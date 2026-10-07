@@ -1,4 +1,4 @@
-// Hermetic unit-test environment (issue #377).
+// Hermetic unit-test environment.
 //
 // The solo and TUI prod paths default the skill roots to os.homedir()
 // (~/.agents/skills, ~/.pi/agent/skills) and read the project trust opt-in

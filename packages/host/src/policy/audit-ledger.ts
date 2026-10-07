@@ -37,7 +37,7 @@ export function auditLedgerDir(repoRoot: string): string {
   return join(repoRoot, '.kubic', 'audit');
 }
 
-// The repo runtime root for a working directory (issue #279): the MAIN
+// The repo runtime root for a working directory: the MAIN
 // checkout's toplevel — what `git rev-parse --path-format=absolute
 // --git-common-dir` names the parent of — so a run from a subdirectory or a
 // linked worktree resolves to the one directory `kubic audit` reads. Resolved from the filesystem (no git spawn): the
@@ -96,7 +96,7 @@ export function auditLedgerDirFor(cwd: string): string {
   return auditLedgerDir(resolveRepoRuntimeRoot(cwd));
 }
 
-// The base revision a solo run started from (issue #282): `git rev-parse
+// The base revision a solo run started from: `git rev-parse
 // HEAD` in the WORKSPACE, captured ONCE at run start — `none` outside git
 // or when git cannot run. Best-effort by contract: a failed probe is never a
 // run failure, and the record then honestly says `none`. The workspace
@@ -161,7 +161,7 @@ function isOrgAuditRecord(value: unknown): value is OrgAuditRecord {
 
 // A ledger that exists but cannot be read (permission denied, a directory in
 // its place, an I/O error) — named, so `kubic audit` never reports it as an
-// empty trail (issue #279).
+// empty trail.
 export class AuditLedgerReadError extends Error {
   readonly path: string;
   constructor(path: string, cause: unknown) {
@@ -173,7 +173,7 @@ export class AuditLedgerReadError extends Error {
   }
 }
 
-// Every §60 record in the ledger, oldest first. A missing ledger (ENOENT) is
+// Every audit record in the ledger, oldest first. A missing ledger (ENOENT) is
 // an empty trail; any other read failure throws AuditLedgerReadError. A torn
 // or foreign line (e.g. a pre-unification router event) is skipped, never
 // guessed into a record.
@@ -199,7 +199,7 @@ export function readAuditLedger(dir: string): OrgAuditRecord[] {
   return records;
 }
 
-// Placeholder for a §60 field the recording site genuinely does not know.
+// Placeholder for a field the recording site genuinely does not know.
 // The record stays honest: it says "unknown", it never invents a value.
 const UNKNOWN = 'unknown';
 
@@ -246,7 +246,7 @@ function verdictFields(verdict: Verdict): {
       };
 }
 
-// §60 record for a solo approval decision (the in-process lane's ask).
+// Audit record for a solo approval decision (the in-process lane's ask).
 export interface SoloDecisionInput {
   sessionId: string;
   toolName: string;
@@ -255,7 +255,7 @@ export interface SoloDecisionInput {
   model?: string;
   thinking?: string;
   /**
-   * The base revision the run started from (issue #282): `git rev-parse
+   * The base revision the run started from: `git rev-parse
    * HEAD` captured once at run start, `none` outside git. Absent keeps the
    * honest `unknown`.
    */
@@ -263,7 +263,7 @@ export interface SoloDecisionInput {
   approved: boolean;
   by?: string;
   reason?: string;
-  /** Issue #467: an approval's recorded note (an edited command). */
+  /** An approval's recorded note (an edited command). */
   note?: string;
   posture: string;
 }
@@ -274,7 +274,7 @@ export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
       ? { approved: true, by: input.by ?? 'user' }
       : { approved: false, reason: input.reason ?? 'denied' },
   );
-  // Issue #467: an approval's own note (an edited command names both) is
+  // An approval's own note (an edited command names both) is
   // its recorded reason.
   const recorded =
     input.approved && input.note !== undefined ? input.note : reason;
@@ -297,7 +297,7 @@ export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
   };
 }
 
-// The privileged actions (issue #284, §60): the closed set of user-level
+// The privileged actions: the closed set of user-level
 // operations beyond approval decisions that each emit one OrgAuditRecord
 // with the same provenance block as decisions. full-access-grant writes
 // `posture:full-access` (fullAccessEnabledAudit); undo-restore writes
@@ -309,7 +309,7 @@ export const PRIVILEGED_ACTION_KINDS = [
 
 export type PrivilegedActionKind = (typeof PRIVILEGED_ACTION_KINDS)[number];
 
-// The `level = "privileged"` filter (issue #286; §58): a `[[audit]]` sink
+// The `level = "privileged"` filter: a `[[audit]]` sink
 // at the privileged level keeps approval decisions (`tool:<name>`) and the
 // privileged-action whats, and drops the rest (`credential:<provider>`).
 // The repo ledger always keeps everything — the level only gates
@@ -317,12 +317,12 @@ export type PrivilegedActionKind = (typeof PRIVILEGED_ACTION_KINDS)[number];
 export function isPrivilegedAuditWhat(what: string): boolean {
   return (
     what.startsWith('tool:') ||
-    // Issue #278: the run-start row is a decision-grade record (it names
+    // The run-start row is a decision-grade record (it names
     // the autonomous combination), not a privileged ACTION — the action
     // kinds stay closed.
     what === 'run:start' ||
     what === 'posture:full-access' ||
-    // Review finding (issue #286): the revoke half of a privileged
+    // Review finding: the revoke half of a privileged
     // posture change reaches privileged sinks too — the disable half of
     // a grant must never vanish while the grant is kept.
     what === 'posture:approvals' ||
@@ -342,7 +342,7 @@ export interface ConfiguredAuditSink {
   stderrNoted: boolean;
 }
 
-// The process's configured `[[audit]]` sinks (issue #286): empty means the
+// The process's configured `[[audit]]` sinks: empty means the
 // repo ledger only (current behavior). The composition root sets them once
 // per process from the loaded config; tests reset with `setAuditSinks([])`.
 let configuredAuditSinks: ConfiguredAuditSink[] = [];
@@ -377,10 +377,10 @@ export interface BuiltAuditSinks {
   problems: string[];
 }
 
-// Build the process's configured sinks from parsed `[[audit]]` tables
-// (issue #286). `syslogTransport` injects the syslog wire for tests — prod
-// builds real transports from the target (unix socket path, defaulting per
-// platform, or `host[:port]` UDP defaulting to 514).
+// Build the process's configured sinks from parsed `[[audit]]` tables.
+// `syslogTransport` injects the syslog wire for tests — prod builds real
+// transports from the target (unix socket path, defaulting per platform, or
+// `host[:port]` UDP defaulting to 514).
 export function buildConfiguredSinks(
   tables: readonly AuditTableConfig[],
   overrides: { syslogTransport?: SyslogTransport } = {},
@@ -457,7 +457,7 @@ export function buildConfiguredSinks(
   return { sinks, problems };
 }
 
-// A `[[audit]] file` sink (issue #286): one validated record per line at
+// A `[[audit]] file` sink: one validated record per line at
 // the EXACT target path (unlike the repo ledger, which owns its filename).
 // Fail-open dirs like the repo ledger: the parent is created when missing.
 function createTargetFileSink(target: string): AuditSink {
@@ -482,7 +482,7 @@ export interface AuditSinkProbes {
   udpAvailable(): boolean;
 }
 
-// One syslog target's reachability (issue #286): unix sockets must exist,
+// One syslog target's reachability: unix sockets must exist,
 // UDP needs a creatable socket (connectionless — delivery stays
 // best-effort). Garbage targets fail closed.
 export function isSyslogTargetAvailable(
@@ -506,7 +506,7 @@ export interface AuditSinkDoctorInput {
   probes: AuditSinkProbes;
 }
 
-// The `[[audit]]` doctor report (issue #286; §58): one check per configured
+// The `[[audit]]` doctor report: one check per configured
 // table — reachable sinks pass naming target and level, missing sockets
 // and unbuilt tables fail — plus the runtime failures the process recorded
 // (`audit:sink:<kind>`). No tables means no checks, so the default matrix
@@ -624,7 +624,7 @@ export function auditSinksDoctorChecks(
   });
 }
 
-// §60 record for a journal undo restore (issue #284): the user-level act of
+// Audit record for a journal undo restore: the user-level act of
 // putting files back. restored names the restored paths, skipped counts the
 // steps left in place — a partial restore (exit 1) records 'error'.
 export interface UndoRestoreInput {
@@ -658,7 +658,7 @@ export function undoRestoreAudit(input: UndoRestoreInput): AuditInput {
   };
 }
 
-// §60 record for one credential use (issue #359; §36.1 rule 4): the ref
+// Audit record for one credential use: the ref
 // (as a sentinel), the role and the purpose — never the value.
 export interface CredentialUseInput {
   sessionId: string;
@@ -695,7 +695,7 @@ export function credentialUseAudit(input: CredentialUseInput): AuditInput {
   };
 }
 
-// §60 record for switching a session to full access (issue #308, §41.4):
+// Audit record for switching a session to full access:
 // who enabled it (the user, through the CLI), when, for which session, and
 // through which command. One row per enable; the per-ask rows that follow
 // carry posture 'full-access' on their own.
@@ -728,7 +728,7 @@ export function fullAccessEnabledAudit(
   };
 }
 
-// §60 record for a run's start (issue #278, §19): the §19 mode the run
+// Audit record for a run's start: the mode the run
 // resolved — explicit `--autonomous` or off by default — so the audit trail
 // names the autonomous combination the session records. A run record, not a
 // privileged action: it is kept at the privileged sink level beside the
@@ -737,13 +737,13 @@ export interface RunStartInput {
   sessionId?: string;
   /** The originating command, e.g. `kubic run`. */
   command: string;
-  /** The run's §19 mode (issue #278). */
+  /** The run's mode. */
   runMode: RunMode;
   workspace?: string;
   posture: string;
   /** Whether `--autonomous` was passed explicitly. */
   autonomous: boolean;
-  /** The resolved worktree base revision (review #278): the caller passes
+  /** The resolved worktree base revision: the caller passes
    *  its `runBase`; absent, the row stays honestly `unknown`. */
   base?: string;
 }
@@ -774,10 +774,9 @@ export function runStartAudit(input: RunStartInput): AuditInput {
   };
 }
 
-// §60 record for switching a session BACK to enforced approvals (issue
-// #309, §41.4): the TUI's in-session toggle off, the symmetric half of
-// `fullAccessEnabledAudit`. One row per disable, so the ledger carries the
-// whole posture history in order.
+// audit record for switching a session BACK to enforced approvals: the TUI's
+// in-session toggle off, the symmetric half of `fullAccessEnabledAudit`. One
+// row per disable, so the ledger carries the whole posture history in order.
 export interface FullAccessDisabledInput {
   sessionId: string;
   /** The originating action, e.g. `kubic tui /approvals off`. */
@@ -807,7 +806,7 @@ export function fullAccessDisabledAudit(
   };
 }
 
-// §60 record for a posture.json change made DURING a session (issue #325):
+// Audit record for a posture.json change made DURING a session:
 // the change is refused — the boot posture stays in force and the file is
 // restored — and recorded once, so a model-written grant is never mistaken
 // for the user's.
@@ -869,8 +868,8 @@ export function appendToLedger(
     // but only values long enough to be matched as a substring: a short or
     // dummy key (`gw`, `ollama` for provider `ollama`) is a word the record
     // legitimately carries, and refusing over it silently dropped the
-    // credential-use row (issue #359).
-    // Configured `[[audit]]` sinks (issue #286) fan out beside the repo
+    // credential-use row.
+    // Configured `[[audit]]` sinks fan out beside the repo
     // ledger, which always leads and is mandatory: the `what` is checked
     // pre-redaction (a redacted `what` would never match the level filter).
     // A configured sink's failure is recorded on its entry and noted on

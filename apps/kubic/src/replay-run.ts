@@ -1,14 +1,14 @@
-// Prod `kubic replay` re-execution runner (issue #78): binds the host's
+// Prod `kubic replay` re-execution runner: binds the host's
 // lane-backed replay runner to the real solo lane. The model pin in the
 // request (deterministic's --model, live's recorded model) is resolved
 // against the assembled catalog first: an unregistered pin can never
 // reach the lane, so it reports provider_probe_failed (exit 6 — the same
 // code `kubic run` yields with no reachable provider) instead of
 // silently re-executing at another model. Trajectory reads go through
-// the exec FileBridge (I/O confinement, §9): this file never imports
+// the exec FileBridge (I/O confinement): this file never imports
 // node:fs directly.
 //
-// Issue #272 (§72): the request's pins are the re-execution's inputs, not
+// The request's pins are the re-execution's inputs, not
 // checked-then-ignored labels. The lane is rooted at the pinned worktree
 // (the `--worktree` override, or the recorded path when it exists here),
 // the live tier boots the role the `--role-config` names — its tools and
@@ -30,10 +30,10 @@ import {
 } from '../../../packages/worker/src/model-select.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
-// §72 (issue #272): the re-execution is rooted at the pinned worktree when
+// The re-execution is rooted at the pinned worktree when
 // that path exists on this machine. A recorded worktree that is absent
 // here (another machine's trajectory) falls back to the working directory
-// — the documented pre-#272 behaviour — while an explicit `--worktree`
+// — the documented fallback — while an explicit `--worktree`
 // override is existence-checked by the command before it gets this far.
 function replayCwd(worktree: string): string {
   try {
@@ -51,7 +51,7 @@ function replayCwd(worktree: string): string {
 
 export async function runProdReplay(
   request: ReplayRunRequest,
-  // The effective config's projections (issue #114), threaded exactly
+  // The effective config's projections, threaded exactly
   // like `kubic run` threads runtimeRunDeps: the re-execution installs
   // the same policy the run path does.
   runtime: ReplayRuntimeDeps = { policySource: 'default' },
@@ -90,13 +90,13 @@ export async function runProdReplay(
           prompt,
           // The live tier's pin artifact names the role; the lane loads
           // `.kubic/roles/<name>.md` from the pinned worktree and applies
-          // its tools and prompt (issue #272).
+          // its tools and prompt.
           rerun.role === null ? {} : { role: rerun.role },
           {
             models: assembled.models,
             model: selection,
             ...runRuntime,
-            // §72: the lane runs where the pin says, under the config's
+            // The lane runs where the pin says, under the config's
             // own projections (agent id, role layers, out-of-scope paths)
             // exactly as `kubic run` installs them.
             env: new NodeExecutionEnv(cwd),
@@ -105,7 +105,7 @@ export async function runProdReplay(
               ...(runRuntime.roles?.layers === undefined
                 ? {}
                 : { layers: runRuntime.roles.layers }),
-              // Issue #430 (§33, L-D27): the pinned worktree's role
+              // The pinned worktree's role
               // document loads under the same trust as the run — an
               // untrusted pin withholds it exactly like `kubic run`.
               ...(runRuntime.roles?.trustProject === undefined

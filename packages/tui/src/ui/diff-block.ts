@@ -1,4 +1,4 @@
-// The inline diff block (EPIC N, issue #456; docs/ui 01-G, 02-E). Input is
+// The inline diff block. Input is
 // the display diff a file change records (`+<n> text`, `-<n> text`,
 // ` <n> text`, ` <pad> ...` for a gap); output is card body rows: context
 // rows with an fg3 line number, removed rows on the delBg surface with `−`,

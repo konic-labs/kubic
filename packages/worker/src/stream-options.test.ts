@@ -1,4 +1,4 @@
-// §37.4 request options per model/role (issue #257): parsed config tuning
+// Request options per model/role: parsed config tuning
 // resolves to pi-durable `settings.stream`, and the solo lane hands it to
 // the harness — the faux provider sees exactly what was configured.
 import { afterEach, describe, expect, it } from 'vitest';
@@ -17,7 +17,7 @@ afterEach(async () => {
   }
 });
 
-describe('resolveStreamOptions (issue #257)', () => {
+describe('resolveStreamOptions', () => {
   it('returns undefined when nothing is tuned', () => {
     expect(resolveStreamOptions(undefined, undefined)).toBeUndefined();
     expect(resolveStreamOptions({}, {})).toBeUndefined();
@@ -49,7 +49,7 @@ describe('resolveStreamOptions (issue #257)', () => {
   });
 });
 
-describe('solo lane stream settings (issue #257)', () => {
+describe('solo lane stream settings', () => {
   it('configured timeoutMs/maxRetries reach the harness streamOptions', async () => {
     const seen: Array<Record<string, unknown> | undefined> = [];
     const lane = await bootFauxLane({

@@ -1,5 +1,4 @@
-// An absent `.kubic/roles/` is the NORMAL case (issue #99 wiring follow-up;
-// since issue #203 it resolves to the presets embedded in the binary).
+// An absent `.kubic/roles/` is the NORMAL case.
 //
 // `rolesDoctorProbe` was wired into `kubic doctor`, and in a workspace with no
 // roles directory it reported `FAIL role:documents (policy-mismatch): ENOENT
@@ -57,8 +56,8 @@ credentials: none
 Decompose the objective.
 `;
 
-describe('an absent roles directory is not an error (#99 wiring follow-up)', () => {
-  it('loadRoles falls back to the embedded presets for a cwd with no .kubic/roles (issue #203)', () => {
+describe('an absent roles directory is not an error', () => {
+  it('loadRoles falls back to the embedded presets for a cwd with no .kubic/roles', () => {
     const root = cwd();
     const loaded = loadRoles({
       cwd: root,
@@ -81,7 +80,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     }
   });
 
-  it('the doctor probe reports the presets, not silence, with no roles directory (issue #203)', () => {
+  it('the doctor probe reports the presets, not silence, with no roles directory', () => {
     const root = cwd();
     const checks = rolesDoctorProbe({
       cwd: root,
@@ -159,7 +158,7 @@ describe('an absent roles directory is not an error (#99 wiring follow-up)', () 
     );
   });
 
-  // Review finding (#203): the repo text used to be re-read from
+  // Review finding: the repo text used to be re-read from
   // `.kubic/roles/<parsed role name>.md`, so a document whose file stem
   // differs from its `role:` line (a rename, a copy whose frontmatter was not
   // updated) threw a raw ENOENT for EVERY consumer — doctor red, every

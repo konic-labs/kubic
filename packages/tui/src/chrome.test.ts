@@ -30,7 +30,7 @@ const playground: HeaderInfo = {
 const between = (left: string, right: string, width: number): string =>
   `${left}${' '.repeat(width - visibleWidth(left) - visibleWidth(right))}${right}`;
 
-describe('header (01-A)', () => {
+describe('header', () => {
   it('carries project, branch, session, posture and clock at 120 columns', () => {
     expect(renderHeader(plain, playground, 120)).toBe(
       between(
@@ -139,7 +139,7 @@ describe('key caps', () => {
   });
 });
 
-describe('key-hint sets (01-M)', () => {
+describe('key-hint sets', () => {
   it('idle: send, newline, commands, palette, panels; quit on the right', () => {
     expect(keyHintSet('idle', DEFAULT_KEY_REGISTRY)).toEqual({
       hints: [
@@ -178,7 +178,7 @@ describe('key-hint sets (01-M)', () => {
   });
 
   it('approval and overlay contexts show the keys that act there', () => {
-    // Issue #459: the card's keys, its explanation and the way back up.
+    // The card's keys, its explanation and the way back up.
     expect(keyHintSet('approval', DEFAULT_KEY_REGISTRY)).toEqual({
       hints: [
         ['a', 'allow once'],
@@ -215,7 +215,7 @@ describe('key-hint sets (01-M)', () => {
       ],
       right: ['esc', 'back'],
     });
-    // Issue #460: the palette's own keys (03-A).
+    // The palette's own keys.
     expect(keyHintSet('palette', DEFAULT_KEY_REGISTRY)).toEqual({
       hints: [
         ['↑↓', 'move'],

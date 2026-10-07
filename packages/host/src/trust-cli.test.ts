@@ -1,5 +1,5 @@
-// `kubic trust` (issue #228): grant, revoke and list the persistent
-// project-trust decision. RED first.
+// `kubic trust`: grant, revoke and list the persistent
+// project-trust decision.
 
 import {
   mkdirSync,
@@ -53,7 +53,7 @@ function harness(store: ProjectTrustStore, cwd: string) {
   };
 }
 
-describe('kubic trust command (issue #228)', () => {
+describe('kubic trust command', () => {
   it('grants trust for the cwd and names the config it unlocks', () => {
     const home = tmpDir('kubic-trust-home-');
     const project = projectWithConfig();
@@ -178,9 +178,9 @@ describe('kubic trust command (issue #228)', () => {
     ).toThrow(/no such directory/);
   });
 
-  // The store canonicalises symlinks, so the operand check follows them too:
-  // a symlink to a project directory is a project directory (issue #228
-  // review). It used to be refused as "not a directory" (lstat).
+  // The store canonicalises symlinks, so the operand check follows them too: a
+  // symlink to a project directory is a project directory. It used to be
+  // refused as "not a directory" (lstat).
   describe('a symlink operand', () => {
     it('to a directory is granted, under the canonical (resolved) path', () => {
       const home = tmpDir('kubic-trust-home-');

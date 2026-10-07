@@ -1,8 +1,7 @@
-// Coarse lane-entry cells for the transcript (issue #88).
-// RED: packages/tui/src/lane-cells.ts does not exist yet.
+// Coarse lane-entry cells for the transcript.
 //
-// §15.2 replicated lane snapshots: the TUI renders committed entries as
-// coarse cells — no token deltas (Pi keeps those; §15 routes no message
+// Replicated lane snapshots: the TUI renders committed entries as
+// coarse cells — no token deltas (Pi keeps those; routes no message
 // events). Pure: entries in, cells out, no I/O.
 import { describe, expect, it } from 'vitest';
 import {
@@ -42,7 +41,7 @@ function assistantEntry(
   };
 }
 
-describe('lane entries to transcript cells (issue #88)', () => {
+describe('lane entries to transcript cells', () => {
   it('orders cells chronologically even when entries arrive newest-first', () => {
     const cells = entriesToCells([
       assistantEntry('a2', 40, [{ type: 'text', text: 'all done' }]),
@@ -163,7 +162,7 @@ describe('lane entries to transcript cells (issue #88)', () => {
   });
 });
 
-describe('tool outcome summary (issue #345)', () => {
+describe('tool outcome summary', () => {
   function resultEntry(text: string, role = 'toolResult'): unknown {
     return {
       id: 1,
@@ -249,7 +248,7 @@ describe('tool outcome summary (issue #345)', () => {
   });
 });
 
-describe('lane text sanitisation (issue #299)', () => {
+describe('lane text sanitisation', () => {
   it('strips a complete SGR sequence, not just the ESC byte', () => {
     expect(sanitizeLaneText('\u001b[31mred\u001b[0m')).toBe('red');
     expect(sanitizeLaneText('plain \u001b[1;32mok\u001b[m done')).toBe(
@@ -290,7 +289,7 @@ describe('lane text sanitisation (issue #299)', () => {
     expect(visibleWidth(expanded.slice(0, expanded.indexOf('c')))).toBe(8);
   });
 
-  it('expands a long tab run in one pass, not per tab (review #299)', () => {
+  it('expands a long tab run in one pass, not per tab', () => {
     // 20 000 tabs: the quadratic version rescanned the whole prefix per tab
     // (~3e9 code units) and blew the test timeout; the running-column pass
     // is linear and every tab still lands on an 8-column stop.
@@ -309,7 +308,7 @@ describe('lane text sanitisation (issue #299)', () => {
   });
 });
 
-describe('compaction cells (issue #317)', () => {
+describe('compaction cells', () => {
   const SUMMARY = `The conversation history before this point was compacted into the following summary:\n\n<summary>\nOlder turns were summarized here.\n</summary>`;
 
   function compactionEntry(text: string): LaneEntryLike {
@@ -367,10 +366,10 @@ describe('compaction cells (issue #317)', () => {
   });
 });
 
-// Issue #340: the committed user prompts of a lane, newest last, for seeding
+// The committed user prompts of a lane, newest last, for seeding
 // the editor history on resume. Compaction summaries (role user inside a
 // `compaction` entry) and image-only prompts are not prompts to recall.
-describe('userPromptsOf (issue #340)', () => {
+describe('userPromptsOf', () => {
   it('returns the user messages text in order and skips everything else', () => {
     const user = (id: string, text: string) => ({
       id,
@@ -403,9 +402,9 @@ describe('userPromptsOf (issue #340)', () => {
   });
 });
 
-// Issue #332: the `/tree` picker — one row per earlier prompt, newest first,
+// The `/tree` picker — one row per earlier prompt, newest first,
 // each forking just BEFORE that prompt (so the operator retries from there).
-describe('forkPickerRows (issue #332)', () => {
+describe('forkPickerRows', () => {
   it('lists prompts newest first with their entry and the fork point (headless snapshot)', () => {
     const rows = forkPickerRows([
       { entryId: 8, at: 7, text: 'fix the failing test' },
@@ -437,7 +436,7 @@ describe('forkPickerRows (issue #332)', () => {
   });
 });
 
-describe('prompt timestamps (issue #455)', () => {
+describe('prompt timestamps', () => {
   it('carries the message time onto the prompt cell, and only a real number', () => {
     const at = Date.UTC(2026, 9, 6, 12, 1, 52);
     const cells = entriesToCells([
@@ -467,7 +466,7 @@ describe('prompt timestamps (issue #455)', () => {
   });
 });
 
-describe('file-change display records (issue #456)', () => {
+describe('file-change display records', () => {
   const result = (details: unknown) => ({
     id: 'r1',
     seq: 2,
@@ -527,7 +526,7 @@ describe('file-change display records (issue #456)', () => {
   });
 });
 
-describe('thinking cells (issue #457)', () => {
+describe('thinking cells', () => {
   const assistant = (content: unknown[]) => ({
     id: 'a1',
     seq: 2,

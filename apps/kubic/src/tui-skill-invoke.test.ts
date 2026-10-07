@@ -1,4 +1,4 @@
-// Explicit skill invocation in `kubic tui` (issue #183; §29.4):
+// Explicit skill invocation in `kubic tui`:
 // `/skill:<name> [instructions]` expands the booted skill (hidden skills
 // included, withheld skills excluded) into the turn prompt. Unknown names
 // refuse locally by name and never reach the model. Faux provider only:
@@ -129,7 +129,7 @@ function writeSkill(dir: string, frontmatter: string, body: string): string {
   return path;
 }
 
-describe('parseSkillInvokeCommand (issue #183)', () => {
+describe('parseSkillInvokeCommand', () => {
   it('parses the colon form with instructions', () => {
     expect(parseSkillInvokeCommand('/skill:hidden do x')).toEqual({
       kind: 'invoke',
@@ -164,7 +164,7 @@ describe('parseSkillInvokeCommand (issue #183)', () => {
   });
 });
 
-describe('kubic tui /skill: over a stub lane (issue #183)', () => {
+describe('kubic tui /skill: over a stub lane', () => {
   function startStubSkillSession() {
     const fake = recordingTerminal();
     const admitted: string[] = [];
@@ -235,7 +235,7 @@ describe('kubic tui /skill: over a stub lane (issue #183)', () => {
     expect(admitted).toEqual([]);
 
     // A refused submit keeps the draft, and the first Ctrl-C clears it —
-    // only the double press after it quits (#454).
+    // only the double press after it quits.
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
@@ -259,7 +259,7 @@ describe('kubic tui /skill: over a stub lane (issue #183)', () => {
   });
 });
 
-describe('kubic tui /skill: over the real lane (issue #183)', () => {
+describe('kubic tui /skill: over the real lane', () => {
   it('drives the hidden skill content to the model, never the system prompt', async () => {
     const root = tmpRoot();
     const skillsDir = join(root, 'skills');
@@ -326,7 +326,7 @@ describe('kubic tui /skill: over the real lane (issue #183)', () => {
   });
 });
 
-describe('withheld skills are not invocable or completed (issue #183 review)', () => {
+describe('withheld skills are not invocable or completed', () => {
   it('excludes a role-withheld skill from completion names and invocation', async () => {
     const workspace = tmpRoot('kubic-tui-skill-gate-');
     mkdirSync(join(workspace, '.git'), { recursive: true });

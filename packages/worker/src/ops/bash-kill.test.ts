@@ -1,10 +1,7 @@
-// Kill-registry retention (issue #142): a finished bash call must not leave
+// Kill-registry retention: a finished bash call must not leave
 // its kill closure (and, through it, the handle and its settled output) in
 // the lane's OperationKillRegistry. The TUI reuses one registry for the whole
 // session, so a handle per completed call is an unbounded leak.
-//
-// RED-first note: the op tracked its handle and never untracked it, so N
-// completed calls left N entries.
 
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
@@ -22,7 +19,7 @@ function inv(): ToolInvocation {
   );
 }
 
-describe('bash kill registry retention (issue #142)', () => {
+describe('bash kill registry retention', () => {
   it.runIf(posix)(
     'a settled call leaves nothing tracked under its operation id',
     async () => {

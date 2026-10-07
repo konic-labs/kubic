@@ -1,4 +1,4 @@
-// §50 handler_error + [model] lines on the TUI path (issue #246): a lane
+// Handler_error + [model] lines on the TUI path: a lane
 // fault reaches the runner's debug sink (when attached) and always a
 // transcript notice — the TUI has no --debug channel — and each committed
 // response's token counts reach the sink as the [model] line. Stub lane
@@ -86,7 +86,7 @@ function stubLoop(events: readonly KubicLaneEvent[]): TuiLaneLoop {
   } as unknown as TuiLaneLoop;
 }
 
-describe('TUI debug lines (issue #246)', () => {
+describe('TUI debug lines', () => {
   it('routes a lane fault to the debug sink and a transcript notice', async () => {
     const target = app();
     const notice = vi.spyOn(target, 'appendNotice');
@@ -102,7 +102,7 @@ describe('TUI debug lines (issue #246)', () => {
       (line: string) => debugLines.push(line),
     );
     await runner.run('hi');
-    // Pi 1.0 has no handler_error event: the lane fault IS the §50 line.
+    // Pi 1.0 has no handler_error event: the lane fault IS the debug line.
     expect(debugLines).toEqual([
       'handler_error hook=tool error=task exploded verdict=deny',
     ]);
@@ -144,7 +144,7 @@ describe('TUI debug lines (issue #246)', () => {
   });
 });
 
-describe('TUI boot debug lines (issue #246)', () => {
+describe('TUI boot debug lines', () => {
   const made: string[] = [];
 
   beforeEach(() => {

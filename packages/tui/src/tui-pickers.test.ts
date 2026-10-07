@@ -1,4 +1,4 @@
-// The pickers in the app (EPIC N, issue #461; docs/ui 03-D, 03-E): the
+// The pickers in the app: the
 // model picker's provider groups, keyless providers, folding and thinking
 // row, and the list picker every other "choose one" uses.
 import { describe, expect, it } from 'vitest';
@@ -69,7 +69,7 @@ const PROVIDERS = [
   { id: 'amazon-bedrock', usable: true, keySource: 'AWS_PROFILE' },
 ];
 
-describe('the model picker (issue #461; 03-D, 03-E)', () => {
+describe('the model picker', () => {
   it('groups by provider, folds the large one, lists keyless ones last', () => {
     const { app, frame } = setup();
     expect(
@@ -159,7 +159,7 @@ describe('the model picker (issue #461; 03-D, 03-E)', () => {
   });
 });
 
-describe('the list picker (issue #461)', () => {
+describe('the list picker', () => {
   it('titles the frame, greys what cannot be chosen and previews moves', () => {
     const { app, frame } = setup();
     const moved: Array<string | undefined> = [];

@@ -1,8 +1,8 @@
-// Deterministic tool-wrap composition (issue #15, slice D; §40.1 mechanism 2).
+// Deterministic tool-wrap composition.
 // Contributions compose in listed order: the first contribution wraps
 // closest to the core, the last is outermost. Rebuilds are pure — removing
 // an extension means recomposing without it, never an inverse mutation.
-// Composition stays pre-registration (EPIC K #393): the Kubic extension is
+// Composition stays pre-registration: the Kubic extension is
 // installed with whatever `composeTools` returned, and pi-durable's own
 // `wrapTool` decorators apply on top of that.
 import type { ToolRegistration } from '../pi-boundary.js';

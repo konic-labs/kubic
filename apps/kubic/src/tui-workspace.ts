@@ -1,4 +1,4 @@
-// The TUI header's workspace facts (EPIC N, issue #453): the project name,
+// The TUI header's workspace facts: the project name,
 // the current branch and the changed-file count. Git runs through the exec
 // shell seam with explicit argv and the worker's porcelain v2 parser — the
 // one `git_status` uses. `--no-optional-locks` keeps

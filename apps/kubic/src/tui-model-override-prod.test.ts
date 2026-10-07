@@ -1,5 +1,5 @@
-// `kubic tui` honours the configured model (issue #227; §38.1, §35.1).
-// Before #227 the interactive TUI — what bare `kubic` opens on a TTY —
+// `kubic tui` honours the configured model.
+// Before the interactive TUI — what bare `kubic` opens on a TTY —
 // called selectModel without the runtime pin, so it ran the first
 // registered provider while `kubic run` in the same directory ran the
 // configured model. These tests drive the PROD boot (bootTuiLane) over the
@@ -89,7 +89,7 @@ async function newSession(root: string): Promise<string> {
   return id;
 }
 
-describe('kubic tui model selection (issue #227)', () => {
+describe('kubic tui model selection', () => {
   it('a config [model] pin selects the pinned model, not the first provider', async () => {
     const sessionsRoot = tmpRoot('tui-227-sessions-');
     const { cwd, home } = pinnedWorkspace();
@@ -152,7 +152,7 @@ describe('kubic tui model selection (issue #227)', () => {
     }
   });
 
-  it('a pin switches a resumed session whose stored model differs (the #148 rule)', async () => {
+  it('a pin switches a resumed session whose stored model differs', async () => {
     const sessionsRoot = tmpRoot('tui-227-sessions4-');
     const id = await newSession(sessionsRoot);
     // First boot stored faux/small (an explicit pin on a fresh session).
@@ -181,7 +181,7 @@ describe('kubic tui model selection (issue #227)', () => {
       await second.close?.();
     }
     // The switch is durable: a third boot with no pin reads the committed
-    // `pi.agent` document and keeps the session's own model (#148's stored
+    // `pi.agent` document and keeps the session's own model (the stored
     // rule) — never the default pick.
     const third = await bootTuiLane(id, {
       sessionsRoot,

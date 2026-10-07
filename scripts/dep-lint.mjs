@@ -107,7 +107,7 @@ export function checkTree(root) {
           owner !== 'exec' &&
           !file.endsWith('.test.ts')
         ) {
-          // I/O confinement (§9, issue #12): only packages/exec (the
+          // I/O confinement: only packages/exec (the
           // ExecutionEnv binding) touches node:fs/child_process. Tools go
           // through the seam. Test scaffolding is exempt.
           const line = content.slice(0, m.index).split('\n').length;
@@ -120,7 +120,7 @@ export function checkTree(root) {
           continue;
         }
         if (spec.startsWith('@earendil-works/')) {
-          // Pi seam rule (§65): only designated boundary files may touch Pi
+          // Pi seam rule: only designated boundary files may touch Pi
           // modules — exact path match, no suffix bypass. Worker owns the
           // agent/model seam; TUI owns the presentation seam (it cannot
           // import worker implementation, so it cannot reuse its boundary).
@@ -155,47 +155,6 @@ export function checkTree(root) {
     }
   }
   return violations;
-}
-
-// All internal package-to-package import edges (allowed ones included).
-// checkTree above reports only violations; this lists every edge so docs
-// can cross-check neighbour lists against the real tree (issue #63
-// review: diagram drift must fail CI, not just forbidden imports).
-export function listInternalEdges(root) {
-  const edges = [];
-  const packagesDir = join(root, 'packages');
-  let owners = [];
-  try {
-    owners = readdirSync(packagesDir).filter((e) =>
-      statSync(join(packagesDir, e)).isDirectory(),
-    );
-  } catch {
-    return edges;
-  }
-  owners.push('kubic');
-  for (const owner of owners) {
-    const srcDir =
-      owner === 'kubic'
-        ? join(root, 'apps', 'kubic')
-        : join(packagesDir, owner);
-    for (const file of tsFiles(srcDir)) {
-      const content = readFileSync(file, 'utf8');
-      for (const m of content.matchAll(IMPORT_RE)) {
-        const spec = m[1] ?? m[2];
-        const target = resolveTarget(owner, file, spec, root);
-        if (target) {
-          const line = content.slice(0, m.index).split('\n').length;
-          edges.push({
-            from: owner,
-            to: target,
-            file: relative(root, file),
-            line,
-          });
-        }
-      }
-    }
-  }
-  return edges;
 }
 
 const isMain = import.meta.main;

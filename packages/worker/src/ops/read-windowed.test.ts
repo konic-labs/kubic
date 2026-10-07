@@ -1,4 +1,4 @@
-// Bounded read windowing (issue #122, slice 2; §9.1, #107).
+// Bounded read windowing.
 // The line window caps the output; this caps the READ. With a ranged-read
 // seam the op must seek to the offset line in chunks and collect the window
 // — never whole-file readFile — costing at most one read-bound window plus
@@ -29,7 +29,7 @@ import type { OpContext, ToolInvocation } from './types.js';
 
 const KIB = 1024;
 const MIB = 1024 * 1024;
-// Spec bounds (issue #122), pinned as literals so the test stands apart
+// Spec bounds, pinned as literals so the test stands apart
 // from the implementation constants.
 const BOUND_MAX_BYTES = 8 * MIB;
 const BOUND_CHUNK_BYTES = 512 * KIB;
@@ -119,7 +119,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('bounded read windowing (issue #122)', () => {
+describe('bounded read windowing', () => {
   it('never whole-reads and stays within the read bound on a deep offset into a >64 MiB file', async () => {
     sparseFile('huge.bin', 64 * MIB + MIB);
     const ctx = countingEnv(true);
@@ -236,12 +236,12 @@ describe('bounded read windowing (issue #122)', () => {
   });
 });
 
-// totalLines/truncated honesty (issue #122 contract): truncated:false
+// totalLines/truncated honesty: truncated:false
 // implies totalLines is exact AND content is complete for the requested
 // region. truncated:true whenever the scan stopped before EOF — budget,
 // line cap, or limit-stopped region collection — and totalLines is then a
 // lower bound ("lines confirmed so far").
-describe('totalLines/truncated honesty (issue #122 contract)', () => {
+describe('totalLines/truncated honesty', () => {
   it('flags truncated when region collection stops at exactly READ_MAX_LINES newlines at a chunk boundary', async () => {
     // 1999 × 262-byte lines + one 550-byte line = exactly 524288 bytes =
     // one chunk: region collection stops with exactly 2000 newlines at the

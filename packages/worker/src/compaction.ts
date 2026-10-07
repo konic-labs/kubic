@@ -1,5 +1,4 @@
-// Kubic compaction policy on the pi-durable mechanism (issues #34, #399;
-// §27.1-27.6).
+// Kubic compaction policy on the pi-durable mechanism.
 //
 // Pi owns the mechanism: the threshold and overflow checks, the summarization
 // request, the `pi.compaction` entry, output bounds and spill files. Kubic
@@ -8,7 +7,7 @@
 //   hands the harness. HarnessSettings are read at every use and never copied,
 //   so `reserveTokens` is a LIVE getter over the current model's window: a
 //   `configure({ model })` switch re-clamps with no explicit re-clamp step.
-// - `compactSoloLane` is the manual path (`/compact [focus]`, issue #330):
+// - `compactSoloLane` is the manual path (`/compact [focus]`):
 //   it admits Pi's compaction task with Kubic's compact prompt as the
 //   summarizer instructions.
 //
@@ -44,11 +43,11 @@ export function effectiveReserveTokens(
   );
 }
 
-// §27.1: roughly how much recent context stays verbatim. 20000 matches
+// Roughly how much recent context stays verbatim. 20000 matches
 // pi-durable's own default (pi-durable's `keepRecentTokens`).
 export const SOLO_KEEP_RECENT_TOKENS = 20000;
 
-// §27.1 — Kubic owns the trigger: exactly one threshold (contextTokens above
+// Kubic owns the trigger: exactly one threshold (contextTokens above
 // contextWindow - reserveTokens) starts a summarization. pi-durable's own
 // default (32768) also starts a background compaction that far BELOW the
 // blocking threshold, i.e. a speculative summary model call before the
@@ -126,7 +125,7 @@ export function buildCompactPrompt(input: CompactPromptInput): string {
 }
 
 /**
- * The half of #394's `SoloLane` compaction needs: the structural twin of
+ * The half of the `SoloLane` compaction needs: the structural twin of
  * `Pick<SoloLane, 'harness' | 'conversation'>`. Naming `SoloLane` here would
  * make compaction.ts import lane/solo.ts while solo.ts imports this module.
  */
@@ -144,12 +143,12 @@ export interface ManualCompactionAdmission {
 }
 
 /**
- * §27.2 manual compaction: `/compact [focus]` (issue #330) admits Pi's
+ * Manual compaction: `/compact [focus]` admits Pi's
  * `CompactionTask` and returns its id. Pi summarizes while the conversation
  * keeps working and places the summary at once when idle, otherwise at the
  * next turn boundary; the caller waits on `harness.waitForTask`.
  *
- * Kubic's compact prompt — the caller's focus verbatim (#82 rule 7) — is the
+ * Kubic's compact prompt — the caller's focus verbatim — is the
  * task's instructions: the one path where Kubic owns the summarizer's text.
  * Automatic (threshold/overflow) compaction uses Pi's own summarization
  * prompt, because pi-durable only accepts instructions through `compact()`.
@@ -166,7 +165,7 @@ export async function compactSoloLane(
   return { taskId, tokensBefore };
 }
 
-// §27.2 (issue #330): how a manual compaction ended. `aborted` is the
+// How a manual compaction ended. `aborted` is the
 // operator's cancel (Esc/Ctrl-C -> conversation.abort()), `orphaned` a task
 // whose abort protocol could not run; `faulted` is Pi's runtime-detected
 // contract failure (an uncaught throw), reported as a failure by name;
@@ -191,7 +190,7 @@ export interface ManualCompactionOutcome {
 }
 
 /**
- * One manual compaction, admitted and awaited to terminal (#330):
+ * One manual compaction, admitted and awaited to terminal:
  * `compactSoloLane` plus `harness.waitForTask`, reported in Kubic's own
  * vocabulary. Never throws for a refused admission, a failed summary or a
  * cancellation — the caller reports the outcome, it never has to catch.
@@ -200,8 +199,7 @@ export interface ManualCompactionOptions {
   /**
    * Called the moment the task is ADMITTED, before the wait: a caller that
    * latched a cancellation during the admission window (the context read and
-   * the admission commit) replays it here, so a Ctrl-C is never lost
-   * (#330 review; the same placement race #312/#334 solved for turns).
+   * the admission commit) replays it here, so a Ctrl-C is never lost.
    */
   onAdmitted?: (taskId: string) => void | Promise<void>;
 }
@@ -351,6 +349,6 @@ export interface CompactedState {
   artifacts: SpillArtifact[];
 }
 
-// NOTE (issue #215): the buildCompactedState constructor was deleted — no
+// NOTE: the buildCompactedState constructor was deleted — no
 // caller ever built one (spill artifacts are not implemented). The
 // CompactedState shape stays for the spill work that needs it.

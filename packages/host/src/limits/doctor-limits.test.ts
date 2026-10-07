@@ -1,7 +1,7 @@
-// Honest-limits doctor checks (issue #58; §59.1, §78, §50).
-// RED first: static §59.1 notices plus dynamic provider/dep/policy
+// Honest-limits doctor checks.
+// Static notices plus dynamic provider/dep/policy
 // builders with honest messages; provider-down maps to exit 6; --json
-// matches the #29 envelope shape. Faux-only: injected values, no I/O.
+// matches the envelope shape. Faux-only: injected values, no I/O.
 import { describe, expect, it } from 'vitest';
 import { MCP_ARRIVAL_REQUIREMENTS } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
@@ -20,7 +20,7 @@ import {
   staticLimitChecks,
 } from './doctor-limits.js';
 
-describe('static §59.1 limit notices (issue #58)', () => {
+describe('static limit notices', () => {
   it('covers every applicable limit with honest warn notices', () => {
     const checks = staticLimitChecks();
     const ids = checks.map((check) => check.id);
@@ -50,7 +50,7 @@ describe('static §59.1 limit notices (issue #58)', () => {
   });
 });
 
-describe('doctor matrix (issue #58)', () => {
+describe('doctor matrix', () => {
   it('missing provider fails provider-down naming exit 6', () => {
     const check = providerAvailabilityCheck([
       { id: 'local', reachable: false },
@@ -84,7 +84,7 @@ describe('doctor matrix (issue #58)', () => {
     expect(check.detail).toContain('git');
   });
 
-  it('unenforceable MCP request fails policy-mismatch as v1-unsupported', () => {
+  it('unenforceable MCP request fails policy-mismatch as unsupported', () => {
     const check = policyEnforceabilityCheck({
       route: 'ask-user',
       autoApprove: ['mcp:filesystem'],
@@ -92,7 +92,9 @@ describe('doctor matrix (issue #58)', () => {
     expect(check.status).toBe('fail');
     expect(check.reason).toBe('policy-mismatch');
     expect(check.detail).toContain('mcp:filesystem');
-    expect(check.detail).toMatch(/unsupported in v1/);
+    expect(check.detail).toMatch(
+      /unsupported: no third-party tools or MCP servers/,
+    );
   });
 
   it('extension request fails the same honest way', () => {
@@ -104,7 +106,7 @@ describe('doctor matrix (issue #58)', () => {
     expect(check.reason).toBe('policy-mismatch');
   });
 
-  it('config-level mcp refusal names the §33 arrival requirements', () => {
+  it('config-level mcp refusal names the arrival requirements', () => {
     const check = policyEnforceabilityCheck({
       route: 'ask-user',
       autoApprove: [],
@@ -123,7 +125,7 @@ describe('doctor matrix (issue #58)', () => {
       mcp: { servers: [] },
     });
     expect(check.status).toBe('fail');
-    expect(check.detail).toMatch(/unsupported in v1/);
+    expect(check.detail).toMatch(/config key \[mcp\] is unsupported/);
   });
 
   it('invalid policy shape defers to policy:approvals without double-failing', () => {
@@ -145,7 +147,7 @@ describe('doctor matrix (issue #58)', () => {
   });
 });
 
-describe('§78 exit mapping (issue #58)', () => {
+describe('exit mapping', () => {
   function fail(reason: DoctorCheck['reason']): DoctorCheck {
     return {
       id: 'x',
@@ -156,7 +158,7 @@ describe('§78 exit mapping (issue #58)', () => {
     };
   }
 
-  it('provider failure exits 6, matching kubic run §78', () => {
+  it('provider failure exits 6, matching kubic run', () => {
     expect(LIMITS_DOCTOR_EXIT_PROVIDER).toBe(6);
     expect(LIMITS_DOCTOR_EXIT_PROVIDER).toBe(RUN_EXIT_PROVIDER_PROBE_FAILED);
     expect(limitsDoctorExit([fail('provider-down')])).toBe(6);
@@ -190,7 +192,7 @@ describe('§78 exit mapping (issue #58)', () => {
     expect(text).toContain('0 fail');
   });
 
-  it('provider-down exits 6 end-to-end via runDoctorCommand (§78)', async () => {
+  it('provider-down exits 6 end-to-end via runDoctorCommand', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
       {},
@@ -207,7 +209,7 @@ describe('§78 exit mapping (issue #58)', () => {
   });
 });
 
-describe('limits --json shape §50/78 (issue #58)', () => {
+describe('limits --json shape /78', () => {
   it('builds the {ok, exitCode, checks} envelope the doctor --json uses', async () => {
     const checks: DoctorCheck[] = [
       ...staticLimitChecks(),
@@ -220,7 +222,7 @@ describe('limits --json shape §50/78 (issue #58)', () => {
     expect(Object.keys(report).sort()).toEqual(['checks', 'exitCode', 'ok']);
   });
 
-  it('matches the #29 doctor --json key shape check-for-check', async () => {
+  it('matches the doctor --json key shape check-for-check', async () => {
     const jsonLines: string[] = [];
     await runDoctorCommand(
       { json: true },
@@ -244,7 +246,7 @@ describe('limits --json shape §50/78 (issue #58)', () => {
   });
 });
 
-describe('collectLimitChecks (issue #58)', () => {
+describe('collectLimitChecks', () => {
   it('aggregates static, provider, dep, and policy checks', () => {
     const checks = collectLimitChecks({
       providers: [{ id: 'local', reachable: true }],

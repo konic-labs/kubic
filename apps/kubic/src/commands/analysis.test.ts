@@ -161,7 +161,7 @@ function realRunners(channels: {
       runEvalCommand(options, {
         ...io,
         ...faux,
-        // §48 (issue #258): --trajectory takes a file path.
+        // --trajectory takes a file path.
         readFile: () => JSON.stringify(makeExport()),
       }),
     benchmark: (options) => runBenchmarkCommand(options, { ...io, ...faux }),
@@ -276,7 +276,7 @@ describe('analysis commands: generated help', () => {
   });
 
   it('shows the eval model default', async () => {
-    // #256: eval's --model has no commander default (--trajectory reads the
+    // Eval's --model has no commander default (--trajectory reads the
     // export); the --task default is documented in the help text instead.
     const evalHelp = (await kubic(['eval', '--help'])).out.join('\n');
     expect(evalHelp).toContain('--task default faux/echo');
@@ -331,7 +331,7 @@ describe('analysis commands: usage errors exit 2', () => {
     }
   });
 
-  it('export and replay take --session <id> as the trajectory source (#383)', async () => {
+  it('export and replay take --session <id> as the trajectory source', async () => {
     const exported = await kubic([
       'export',
       '--session',
@@ -353,7 +353,7 @@ describe('analysis commands: usage errors exit 2', () => {
     expect(neither.calls).toEqual([{ name: 'export', options: {} }]);
   });
 
-  it('eval --trajectory needs no provenance flags at the commander layer (#256)', async () => {
+  it('eval --trajectory needs no provenance flags at the commander layer', async () => {
     const run = await kubic([
       'eval',
       '--suite',
@@ -384,7 +384,7 @@ describe('analysis commands: parsed options reach the runners', () => {
   it('maps flags to camel-cased option values, --flag=value included', async () => {
     const cases: [readonly string[], unknown][] = [
       [['cost', '--session=s-1', '--json'], { session: 's-1', json: true }],
-      // Issue #250: the project scope and grouping flags.
+      // The project scope and grouping flags.
       [['cost', '--all', '--by=project'], { all: true, by: 'project' }],
       [
         ['audit', '--posture', 'approvals', '--result', 'ok'],
@@ -449,7 +449,7 @@ describe('analysis commands: happy paths over the real handlers', () => {
   it('cost prints a table and the task total', async () => {
     const run = await kubic(['cost'], true);
     expect(run.code).toBe(0);
-    // Issue #250 (§39): group + role + split counters at sub-cent precision.
+    // Group + role + split counters at sub-cent precision.
     expect(run.out[0]).toMatch(
       /^AGENT +ROLE +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
     );

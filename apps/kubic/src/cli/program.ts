@@ -46,11 +46,11 @@ export interface ProgramOptions {
   // The root help text (`kubic --help`); its plain form is pinned by the
   // binary contract.
   readonly rootHelp: string;
-  // Issue #446: the stdout theme. When it is coloured, subcommand help is
+  // The stdout theme. When it is coloured, subcommand help is
   // styled (titles, terms) through commander's style hooks; absent or plain
   // keeps commander's text byte-for-byte.
   readonly helpTheme?: CliTheme;
-  // Issue #450: the stderr theme. When it is coloured, a usage error
+  // The stderr theme. When it is coloured, a usage error
   // (unknown option, missing value) is an error block; plain otherwise.
   readonly errorTheme?: CliTheme;
 }
@@ -61,7 +61,7 @@ function toLines(write: (line: string) => void): (chunk: string) => void {
   return (chunk) => write(chunk.endsWith('\n') ? chunk.slice(0, -1) : chunk);
 }
 
-// Commander's help style hooks over the shared tokens (issue #446). Titles
+// Commander's help style hooks over the shared tokens. Titles
 // (`Usage:`, `Options:`) muted and bold, the command line bold, option and
 // argument terms secondary; descriptions keep the default text colour.
 function helpStyles(theme: CliTheme | undefined): {

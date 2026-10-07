@@ -1,4 +1,4 @@
-// `kubic cost` CLI tests (issue #79; §62). RED first: cost-cli.ts lands
+// `kubic cost` CLI tests. Cost-cli.ts lands
 // after this file. Faux-only, zero network — rows are injected.
 import {
   appendFileSync,
@@ -49,7 +49,7 @@ import {
 
 const attached = vi.hoisted(() => ({
   calls: [] as Array<readonly unknown[]>,
-  // Issue #426: scripted `sessionLockIsLive` answers, consumed in order
+  // Scripted `sessionLockIsLive` answers, consumed in order
   // (a mid-read-liveness test scripts [undefined, live]). Empty means
   // passthrough to the real probe, so every other test is unaffected.
   lockScript: [] as Array<{ pid: number; startedAt?: number } | undefined>,
@@ -110,7 +110,7 @@ function capture() {
   };
 }
 
-describe('kubic cost text view (issue #79)', () => {
+describe('kubic cost text view', () => {
   it('prints one row per agent plus the task total', async () => {
     const cap = capture();
     const code = await runCostCommand(
@@ -123,7 +123,7 @@ describe('kubic cost text view (issue #79)', () => {
     );
     expect(code).toBe(0);
     // One plain (uncoloured, unboxed) table, then the task total.
-    // Issue #250 (§39): the group column, the worker's role, and the
+    // The group column, the worker's role, and the
     // separate in/out/cache counters at sub-cent precision.
     expect(cap.lines[0]).toBe(
       [
@@ -162,7 +162,7 @@ describe('kubic cost text view (issue #79)', () => {
   });
 });
 
-describe('kubic cost --json (issue #79)', () => {
+describe('kubic cost --json', () => {
   it('matches the in-code toCostJson shape field-for-field', async () => {
     const cap = capture();
     const code = await runCostCommand(
@@ -208,7 +208,7 @@ describe('kubic cost --json (issue #79)', () => {
   });
 });
 
-describe('kubic cost usage (issue #79, §78)', () => {
+describe('kubic cost usage', () => {
   // Argv syntax (unknown flags, a missing --session value, --help) is
   // commander's: apps/kubic/src/commands/analysis.test.ts pins it.
   it('exits 2 on an invalid session id before any store is touched', async () => {
@@ -271,7 +271,7 @@ describe('kubic cost usage (issue #79, §78)', () => {
   });
 });
 
-describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
+describe('kubic cost cache aggregation', () => {
   const CACHED_ROWS = [
     {
       agentId: 'sess-hit',
@@ -306,8 +306,8 @@ describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
     expect(code).toBe(0);
     const text = [...cap.lines, ...cap.errs].join('\n');
     // 1 of 2 sessions had a cache read > 0: a real measurement over the
-    // rows the loader returned, never an invented number. Issue #250:
-    // the unit follows the grouping level (per-agent by default).
+    // rows the loader returned, never an invented number. The unit follows
+    // the grouping level (per-agent by default).
     expect(text).toMatch(/cache: 1\/2 agents with prefix hits/);
     expect(text).toMatch(/50%/);
   });
@@ -338,7 +338,7 @@ describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
       agents: Array<Record<string, unknown>>;
       taskTotal: number;
     };
-    // Criterion 5: the documented top-level shape is untouched.
+    // The documented top-level shape is untouched.
     expect(Object.keys(parsed).sort()).toEqual(['agents', 'taskTotal']);
     // The new aggregation is additive: inside the existing per-agent rows.
     expect(parsed.agents[0]?.cacheRead).toBe(900);
@@ -356,7 +356,7 @@ describe('kubic cost cache aggregation (issue #98, criterion 4)', () => {
   });
 });
 
-describe('kubic cost secret backstop (issue #79 fix cycle 1)', () => {
+describe('kubic cost secret backstop', () => {
   // Passes SESSION_ID_PATTERN ([A-Za-z0-9_-]) yet matches the sk secret
   // shape: the unknown-session echo must not carry it.
   const SHAPED_SESSION = 'SK-FAUX-TEST-KEY-0001';
@@ -419,7 +419,7 @@ describe('kubic cost secret backstop (issue #79 fix cycle 1)', () => {
   });
 });
 
-describe('kubic cost durable usage (issue #400)', () => {
+describe('kubic cost durable usage', () => {
   // The faux provider's default model (not the host fixture's `echo`).
   const MODEL_REF = `${FAUX_PROVIDER_ID}/faux-1`;
   const made: string[] = [];
@@ -663,7 +663,7 @@ describe('kubic cost durable usage (issue #400)', () => {
     );
     try {
       const rows = await loadSessionCostRows(root);
-      // Issue #250: marker rows carry the same locating identity as real
+      // Marker rows carry the same locating identity as real
       // rows (the session that could not be read, and its project).
       expect(rows).toEqual([
         {
@@ -700,7 +700,7 @@ describe('kubic cost durable usage (issue #400)', () => {
   });
 });
 
-describe('kubic cost lock-free reads (issue #251)', () => {
+describe('kubic cost lock-free reads', () => {
   const made: string[] = [];
   const open: Harness[] = [];
 
@@ -823,7 +823,7 @@ describe('kubic cost lock-free reads (issue #251)', () => {
     expect(cap.errs).toEqual([]);
   });
 
-  // Issue #426 (found reviewing #251): between the `sessionLockIsLive`
+  // Between the `sessionLockIsLive`
   // probe and the read, a session can go live — cost then reads a store
   // another process is appending to. The torn tail must not fail the
   // report, and a row that went live mid-read must say it may be
@@ -885,7 +885,7 @@ describe('kubic cost lock-free reads (issue #251)', () => {
   });
 });
 
-describe('kubic cost project scope and grouping (issue #250)', () => {
+describe('kubic cost project scope and grouping', () => {
   const made: string[] = [];
   const open: Harness[] = [];
   const MODEL_REF = `${FAUX_PROVIDER_ID}/faux-1`;

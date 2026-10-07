@@ -1,4 +1,4 @@
-// Session fork (issue #265; §22.3 on pi-durable — the EPIC K re-baseline):
+// Session fork (on pi-durable — the re-baseline):
 // a NEW session (own directory, lock and journal) whose lane runs a
 // pi-durable fork of the source's lane at an entry. Faux provider, real
 // JSONL sessions under a temp root; everything is cleaned up in afterEach.
@@ -72,7 +72,7 @@ async function twoTurnSource(root: string) {
   return { id: lane.sessionId, firstAnswerId: Number(firstAnswer?.id) };
 }
 
-describe('kubic sessions fork: the store (issue #265)', () => {
+describe('kubic sessions fork: the store', () => {
   it('a branch fork sees history through the cut, not after it, and runs on its own', async () => {
     const root = tmpRoot();
     const source = await twoTurnSource(root);

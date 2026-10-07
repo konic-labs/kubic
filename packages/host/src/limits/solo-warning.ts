@@ -1,11 +1,11 @@
-// Solo no-isolation startup warning (issue #58; §59.1i-ii, §3.7).
+// Solo no-isolation startup warning.
 // Solo announces its trust model on every fresh start: in-process, the
 // user's own authority over files/network/credentials, no isolation, no
 // containment, no prompt-injection prevention. Controls are approvals
 // (ask-user by default) plus the change journal (review `kubic diff`,
 // revert `kubic undo`). Pure strings — the module owns the text and the
 // emission decision so both surfaces read and behave identically; the
-// sinks themselves live at the composition root (issue #89):
+// sinks themselves live at the composition root:
 // apps/kubic/src/headless-run.ts writes the block to stderr before the
 // first turn; apps/kubic/src/tui-run.ts shows the one-line statement in the
 // welcome block from the first render and the full block on `/safety`.
@@ -17,7 +17,7 @@ export function soloWarningLines(): string[] {
   return [
     'warning: solo mode has no isolation: this run executes in-process with your user authority.',
     'warning: authority covers your files, network, and credentials - there is no containment and no prompt-injection prevention.',
-    'warning: controls are approvals (ask-user by default) + the change journal: review with `kubic diff`, revert with `kubic undo` (honest limits §59.1, §3.7).',
+    'warning: controls are approvals (ask-user by default) + the change journal: review with `kubic diff`, revert with `kubic undo` (honest limits).',
   ];
 }
 
@@ -34,7 +34,7 @@ export type SoloNoticeEnv = Record<string, string | undefined>;
 // The opt-out's environment variable.
 export const SOLO_NOTICE_OPT_OUT_ENV = 'KUBIC_NO_NOTICE';
 
-// The emission decision (issue #89), shared by `run` and `tui` so the two
+// The emission decision, shared by `run` and `tui` so the two
 // surfaces cannot disagree: KUBIC_NO_NOTICE=1 is the documented operator
 // opt-out. A `--session` resume still announces: the rule is per process
 // start, not per session. `=0` is not an opt-out.

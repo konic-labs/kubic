@@ -1,6 +1,6 @@
-// Prod `kubic run` policy path (issue #86): the shipped default installs
+// Prod `kubic run` policy path: the shipped default installs
 // permission classes + interceptors on the lane, a destructive command is
-// refused and the run ends as approval_denied (exit 4; issue #129 split the
+// refused and the run ends as approval_denied (exit 4; a separate
 // label from approval_timed_out, which is reserved for denials whose reason
 // carries the timeout marker) unless session-scoped full access was
 // explicitly recorded, and doctor reports the INSTALLED policy object rather
@@ -94,8 +94,8 @@ async function transcriptOf(root: string, sessionId: string): Promise<string> {
   }
 }
 
-describe('prod run path: destructive call (issue #86, criterion 2)', () => {
-  it('refuses with approval_denied (exit 4) — a refusal is not a timeout (issue #129)', async () => {
+describe('prod run path: destructive call', () => {
+  it('refuses with approval_denied (exit 4) — a refusal is not a timeout', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(
       'clean the tmp dir',
@@ -107,7 +107,7 @@ describe('prod run path: destructive call (issue #86, criterion 2)', () => {
       },
     );
     // The recorded reason names the missing surface and REFUSING — nothing
-    // timed out. The status (the machine-readable half of §78) must say denied.
+    // timed out. The status (the machine-readable half of) must say denied.
     expect(result.terminus).toBe('approval_denied');
     expect(mapTerminusToExitCode(result.terminus)).toBe(4);
     // The message is unchanged by the relabel: the same refusal sentence,
@@ -125,7 +125,7 @@ describe('prod run path: destructive call (issue #86, criterion 2)', () => {
     expect(envelope.ok).toBe(false);
   });
 
-  it('keeps approval_timed_out for a denial whose reason names the bound elapsing (issue #129)', async () => {
+  it('keeps approval_timed_out for a denial whose reason names the bound elapsing', async () => {
     const root = tmpRoot();
     // A seat is attached but cannot answer: the service's own bound is what
     // elapses, and the recorded reason says so — the timeout label stays
@@ -205,7 +205,7 @@ describe('prod run path: destructive call (issue #86, criterion 2)', () => {
   });
 });
 
-describe('prod run path: second-segment outside redirect (issue #326)', () => {
+describe('prod run path: second-segment outside redirect', () => {
   it('refuses a later `> /etc/...` after an inside redirect with approval_denied (exit 4)', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(
@@ -230,7 +230,7 @@ describe('prod run path: second-segment outside redirect (issue #326)', () => {
   });
 });
 
-describe('prod run path: allowlist (issue #86, criterion 3)', () => {
+describe('prod run path: allowlist', () => {
   it('refuses a tool outside the allowlist at execute time, not merely silently', async () => {
     const root = tmpRoot();
     // shell:false removes bash from the class-derived allowlist.
@@ -284,7 +284,7 @@ describe('prod run path: allowlist (issue #86, criterion 3)', () => {
   });
 
   it('the default posture is deny-by-default on network and credentials', () => {
-    // §40.3 / §59.1: the shipped default's restrictive tail is the point of
+    // The shipped default's restrictive tail is the point of
     // the issue. Pinned as an assertion, not prose: if someone loosens the
     // default to make a test pass, this fails.
     const posture = installedPolicyPosture({ workspace: '/tmp/x' });
@@ -340,7 +340,7 @@ describe('prod run path: allowlist (issue #86, criterion 3)', () => {
   });
 });
 
-describe('doctor reports the installed policy (issue #86, criteria 4-5)', () => {
+describe('doctor reports the installed policy', () => {
   function doctorDeps(
     lines: string[],
     installed: () => ReturnType<typeof installedPolicyPosture>,
@@ -372,7 +372,7 @@ describe('doctor reports the installed policy (issue #86, criteria 4-5)', () => 
     expect(printed).toContain('source=default');
   });
 
-  it('names each unsupported level instead of printing it green (issue #166)', async () => {
+  it('names each unsupported level instead of printing it green', async () => {
     const lines: string[] = [];
     const installed = installSoloPolicy({
       workspace: '/fake',
@@ -448,7 +448,7 @@ describe('doctor reports the installed policy (issue #86, criteria 4-5)', () => 
   });
 });
 
-describe('installed policy derivation (issue #86, §40.3 agreement)', () => {
+describe('installed policy derivation', () => {
   it('the printed posture and the installed lane policy are one object', () => {
     const input = { workspace: '/fake' };
     const installed = installSoloPolicy(input);

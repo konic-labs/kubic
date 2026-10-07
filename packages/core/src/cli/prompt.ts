@@ -36,7 +36,7 @@ export interface SelectChoice<T extends string> {
   readonly hint?: string;
 }
 
-// One choice from a list (issue #451, `kubic setup`). Same contract as
+// One choice from a list (`kubic setup`). Same contract as
 // promptConfirm: never prompts off a TTY, `null` on cancel.
 export async function promptSelect<T extends string>(
   options: PromptBase<T> & {
@@ -99,7 +99,7 @@ export interface KeyPromptIo {
   readonly write: (text: string) => void;
 }
 
-// One keystroke from a short list (issue #462, the trust question): the
+// One keystroke from a short list (the trust question): the
 // key IS the answer — no Enter, no arrows; any other key is ignored. Same
 // contract as promptConfirm: never prompts off a TTY, `null` on Ctrl-C or
 // Esc. The caller renders the question (`message`, keys included); raw

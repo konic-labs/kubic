@@ -1,4 +1,4 @@
-// Issue #336: the `@` mention source on the real boot path — the workspace's
+// The `@` mention source on the real boot path — the workspace's
 // files from the gitignore-aware walk (gitignored files are never offered),
 // workspace-relative, cached for a short window. Faux provider; temp dirs
 // cleaned up in afterEach.
@@ -42,7 +42,7 @@ function workspace(): string {
   return root;
 }
 
-describe('@ mention file source (issue #336)', () => {
+describe('@ mention file source', () => {
   it('the booted lane lists workspace files and never a gitignored one', async () => {
     const root = workspace();
     const models = createModels();

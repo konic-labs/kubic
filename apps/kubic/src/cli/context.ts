@@ -38,7 +38,7 @@ export interface DispatchRunners extends AnalysisRunners {
   readonly skills: CommandRunner<SkillsCommandOptions>;
   readonly config: CommandRunner<ConfigCommandOptions>;
   readonly trust: CommandRunner<TrustCommandOptions>;
-  // Issue #451: the interactive first-run setup.
+  // The interactive first-run setup.
   readonly setup: CommandRunner<SetupCommandOptions>;
 }
 

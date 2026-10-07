@@ -1,4 +1,4 @@
-// Small marks for the TUI kit (EPIC N, issue #452): badges, gauges, section
+// Small marks for the TUI kit: badges, gauges, section
 // labels and rules. All pure over a UiTheme; plain text at depth none.
 
 import { GAUGE } from '../../../core/src/ui/glyphs.js';

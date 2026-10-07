@@ -1,4 +1,4 @@
-// Prod `kubic replay` re-execution runner (issue #382): the composition
+// Prod `kubic replay` re-execution runner: the composition
 // root's model-pin gate. An unregistered provider/id must never reach the
 // lane — it reports provider_probe_failed (exit 6) instead of silently
 // re-executing at another model — and the relative trajectory path must
@@ -127,7 +127,7 @@ afterEach(() => {
   }
 });
 
-describe('prod replay re-execution runner (issue #382)', () => {
+describe('prod replay re-execution runner', () => {
   it('refuses an unregistered provider before booting the lane', async () => {
     cwdWithTrajectory();
     const result = await runProdReplay(request({ model: 'ghost/echo' }));
@@ -213,7 +213,7 @@ describe('prod replay re-execution runner (issue #382)', () => {
     expect(trustProject.mock.calls[0]?.[0]).toBe(process.cwd());
   });
 
-  it('roots the lane at the pinned worktree and boots the pinned role (issue #272)', async () => {
+  it('roots the lane at the pinned worktree and boots the pinned role', async () => {
     cwdWithTrajectory();
     const worktree = tempDir('replay-worktree-');
     const roleConfig = join(worktree, 'role.json');

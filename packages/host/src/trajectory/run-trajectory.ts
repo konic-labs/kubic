@@ -1,12 +1,12 @@
-// Run → §46 trajectory (issue #383; design §46, §74, §84).
+// Run → trajectory.
 // Every settled run (`kubic run`, each TUI turn) persists one trajectory
 // next to its session:
 // <sessions-root>/<id>/trajectory.json. This module is the pure half: the
 // run's own evidence in — session entries (actions, observations, usage),
 // journal changes (the diff), ledger records (approvals), the USED spawn env
-// and the settled §78 outcome — and the fail-closed exporter's record out
+// and the settled outcome — and the fail-closed exporter's record out
 // (packages/trajectory/src/export.ts refuses a record without provenance, a
-// used env, or a §52 category on a non-completed result).
+// used env, or a failure category on a non-completed result).
 //
 // Only this run's evidence is recorded: a resumed session keeps one entry
 // chain across runs, so entries, changes and approvals older than the
@@ -50,13 +50,13 @@ import type { RunTerminusKind } from '../run-cli.js';
 
 export const TRAJECTORY_FILE = 'trajectory.json';
 
-// The settled run as the composition root saw it: the §78 terminus and its
+// The settled run as the composition root saw it: the terminus and its
 // summary, the lane's own terminal record when the lane settled, and
 // whether an interrupt (SIGINT/SIGTERM/SIGHUP) ended the drive.
 export interface RunOutcome {
   terminus: RunTerminusKind;
   summary: string;
-  // The lane's terminal record (#395 lane/turn.ts): its outcome kind
+  // The lane's terminal record: its outcome kind
   // ('completed' | 'failed' | 'aborted') and, for a failure, the lane error
   // that explains it.
   lane?: { status: string; error?: OperationErrorLike };
@@ -86,17 +86,17 @@ export interface RunTrajectoryInput {
   startedAt: number;
   endedAt: number;
   outcome: RunOutcome;
-  // The run verifier's `signal:*` labels (issue #267); absent means none —
+  // The run verifier's `signal:*` labels; absent means none —
   // every gate stays unknown.
   evalLabels?: Record<string, string>;
-  // The lane's escalation record (issue #210): every model climb this
+  // The lane's escalation record: every model climb this
   // run recorded, oldest first. Absent means no climb — never an empty
   // array from a lane that cannot climb.
   escalations?: TrajectoryEscalation[];
 }
 
-// Two runs of one prompt answer the same task, so they can form a §74
-// preference pair (#269 refuses pairs across tasks); the id is a digest of
+// Two runs of one prompt answer the same task, so they can form a
+// preference pair; the id is a digest of
 // the prompt text — stable, and never the prompt itself.
 export function taskIdForPrompt(prompt: string): string {
   return `prompt:${createHash('sha256').update(prompt).digest('hex').slice(0, 16)}`;
@@ -225,7 +225,7 @@ function usageOf(items: readonly TranscriptItem[]): TrajectoryUsage {
   return total;
 }
 
-// The thinking level the run actually ended at (issue #282): the newest
+// The thinking level the run actually ended at: the newest
 // assistant response's `thinkingLevel`. Recorded in `model.thinking` when
 // the caller could not name one (a resumed session, a lane that escalated).
 function thinkingLevelOf(items: readonly TranscriptItem[]): string | null {
@@ -283,9 +283,9 @@ function approvalsOf(
     }));
 }
 
-// §78 terminus → §46 result status + §52 category. A non-completed result
+// Terminus → result status + failure category. A non-completed result
 // always carries a category (the exporter refuses one without): lane
-// failures go through the §52 taxonomy, guard and gate termini name their
+// failures go through the taxonomy, guard and gate termini name their
 // own code, and a failure outside the lane (boot, interrupt) is a process
 // failure.
 export function trajectoryResultFor(outcome: RunOutcome): TrajectoryResult {
@@ -322,7 +322,7 @@ export function trajectoryResultFor(outcome: RunOutcome): TrajectoryResult {
     case 'provider_probe_failed':
       category = classifyFailure('provider', '', summary).code;
       break;
-    // Issue #155: a mid-run provider error keeps its own terminus — §78's 6
+    // A mid-run provider error keeps its own terminus — 6
     // is the pre-run probe, never a transient/auth failure during the run.
     case 'provider_transient':
     case 'provider_auth':
@@ -383,7 +383,7 @@ export function assembleRunTrajectory(
     model: {
       provider: input.model.provider,
       model: input.model.id,
-      // #282: a caller that cannot name the level still records the one the
+      // A caller that cannot name the level still records the one the
       // responses actually ran at.
       thinking: input.model.thinking ?? thinkingLevelOf(items),
       escalations: input.escalations ?? [],

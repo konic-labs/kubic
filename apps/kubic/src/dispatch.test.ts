@@ -117,7 +117,7 @@ const PARSED: Readonly<Record<string, unknown>> = {
   cost: { json: true },
   policy: { tool: 'shell' },
   audit: {},
-  // #256: no commander model default on eval — the handler applies it on
+  // No commander model default on eval — the handler applies it on
   // the --task path; --trajectory reads the model from the export.
   eval: {
     suite: 'swe-bench-mini',
@@ -146,7 +146,7 @@ interface Harness {
   readonly deps: DispatchDeps;
   readonly calls: RunnerCall[];
   readonly lines: string[];
-  // The options each `loadConfig` call received (issue #228: the accepted
+  // The options each `loadConfig` call received (the accepted
   // trust answer is threaded into the load as an explicit decision).
   readonly loadOptions: ReadonlyArray<{ projectTrusted?: boolean } | undefined>;
   readonly state: {
@@ -250,7 +250,7 @@ function loadedConfig(): CliConfigResult {
   return loadedOnce;
 }
 
-describe('dispatch routing (issue #135)', () => {
+describe('dispatch routing', () => {
   it('pins the roster: 23 commands, 17 runners, every runner exercised', () => {
     expect(ROUTES).toHaveLength(23);
     expect(RUNNER_KEYS).toHaveLength(17);
@@ -297,7 +297,7 @@ describe('dispatch routing (issue #135)', () => {
     expect(h.calls).toEqual([]);
   });
 
-  it('a bare multi-word prompt is `kubic run -p <prompt>` (issue #268, L-D7)', async () => {
+  it('a bare multi-word prompt is `kubic run -p <prompt>`', async () => {
     const h = harness();
     expect(
       await dispatchCommand('fix the authentication bug', [], h.deps),
@@ -318,7 +318,7 @@ describe('dispatch routing (issue #135)', () => {
     ]);
   });
 
-  it('a single-word unknown token stays an unknown command with the prompt hint (L-D7)', async () => {
+  it('a single-word unknown token stays an unknown command with the prompt hint', async () => {
     const h = harness();
     expect(await dispatchCommand('nosuch', [], h.deps)).toBe(2);
     expect(h.lines).toEqual([
@@ -342,7 +342,7 @@ describe('dispatch routing (issue #135)', () => {
   });
 });
 
-describe('front door (issue #128 behavior, moved)', () => {
+describe('front door', () => {
   it('--version prints the version line from the injected version', async () => {
     const h = harness({ version: '9.9.9' });
     expect(await dispatchCommand('--version', [], h.deps)).toBe(0);
@@ -372,7 +372,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
-  it('the bare invocation on an interactive terminal opens the TUI (§78/§80)', async () => {
+  it('the bare invocation on an interactive terminal opens the TUI', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => true };
     expect(await dispatchCommand(undefined, [], deps)).toBe(0);
@@ -382,7 +382,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.lines).toEqual([]);
   });
 
-  it('bare `kubic --dangerously-skip-approvals` on a TTY is `kubic tui --dangerously-skip-approvals` (issue #308)', async () => {
+  it('bare `kubic --dangerously-skip-approvals` on a TTY is `kubic tui --dangerously-skip-approvals`', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => true };
     expect(
@@ -394,7 +394,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.state.excludeCalls).toBe(1);
   });
 
-  it('bare `kubic --dangerously-skip-approvals` off a TTY keeps usage + exit 1 (issue #308)', async () => {
+  it('bare `kubic --dangerously-skip-approvals` off a TTY keeps usage + exit 1', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => false };
     expect(
@@ -404,7 +404,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
-  // Issue #295: bare `kubic --model p/id` on a TTY is `kubic tui --model`.
+  // Bare `kubic --model p/id` on a TTY is `kubic tui --model`.
   it('routes a bare --model on an interactive terminal to the TUI', async () => {
     const h = harness();
     const deps = { ...h.deps, isInteractive: () => true };
@@ -438,7 +438,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(h.calls).toEqual([]);
   });
 
-  it('throws from the gated crash probe (contract seam, issue #128)', async () => {
+  it('throws from the gated crash probe (contract seam)', async () => {
     process.env.__KUBIC_CONTRACT_CRASH_PROBE = '1';
     try {
       await expect(
@@ -470,7 +470,7 @@ describe('front door (issue #128 behavior, moved)', () => {
       ]);
       expect(h.calls, command).toEqual([]);
     }
-    // `help` and `version` point at the real flags (issue #450), never at
+    // `help` and `version` point at the real flags, never at
     // the prompt form; a typo names the closest command.
     const help = harness();
     expect(await dispatchCommand('help', [], help.deps)).toBe(2);
@@ -494,7 +494,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     ]);
   });
 
-  it('runs the first-run setup only for a bare interactive kubic (issue #451)', async () => {
+  it('runs the first-run setup only for a bare interactive kubic', async () => {
     let asked = 0;
     const firstRunSetup = async (): Promise<number | undefined> => {
       asked += 1;
@@ -513,7 +513,7 @@ describe('front door (issue #128 behavior, moved)', () => {
     expect(asked).toBe(1);
   });
 
-  it('renders a usage error as an error block on a colour terminal (issue #450)', async () => {
+  it('renders a usage error as an error block on a colour terminal', async () => {
     const h = harness();
     const theme = createCliTheme('truecolor');
     expect(
@@ -545,7 +545,7 @@ describe('front door (issue #128 behavior, moved)', () => {
   });
 });
 
-describe('config refusal (issue #90 policy, moved)', () => {
+describe('config refusal', () => {
   // policy consumes a config projection (the installed posture a run
   // enforces), so a refused config must stop it like the agent-executing
   // modes.
@@ -623,7 +623,7 @@ describe('config refusal (issue #90 policy, moved)', () => {
     expect(errs).toEqual(['error: unknown key [nope]']);
   });
 
-  it('prints the command’s failure envelope on stdout under --json (issue #244)', async () => {
+  it('prints the command’s failure envelope on stdout under --json', async () => {
     const cases: Array<{
       command: string;
       rest: string[];
@@ -702,7 +702,7 @@ describe('config refusal (issue #90 policy, moved)', () => {
   });
 });
 
-describe('interactive project trust (issue #228)', () => {
+describe('interactive project trust', () => {
   it('asks `kubic tui` on a TTY and loads with the accepted decision', async () => {
     const h = harness({ interactive: true, resolveTrust: async () => true });
     expect(await dispatchCommand('tui', [], h.deps)).toBe(0);
@@ -792,7 +792,7 @@ describe('interactive project trust (issue #228)', () => {
   });
 });
 
-describe('runtime exclude (issue #91, moved order)', () => {
+describe('runtime exclude (moved order)', () => {
   it('ships the exclude rules for the state-creating modes', async () => {
     for (const command of ['run', 'tui']) {
       const h = harness();
@@ -809,7 +809,7 @@ describe('runtime exclude (issue #91, moved order)', () => {
     }
   });
 
-  it('a --help argv skips the exclude step (issue #245)', async () => {
+  it('a --help argv skips the exclude step', async () => {
     // `kubic run --help` is the command's generated help, not the root's:
     // commander answers it before the action, so the runtime-exclude write
     // (a repo mutation) must not happen for a help request.
@@ -863,7 +863,7 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     };
   }
 
-  it('eval --task drives the live suite runner (issue #262)', async () => {
+  it('eval --task drives the live suite runner', async () => {
     // The built-in suite's fixture runs through the solo lane with the faux
     // provider, so --task produces a scored record instead of the old
     // "live suite execution is not available" refusal.

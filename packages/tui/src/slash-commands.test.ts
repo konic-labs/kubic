@@ -1,4 +1,4 @@
-// The slash-command registry (issue #305): the palette, `/help`, the
+// The slash-command registry: the palette, `/help`, the
 // editor's autocomplete and the submit path's dispatcher all read this one
 // list, so a command that exists is discoverable and an unknown one is
 // refused locally instead of being sent to the model.
@@ -16,7 +16,7 @@ import {
   skillCommandSpecs,
 } from './slash-commands.js';
 
-describe('slash-command registry (issue #305)', () => {
+describe('slash-command registry', () => {
   it('lists the shipped commands exactly once, each with usage and summary', () => {
     const names = SLASH_COMMANDS.map((spec) => spec.name);
     expect(new Set(names).size).toBe(names.length);
@@ -44,7 +44,7 @@ describe('slash-command registry (issue #305)', () => {
     }
   });
 
-  it('maps every non-local command to the §66 vocabulary', () => {
+  it('maps every non-local command to the vocabulary', () => {
     // The dispatcher is keyed by PresentationCommand, never a bare string:
     // an entry that names a command outside the contract would fail here.
     for (const spec of SLASH_COMMANDS) {
@@ -52,7 +52,7 @@ describe('slash-command registry (issue #305)', () => {
       expect(isPresentationCommand(spec.command)).toBe(true);
     }
     // `/new` and `/resume` both attach (the dispatcher keys off this); the
-    // local reads and `/quit` carry no §66 command.
+    // local reads and `/quit` carry no presentation command.
     expect(findSlashCommand('new')?.command).toBe('session.attach');
     expect(findSlashCommand('resume')?.command).toBe('session.attach');
     expect(findSlashCommand('model')?.command).toBe('model.select');
@@ -110,7 +110,7 @@ describe('slash-command registry (issue #305)', () => {
   });
 });
 
-describe('slash-command keys (issue #460)', () => {
+describe('slash-command keys', () => {
   // The palette shows a command's key from the live key registry; `/help`
   // prints the static `keys`. They must name the same default binding.
   it("every printed key is its action's default binding", () => {
@@ -126,7 +126,7 @@ describe('slash-command keys (issue #460)', () => {
   });
 });
 
-describe('slash-command autocomplete (issue #305)', () => {
+describe('slash-command autocomplete', () => {
   const provider = new SlashCommandAutocomplete();
 
   it('offers every command for a bare slash', async () => {
@@ -177,7 +177,7 @@ describe('slash-command autocomplete (issue #305)', () => {
   });
 });
 
-describe('per-skill /skill: rows (issue #183)', () => {
+describe('per-skill /skill: rows', () => {
   it('builds one local row per booted skill name', () => {
     const specs = skillCommandSpecs(['hidden', 'open']);
     expect(specs.map((spec) => spec.name)).toEqual([
@@ -185,7 +185,7 @@ describe('per-skill /skill: rows (issue #183)', () => {
       'skill:open',
     ]);
     for (const spec of specs) {
-      // A local read like /help: no §66 command, never dispatched.
+      // A local read like /help: no presentation command, never dispatched.
       expect(spec.command).toBeUndefined();
       expect(spec.usage.startsWith(`/${spec.name}`)).toBe(true);
     }

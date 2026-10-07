@@ -1,8 +1,7 @@
-// Headless hardening (issue #28, review cycle 2; ported to the durable lane
-// in #395): defense-in-depth --session validation inside runHeadlessPrompt,
-// the ref triple on store failures, honest summaries when the model left no
-// text, and the guard drain running BEFORE the reconciliation sweep. Faux
-// models only: zero network.
+// Headless hardening (review; ported to the durable lane): defense-in-depth
+// --session validation inside runHeadlessPrompt, the ref triple on store
+// failures, honest summaries when the model left no text, and the guard drain
+// running BEFORE the reconciliation sweep. Faux models only: zero network.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +20,7 @@ import { runHeadlessPrompt } from './headless-run.js';
 
 const mockState = vi.hoisted(() => ({ closeShouldReject: false }));
 
-// Issue #109: the guard-drain order tests need to see the sweep fire, so
+// The guard-drain order tests need to see the sweep fire, so
 // beginReconciliation is wrapped (sweep still logs; the real module is
 // untouched for every other suite — file-local mock).
 const guardEvents = vi.hoisted(() => ({ events: [] as string[] }));
@@ -138,7 +137,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('headless hardening (issue #28, review cycle 2)', () => {
+describe('headless hardening', () => {
   it('rejects a hostile session id inside runHeadlessPrompt with exit 2', async () => {
     const result = await runHeadlessPrompt(
       'hello',
@@ -186,7 +185,7 @@ describe('headless hardening (issue #28, review cycle 2)', () => {
   });
 });
 
-describe('summary honesty (issue #129) on the durable lane', () => {
+describe('summary honesty on the durable lane', () => {
   it('reports the named non-answer when the model left no text', async () => {
     const result = await runHeadlessPrompt(
       'prompt-never-echoed-fixture',
@@ -222,7 +221,7 @@ describe('summary honesty (issue #129) on the durable lane', () => {
     expect(result.summary).toBe('z'.repeat(500));
   });
 
-  it('maps a failed turn to its §52-derived terminus and message', async () => {
+  it('maps a failed turn to its -derived terminus and message', async () => {
     const result = await runHeadlessPrompt(
       'break it',
       {},
@@ -233,12 +232,12 @@ describe('summary honesty (issue #129) on the durable lane', () => {
   });
 });
 
-// Issue #109: guard exhaustion must not abandon in-flight tools. On every
+// Guard exhaustion must not abandon in-flight tools. On every
 // exit path where a turn is (or was) in flight, the headless runner first
 // states the durable abort and drains the kill registry — and only then
 // sweeps: the reconciliation must observe the tree AFTER the orphaned work
 // is dead, or late writes escape both the journal and the sweep.
-describe('guard drain on exit paths (issue #109)', () => {
+describe('guard drain on exit paths', () => {
   it('aborts and drains before the sweep on wall-clock exhaustion', async () => {
     const result = await runHeadlessPrompt(
       'hang',

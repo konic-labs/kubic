@@ -1,6 +1,4 @@
-// Slice A: §16.2 VStack root — tree / transcript / editor / status rows
-// (issue #453 put the editor above the status line and added the notice and
-// key-hint rows).
+// VStack root — tree / transcript / editor / status rows.
 //
 // No VirtualTerminal exists in Pi 0.85.1: headless snapshots render the
 // root VStack directly (Component.render is pure) and assert row counts,
@@ -24,7 +22,7 @@ function slots(): {
   };
 }
 
-describe('tui layout root (issue #22, slice A)', () => {
+describe('tui layout root', () => {
   it('orders tree / transcript / editor / status top to bottom', () => {
     const s = slots();
     const root = buildLayoutRoot(s);
@@ -38,7 +36,7 @@ describe('tui layout root (issue #22, slice A)', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  it('puts the notice above the editor and the hints at the bottom (#453)', () => {
+  it('puts the notice above the editor and the hints at the bottom', () => {
     const rows = renderLayout(
       buildLayoutRoot({
         ...slots(),
@@ -104,7 +102,7 @@ describe('tui layout root (issue #22, slice A)', () => {
   });
 });
 
-describe('tui layout boundary (issue #68; mutation hardening)', () => {
+describe('tui layout boundary (mutation hardening)', () => {
   it('keeps the tree visible at exactly 80 columns, hides at 79', () => {
     expect(renderLayout(buildLayoutRoot(slots()), 80).join('\n')).toContain(
       'tree',
@@ -116,7 +114,7 @@ describe('tui layout boundary (issue #68; mutation hardening)', () => {
 });
 
 function visibleWidth(line: string): number {
-  // Strip SGR sequences; OSC8 hyperlinks are reset per §16.3.
+  // Strip SGR sequences; OSC8 hyperlinks are reset.
   const sgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
   return line.replace(sgr, '').length;
 }

@@ -48,7 +48,7 @@ function fakeShell(
   };
 }
 
-describe('tui workspace facts (issue #453)', () => {
+describe('tui workspace facts', () => {
   it('counts each changed path once, conflicts and untracked included', () => {
     expect(workspaceFromStatus('/work/kubic-playground', STATUS_OUT)).toEqual({
       project: 'kubic-playground',

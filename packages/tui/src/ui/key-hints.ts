@@ -1,4 +1,4 @@
-// The key-hint row (EPIC N, issue #452; docs/ui 01-M): ` ⏎ send   ⇧⏎
+// The key-hint row: ` ⏎ send   ⇧⏎
 // newline   / commands …        ^C ^C quit`. Keys in fg1, labels in fg2.
 // When the row is too narrow, hints are dropped from the end (never split);
 // the right-aligned hint is kept as long as it fits at all.

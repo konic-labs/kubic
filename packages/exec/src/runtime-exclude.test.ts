@@ -1,4 +1,4 @@
-// Runtime-state exclude rules (issue #91; design §35, D34/D35).
+// Runtime-state exclude rules.
 //
 // The split: `.kubic/config.toml` + `.kubic/roles/*.md` are committed;
 // `.kubic/{sessions,journal,artifacts,audit}/` is runtime state
@@ -7,10 +7,10 @@
 // (`.git/info/exclude`) so a user's committed `.gitignore` is never
 // dirtied, and `.kubic/` itself stays unignored so roles stay committable.
 //
-// These tests drive real git in sandboxed scratch repositories (issue
-// #365: scrubbed env, never the inherited one) with no mocks: the
-// assertions are the exact user-visible promise from the issue. Only
-// packages/exec may spawn processes and touch node:fs (§9).
+// These tests drive real git in sandboxed scratch repositories (scrubbed env,
+// never the inherited one) with no mocks: the assertions are the exact
+// user-visible promise from the issue. Only packages/exec may spawn processes
+// and touch node:fs.
 import {
   existsSync,
   mkdirSync,
@@ -104,7 +104,7 @@ function status(repo: GitSandbox): string[] {
     .filter((line) => line.length > 0);
 }
 
-describe('applyRuntimeExcludeBlock (issue #91)', () => {
+describe('applyRuntimeExcludeBlock', () => {
   it('renders the managed block with every runtime entry', () => {
     const { text, changed } = applyRuntimeExcludeBlock('');
     expect(changed).toBe(true);
@@ -126,7 +126,7 @@ describe('applyRuntimeExcludeBlock (issue #91)', () => {
   });
 });
 
-describe('ensureRuntimeExcludeRules (issue #91)', () => {
+describe('ensureRuntimeExcludeRules', () => {
   it('writes the block into the repo-local exclude file', () => {
     const repo = roleScratchRepo();
     const result = ensureRuntimeExcludeRules({ cwd: repo.path });
@@ -244,7 +244,7 @@ describe('ensureRuntimeExcludeRules (issue #91)', () => {
   });
 });
 
-describe('refusing hostile exclude entries (issue #133 review)', () => {
+describe('refusing hostile exclude entries', () => {
   it('refuses to render an entry carrying control characters', () => {
     // An entry is written one line at a time: a newline injects arbitrary
     // gitignore patterns, and a literal ESC would reach whatever reads the

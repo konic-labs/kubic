@@ -1,4 +1,4 @@
-// Slice A RED: single-file journal diff rendering (issue #25; §16.5, §18).
+// Single-file journal diff rendering.
 // Text only, no VirtualTerminal in Pi 0.85.1: headless snapshots render
 // directly like layout.test.ts. Structural DiffFileChange mirrors exec
 // FileChange (journal-diff.ts) without importing it — tui must never
@@ -24,7 +24,7 @@ const WRITE_EDIT = {
   after: 'one\nTWO\nthree\n',
 };
 
-describe('diff hunks (issue #25; §42.2 mirror)', () => {
+describe('diff hunks', () => {
   it('renders one changed region with context and @@ headers', () => {
     const hunks = unifiedHunks('one\ntwo\nthree\n', 'one\nTWO\nthree\n');
     expect(hunks[0]).toMatch(/^@@ -1,\d+ \+1,\d+ @@$/);
@@ -46,7 +46,7 @@ describe('diff hunks (issue #25; §42.2 mirror)', () => {
   });
 });
 
-// Issue #126: every emitted @@ header counts exactly the lines the hunk
+// Every emitted @@ header counts exactly the lines the hunk
 // prints for its side — same invariant as the exec test, checked on the
 // mirror so TUI hunks stay byte-equal to `kubic diff` hunks.
 function hunkCountMismatches(
@@ -81,7 +81,7 @@ function hunkCountMismatches(
   return out;
 }
 
-describe('truthful hunk header counts (issue #126)', () => {
+describe('truthful hunk header counts', () => {
   it('counts the lines emitted, not the pre-loop window (issue example)', () => {
     const lines = unifiedHunks('1\n2\n3\n4\n5', '1\n5');
     expect(lines[0]).toBe('@@ -1,5 +1,2 @@');
@@ -111,7 +111,7 @@ describe('truthful hunk header counts (issue #126)', () => {
   });
 });
 
-describe('diff view header + hunks (issue #25)', () => {
+describe('diff view header + hunks', () => {
   it('write+edit renders path header, op label, attribution, hunks', () => {
     expect(renderDiffLines(WRITE_EDIT)).toEqual([
       'a.txt — write',
@@ -149,7 +149,7 @@ describe('diff view header + hunks (issue #25)', () => {
   });
 });
 
-describe('diff placeholders (issue #25)', () => {
+describe('diff placeholders', () => {
   it('detects binary content by NUL byte', () => {
     expect(isBinaryText('ab\0cd')).toBe(true);
     expect(isBinaryText('plain text\n')).toBe(false);
@@ -193,7 +193,7 @@ describe('diff placeholders (issue #25)', () => {
   });
 });
 
-describe('diff mutation hardening (issue #68)', () => {
+describe('diff mutation hardening', () => {
   it('badges the header for unattributed reconciliation entries', () => {
     expect(renderDiffHeader({ ...WRITE_EDIT, unattributed: true })).toBe(
       'a.txt — write [unattributed]',

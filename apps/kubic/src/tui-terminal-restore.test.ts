@@ -1,8 +1,8 @@
-// Every way `kubic tui` can end restores the terminal (issue #313; §16.1,
-// §18): SIGTERM and SIGHUP run the same shutdown as SIGINT (mid-turn drain
-// included) and exit 128+signo; an exception in input or render, and an
-// unhandled rejection, restore the screen before the error is reported; the
-// normal quit drains stdin so a late key-release never leaks into the shell.
+// Every way `kubic tui` can end restores the terminal: SIGTERM and SIGHUP run
+// the same shutdown as SIGINT (mid-turn drain included) and exit 128+signo; an
+// exception in input or render, and an unhandled rejection, restore the screen
+// before the error is reported; the normal quit drains stdin so a late
+// key-release never leaks into the shell.
 //
 // The signal/exception source is injected (an EventEmitter), so the test
 // runner is never signalled. Faux provider only; temp dirs and listeners are
@@ -127,7 +127,7 @@ function start(
   return { log, errors, exits, fake, signals, exit };
 }
 
-describe('terminal restore on every exit path (issue #313)', () => {
+describe('terminal restore on every exit path', () => {
   it('SIGTERM runs shutdown once, leaves the alt screen, closes the session and exits 143', async () => {
     const events: string[] = [];
     const run = start(viewerBoot(events));
@@ -184,7 +184,7 @@ describe('terminal restore on every exit path (issue #313)', () => {
         loop: {
           ...loop,
           // The placement signal: `run-start` is the durable equivalent of
-          // the old admission's operation id, and D1 keys the kill registry
+          // the old admission's operation id, and keys the kill registry
           // by the conversation id.
           subscribe: async (sink, context) => {
             const stop = await loop.subscribe((event) => {
@@ -318,9 +318,9 @@ describe('terminal restore on every exit path (issue #313)', () => {
   });
 });
 
-// Issue #314 (§16.1): on quit the final document is printed on the MAIN
+// On quit the final document is printed on the MAIN
 // screen — after `?1049l` — and carries the last assistant cell.
-describe('the final document reaches the main screen (issue #314)', () => {
+describe('the final document reaches the main screen', () => {
   it('prints every document line after leaving the alt screen, including the last answer', async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot();

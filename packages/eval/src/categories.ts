@@ -1,4 +1,4 @@
-// Eval categories (issue #53; design §48).
+// Eval categories.
 // The eight benchmark categories every matrix run covers.
 export const EVAL_CATEGORIES = [
   'swe',

@@ -1,4 +1,4 @@
-// The configured escalation ladder on `kubic tui` (issue #210; §38.4):
+// The configured escalation ladder on `kubic tui`:
 // a `/model` switch to an off-ladder model refuses by name with the live
 // model untouched, an on-ladder climb switches, a down-step refuses
 // one-way, and naming the live model still passes. Drives the real
@@ -92,7 +92,7 @@ async function waitFor(
   condition: () => boolean,
   deadlineMs = 10_000,
 ): Promise<void> {
-  // Deadline-based (issue #385): a generous deadline only fails a true
+  // Deadline-based: a generous deadline only fails a true
   // hang, never a slow scheduler.
   const start = Date.now();
   while (!condition() && Date.now() - start < deadlineMs) {
@@ -133,7 +133,7 @@ const LADDER =
   '[model]\nprovider = "local"\nid = "a"\n' +
   'escalate = ["local/a", "local/b"]\n';
 
-describe('configured ladder on the TUI lane (issue #210)', () => {
+describe('configured ladder on the TUI lane', () => {
   it('refuses an off-ladder switch, climbs on-ladder, refuses down-steps', async () => {
     const workspace = tmpRoot();
     const cfg = cliConfig({ [PROJECT]: LADDER });
@@ -220,12 +220,12 @@ describe('configured ladder on the TUI lane (issue #210)', () => {
   });
 
   it('climbs once after N consecutive tool failures and never steps back', async () => {
-    // Slice 4 (issue #210): the automatic trigger. Three turns settled
+    // Slice 4: the automatic trigger. Three turns settled
     // with tool-classified failures climb the lane one rung with
     // {from,to,reason} recorded; further failures never climb again.
     // Drives the real recordTurn (every TUI turn settles through it)
     // with synthesized failed records — the classification itself is
-    // #209's pinned unit, this pins the trigger off it.
+    // 's pinned unit, this pins the trigger off it.
     const workspace = tmpRoot();
     const sessions = tmpRoot();
     const cfg = cliConfig({ [PROJECT]: LADDER });
@@ -303,7 +303,7 @@ describe('configured ladder on the TUI lane (issue #210)', () => {
   });
 
   it('reports an explicit climb as a transcript row on the next drain', async () => {
-    // Slice 5 (issue #210): the /model climb records the event and the
+    // Slice 5: the /model climb records the event and the
     // runner drain reports it as a transcript row — each climb once.
     // Full loop level: /model through runTuiCommand on a fake terminal.
     const workspace = tmpRoot();

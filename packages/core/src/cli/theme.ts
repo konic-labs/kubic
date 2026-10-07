@@ -1,5 +1,5 @@
 // CLI colour palette for the non-TUI commands. Built on the shared design
-// tokens (packages/core/src/ui, EPIC N issue #444) so `kubic doctor` and the
+// tokens (packages/core/src/ui) so `kubic doctor` and the
 // TUI read as one product: the same roles, palette and colour-depth rule.
 //
 // Colour is decided ONCE from the environment and the target stream
@@ -33,7 +33,7 @@ export interface CliTheme {
   readonly code: Style;
 }
 
-// Issue #468: the palette is the design's dark brand unless one is named
+// The palette is the design's dark brand unless one is named
 // (the CLI render matrix runs every palette).
 export function createCliTheme(
   level: ColorLevel,

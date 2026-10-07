@@ -1,4 +1,4 @@
-// Request-time secrets (issue #38; design §36).
+// Request-time secrets.
 // Secrets are NEVER in config/trajectory/log: models.json holds refs only
 // ($ENV_VAR, !command, escaped literals), resolved at request time with one
 // audit event per use.
@@ -25,7 +25,7 @@ export class SecretError extends Error {
 
 export type SecretRef = CoreSecretRef;
 
-// The parse table lives in @kubic/core (issue #224) so the worker's
+// The parse table lives in @kubic/core so the worker's
 // models.json parser shares it — same direction as secret-shapes.ts. Kept
 // as a same-path export so the host call sites, the tests and the
 // export-surface gate do not move; core refusals cross the package edge as
@@ -93,13 +93,13 @@ export async function resolveSecretRef(
   return value;
 }
 
-// The models.json provider-key resolver (issue #359; §36.1 rules 3-4): the
+// The models.json provider-key resolver: the
 // provider's `apiKeyEnv` IS a `$ENV` ref, resolved through resolveSecretRef
 // at every request (Pi calls it per request), emitting exactly one audit
 // event per use — ref, role, purpose, never the value. Every resolved value
 // is remembered in `live` so the persistence paths can redact it.
 //
-// Issue #224 widens the use to a parsed secret ref: an explicit `$VAR` /
+// Widens the use to a parsed secret ref: an explicit `$VAR` /
 // `!command` ref fails closed (a missing variable or failed command
 // rejects, naming it), while the legacy `apiKeyEnv` name keeps its pinned
 // skip — a missing variable leaves the provider unconfigured. The shapes
@@ -128,14 +128,14 @@ export function createModelKeyResolver(options: {
   audit: (event: SecretAuditEvent & { provider: string }) => void;
   now?: () => number;
   /**
-   * The run's provider and model ids (issue #359). A resolved value that is —
+   * The run's provider and model ids. A resolved value that is —
    * or sits inside — one of them is identity, not a secret (LM Studio's
    * documented dummy key is its own provider name), so `live()` leaves it
    * out and nothing scrubs or refuses on it.
    */
   identity?: () => readonly string[];
   /**
-   * Runs a `!command` secret ref (issue #224): invoked with the parsed argv
+   * Runs a `!command` secret ref: invoked with the parsed argv
    * on every command-ref resolve — rerun per request, never cached. Absent,
    * a command ref is a named refusal (fail closed, never a silent drop).
    */
@@ -163,8 +163,7 @@ export function createModelKeyResolver(options: {
         if (value === undefined || value === '') return undefined;
         // Registered BEFORE the audit event fires: a failure of that very
         // append (an error message naming a path, a sink's own text) must
-        // already be redactable on the first use — not only from the second
-        // (issue #359).
+        // already be redactable on the first use — not only from the second.
         live.add(value);
         return resolveSecretRef(
           parseSecretRef(`$${use.envVar}`),
@@ -176,7 +175,7 @@ export function createModelKeyResolver(options: {
           context(use.provider),
         );
       }
-      // Explicit refs fail closed instead (issue #224). Refusals name the
+      // Explicit refs fail closed instead. Refusals name the
       // provider as well as the ref: in a multi-provider run the error
       // must say whose command or variable failed.
       const ref = use.ref;
@@ -244,7 +243,7 @@ export function createModelKeyResolver(options: {
   };
 }
 
-// The values that are not identity (issue #359): a live value equal to, or
+// The values that are not identity: a live value equal to, or
 // contained in, an identity word (a provider or model id), compared
 // case-insensitively, is a name the run legitimately carries everywhere —
 // scrubbing it rewrites the envelope and the session rows, refusing on it
@@ -268,8 +267,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-// The shortest live value matched as a SUBSTRING (issue #359): the debug and
-// persistence redaction and the §60 ledger refusal all search text for the
+// The shortest live value matched as a SUBSTRING: the debug and
+// persistence redaction and the ledger refusal all search text for the
 // resolved values, and a short or dummy key (`gw`, `solo`, `1`, a key named
 // like its provider) would blank every word it spells and refuse the
 // credential-use row that names the provider. Real provider keys are far
@@ -314,7 +313,7 @@ export function redactSecretValues(
 }
 
 // A line sink that scrubs the live values out of every line before it
-// reaches `sink` (issue #359: the debug channel). The inventory is read per
+// reaches `sink` (the debug channel). The inventory is read per
 // line — the values are known only once the request-time resolver has run.
 export function redactingSink(
   sink: (line: string) => void,
@@ -323,7 +322,7 @@ export function redactingSink(
   return (line) => sink(String(redactSecretValues(line, secrets())));
 }
 
-// The session/trajectory persistence choke point (issue #359): a FileBridge
+// The session/trajectory persistence choke point: a FileBridge
 // whose text writes and appends scrub the live values first, so a provider
 // echoing a key in an error body (or a tool printing one) cannot land in the
 // session JSONL. Strings inside JSONL are JSON-escaped, so each value is also

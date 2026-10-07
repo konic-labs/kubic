@@ -1,6 +1,6 @@
-// Prod replay re-execution runner (issue #78): re-runs the recorded
+// Prod replay re-execution runner: re-runs the recorded
 // objective through the lane and maps the settled terminus into replay's
-// §78 subset. RED first.
+// Subset.
 import { describe, expect, it } from 'vitest';
 import { buildTrajectoryExport } from '../../../trajectory/src/export.js';
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
@@ -71,7 +71,7 @@ function request(): ReplayRunRequest {
   };
 }
 
-describe('prod replay runner (issue #78)', () => {
+describe('prod replay runner', () => {
   it('re-executes the recorded objective and hands the pins to the run seam', async () => {
     const seen: Array<{ prompt: string; model: string; request: unknown }> = [];
     const run = createProdReplayRun({

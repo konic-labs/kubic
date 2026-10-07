@@ -109,8 +109,8 @@ async function pollUntil(
 
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
-// Issue #280: a cancelled run keeps the POSIX 128+signo convention
-// (`kubic tui` pins the same one, #313).
+// A cancelled run keeps the POSIX 128+signo convention
+// (`kubic tui` pins the same one).
 const SIGNAL_EXIT: Readonly<Record<(typeof SIGNALS)[number], number>> = {
   SIGHUP: 129,
   SIGINT: 130,

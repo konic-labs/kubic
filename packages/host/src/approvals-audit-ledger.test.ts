@@ -95,7 +95,7 @@ function capture() {
   };
 }
 
-describe('resolveRepoRuntimeRoot (issue #279)', () => {
+describe('resolveRepoRuntimeRoot', () => {
   it('names the main checkout from a subdirectory, a linked worktree, and outside git', () => {
     const { repo, sub } = fixtureRepo();
     expect(resolveRepoRuntimeRoot(sub)).toBe(repo);
@@ -107,7 +107,7 @@ describe('resolveRepoRuntimeRoot (issue #279)', () => {
   });
 });
 
-describe('solo decisions land in the repo ledger (issue #279)', () => {
+describe('solo decisions land in the repo ledger', () => {
   it('a run from <repo>/sub appends to <repo>/.kubic/…/audit.jsonl and creates nothing under sub', async () => {
     const { repo, sub } = fixtureRepo();
     const installed = installSoloPolicy({
@@ -144,7 +144,7 @@ describe('solo decisions land in the repo ledger (issue #279)', () => {
   });
 });
 
-describe('solo provenance fields (issue #282)', () => {
+describe('solo provenance fields', () => {
   it('records the thinking level and the base revision the run captured at start', async () => {
     const { repo, sub } = fixtureRepo();
     const base = git(repo, ['rev-parse', 'HEAD']).trim();
@@ -183,7 +183,7 @@ describe('solo provenance fields (issue #282)', () => {
   });
 });
 
-describe('an unreadable ledger is an error, not an empty trail (issue #279)', () => {
+describe('an unreadable ledger is an error, not an empty trail', () => {
   const skip =
     process.platform === 'win32' ||
     (typeof process.getuid === 'function' && process.getuid() === 0);

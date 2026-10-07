@@ -1,8 +1,8 @@
-// Quitting `kubic tui` mid-turn drains the operation (issue #312; §18,
-// §42.5, #109): Esc, a second Ctrl-C, Ctrl-D or SIGINT while a turn runs
-// must abort the operation, kill its detached tool process groups, wait
-// (bounded) for it to settle and only then run the §42.5 sweep and close
-// the session — mirroring `kubic run`'s drain-before-sweep contract.
+// Quitting `kubic tui` mid-turn drains the operation: Esc, a second Ctrl-C,
+// Ctrl-D or SIGINT while a turn runs must abort the operation, kill its
+// detached tool process groups, wait (bounded) for it to settle and only then
+// run the sweep and close the session — mirroring `kubic run`'s
+// drain-before-sweep contract.
 //
 // Real code end to end: the prod bootTuiLane re-rooted onto temp state, a
 // real NodeExecutionEnv (a real slow bash) inside a temp workspace, and a
@@ -161,7 +161,7 @@ function harness(steps: Step[]): Harness {
       ...boot,
       loop: {
         ...loop,
-        // The placement signal (D1 keys the kill registry by the
+        // The placement signal (keys the kill registry by the
         // conversation id, so that IS the admitted operation here).
         subscribe: async (sink, context) => {
           const stop = await loop.subscribe((event) => {
@@ -214,7 +214,7 @@ async function submit(
   fake.feed('\r');
 }
 
-describe('quitting mid-turn drains the operation (issue #312)', () => {
+describe('quitting mid-turn drains the operation', () => {
   it('a real slow bash leaves no surviving child and the session records the abort', async () => {
     const h = harness([
       [
@@ -233,8 +233,8 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     const pid = Number(readFileSync(pidFile, 'utf8').trim());
     pids.push(pid);
     expect(alive(pid)).toBe(true);
-    fake.feed('\x1b'); // Esc mid-turn: the first press cancels (issue #302)
-    // Issue #302/#454: Esc mid-turn interrupts the turn and keeps the
+    fake.feed('\x1b'); // Esc mid-turn: the first press cancels
+    // Esc mid-turn interrupts the turn and keeps the
     // session; Esc never quits, so the second press is Ctrl-C, which quits
     // and drains.
     await waitFor(() => fake.writes.join('').includes('cancelling'));
@@ -243,12 +243,12 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await waitFor(() => !alive(pid), 500);
     expect(existsSync(join(h.workspace, 'late.txt'))).toBe(false);
     const opId = h.admitted[0] ?? '';
-    // Two presses, two abort requests: the first Esc cancelled the turn
-    // (issue #302) and the second quit, whose drain re-asserts the abort
-    // before closing. The lane treats the repeat as a no-op, and the
-    // session still records exactly the one settlement below.
+    // Two presses, two abort requests: the first Esc cancelled the turn and the
+    // second quit, whose drain re-asserts the abort before closing. The lane
+    // treats the repeat as a no-op, and the session still records exactly the
+    // one settlement below.
     expect(h.events).toEqual([`abort:${opId}`, `abort:${opId}`, 'close']);
-    // Resume: the interrupted work settled, nothing dangles (#396's durable
+    // Resume: the interrupted work settled, nothing dangles (the durable
     // read), and the settlement is the abort the quit asked for.
     const sessionId = h.boots[0]?.sessionId ?? '';
     const store = openSessionStore(
@@ -319,7 +319,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
       }, 30);
     });
     process.emit('SIGINT');
-    // Issue #313: a signalled quit exits 128+signo (SIGINT → 130).
+    // A signalled quit exits 128+signo (SIGINT → 130).
     expect(await exit).toBe(130);
     const sessionId = h.boots[0]?.sessionId ?? '';
     const paths = new FileJournalStore(
@@ -349,7 +349,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await submit(fake, 'hang');
     await waitFor(() => h.admitted.length === 1);
     fake.feed('\x1b');
-    // Issue #302/#454: Esc mid-turn interrupts the turn and keeps the
+    // Esc mid-turn interrupts the turn and keeps the
     // session; Esc never quits, so the second press is Ctrl-C, which quits
     // and drains.
     await waitFor(() => fake.writes.join('').includes('cancelling'));
@@ -367,7 +367,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     expect(timers.every((timer) => timer.ms === 1234)).toBe(true);
   });
 
-  // Issue #306 decision: a held key's repeats never act as a global key.
+  // Decision: a held key's repeats never act as a global key.
   // While a quit drains, only a real second Ctrl-C press ends the wait: the
   // Kitty release (`:3`) and repeat (`:2`) events of the SAME key must not.
   it('a held Ctrl-C (Kitty repeat) or its release does not end the drain; a real second press does', async () => {
@@ -387,7 +387,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await submit(fake, 'hang');
     await waitFor(() => h.admitted.length === 1);
     fake.feed('\x1b');
-    // Issue #302/#454: Esc mid-turn interrupts the turn and keeps the
+    // Esc mid-turn interrupts the turn and keeps the
     // session; Esc never quits, so the second press is Ctrl-C, which quits
     // and drains.
     await waitFor(() => fake.writes.join('').includes('cancelling'));
@@ -413,7 +413,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     expect(fake.counts.stopped).toBe(1);
   });
 
-  // Issue #312 review: the bound used to cover only the wait AFTER the abort
+  // The bound used to cover only the wait AFTER the abort
   // request. A requestAbort that never settles blocked the quit (and the kill
   // drain queued behind it) with no way out — a second Ctrl-C ended a wait
   // nobody was in.
@@ -460,7 +460,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
         h.events.push('kill');
       });
       fake.feed('\x1b');
-      // Issue #302/#454: Esc mid-turn interrupts the turn and keeps the
+      // Esc mid-turn interrupts the turn and keeps the
       // session; Esc never quits, so the second press is Ctrl-C, which
       // quits and drains.
       await waitFor(() => fake.writes.join('').includes('cancelling'));
@@ -514,7 +514,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
         h.events.push('kill');
       });
       fake.feed('\x1b');
-      // Issue #302/#454: Esc mid-turn interrupts the turn and keeps the
+      // Esc mid-turn interrupts the turn and keeps the
       // session; Esc never quits, so the second press is Ctrl-C, which
       // quits and drains.
       await waitFor(() => fake.writes.join('').includes('cancelling'));
@@ -545,7 +545,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
       await submit(fake, 'hang');
       await waitFor(() => h.admitted.length === 1);
       fake.feed('\x1b');
-      // Issue #302/#454: Esc mid-turn interrupts the turn and keeps the
+      // Esc mid-turn interrupts the turn and keeps the
       // session; Esc never quits, so the second press is Ctrl-C, which
       // quits and drains.
       await waitFor(() => fake.writes.join('').includes('cancelling'));
@@ -560,7 +560,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     });
   });
 
-  // Issue #311: the settlement sweep is for a session that goes on. A quit
+  // The settlement sweep is for a session that goes on. A quit
   // that drains a turn which already ran bash owns its own final sweep
   // (close); the settlement handler must not run a second one.
   it('a turn settled by a quit does not also run the settlement sweep', async () => {
@@ -595,14 +595,14 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await submit(fake, 'run bash then hold');
     await waitFor(() => h.admitted.length === 1);
     const opId = h.admitted[0] ?? '';
-    // Issue #453: the solo tree row opens on Ctrl-T.
+    // The solo tree row opens on Ctrl-T.
     fake.feed('\x14');
     // The bash call has ended (the tree row turns ✓): the model's second step
     // is the gated one, so the turn is still running.
     await waitFor(() => fake.writes.join('').includes('✓ bash'));
     h.boots[0]?.loop?.kills.track(opId, release);
-    fake.feed('\x1b'); // Esc mid-turn: the first press cancels (issue #302); the kill releases the gate
-    // Issue #302/#454: Esc mid-turn interrupts the turn and keeps the
+    fake.feed('\x1b'); // Esc mid-turn: the first press cancels; the kill releases the gate
+    // Esc mid-turn interrupts the turn and keeps the
     // session; Esc never quits, so the second press is Ctrl-C, which quits
     // and drains.
     await waitFor(() => fake.writes.join('').includes('cancelling'));
@@ -629,7 +629,7 @@ describe('quitting mid-turn drains the operation (issue #312)', () => {
     await submit(fake, 'hang');
     await waitFor(() => h.admitted.length === 1);
     fake.feed('\x1b');
-    // Issue #302/#454: Esc mid-turn interrupts the turn and keeps the
+    // Esc mid-turn interrupts the turn and keeps the
     // session; Esc never quits, so the second press is Ctrl-C, which quits
     // and drains.
     await waitFor(() => fake.writes.join('').includes('cancelling'));

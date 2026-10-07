@@ -1,4 +1,4 @@
-// `/new`, `/resume` and `/undo` on the real `kubic tui` loop (issue #305).
+// `/new`, `/resume` and `/undo` on the real `kubic tui` loop.
 // The prod boot (`bootTuiLane`) is driven through the real alt-screen key
 // path with a temp sessions root and a temp workspace, so `/new` really
 // boots a second session, `/resume` really lists the store, and `/undo`
@@ -77,7 +77,7 @@ function sessionIds(root: string): string[] {
   return readdirSync(root).filter((entry) => entry.startsWith('0'));
 }
 
-describe('/new, /resume and /undo on the kubic tui path (issue #305)', () => {
+describe('/new, /resume and /undo on the kubic tui path', () => {
   it('starts a fresh session with /new without leaving the alt-screen', {
     timeout: 20000,
   }, async () => {
@@ -168,7 +168,7 @@ describe('/new, /resume and /undo on the kubic tui path (issue #305)', () => {
     expect(second).toBeDefined();
 
     // `/resume` lists the OTHER session (the current one is not a choice),
-    // titled by its first prompt with its turns (issue #461).
+    // titled by its first prompt with its turns.
     const mark = fake.writes.length;
     type(fake, '/resume');
     await waitFor(() =>

@@ -1,4 +1,4 @@
-// Layered TOML config, precedence, trust gate, example (issue #38) — RED first.
+// Layered TOML config, precedence, trust gate, example.
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +37,7 @@ function fakeBridge(files: Record<string, string>): BridgePick {
   };
 }
 
-describe('config layers (issue #38)', () => {
+describe('config layers', () => {
   it('orders precedence Enterprise > Product > Global > Project > Workspace > Session > Agent', () => {
     expect(CONFIG_LAYERS).toEqual([
       'enterprise',
@@ -113,7 +113,7 @@ describe('config layers (issue #38)', () => {
   });
 });
 
-describe('prototype-pollution guard (issue #38)', () => {
+describe('prototype-pollution guard', () => {
   it('refuses a [__proto__] section without polluting Object.prototype', () => {
     expect(() => parseTomlConfig('[__proto__]\npolluted = "yes"\n')).toThrow(
       /forbidden key '__proto__'/,
@@ -129,7 +129,7 @@ describe('prototype-pollution guard (issue #38)', () => {
   });
 });
 
-describe('canonical TOML example (issue #38)', () => {
+describe('canonical TOML example', () => {
   it('parses the example with every required section', () => {
     const parsed = parseTomlConfig(EXAMPLE_TOML);
     expect(parsed.agent?.name).toBe('kubic');
@@ -192,7 +192,7 @@ sink = "syslog"
 level = "privileged"
 `;
 
-describe('§37.4 request options (issue #257)', () => {
+describe('request options', () => {
   it('parses [model] timeoutMs/maxRetries/maxRetryDelayMs/cacheRetention', () => {
     const parsed = parseTomlConfig(
       '[model]\nprovider = "local"\nid = "llama3"\ntimeoutMs = 60000\nmaxRetries = 5\nmaxRetryDelayMs = 10000\ncacheRetention = "long"\n',
@@ -318,7 +318,7 @@ describe('[policy] + [[audit]]', () => {
     ).toThrow(/unknown key 'bogus'/);
   });
 
-  // Review finding (issue #286): docs promise `facility` as "name or
+  // Review finding: docs promise `facility` as "name or
   // number 0–23", so TOML `facility = 19` must parse to the number.
   it('accepts a numeric facility 0–23 in [[audit]]', () => {
     const parsed = parseTomlConfig(
@@ -359,7 +359,7 @@ describe('[policy] + [[audit]]', () => {
   });
 });
 
-describe('session.retentionDays (issue #119)', () => {
+describe('session.retentionDays', () => {
   it('parses the key and refuses malformed values', () => {
     expect(
       parseTomlConfig('[session]\nretentionDays = 30\n').session?.retentionDays,
@@ -397,7 +397,7 @@ describe('session.retentionDays (issue #119)', () => {
   });
 });
 
-describe('[session] compaction keys (issue #239)', () => {
+describe('[session] compaction keys', () => {
   it('parses autoCompact, reserveTokens and keepRecentTokens', () => {
     const session = parseTomlConfig(
       '[session]\nautoCompact = false\nreserveTokens = 4000\nkeepRecentTokens = 5000\n',
@@ -425,7 +425,7 @@ describe('[session] compaction keys (issue #239)', () => {
   });
 });
 
-describe('[agent] systemPromptFile (issue #240)', () => {
+describe('[agent] systemPromptFile', () => {
   it('parses the key and refuses malformed values by name', () => {
     expect(
       parseTomlConfig('[agent]\nsystemPromptFile = "SYSTEM.md"\n').agent
@@ -443,7 +443,7 @@ describe('[agent] systemPromptFile (issue #240)', () => {
   });
 });
 
-describe('trust-gated project-local config (issue #38)', () => {
+describe('trust-gated project-local config', () => {
   it('refuses untrusted project config pre-trust', () => {
     expect(() =>
       mergeLayered([
@@ -515,7 +515,7 @@ describe('trust-gated project-local config (issue #38)', () => {
   });
 });
 
-describe('committed vs gitignored split (issue #38)', () => {
+describe('committed vs gitignored split', () => {
   it('commits config + roles, never sessions/journal/artifacts/audit', () => {
     expect(isCommittedConfigPath('config.toml')).toBe(true);
     expect(isCommittedConfigPath('roles/reviewer.md')).toBe(true);
@@ -536,7 +536,7 @@ describe('committed vs gitignored split (issue #38)', () => {
   });
 });
 
-describe('layer paths (issue #38)', () => {
+describe('layer paths', () => {
   it('maps global config under home and project config under the repo', () => {
     const paths = defaultLayerPaths({ home: '/home/u', projectRoot: '/repo' });
     expect(paths.global).toBe('/home/u/.kubic/config.toml');
@@ -556,9 +556,9 @@ describe('layer paths (issue #38)', () => {
   });
 });
 
-// TOML parser hardening (issue #69): single-quote, escape, and malformed
+// TOML parser hardening: single-quote, escape, and malformed
 // branches pinned so dropped guards fail loudly.
-describe('TOML parser hardening (issue #69)', () => {
+describe('TOML parser hardening', () => {
   it('keeps # and = inside single-quoted strings', () => {
     const parsed = parseTomlConfig(
       "[agent]\nname = 'a#b'\n[model]\nid = 'x=y'\nprovider = \"p\"\n",
@@ -585,7 +585,7 @@ describe('TOML parser hardening (issue #69)', () => {
     expect(parsed.roles?.a?.tools).toEqual(['a', 'b']);
   });
 
-  it('parses [roles.<name>] requires like tools (issue #196)', () => {
+  it('parses [roles.<name>] requires like tools', () => {
     const parsed = parseTomlConfig(
       '[roles.a]\nrequires = ["write", \'bash\']\n',
     );
@@ -658,7 +658,7 @@ describe('TOML parser hardening (issue #69)', () => {
   });
 });
 
-describe('config validation hardening (issue #69)', () => {
+describe('config validation hardening', () => {
   it('rejects unknown keys per section', () => {
     expect(() => parseTomlConfig('[agent]\nname = "x"\nextra = 1\n')).toThrow(
       /unknown key/,
@@ -666,7 +666,7 @@ describe('config validation hardening (issue #69)', () => {
     expect(() =>
       parseTomlConfig('[approvals]\nroute = "deny"\nturbo = true\n'),
     ).toThrow(/unknown key/);
-    // `maxBytes` is a real key (issue #350); anything else under [journal]
+    // `maxBytes` is a real key; anything else under [journal]
     // is still refused by name.
     expect(() => parseTomlConfig('[journal]\nbogus = 1\n')).toThrow(
       /unknown key 'bogus'/,
@@ -681,7 +681,7 @@ describe('config validation hardening (issue #69)', () => {
     expect(() => parseTomlConfig('[roles.a]\nmodel = 42\n')).toThrow(
       /'roles\.a': 'model' must be 'provider\/id'/,
     );
-    // The shape is checked too (issue #133): a bare provider can never
+    // The shape is checked too: a bare provider can never
     // become a selection, so it is refused by name at parse time.
     expect(() => parseTomlConfig('[roles.a]\nmodel = "local"\n')).toThrow(
       /'roles\.a': 'model' must be 'provider\/id'/,
@@ -706,7 +706,7 @@ describe('config validation hardening (issue #69)', () => {
     ).toThrow(/must be a boolean/);
   });
 
-  it('parses [roles.<name>] thinking, refusing unknown levels by name (issue #225)', () => {
+  it('parses [roles.<name>] thinking, refusing unknown levels by name', () => {
     expect(
       parseTomlConfig('[roles.a]\nthinking = "high"\n').roles?.a?.thinking,
     ).toBe('high');
@@ -715,7 +715,7 @@ describe('config validation hardening (issue #69)', () => {
     );
   });
 
-  it('parses [roles.<name>] models, refusing bad entries by name (issue #255)', () => {
+  it('parses [roles.<name>] models, refusing bad entries by name', () => {
     const parsed = parseTomlConfig(
       '[roles.a]\nmodels = ["local/*", { id = "acme/big", thinking = "high" }]\n',
     );
@@ -761,7 +761,7 @@ describe('config validation hardening (issue #69)', () => {
     ).toThrow(/'roles\.a\.models\[0\]': unknown key 'bogus'/);
   });
 
-  it('parses [model]/[roles.<name>] escalate + maxEscalations (issue #210)', () => {
+  it('parses [model]/[roles.<name>] escalate + maxEscalations', () => {
     const parsed = parseTomlConfig(
       '[model]\nescalate = ["local/a", "acme/big"]\nmaxEscalations = 2\n' +
         '[roles.a]\nescalate = ["local/a", "local/b"]\n',
@@ -806,7 +806,7 @@ describe('config validation hardening (issue #69)', () => {
   });
 
   it('parses [journal] maxBytes as a positive integer, refusing anything else', () => {
-    // §42.4 byte bound (issue #350): the whole store — index + blobs — is
+    // Byte bound: the whole store — index + blobs — is
     // pruned to stay under it. 0 is not "off" (unset is): it is a bound
     // nothing fits, so it is refused by name rather than failing every write.
     expect(parseTomlConfig('[journal]\nmaxBytes = 1048576\n').journal).toEqual({
@@ -828,7 +828,7 @@ describe('config validation hardening (issue #69)', () => {
       parseTomlConfig('[journal]\noutOfScope = ["build", "coverage"]\n').journal
         ?.outOfScope,
     ).toEqual(['build', 'coverage']);
-    // Unset stays unset: no empty list is invented (§35 opt-in).
+    // Unset stays unset: no empty list is invented.
     expect(
       parseTomlConfig('[journal]\nretentionDays = 7\n').journal?.outOfScope,
     ).toBeUndefined();
@@ -857,7 +857,7 @@ describe('config validation hardening (issue #69)', () => {
   });
 });
 
-describe('layer merge hardening (issue #69)', () => {
+describe('layer merge hardening', () => {
   it('records no attempt when layers agree on a value', () => {
     const merged = mergeLayered([
       { layer: 'global', config: { model: { provider: 'g', id: 'm' } } },
@@ -914,7 +914,7 @@ describe('layer merge hardening (issue #69)', () => {
   });
 });
 
-describe('layered load hardening (issue #69)', () => {
+describe('layered load hardening', () => {
   it('wraps file errors with the layer name', () => {
     const bridge = fakeBridge({ '/etc/kubic/config.toml': '[bad\n' });
     const paths = defaultLayerPaths({
@@ -985,7 +985,7 @@ describe('layered load hardening (issue #69)', () => {
   });
 });
 
-describe('config serialization hardening (issue #69)', () => {
+describe('config serialization hardening', () => {
   it('emits role tables sorted by name', () => {
     const text = serializeTomlConfig({
       roles: {
@@ -1019,7 +1019,7 @@ describe('config serialization hardening (issue #69)', () => {
     ]);
   });
 
-  // Issue #91: the required-entry list is not a second copy of the rule
+  // The required-entry list is not a second copy of the rule
   // set — it is derived from the module that writes the rules. If the two
   // ever drift, this fails instead of shipping a gate that checks fiction.
   it('derives the required entries from the shipped runtime rules', async () => {
@@ -1035,7 +1035,7 @@ describe('config serialization hardening (issue #69)', () => {
     ).toEqual([]);
   });
 
-  // Issue #91 criterion 2: the committed half must stay trackable, proven
+  // The committed half must stay trackable, proven
   // against the rules that are actually shipped (not a hand-written list).
   it('keeps every shipped runtime rule off the committed half', async () => {
     const shipped = await import('../../../exec/src/runtime-exclude.js');
@@ -1050,7 +1050,7 @@ describe('config serialization hardening (issue #69)', () => {
   });
 });
 
-describe('[verify] section (issue #267)', () => {
+describe('[verify] section', () => {
   it('parses the four gate commands and the timeout, and round-trips', () => {
     const text =
       '[verify]\ntests = "npm test"\nbuild = "npm run build"\nlint = "npm run lint"\ntypecheck = "npm run typecheck"\ntimeoutMs = 60000\n';
@@ -1088,7 +1088,7 @@ describe('[verify] section (issue #267)', () => {
   });
 });
 
-describe('checkRoleModelRef (issue #211)', () => {
+describe('checkRoleModelRef', () => {
   it.each(['llama', '/x', 'x/', ''])(
     'refuses %j with the provider/id message',
     (ref) => {

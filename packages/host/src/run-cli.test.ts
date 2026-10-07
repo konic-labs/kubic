@@ -1,5 +1,5 @@
-// Headless `kubic run -p` (issue #28; §78, §17, §19, §80, §84).
-// Faux-only: injected runner, zero network. Covers the §78 exit-code
+// Headless `kubic run -p`.
+// Faux-only: injected runner, zero network. Covers the exit-code
 // contract (0/1/2/3/4/5/6), the --json envelope, identical persistence,
 // no alt-screen in -p path, and attach-reopens-transcript.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -76,8 +76,8 @@ function stubRun(
   };
 }
 
-describe('run -p exit-code contract (§78)', () => {
-  it('maps every termini class to its §78 code (0-6)', () => {
+describe('run -p exit-code contract', () => {
+  it('maps every termini class to its exit code (0-6)', () => {
     expect(mapTerminusToExitCode('completed')).toBe(0);
     expect(mapTerminusToExitCode('failed')).toBe(1);
     expect(mapTerminusToExitCode('usage')).toBe(2);
@@ -88,22 +88,22 @@ describe('run -p exit-code contract (§78)', () => {
     expect(mapTerminusToExitCode('provider_probe_failed')).toBe(6);
   });
 
-  it('a mid-run provider error is a task failure, not the probe code (issue #155)', () => {
-    // §78's 6 is the pre-run probe (no provider / unknown model). A
-    // provider error during the run is a failed task whose §52 code is
+  it('a mid-run provider error is a task failure, not the probe code', () => {
+    // 's 6 is the pre-run probe (no provider / unknown model). A
+    // provider error during the run is a failed task whose failure code is
     // provider_transient/provider_auth.
     expect(mapTerminusToExitCode('provider_transient')).toBe(1);
     expect(mapTerminusToExitCode('provider_auth')).toBe(1);
   });
 
-  it('a timeout is a task failure, never a turn limit (issue #280)', () => {
+  it('a timeout is a task failure, never a turn limit', () => {
     // There is no timeout exit code; the --json status is the honest half,
     // and a wall-clock bound must not claim the turn-limit code.
     expect(mapTerminusToExitCode('timeout')).toBe(1);
   });
 
-  it('a cancelled run keeps the POSIX 128+signo convention (issue #280)', () => {
-    // The same convention `kubic tui` pins for a signalled quit (#313).
+  it('a cancelled run keeps the POSIX 128+signo convention', () => {
+    // The same convention `kubic tui` pins for a signalled quit.
     expect(mapTerminusToExitCode('cancelled', 'SIGHUP')).toBe(129);
     expect(mapTerminusToExitCode('cancelled', 'SIGINT')).toBe(130);
     expect(mapTerminusToExitCode('cancelled', 'SIGTERM')).toBe(143);
@@ -153,7 +153,7 @@ describe('run -p exit-code contract (§78)', () => {
     }
   });
 
-  it('pins both approval labels to exit 4 while the status keeps them distinct (issue #129)', async () => {
+  it('pins both approval labels to exit 4 while the status keeps them distinct', async () => {
     for (const status of ['approval_denied', 'approval_timed_out'] as const) {
       const o = out();
       const exit = await runRunCommand(
@@ -195,7 +195,7 @@ describe('run -p exit-code contract (§78)', () => {
   });
 });
 
-describe('run -p --session validation (issue #28, E4)', () => {
+describe('run -p --session validation', () => {
   it('rejects a --session id outside [A-Za-z0-9_-] with exit 2 without calling run', async () => {
     const o = out();
     let called = false;
@@ -215,7 +215,7 @@ describe('run -p --session validation (issue #28, E4)', () => {
   });
 });
 
-describe('mapLaneOutcomeToTerminus (issue #28, E1)', () => {
+describe('mapLaneOutcomeToTerminus', () => {
   it('maps a completed lane to completed', () => {
     expect(mapLaneOutcomeToTerminus('completed')).toBe('completed');
   });
@@ -258,8 +258,8 @@ describe('mapLaneOutcomeToTerminus (issue #28, E1)', () => {
   });
 });
 
-describe('mapLaneOutcomeToFailure (issue #155)', () => {
-  it('carries the §52 code beside the terminus', () => {
+describe('mapLaneOutcomeToFailure', () => {
+  it('carries the failure code beside the terminus', () => {
     const tool = mapLaneOutcomeToFailure('failed', {
       code: 'tool_failed',
       message: 'exit 1',
@@ -294,7 +294,7 @@ describe('mapLaneOutcomeToFailure (issue #155)', () => {
     expect(model.failure?.code).toBe('model_failed');
   });
 
-  it('decides the approval terminus by the timeout marker, not by wording (issue #129)', () => {
+  it('decides the approval terminus by the timeout marker, not by wording', () => {
     // An elapsed wait whose reason also says "denied" is still a timeout;
     // a refusal worded "refused" is still a refusal. The marker rule is the
     // one all three readers share.
@@ -313,8 +313,8 @@ describe('mapLaneOutcomeToFailure (issue #155)', () => {
   });
 });
 
-describe('failureForTerminus (issue #155)', () => {
-  it('gives every fixed-code terminus its §52 classification', () => {
+describe('failureForTerminus', () => {
+  it('gives every fixed-code terminus its failure classification', () => {
     expect(failureForTerminus('turn_limit')).toMatchObject({
       code: 'run_limit',
       strategy: 'abandon',
@@ -350,7 +350,7 @@ describe('failureForTerminus (issue #155)', () => {
     expect(probe?.remedy).toMatch(/register|pin/i);
   });
 
-  it('carries no §52 code for termini that have none', () => {
+  it('carries no failure code for termini that have none', () => {
     for (const terminus of [
       'completed',
       'failed',
@@ -363,7 +363,7 @@ describe('failureForTerminus (issue #155)', () => {
   });
 });
 
-describe('run -p failure mapping (issue #28, E2)', () => {
+describe('run -p failure mapping', () => {
   it('maps a workspace-flavored run rejection to exit 5', async () => {
     const o = out();
     const exit = await runRunCommand(
@@ -437,7 +437,7 @@ describe('run -p failure mapping (issue #28, E2)', () => {
   });
 });
 
-describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
+describe('mapCaughtErrorToTerminus', () => {
   it('maps ENOENT-flavored failures to workspace_unavailable', () => {
     expect(mapCaughtErrorToTerminus(new Error('ENOENT: no such file'))).toBe(
       'workspace_unavailable',
@@ -584,7 +584,7 @@ describe('mapCaughtErrorToTerminus (issue #28, E2)', () => {
   });
 });
 
-describe('run -p headless behavior (§17, §80)', () => {
+describe('run -p headless behavior', () => {
   it('exits 0 and prints the result through the injected sink alone (no terminal)', async () => {
     const o = out();
     const seen: { prompt?: string } = {};
@@ -776,7 +776,7 @@ describe('run -p headless behavior (§17, §80)', () => {
   });
 });
 
-describe('run -p argument handling (issue #68; mutation hardening)', () => {
+describe('run -p argument handling (mutation hardening)', () => {
   it('accepts the --prompt long form like -p', async () => {
     const o = out();
     const seen: { prompt?: string; sessionId?: string } = {};
@@ -791,7 +791,7 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     expect(seen.prompt).toBe('hi there');
   });
 
-  it('passes --debug through to the runner without gating the run (issue #98)', async () => {
+  it('passes --debug through to the runner without gating the run', async () => {
     const o = out();
     const seen: { debug?: boolean } = {};
     const exit = await runRunCommand(
@@ -910,7 +910,7 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     expect(envelope.error).toEqual({ kind: 'failed', message: 'm' });
   });
 
-  it('carries the §52 failure (code/remedy/strategy) in the failure envelope (issue #155)', async () => {
+  it('carries the failure (code/remedy/strategy) in the failure envelope', async () => {
     const o = out();
     const exit = await runRunCommand(
       { prompt: 'hello', json: true },
@@ -942,7 +942,7 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     });
   });
 
-  it('synthesizes the failure for a terminus whose §52 code is implied', async () => {
+  it('synthesizes the failure for a terminus whose failure code is implied', async () => {
     const o = out();
     const exit = await runRunCommand(
       { prompt: 'hello', json: true },
@@ -986,7 +986,7 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
     const envelope = JSON.parse(o.lines[0] as string) as {
       failure?: { code: string; strategy: string };
     };
-    // Exit 6 tells a consumer the provider is unavailable; the §52 half must
+    // Exit 6 tells a consumer the provider is unavailable; the half must
     // not contradict it with a retryable transient code.
     expect(envelope.failure?.code).toBe('provider_auth');
     expect(envelope.failure?.strategy).toBe('abandon');
@@ -1019,8 +1019,8 @@ describe('run -p argument handling (issue #68; mutation hardening)', () => {
   });
 });
 
-// Issue #447: the interactive-terminal rendering of `kubic run`.
-describe('run progress sink (issue #447)', () => {
+// The interactive-terminal rendering of `kubic run`.
+describe('run progress sink', () => {
   function sink() {
     const calls: string[] = [];
     let progressSeen: unknown;

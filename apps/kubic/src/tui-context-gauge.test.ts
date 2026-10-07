@@ -1,4 +1,4 @@
-// The context gauge's production wiring (issue #347; §18): the boot hands
+// The context gauge's production wiring: the boot hands
 // the status bar the running model's context window and the compaction
 // threshold derived from it, and a `/model` switch moves both. Faux
 // provider only: zero network, zero paid tokens.
@@ -51,7 +51,7 @@ function fauxModels(): ReturnType<typeof createModels> {
   return models;
 }
 
-describe('context gauge wiring (issue #347)', () => {
+describe('context gauge wiring', () => {
   it('derives the window and the compaction threshold from the catalog', () => {
     const models = fauxModels();
     const limits = contextLimitsOf(models, 'faux', 'faux-1');

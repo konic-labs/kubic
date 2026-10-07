@@ -104,13 +104,13 @@ describe('runEvalTask refusals are specific', () => {
     ).rejects.toMatchObject({
       code: 'usage-mismatch',
       message: expect.stringMatching(
-        /^signals do not reconcile with §39 usage rows: \S/,
+        /^signals do not reconcile with usage rows: \S/,
       ),
     });
   });
 });
 
-describe('runEvalTask (issue #53)', () => {
+describe('runEvalTask', () => {
   it('builds a complete record from a faux suite run', async () => {
     const record = await runEvalTask(
       {
@@ -276,7 +276,7 @@ describe('runEvalTask (issue #53)', () => {
     ).rejects.toMatchObject({ code: 'stub-suite' });
   });
 
-  it('rejects a run whose signals do not reconcile with usage rows (§39)', async () => {
+  it('rejects a run whose signals do not reconcile with usage rows', async () => {
     await expect(
       runEvalTask(
         {
@@ -307,7 +307,7 @@ describe('runEvalTask (issue #53)', () => {
     ).rejects.toMatchObject({ code: 'usage-mismatch' });
   });
 
-  it('refuses a task-path run without usage rows (§39)', async () => {
+  it('refuses a task-path run without usage rows', async () => {
     await expect(
       runEvalTask(
         {
@@ -377,7 +377,7 @@ describe('runEvalTask (issue #53)', () => {
   });
 });
 
-describe('runEvalTrajectory (issue #53)', () => {
+describe('runEvalTrajectory', () => {
   it('scores a trajectory export without re-running it', async () => {
     const record = await runEvalTrajectory({
       suite: 'swe-bench-mini',
@@ -514,7 +514,7 @@ describe('runEvalTrajectory (issue #53)', () => {
   });
 });
 
-describe('runEvalTrajectory provenance comes from the export (issue #256)', () => {
+describe('runEvalTrajectory provenance comes from the export', () => {
   it('records the export provider/model, generation and worktree when no flags are given', async () => {
     const record = await runEvalTrajectory({
       suite: 'swe-bench-mini',
@@ -604,7 +604,9 @@ describe('runEvalTrajectory provenance comes from the export (issue #256)', () =
       size: 'smoke',
     })) as EvalRunnerError;
     expect(malformed.code).toBe('invalid-trajectory');
-    expect(malformed.message).toMatch(/^invalid trajectory export: .*§46/);
+    expect(malformed.message).toMatch(
+      /^invalid trajectory export: trajectory is missing field/,
+    );
   });
 
   it('refuses a blank or unknown size with distinct codes', async () => {

@@ -1,9 +1,9 @@
-// The `/scoped-models` report (issue #255; §38.2): the role's resolved
+// The `/scoped-models` report: the role's resolved
 // allowed set as one transcript line.
 import { describe, expect, it } from 'vitest';
 import { formatScopedModels } from './scoped-models.js';
 
-describe('formatScopedModels (issue #255)', () => {
+describe('formatScopedModels', () => {
   it('names the set with per-entry thinking', () => {
     expect(
       formatScopedModels('reviewer', [

@@ -57,7 +57,7 @@ function docNamed(docs: ParsedRoleDoc[], name: string): ParsedRoleDoc {
   return found;
 }
 
-describe('built-in role documents (issue #44)', () => {
+describe('built-in role documents', () => {
   it('loads exactly the five built-in roles from .kubic/roles/*.md', () => {
     const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
     // Sorted by filename (loader contract: deterministic), covering the
@@ -89,11 +89,11 @@ describe('built-in role documents (issue #44)', () => {
 });
 
 describe('built-in tool sets', () => {
-  it('planner is read-only: no write/edit/git tools, bash only via the read-only shell (issue #157)', () => {
+  it('planner is read-only: no write/edit/git tools, bash only via the read-only shell', () => {
     const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
     const planner = resolveRole(docNamed(docs, 'planner'), []);
     expect(planner.tools).toContain('read');
-    // §12.1 gives the planner read-only inspection commands: bash is present,
+    // Gives the planner read-only inspection commands: bash is present,
     // and the read-only shell level is what keeps it from writing.
     expect(planner.tools).toContain('bash');
     expect(planner.classes.shell).toBe('read-only-allowlist');
@@ -102,13 +102,13 @@ describe('built-in tool sets', () => {
     }
   });
 
-  it('reviewer is read-only: no write/edit/commit/git tools, bash only via the read-only shell (issue #157)', () => {
+  it('reviewer is read-only: no write/edit/commit/git tools, bash only via the read-only shell', () => {
     const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
     const reviewer = resolveRole(docNamed(docs, 'reviewer'), []);
     expect(reviewer.tools).toContain('read');
     expect(reviewer.tools).toContain('bash');
     expect(reviewer.classes.shell).toBe('read-only-allowlist');
-    // §12.1: `git: false` — read-only git runs through the allowlisted shell.
+    // `git: false` — read-only git runs through the allowlisted shell.
     expect(reviewer.classes.git).toBe(false);
     for (const banned of [
       'write',

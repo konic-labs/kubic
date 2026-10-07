@@ -5,7 +5,6 @@
 > `packages/host/src/config/trust-store.ts` (the store + the one trust
 > report), `packages/host/src/trust-cli.ts` (`kubic trust`),
 > `apps/kubic/src/config-runtime.ts` (the prompt and the load gate).
-> Issue [#228](https://github.com/konic-labs/kubic/issues/228).
 
 A repository can commit `.kubic/config.toml`, and that file is
 configuration: it can change the model, the approval policy, the permission
@@ -20,7 +19,7 @@ error: project-local config refused pre-trust: <path>/.kubic/config.toml — run
 ```
 
 The same gate covers the project `models.json`, ancestor project skills,
-and the project role documents (issue #430), so a repository cannot point
+and the project role documents, so a repository cannot point
 a provider — and your API key — at its own URL, nor inject lane instructions,
 either. The flip side is what a grant means: **one `yes` covers all four**.
 A trusted project's `models.json` may name any `*_API_KEY` (or `KUBIC_*`)
@@ -97,7 +96,7 @@ repository cannot write it, and `kubic trust` is the only writer.
 `kubic tui` — and a bare `kubic` on an interactive terminal — resolves
 trust before the config load and before the alt-screen opens. When a
 project `config.toml` is present and no decision is recorded, it asks once,
-as one row in the first screen's language (issue #462), answered with one
+as one row in the first screen's language, answered with one
 key:
 
 ```

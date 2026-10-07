@@ -1,5 +1,4 @@
-// The ^P command palette (EPIC N, issue #460; docs/ui/03-palette.html,
-// 03-A … 03-C). One fuzzy search over four groups — COMMANDS, MODELS,
+// The ^P command palette. One fuzzy search over four groups — COMMANDS, MODELS,
 // SESSIONS, FILES, in that order — each hidden when nothing in it matches
 // and capped at PALETTE_GROUP_ROWS until `tab` focuses it. Pi's fuzzyMatch
 // ranks (the row's text first, a command's summary at a lower weight) and

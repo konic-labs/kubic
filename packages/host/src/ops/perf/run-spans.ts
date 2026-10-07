@@ -1,14 +1,14 @@
-// Run spans on the live headless path (issue #98; §49.3, §50, §61).
+// Run spans on the live headless path.
 // Maps the real headless-run events (lane accept, lane drive, harness tool
-// hooks) onto the §29 SpanRecorder, so a live `kubic run` records spans
-// instead of leaving §49.3 unimplemented. Destination is documented in
+// hooks) onto the SpanRecorder, so a live `kubic run` records spans
+// instead of leaving unimplemented. Destination is documented in
 // docs/packages/host.md and docs/cli/commands.md:
 //   - durable artifact: <sessions-root>/<id>/spans.jsonl (one JSON record
 //     per span, written by the composition root next to the journal),
-//   - stderr debug lines on the existing §50 vocabulary (`[agent]` lane
+//   - stderr debug lines on the existing vocabulary (`[agent]` lane
 //     lines, `[tool]` in/out lines) behind `kubic run --debug`.
 // No new debug class is invented: DEBUG_CLASSES stays the pinned eight.
-// Since issue #397 the attachment is a pi-durable `ToolTask` hook (beforeTool
+// Since the attachment is a pi-durable `ToolTask` hook (beforeTool
 // opens the span, afterTool closes it and returns the result unchanged).
 // Never blocks a tool call — the handlers return undefined except for the
 // untouched result, so telemetry can only observe the lane, never fail it.
@@ -129,7 +129,7 @@ export class RunSpans {
   }
 
   private remember(id: string): void {
-    // Issue #243: one keyed read, never a trace copy plus linear find.
+    // One keyed read, never a trace copy plus linear find.
     const span = this.recorder.get(id);
     this.startMs.set(id, span?.startMs ?? 0);
     this.endMs.set(id, null);
@@ -140,7 +140,7 @@ export class RunSpans {
   private close(id: string, error?: string): number {
     if (this.endMs.get(id) === null) {
       this.recorder.end(id, error);
-      // Issue #243: one keyed read, never a trace copy plus linear find.
+      // One keyed read, never a trace copy plus linear find.
       const span = this.recorder.get(id);
       this.endMs.set(id, span?.endMs ?? null);
     }
@@ -160,7 +160,7 @@ export class RunSpans {
   }
 }
 
-// Per-turn spans for event-driven surfaces (issue #290): the TUI folds
+// Per-turn spans for event-driven surfaces: the TUI folds
 // the conversation's committed lane events, so a turn is a run-start…run-end
 // pair with tool calls in between — not the headless lane accept/drive
 // shape. Each turn gets its own RunSpans keyed by the run-start inputs:
@@ -213,7 +213,7 @@ export class TurnSpans {
   }
 }
 
-// What a turn-driven surface (the TUI) passes its runner (issue #290):
+// What a turn-driven surface (the TUI) passes its runner:
 // the per-turn tracker plus where a settled turn's artifact lines go.
 export interface TurnSpansSink {
   turns: TurnSpans;
@@ -242,7 +242,7 @@ export function serializeSpanArtifact(
     .join('\n')}\n`;
 }
 
-// Harness hook attachment for the `kubic.spans` extension (issue #397):
+// Harness hook attachment for the `kubic.spans` extension:
 // opens a pi.tool.execute span on beforeTool and closes it on afterTool.
 // Handlers never block a call; afterTool returns the result unchanged.
 //

@@ -1,4 +1,4 @@
-// Policy interceptors as pi-durable ToolTask hooks (issues #15, #208, #397).
+// Policy interceptors as pi-durable ToolTask hooks.
 // Every behaviour here runs through a REAL Harness over MemoryStorage with
 // the faux provider: first-block-wins, throw-to-block and argument chaining
 // are the harness's own hook semantics, not a hand-rolled stand-in.
@@ -153,7 +153,7 @@ function probeTools(world: World) {
 
 interface BootOptions {
   calls?: Array<{ name: string; args: Record<string, JsonValue> }>;
-  // Issue #194: a scripted multi-turn sequence (each inner array is one
+  // A scripted multi-turn sequence (each inner array is one
   // assistant tool-use message) whose entries may pin a provider call id,
   // for the duplicate-id and empty-id stand-down cases.
   turns?: Array<
@@ -228,7 +228,7 @@ async function drive(booted: Booted, prompt = 'go'): Promise<void> {
   expect(settled.status).toBe('done');
 }
 
-describe('policyInterceptorHooks on a real harness (issue #397)', () => {
+describe('policyInterceptorHooks on a real harness', () => {
   it('blocks a destructive bash call with a redacted reason the model sees as an error', async () => {
     const booted = await boot({
       calls: [
@@ -310,7 +310,7 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
     ]);
   });
 
-  it('lets read open an advertised skill root and confines everything else (issue #173)', async () => {
+  it('lets read open an advertised skill root and confines everything else', async () => {
     const skill = '/home/u/.agents/skills/a/SKILL.md';
     const booted = await boot({
       calls: [
@@ -356,7 +356,7 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
     expect(allowed.world.calls).toHaveLength(1);
   });
 
-  it('lets an approved call through and blocks a denied one (issue #16)', async () => {
+  it('lets an approved call through and blocks a denied one', async () => {
     const denied = await boot({
       calls: [{ name: 'bash', args: { command: 'rm -rf /tmp/x' } }],
       policy: {
@@ -395,7 +395,7 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
     expect(fast.world.calls[0]?.args.path).toBe('/work/etc/passwd');
   });
 
-  it('stands down per call id, never by tool name (issue #194)', async () => {
+  it('stands down per call id, never by tool name', async () => {
     let asks = 0;
     const booted = await boot({
       calls: [
@@ -422,7 +422,7 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
     expect(results[1]?.text).toContain('destructive command blocked');
   });
 
-  it('keys the stand-down on the exact call, not the provider id (issue #194)', async () => {
+  it('keys the stand-down on the exact call, not the provider id', async () => {
     let asks = 0;
     const booted = await boot({
       turns: [
@@ -450,7 +450,7 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
     expect(booted.world.calls[1]?.args.path).toBe('/work/etc/passwd');
   });
 
-  it('spends the stand-down after the approved call (issue #194)', async () => {
+  it('spends the stand-down after the approved call', async () => {
     let asks = 0;
     const booted = await boot({
       turns: [
@@ -478,7 +478,7 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
     expect(results[1]?.text).toContain('destructive command blocked');
   });
 
-  it('never honours a stand-down for an empty call id (issue #194)', async () => {
+  it('never honours a stand-down for an empty call id', async () => {
     const booted = await boot({
       turns: [[{ name: 'bash', args: { command: 'rm -rf /tmp/x' }, id: '' }]],
       policy: {
@@ -495,7 +495,7 @@ describe('policyInterceptorHooks on a real harness (issue #397)', () => {
   });
 });
 
-describe('policy interceptor state lifetime (issue #397)', () => {
+describe('policy interceptor state lifetime', () => {
   it('gives every factory call its own stand-down set', () => {
     // The same options object is reusable: the state lives in the factory
     // invocation, never in the options or in module scope. One invocation =
@@ -507,9 +507,10 @@ describe('policy interceptor state lifetime (issue #397)', () => {
   });
 });
 
-describe('secret redaction (issue #192)', () => {
-  // §36.1 rule 2: these strings reach the trajectory, the audit ledger and
-  // the TUI, so every probe must come back with no secret material. Probes are faux material only.
+describe('secret redaction', () => {
+  // These strings reach the trajectory, the audit ledger and the TUI, so
+  // every probe must come back with no secret material. Probes are faux
+  // material only.
   const PROBES: ReadonlyArray<readonly [string, readonly string[]]> = [
     ['Authorization: Bearer sk-live-123', ['sk-live-123']],
     ['Authorization hunter2', ['hunter2']],
@@ -556,7 +557,7 @@ describe('secret redaction (issue #192)', () => {
   });
 });
 
-describe('read-only shell allowlist (issue #161)', () => {
+describe('read-only shell allowlist', () => {
   it.each([
     'ls',
     'ls -la',
@@ -594,7 +595,7 @@ describe('read-only shell allowlist (issue #161)', () => {
     ['node -e "fs.writeFileSync(1,2)"', 'node'],
     ['rm -rf x', 'rm'],
     ['ls | xargs rm', 'xargs'],
-    // Review of #161: a single `&` is a separator too, or everything after
+    // Review of: a single `&` is a separator too, or everything after
     // it escapes the allowlist.
     ['ls & git commit -m x', 'commit'],
     ['ls & sed -i s/a/b/ f', 'sed -i'],
@@ -604,7 +605,7 @@ describe('read-only shell allowlist (issue #161)', () => {
     // launder another command through it (fail closed on `$`).
     ['cat $(git commit -m x)', 'command substitution'],
     ['cat `npm test`', 'command substitution'],
-    // Review round 2: process substitution runs a command too.
+    // Process substitution runs a command too.
     ['cat <(git commit -m x)', 'process substitution'],
     ['cat <(sed -i s/a/b/ f)', 'process substitution'],
     ["R='> out'; cat a $R", 'shell-expanded'],
@@ -613,7 +614,7 @@ describe('read-only shell allowlist (issue #161)', () => {
     // Write/exec flags under an allowed verb.
     ['git diff --output=out.patch', '--output'],
     ['rg --pre "cat" pattern', '--pre'],
-    // Review round 2: git global options that execute code.
+    // Git global options that execute code.
     ['git -c diff.external=x diff', '-c'],
     ['git -c core.pager=x log', '-c'],
     ['git --exec-path=/tmp log', '--exec-path'],
@@ -648,7 +649,7 @@ describe('read-only shell allowlist (issue #161)', () => {
     ]);
   });
 
-  it('runs the read-only presets’ checks and blocks writes, destructive and network calls (issue #157)', async () => {
+  it('runs the read-only presets’ checks and blocks writes, destructive and network calls', async () => {
     // The reviewer/planner presets run their targeted checks through this
     // level (`.kubic/roles/{reviewer,planner}.md`: `shell:
     // read-only-allowlist`, `git: false`), so a lane on it must let a
@@ -748,7 +749,7 @@ describe('destructive/confine matchers (unit)', () => {
     });
   });
 
-  it('keeps tilde/$VAR tokens workspace-relative for tool paths (issue #355)', () => {
+  it('keeps tilde/$VAR tokens workspace-relative for tool paths', () => {
     // The write/edit/read ops resolve a path with node `resolve(cwd, path)`
     // and never expand `~` or `$VAR`, so for a TOOL path these tokens are
     // literal workspace entries (`/work/~/.bashrc`) — confinePath is right to
@@ -788,7 +789,7 @@ describe('destructive/confine matchers (unit)', () => {
     expect(defaultIsDestructive('echo hi', '/work')).toBe(false);
   });
 
-  // Issue #357: each new DESTRUCTIVE_PATTERNS arm pinned on its own, with a
+  // Each new DESTRUCTIVE_PATTERNS arm pinned on its own, with a
   // near-miss beside it, so weakening one regex fails exactly one row.
   it.each([
     ['git push --force origin main', true],
@@ -820,7 +821,7 @@ describe('destructive/confine matchers (unit)', () => {
     ['git restore --staged a.ts', false],
     ['git restore -S a.ts', false],
     ['git status; git log', false],
-  ])('classifies %s as destructive=%s (issue #357)', (command, expected) => {
+  ])('classifies %s as destructive=%s', (command, expected) => {
     expect(defaultIsDestructive(command, '/work')).toBe(expected);
   });
 });

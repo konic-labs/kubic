@@ -2,13 +2,11 @@
 
 > The agent lane runtime; Pi boundary (CODEOWNERS-gated
 > `src/pi-boundary.ts`).
-> Owner: issue
-> [#63](https://github.com/konic-labs/kubic/issues/63).
-> Source: `packages/worker/src` (read-only — this page quotes it, never moves it).
+> Source: `packages/worker/src`.
 
 `@kubic/worker` is the agent runtime: the solo lane, tool adaptation,
 Pi harness wiring, sessions, compaction and the failure taxonomy. All Pi imports flow through the worker Pi seam
-`src/pi-boundary.ts` (§65) — `scripts/dep-lint.mjs` rejects
+`src/pi-boundary.ts` — `scripts/dep-lint.mjs` rejects
 `@earendil-works/*` imports everywhere else in the worker (the TUI owns
 the other seam, `packages/tui/src/tui-boundary.ts`), and CODEOWNERS flags
 every diff touching the boundary for maintainer review.
@@ -17,32 +15,32 @@ every diff touching the boundary for maintainer review.
 
 | Module | Exports |
 | --- | --- |
-| `pi-boundary.ts` | Worker Pi seam (§65, [#197](https://github.com/konic-labs/kubic/issues/197); #391 moved it to the Pi 1.0 surface). pi-durable harness: values `Harness`, `createRegistry`, `defineExtension`, `defineTool`, `wrapTool`, `hook`, `section`, `ToolTask`, `GenerationTask`, `CompactionTask`, `AgentDoc`, `LiveDoc`, `UsageDoc`, `configure`, `defineDoc`, the entry-kind tokens (`UserEntry`, `AssistantEntry`, `ToolResultEntry`, `SystemEntry`, `CompactionEntry`), `MemoryStorage`, `watchEvents`, `ConversationBusy`; types `Conversation`, `Submission`, `SettledSubmissionRecord`, `Extension`, `ToolRegistration`, `ToolExecutionApi`, `ToolHooks`, `HookRegistration`, `HarnessSettings`, `CompactionPolicy`, `AgentEvent`, `EntryRecord`, `Storage`; storage `openNodeJsonlStorage`. `@earendil-works/chord`: `Context`, `BACKGROUND_CONTEXT`, `JsonValue`. `@earendil-works/pi-durable/env`: `FileSystem`, `ExecutionEnv`, `Result`, `ok`, `err`, `FileError`, `FileErrorCode`, `FileInfo`, `FileKind`. Model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`, the lazy `api/*.lazy` subpaths, `builtinProviders`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review, and the pi-boundary gate fails an export without one |
-| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `SoloPolicyOptions` (`spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the #392 handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; the pre-1.0 `memos` option is gone — tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` — #148), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; the pre-1.0 `driveToSettled`/`DriveOutcome` loop was deleted with #395, and `lane/turn.ts` owns the glue |
+| `pi-boundary.ts` | Worker Pi seam (moved it to the Pi 1.0 surface). pi-durable harness: values `Harness`, `createRegistry`, `defineExtension`, `defineTool`, `wrapTool`, `hook`, `section`, `ToolTask`, `GenerationTask`, `CompactionTask`, `AgentDoc`, `LiveDoc`, `UsageDoc`, `configure`, `defineDoc`, the entry-kind tokens (`UserEntry`, `AssistantEntry`, `ToolResultEntry`, `SystemEntry`, `CompactionEntry`), `MemoryStorage`, `watchEvents`, `ConversationBusy`; types `Conversation`, `Submission`, `SettledSubmissionRecord`, `Extension`, `ToolRegistration`, `ToolExecutionApi`, `ToolHooks`, `HookRegistration`, `HarnessSettings`, `CompactionPolicy`, `AgentEvent`, `EntryRecord`, `Storage`; storage `openNodeJsonlStorage`. `@earendil-works/chord`: `Context`, `BACKGROUND_CONTEXT`, `JsonValue`. `@earendil-works/pi-durable/env`: `FileSystem`, `ExecutionEnv`, `Result`, `ok`, `err`, `FileError`, `FileErrorCode`, `FileInfo`, `FileKind`. Model layer (`Model`, `MutableModels`, `Usage`, `DeferredHandle`, `ModelThinkingLevel`, thinking clamp, providers, `Type`, the lazy `api/*.lazy` subpaths, `builtinProviders`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review, and the pi-boundary gate fails an export without one |
+| `lane/solo.ts` | `SOLO_LANE_NAME` (`'main'`), `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput`, `defaultSoloModelId`, `SoloPolicyOptions` (`spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; the pre-1.0 `memos` option is gone — tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` ), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; the pre-1.0 `driveToSettled`/`DriveOutcome` loop was deleted with, and `lane/turn.ts` owns the glue |
 | `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `KubicLaneTool`, `KubicLaneCompaction`, `toKubicLaneEvent`, `subscribeLaneEvents` |
 | `lane/failures.ts` | `FailureCode`, `FAILURE_CODES`, `RetryStrategy`, `RETRY_STRATEGIES`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
-| `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling — #168), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)). A successful `edit` or `write` also puts its display record in the result `details` (issue #456) — never in the model's text |
-| `ops/display-diff.ts` | `displayDiff(before, after)` (Pi's display form: `+n` / `-n` / ` n` rows, 3 lines of context, `...` gaps, bounded LCS, 400 rows) and `writeDisplay(content)`; the ops report them through `OpContext.display` (issue #456) |
-| `lane/interceptors.ts` | `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `redactSecrets` (broad redactor for summaries/block reasons: inline credential rules + the shared `@kubic/core` shape table, #192), `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations, #397; one call per boot — the attempt counter and the exact-call stand-down set (call id + args hash, spent after the call, #194) live in that call, never across boots; first block wins, a throw blocks) |
+| `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling), `renderToolText`, `renderReadText`, `renderGrepText`, `renderBashText` (plain-text results with a header; [tools](../cli/tools.md)). A successful `edit` or `write` also puts its display record in the result `details` — never in the model's text |
+| `ops/display-diff.ts` | `displayDiff(before, after)` (Pi's display form: `+n` / `-n` / ` n` rows, 3 lines of context, `...` gaps, bounded LCS, 400 rows) and `writeDisplay(content)`; the ops report them through `OpContext.display` |
+| `lane/interceptors.ts` | `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `redactSecrets` (broad redactor for summaries/block reasons: inline credential rules + the shared `@kubic/core` shape table), `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations; one call per boot — the attempt counter and the exact-call stand-down set (call id + args hash, spent after the call) live in that call, never across boots; first block wins, a throw blocks) |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
-| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `forkSession` / `ForkSessionOptions` / `ForkSessionResult` / `SessionForkError` (issue #265: a new session forked from an existing one), `laneConversationIdOf` (the conversation a session's lane runs — a fork's recorded `KubicSessionMeta.conversation`, else the reserved root; every transcript reader resolves it), `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
+| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `forkSession` / `ForkSessionOptions` / `ForkSessionResult` / `SessionForkError` (a new session forked from an existing one), `laneConversationIdOf` (the conversation a session's lane runs — a fork's recorded `KubicSessionMeta.conversation`, else the reserved root; every transcript reader resolves it), `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` — the 1.0 `FileSystem` (19 members, `id`/`truncateFile`/`flushFile` included) over the exec file bridge |
-| `lane/turn.ts` | `TurnOutcome`, `RunTurnOptions`, `runTurn`, `awaitTurn`, `turnAbort`, `turnAbortReasonOf`, `TurnAbort`, `turnLaneRecord`, `TURN_BUSY_REASON`, `SoloOverflowRecovery`, `OverflowRecoveryOptions`, `recoverSoloOverflowTurn`, `runTurnWithOverflowRecovery` — one turn is `conversation.submit({ type: 'input', … })` → `submission.wait(context)`; no Kubic-side loop, no sleep (§20.5–§20.7, #395). The recovery wrapper retries exactly one failure — context overflow, compacted first (#399) and retried once (#209) |
-| `lane/settle.ts` | `JsonValue`, `ResultStatus`, `ResultErrorKind`, `ResultError`, `OperationErrorLike`, `SettledResult`, `LaneTerminalStatus`, `SubmissionFailure`, `classifyHarnessError`, `classifySubmissionFailure`, `classifyThrownError`, `laneStatusOf`, `laneErrorOf`, `settleTerminalStatus`, `settleSubmission` — a settled pi-durable submission → Kubic's `ResultStatus`/`ResultError` and the §52 codes (#395) |
-| `lane/pending.ts` | `PendingPolicy`, `PendingReport`, `PendingSettlementResult`, `SettlePendingOptions`, `PendingLane`, `inspectPending`, `settlePending`, `describePendingSettlement`, `pendingInputText`, `inspectStoredWork` — settle a turn a crashed process left open (#147; #396: `harness.inspect()` decides, `resume` waits under the caller's guard, `abort` is durable) |
-| `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `AbortableLane`, `LaneAbortResult`, `LaneDriveError`, `abortLane`, `forgetLaneKills` — `conversation.abort(context)` plus the conversation-keyed kill drain (every kill attempted, failures aggregated, #395 D6.2); `track()` returns the unregister fn its owner calls when the handle settles (#142) |
-| `lane/transcript.ts` | `TranscriptItem`, `entriesToTranscript`, `readConversationEntries`, `readSessionEntries` — the one pi-durable → Kubic transcript adapter (#400) |
-| `lane/test-harness.ts` | `bootFauxLane`, `runPrompt`, `laneEntries`, `laneToolResults`, `laneSystemPrompt`, `laneActiveTools`, `fauxToolUse`, … — the test-only faux SoloLane factory (#401) |
+| `lane/turn.ts` | `TurnOutcome`, `RunTurnOptions`, `runTurn`, `awaitTurn`, `turnAbort`, `turnAbortReasonOf`, `TurnAbort`, `turnLaneRecord`, `TURN_BUSY_REASON`, `SoloOverflowRecovery`, `OverflowRecoveryOptions`, `recoverSoloOverflowTurn`, `runTurnWithOverflowRecovery` — one turn is `conversation.submit({ type: 'input', … })` → `submission.wait(context)`; no Kubic-side loop, no sleep. The recovery wrapper retries exactly one failure — context overflow, compacted first and retried once |
+| `lane/settle.ts` | `JsonValue`, `ResultStatus`, `ResultErrorKind`, `ResultError`, `OperationErrorLike`, `SettledResult`, `LaneTerminalStatus`, `SubmissionFailure`, `classifyHarnessError`, `classifySubmissionFailure`, `classifyThrownError`, `laneStatusOf`, `laneErrorOf`, `settleTerminalStatus`, `settleSubmission` — a settled pi-durable submission → Kubic's `ResultStatus`/`ResultError` and the failure codes |
+| `lane/pending.ts` | `PendingPolicy`, `PendingReport`, `PendingSettlementResult`, `SettlePendingOptions`, `PendingLane`, `inspectPending`, `settlePending`, `describePendingSettlement`, `pendingInputText`, `inspectStoredWork` — settle a turn a crashed process left open (`harness.inspect()` decides, `resume` waits under the caller's guard, `abort` is durable) |
+| `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `AbortableLane`, `LaneAbortResult`, `LaneDriveError`, `abortLane`, `forgetLaneKills` — `conversation.abort(context)` plus the conversation-keyed kill drain (every kill attempted, failures aggregated); `track()` returns the unregister fn its owner calls when the handle settles |
+| `lane/transcript.ts` | `TranscriptItem`, `entriesToTranscript`, `readConversationEntries`, `readSessionEntries` — the one pi-durable → Kubic transcript adapter |
+| `lane/test-harness.ts` | `bootFauxLane`, `runPrompt`, `laneEntries`, `laneToolResults`, `laneSystemPrompt`, `laneActiveTools`, `fauxToolUse`, … — the test-only faux SoloLane factory |
 | `lane/wrap.ts` | `ExecuteFn`, `ToolContribution`, `composeTools`, `compositionOrder`, `PolicyDeniedError`, `withPermissionCheck`, `TelemetryRecord`, `withTelemetry` |
 | `usage.ts` | `KubicUsageRow`, `formatCost`, `usageRowFromEntry` |
 | `model-select.ts` | `ModelSelectError`, `ModelSelection`, `AnyModel`, `selectModel`, `parseModelFlag`, `EscalationRecord`, `EscalationLadder`, `EscalationError`, `escalateModel`, `supportedThinking`, `clampThinking` |
 | `models-config.ts` | `CustomApi`, `CUSTOM_APIS`, `CustomModelSpec`, `CustomProviderSpec`, `ModelsJsonError`, `THINKING_LEVELS`, `isThinkingLevel`, `parseModelsJson`, `LOCAL_MODELS_EXAMPLE`, `registerCustomProviders` |
 | `prompts.ts` | `PromptCacheError`, `SystemPromptInput`, `assembleSystemPrompt`, `sortedToolNames`, `serializeMetadata`, `AffinityEscalation`, `TaskAffinity`, `pinModelForTask`, `taskModelForTurn`, `assertSingleModelId`, `ModelEscalationEvent`, `escalatePinnedModel`, `CompactionRoute`, `buildCompactionRoute`, `SessionCacheCounters`, `emptyCacheCounters`, `recordCacheUsage`, `cacheHitRate`, `SessionCacheStats` |
-| `compaction.ts` | `DEFAULT_RESERVE_TOKENS`, `MAX_RESERVE_FRACTION`, `effectiveReserveTokens`, `SOLO_KEEP_RECENT_TOKENS` (20000), `SOLO_BACKGROUND_TOKENS` (0: Kubic's reserve threshold is the only trigger — no speculative background summary, #399), `SoloCompactionSettingsOptions`, `soloCompactionSettings` (the harness `settings.compaction`; `reserveTokens` is a live getter clamped to the current model's window, so a model switch re-clamps with no explicit step), `SoloCompactionLane`, `compactSoloLane` (§27.2 manual `/compact [focus]`; admits Pi's compaction task with Kubic's prompt as its instructions — #330; **automatic** threshold/overflow compaction uses Pi's own summarization prompt, because pi-durable only accepts instructions through `compact()`, so Kubic's `buildCompactPrompt` reaches the manual path only — #399/D3), `parseCompactCommand`, `CompactionError`, `CompactPromptInput`, `buildCompactPrompt`, `FileOpKind`, `FileOp`, `CumulativeFileOps`, `emptyFileOps`, `accumulateFileOps`, `StructuredSummary`, `formatStructuredSummary`, `TruncatedToolOutput`, `SpillArtifact`, `resolveTruncatedOutput`, `buildSpillArtifact`, `passThroughOutput`, `CompactedState` (the `buildCompactedState` constructor was deleted, #215) |
-| `approval-client.ts`, `session.ts`, `tools.ts` | Pointer | Approvals decider in `@kubic/host` `approvals.ts` (#16) + `lane/interceptors.ts`; sessions in `lane/session-store.ts` (#14); tools in `lane/tools-adapter.ts` (#11) |
+| `compaction.ts` | `DEFAULT_RESERVE_TOKENS`, `MAX_RESERVE_FRACTION`, `effectiveReserveTokens`, `SOLO_KEEP_RECENT_TOKENS` (20000), `SOLO_BACKGROUND_TOKENS` (0: Kubic's reserve threshold is the only trigger — no speculative background summary), `SoloCompactionSettingsOptions`, `soloCompactionSettings` (the harness `settings.compaction`; `reserveTokens` is a live getter clamped to the current model's window, so a model switch re-clamps with no explicit step), `SoloCompactionLane`, `compactSoloLane` (manual `/compact [focus]`; admits Pi's compaction task with Kubic's prompt as its instructions; **automatic** threshold/overflow compaction uses Pi's own summarization prompt, because pi-durable only accepts instructions through `compact()`, so Kubic's `buildCompactPrompt` reaches the manual path only), `parseCompactCommand`, `CompactionError`, `CompactPromptInput`, `buildCompactPrompt`, `FileOpKind`, `FileOp`, `CumulativeFileOps`, `emptyFileOps`, `accumulateFileOps`, `StructuredSummary`, `formatStructuredSummary`, `TruncatedToolOutput`, `SpillArtifact`, `resolveTruncatedOutput`, `buildSpillArtifact`, `passThroughOutput`, `CompactedState` (the `buildCompactedState` constructor was deleted) |
+| `approval-client.ts`, `session.ts`, `tools.ts` | Pointer | Approvals decider in `@kubic/host` `approvals.ts` + `lane/interceptors.ts`; sessions in `lane/session-store.ts`; tools in `lane/tools-adapter.ts` |
 | `ops/` | Implemented | Operation implementations (read/write/edit/bash/git/…) + registry |
 
-### Output bounds (issue #121)
+### Output bounds
 
 Child output is capped at two independent layers, both keeping the **tail**
 (endings usually carry the error) and naming exactly what was dropped:
@@ -52,7 +50,7 @@ Child output is capped at two independent layers, both keeping the **tail**
   `SpawnOptions.maxOutputBytes`. A chatty child (`yes`, a verbose build) can no
   longer OOM the run; the settled stream gains a
   `[kubic: output truncated — dropped N leading bytes, kept the last M]`
-  header. Both numbers are **bytes of the decoded stream** (issue #354) —
+  header. Both numbers are **bytes of the decoded stream** —
   invalid UTF-8 arrives as U+FFFD and costs 3 bytes, so a binary-producing
   child is capped conservatively: the accumulator measures
   `Buffer.byteLength` per chunk and trims on a **code-point boundary**, so
@@ -69,7 +67,7 @@ Child output is capped at two independent layers, both keeping the **tail**
   consistent.
 | `index.ts` | Pointer | No barrel — import per-module paths |
 
-### Find/grep walk bounds (issue #172)
+### Find/grep walk bounds
 
 `walkFiles` (`ops/walk.ts`) is what `find` and `grep` recurse with, so
 both made the same mistake on a real repo: the 10,000-entry cap was spent on
@@ -121,11 +119,11 @@ The real-filesystem suite for all of this is
 `NodeExecutionEnv`, a >10k `node_modules` fixture, a directory cycle, and a
 cleanup `afterEach`).
 
-### Grep bounds (issue #180)
+### Grep bounds
 
 `grep` reads and returns under three bounds, all in `ops/grep.ts`:
 
-- **`GREP_MAX_LINE_LENGTH` (500, §27.5 / Pi's constant):** match text is
+- **`GREP_MAX_LINE_LENGTH` (500, / Pi's constant):** match text is
   clipped, `linesTruncated: true` marks it, and the rendered header says
   `lines clipped at 500 chars`. Clipping is not truncation — every match is
   still reported, so `truncated` stays false — but a partial line read as a
@@ -152,13 +150,13 @@ cleanup `afterEach`).
 `include` stays a path substring test — pinned in the tool schema and the
 operation description (`ops/grep.test.ts`), not turned into a glob.
 
-### Bash op: bash-preferred, sh fallback (issue #123)
+### Bash op: bash-preferred, sh fallback
 
 The `bash` op runs **bash when the system has it** — not `sh`, so
 bashisms (`[[ ]]`, `local`, arrays) work wherever bash exists. Resolution
 is lazy and cached per process: the first command attempts `bash`, and a
 spawn that settles exit 127 with Node's `spawn <name> ENOENT` message
-line (the `env.ts` ENOENT hardening from issue #85 is what puts that
+line (the `env.ts` ENOENT hardening is what puts that
 message in stderr — user output never matches) degrades once to `sh` and
 remembers — a single detect-and-retry inside
 `execute()`, before the registry memoizes under `op-result-bash`, so a
@@ -169,7 +167,7 @@ scripts the answer. The Windows `cmd /d /s /c` path is unchanged.
 `BashResult.shell: 'bash' | 'sh' | 'cmd'` names what actually ran. The
 retry handle is re-registered via `ctx.trackHandle` so
 timeout/abort kill whichever handle is live, and the settled one is
-**untracked** again (issue #142): `OperationKillRegistry.track` returns the
+**untracked** again: `OperationKillRegistry.track` returns the
 unregister fn the op calls once `wait()` settles, because a lane reuses one
 registry for a whole session — a handle left per completed call kept that
 call's output alive for the life of the run. `kill()` on a settled handle is
@@ -181,7 +179,7 @@ The test seam
 `__setResolvedShellForTests` (exported from `ops/bash.ts`, never
 re-exported) pins or resets the per-process resolution.
 
-A clipped stream spills its full text by path (issue #182; §27.5):
+A clipped stream spills its full text by path:
 `clipStream` bounds each stream to its last `BASH_RESULT_MAX_LINES` (2000,
 pi-durable's `DEFAULT_MAX_LINES`) and its last `BASH_RESULT_MAX_CHARS`
 (64 KiB), writes the untruncated stream through `OpContext.spill` — the
@@ -198,21 +196,20 @@ nothing lands in the workspace (where the end-of-run sweep would journal it)
 or in `$TMPDIR`. No sink (tests, journal-free contexts) or a sink that throws
 leaves the header without a path; the call never fails over a spill.
 
-The op also bounds a call in time (issue #339): with no `timeout` the command
+The op also bounds a call in time: with no `timeout` the command
 gets `BASH_DEFAULT_TIMEOUT_SEC` (120 s), any timeout is clamped to
 `BASH_MAX_TIMEOUT_SEC` (600 s), and processes the command backgrounded are
 killed when it exits unless `KUBIC_BASH_KEEP_BACKGROUND` opts in. Both limits
 and the model-facing description come from those constants; the user-facing
 statement is in [tools](../cli/tools.md#bash-limits).
 
-### Read/edit bounds (issue #122)
+### Read/edit bounds
 
 Two hard bounds keep one tool call from costing the whole file in memory
-(the journal has hashed bounded since #107; the ops now match):
+(the journal has hashed bounded; the ops now match):
 
 - **`read` — `READ_MAX_BYTES` (8 MiB) of I/O, `READ_CHUNK_BYTES` (512 KiB)
-  per buffer:** with a ranged-read seam (`FileSystem.readFileRange` — #107's
-  file-bridge seam extended to `ExecutionEnv`), `readWindowed` seeks to the
+  per buffer:** with a ranged-read seam (`FileSystem.readFileRange` — 's file-bridge seam extended to `ExecutionEnv`), `readWindowed` seeks to the
   `offset` line by counting newlines chunk by chunk and collects the window
   with one `StringDecoder` across chunks — the window costs the window, not
   the file. Seams without `readFileRange` fall back to a whole read
@@ -230,8 +227,7 @@ Two hard bounds keep one tool call from costing the whole file in memory
   only output cutting (the line window, `READ_MAX_LINES`, and the 51200B
   output cap) — an explicit `limit` is the requested region, not
   truncation. `readWindowed` calls
-  `fs.readFileRange` as a method (the real `NodeFileSystem` reads
-  `this.cwd`; #199), and `read` names the actual failure: a missing path
+  `fs.readFileRange` as a method (the real `NodeFileSystem` reads `this.cwd`), and `read` names the actual failure: a missing path
   is `not_found`, a directory `is_directory`, an unreadable file
   `permission_denied`, a cwd-confinement escape `invalid_args`; any other
   error propagates as a fault instead of masquerading as a missing file.
@@ -239,7 +235,7 @@ Two hard bounds keep one tool call from costing the whole file in memory
   bound with a named `file_too_large` OpError (op failure-code vocabulary,
   `ops/types.ts`) naming the size — before any content allocation, journal
   untouched. The boundary is exact: 8 MiB edits fine, 8 MiB + 1 refuses.
-- **`read` output bounds (issue #176; §27.5):** the scan bound above is
+- **`read` output bounds:** the scan bound above is
   not a context bound. `READ_RESULT_MAX_BYTES` (51200B — Pi's
   `DEFAULT_MAX_BYTES`) caps what the model sees, whole lines only: a window
   past the cap keeps the lines that fit and adds
@@ -258,7 +254,7 @@ Two hard bounds keep one tool call from costing the whole file in memory
   with stream semantics, so a codepoint straddling the 512 KiB read
   boundary is not a false positive); binary content returns an empty
   `content`, a structured `binary: { reason, bytes }`, and a `binary file
-  (NB, …)` notice — the sniff only MARKS the window, so the #122 scan
+  (NB, …)` notice — the sniff only MARKS the window, so the scan
   contract is unchanged. `ReadResult` only gains fields; nothing is
   renamed.
 
@@ -268,7 +264,7 @@ whole file in memory (plus its UTF-8 decode) on a path the model triggers
 with a single tool call. Text ops stay text; for oversized files the
 refusal names targeted shell tooling as the actionable alternative.
 
-### Edit line endings and BOM (issue #195)
+### Edit line endings and BOM
 
 `edit` (`ops/edit.ts`) normalizes before matching and restores on write,
 following Pi's `edit-diff.ts` shape with three deliberate deviations from
@@ -307,7 +303,7 @@ multi-line replace, CRLF needle and replacement, BOM first line, BOM in the
 needle, no second BOM, empty-after-normalization refusal, `expectCount` on
 normalized text, LF unchanged, undo round-trip).
 
-### Write pre-image bound (issue #139)
+### Write pre-image bound
 
 `readPreImage` (`ops/atomic-file.ts`) never holds a file it cannot bound.
 Above `PREIMAGE_MAX_BYTES` (8 MiB, the text bound read and edit share) the
@@ -324,7 +320,7 @@ inventing content. `edit` is unaffected — it refuses above `EDIT_MAX_BYTES`
 before calling `readPreImage` — and a seam without `readFileRange` (a test
 double) keeps the whole-file fallback.
 
-### Write/edit symlink safety (issue #140)
+### Write/edit symlink safety
 
 `write` and `edit` share `replaceFile` (`ops/atomic-file.ts`), the
 journal-first tmp+rename writer. It now follows symlinks instead of
@@ -355,15 +351,15 @@ are optional (test doubles have no links and no cleanup) and
 tmp. A dangling link has no target to resolve, so the write replaces the
 link itself, as before.
 
-### Session storage (issue #392)
+### Session storage
 
 One pi-durable `Storage` per session, at `<sessions-root>/<id>/` — the same
 directory that already held the journal, spans, approvals posture and lock,
-and now the `spill/` directory of issue #182 (bash output too large for the
+and now the `spill/` directory of (bash output too large for the
 model's context window; removed with the session by `kubic sessions prune`).
 The storage is opened over the exec file bridge (`bridgeToPiFileSystem`), not
 through pi-durable's Node entry point: session bytes keep crossing the I/O
-seam, so the #359 secret scrubbing and the #361 file modes apply to the
+seam, so the secret scrubbing and the file modes apply to the
 session JSONL exactly as they did before, and Kubic stays the only package
 that touches `node:fs`.
 
@@ -393,10 +389,10 @@ re-synced from the document on attach, so the two cannot drift.
 storage did, so this is parity rather than a downgrade. A process crash loses
 nothing (the page cache outlives it); a power loss costs at most the newest
 commit, which recovery drops whole instead of leaving a torn session. The
-change journal stays Kubic's fsync'd store (§42.4): that is where "this
+change journal stays Kubic's fsync'd store: that is where "this
 change can be undone" is guaranteed.
 
-Session state is private ([#361](https://github.com/konic-labs/kubic/issues/361)):
+Session state is private:
 the session directory and the sessions root are 0700, and the JSONL files, the
 `session.json` header, the lock file and the stored thinking level are created
 0600 through the same bridge calls the port uses (the mode is applied at
@@ -406,7 +402,7 @@ tightened when the next session lock is taken, and `kubic doctor`'s
 
 **Legacy sessions (Pi 0.87).** A transcript written by the removed
 `JsonlSessionRepo` lives at `<root>/--<cwd>--/<ts>_<id>.jsonl` with a
-format-4 header. There is no converter (the repo is unreleased, §21):
+format-4 header. There is no converter (the repo is unreleased):
 `listSessions` reports it as `{ format: 'legacy' }` (and
 `sessionsTouchingWorkspace` skips it — a 0.87 transcript can never be the
 live sibling that probe warns about), and `attachSession` refuses it with
@@ -415,7 +411,6 @@ live sibling that probe warns about), and `attachSession` refuses it with
 ```
 session <id> was written by Kubic on Pi 0.87; start a new session
 ```
-
 
 A session id must be a plain path segment (`[A-Za-z0-9_-]`) **and** must not
 be shaped like one of pi's transcript directories (`--…--`): `listSessions`
@@ -440,23 +435,21 @@ harness closes it), and `release()` stays idempotent either way.
 `handle.storage` is for reads — `readSessionMetadata` and the other readers —
 and does not transfer ownership.
 
-
-### Session locking (issue #118)
+### Session locking
 
 One live attachment per session, fail-closed. `createSession` (before the
 storage is created) and `attachSession` (before the storage is opened)
 acquire `<sessions-root>/<session-id>/lock.json` — a
 `{pid, startedAt, procStart?, nonce?}` record of the attaching process
 (`startedAt` is when the lock was taken, `procStart` the holder process's
-own start time for the pid-reuse guard in issue #145, `nonce` the
+own start time for the pid-reuse guard, `nonce` the
 per-attempt unique that makes the post-write verification exact) — through
-the exec-owned lock-file primitive (`exec/lock-file.ts`; I/O confinement,
-§9): an O_EXCL (`writeFileSync(…, {flag: 'wx'})`) create is the atomic
+the exec-owned lock-file primitive (`exec/lock-file.ts`; I/O confinement): an O_EXCL (`writeFileSync(…, {flag: 'wx'})`) create is the atomic
 test-and-set, and the primitive makes the session dir eagerly as the
 lock's parent. `handle.release(…)` releases the lock, so the file exists
 only while a session is actually attached.
 
-The lock is the ONLY guard around a storage open (issue #392): pi-durable
+The lock is the ONLY guard around a storage open: pi-durable
 states that one process owns a storage at a time and provides no
 cross-process locking, so every open in this module happens with the lock
 already held.
@@ -470,7 +463,7 @@ already held.
   recovery works same-day. There is NO age rule: a days-old lock with a
   live, matching holder is a long TUI session, never stale. Pid reuse is
   caught by the process-start check instead: the lock records the holder's
-  own start time (`/proc` on Linux; `processStartTimeOf`, issue #145), and
+  own start time (`/proc` on Linux; `processStartTimeOf`), and
   a live pid whose start moved is a recycled number, so the lock is stale.
   Locks without a recorded start (legacy shape, or a platform without a
   start-time source) fall back to the pid probe. An unparseable/torn
@@ -486,7 +479,7 @@ already held.
 - **Local filesystem only.** O_EXCL atomicity is claimed on local
   filesystems only — no network/shared-disk (NFS/SMB) locking semantics
   are provided or tested.
-- **Read-only liveness view** (issue #119): `sessionLockIsLive(sessionDir)`
+- **Read-only liveness view**: `sessionLockIsLive(sessionDir)`
   reports `{pid, startedAt}` while the holder pid is alive — the rail
   `kubic sessions prune` reads before it would ever delete a session. It is
   deliberately stronger than the steal rule above (any live holder pid
@@ -494,7 +487,7 @@ already held.
   reused pid costs at most a skipped prune. A dead holder — or a
   torn/absent payload — never protects. Liveness is this machine's process
   table, local filesystem only, like every lock read here.
-- **Repo-level overlap — warning only** (issue #118; §42.5 blind spot). A
+- **Repo-level overlap — warning only** (blind spot). A
   session lock is per session; **different** sessions on one workspace are
   legal. `sessionsTouchingWorkspace` lists the sessions recorded against a
   workspace (local-store view; it cannot prove one is *running*), and that
@@ -512,14 +505,14 @@ already held.
 The lock covers the session's journal too (it lives under the session
 dir) — the journal is not locked separately.
 
-### Session transcript (`lane/transcript.ts`, issue #400)
+### Session transcript (`lane/transcript.ts`)
 
 One adapter turns a session's durable entries into Kubic's
 `TranscriptItem` vocabulary. Pi 0.87 stored a tree of
 `{id, parentId, type: 'message', message}` entries; pi-durable stores
 typed records (`pi.user`, `pi.assistant` with `model: [AssistantMessage]`,
 `pi.tool-result`, `pi.system`, `pi.compaction`, `pi.reset`), so every
-reader — `kubic sessions attach`, the run-envelope usage, the §46
+reader — `kubic sessions attach`, the run-envelope usage, the
 trajectory, replay/export/eval — goes through this module instead of
 matching entry-kind strings itself.
 
@@ -538,7 +531,7 @@ no writes. A session whose root conversation does not exist yet (a fresh
 `sessions create`) reads as an empty transcript, never a throw. This is
 the path CLI readers take, so a reader never opens what it may not run.
 
-Pi seam: all pi-durable symbols come from `pi-boundary.ts` (§65); the
+Pi seam: all pi-durable symbols come from `pi-boundary.ts`; the
 adapter adds only `ResetEntry` and `ROOT_CONVERSATION_ID` there.
 
 ## Contracts
@@ -547,7 +540,7 @@ adapter adds only `ResetEntry` and `ROOT_CONVERSATION_ID` there.
 
 Exactly one `subscribeLaneEvents` per conversation relays pi-durable's
 committed watch (`watchEvents`, isolated here because upstream marks it
-experimental), only to the §15 groups Kubic routes: run status, tool
+experimental), only to the groups Kubic routes: run status, tool
 status, usage, faults, plus retry and compaction. `KubicLaneEvent`
 variants: `run-start`/`run-end` (`inputs: SubmissionId[]`),
 `tool-start`/`tool-end` (`toolCallId`, `toolName`, + `args` / `isError` +
@@ -555,27 +548,27 @@ variants: `run-start`/`run-end` (`inputs: SubmissionId[]`),
 assistant entry, + `entry`), `fault` (`code`, `message`),
 `retry` (`phase`, `attempt?`, `error?`), `compaction` (`phase`,
 `reason?`), `message-delta` (`text`: the in-flight generation's streamed
-text, issue #296; a whole-message or thinking-only batch maps to nothing),
+text; a whole-message or thinking-only batch maps to nothing),
 `entry` (`entry`: a committed non-assistant message end — a user turn, a
-compaction summary, a reset handoff — issue #317, so the transcript folds it
-live), `inbox` (`items`: the conversation's queue, #334), and `snapshot` —
+compaction summary, a reset handoff — so the transcript folds it
+live), `inbox` (`items`: the conversation's queue), and `snapshot` —
 the attach / late-join / overflow path,
 carrying the committed `entries`, live tools, retry, compactions and
 `pi.usage`; a snapshot REPLACES the consumer's state, it never appends.
 
-`FAILURE_CODES` (§52, 16 codes): `model_failed`, `model_refused`,
+`FAILURE_CODES`: `model_failed`, `model_refused`,
 `provider_transient`, `provider_auth`, `tool_failed`,
 `tool_invalid_args`, `tool_timeout`, `tool_unavailable`,
 `process_crashed`, `process_spawn_failed`, `workspace_failed`,
 `context_overflow`, `context_polluted`, `run_limit`,
 `approval_denied`, `approval_timed_out` — pinned equal with the
-[trajectory](trajectory.md) snapshot by test. `RETRY_STRATEGIES` (§53, 6):
+[trajectory](trajectory.md) snapshot by test. `RETRY_STRATEGIES`:
 `retry_same`, `retry_with_new_context`, `retry_with_new_agent`,
 `retry_with_stronger_model`, `retry_with_different_tool`,
 `retry_with_wider_capability`; decisions add `escalate`/`abandon`, and
 retries are bounded by `RetryBudget`.
-Emitted by `classifyFailure` (#209): `retry_same` (executed by the
-harness's durable generation retry, #395 — Kubic never relaunches it),
+Emitted by `classifyFailure`: `retry_same` (executed by the
+harness's durable generation retry — Kubic never relaunches it),
 `retry_with_different_tool`, and `retry_with_new_context` (solo
 compact-then-retry). Pollution escalates (the operator picks the fresh
 agent); `run_limit`/`approval_denied` abandon and spend nothing.
@@ -590,18 +583,14 @@ recovery (`recoverSoloOverflowTurn` / `runTurnWithOverflowRecovery` in
 `runManualCompaction`, then one retry with a fresh request id; a
 compaction that did not cut abandons with the original failure.
 
-### Usage (`usage.ts`, §39)
+### Usage (`usage.ts`)
 
 `KubicUsageRow` is `{ model, provider, usage: Usage (Pi type),
-toolCallId?, entryId? }`. There is no launch-layer rollup: the `usageRows`
-dep, `launched.usage()` and `summarizeUsage` were deleted (issue #433) —
-no production code ever supplied or read them, and the single roll-up
-surface is `kubic cost --session <run>` (#164). Since #398 the rows
-are built by `usageRowFromEntry` from the committed assistant entry, so
-`provider`/`model` are the ones that really answered (not the lane name or
-the boot model — #287). Issue #346 deleted the never-written
-`ttftMs`/`latencyMs` fields with the status bar's TTFT/tool-ms segments:
-Pi 1.0 reports no timing Kubic can read.
+toolCallId?, entryId? }`. `usageRowFromEntry` builds the rows from the
+committed assistant entry, so `provider`/`model` are the ones that really
+answered (not the lane name or the boot model). The roll-up surface is
+`kubic cost --session <run>`. Rows carry no timing: Pi 1.0 reports none
+Kubic can read.
 
 ## Dep-direction neighbours
 
@@ -612,12 +601,12 @@ Pi 1.0 reports no timing Kubic can read.
 - Never imported by [@kubic/trajectory](trajectory.md): trajectory imports
   nothing but core — it records structural snapshots pinned by the golden
   fixture test, never a live import.
-- Pi seam: `pi-boundary.ts` only (§65).
+- Pi seam: `pi-boundary.ts` only.
 
 ```text
 core + exec + agents ──→ @kubic/worker ──→ host
                               ↑
-                    pi-boundary.ts (worker Pi seam, §65)
+                    pi-boundary.ts (worker Pi seam)
 ```
 
 Back to the [docs index](../README.md).

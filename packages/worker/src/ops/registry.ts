@@ -1,15 +1,15 @@
-// Operation registry (issue #13, slice A).
+// Operation registry.
 // The registry IS the tool set: removing an entry makes the tool
 // uncallable by construction — dispatch is a record lookup, and unknown
 // names (or invalid args) become structured errors, never throws.
 //
-// Never-replay guard (§20.2, §20.3): a caller WITHOUT its own replay gate
+// Never-replay guard: a caller WITHOUT its own replay gate
 // (`ToolInvocation.keepEffectMemo`) memoizes an effect's result under the
 // invocation id, so a retry or crash replay with the same invocation id
 // returns the memoized result instead of re-executing. On the lane the
 // memo is skipped: pi-durable's `replay: 'unsafe'` already settles an
 // interrupted effect without re-entering execute, so the copy could never
-// be read and would cost a second durable write per effect (EPIC K #393).
+// be read and would cost a second durable write per effect.
 
 import { type TSchema, Type } from '../pi-boundary.js';
 import type { BashResult } from './bash.js';
@@ -84,7 +84,7 @@ export const OPERATIONS = {
 
 export type OperationName = keyof typeof OPERATIONS;
 
-// Tool parameter schemas (issue #168; §37.5, §40.3): the SINGLE source of
+// Tool parameter schemas: the SINGLE source of
 // what each operation accepts, as the model sees it and as Pi validates it
 // before a call runs. Kubic's validators stay authoritative (they also
 // check what a schema cannot, e.g. a compilable regex or a dash-free ref);

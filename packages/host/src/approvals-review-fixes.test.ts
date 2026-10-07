@@ -1,8 +1,8 @@
-// Adversarial review of the #324/#355/#357 detector fixes (approvals.ts): the
+// Adversarial review of the detector fixes (approvals.ts): the
 // first cut let `cd` tracking REPLACE the path as typed, so a literal
 // `.kubic/journal` write stopped being refused whenever a `cd` that does not
 // really change the directory at the write came before it. Each block below
-// was written RED first. The rule they pin: classify BOTH the token as typed
+// was written. The rule they pin: classify BOTH the token as typed
 // (against the workspace) AND the cd-tracked resolution, and raise if EITHER
 // is control-plane (or, for outside-write, outside) — phantom, conditional,
 // subshell, quoted or echoed `cd`s can then only over-trigger, never hide a

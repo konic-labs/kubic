@@ -232,7 +232,7 @@ describe('sink failure', () => {
   });
 });
 
-describe('case-transform bypass (fix cycle 2)', () => {
+describe('case-transform bypass', () => {
   it('refuses uppercase SK- material in the wire form', () => {
     const sink = createMemorySink();
     expect(() =>
@@ -350,7 +350,7 @@ describe('case-transform bypass (fix cycle 2)', () => {
   });
 });
 
-describe('nested unknown keys (fix cycle 2)', () => {
+describe('nested unknown keys', () => {
   it('rejects agent.extra (exactly-13 holds below the top level)', () => {
     const sink = createMemorySink();
     const input = baseInput();
@@ -396,10 +396,10 @@ describe('nested unknown keys (fix cycle 2)', () => {
   });
 });
 
-// Syslog sink (issue #286; §58): one record → one RFC 5424 line over an
+// Syslog sink: one record → one RFC 5424 line over an
 // injectable transport. Faux-only: the fake transport captures lines, no
 // socket is ever opened.
-describe('syslog sink (issue #286)', () => {
+describe('syslog sink', () => {
   function fakeTransport(): SyslogTransport & { lines: string[] } {
     const lines: string[] = [];
     return {

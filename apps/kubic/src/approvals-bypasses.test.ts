@@ -1,13 +1,12 @@
-// Bash approval-detector bypasses and autoApprove semantics found by the
-// post-ship re-audit of #324, #355, #357 and #230. Each block below was
-// written RED first against the shipped detectors, then fixed. The
-// classifiers are the PRODUCTION ones (defaultIsDestructive, isNetworkCommand,
-// confinePath) wired like triggerContextFor, and the lane tests drive the real
-// installSoloPolicy — faux/no provider, zero network.
-// Detection stays lexical: a variable-built path (`$D/roles/r.md` with D set
-// elsewhere), a symlink, `sed -i`, a script file or an interpreter still
-// reach `.kubic/` without raising — those documented limits are pinned in the
-// "still-documented misses" block so a future fix is a conscious change.
+// Bash approval-detector bypasses and autoApprove semantics. Each block pins
+// a bypass the detectors once missed. The classifiers are the PRODUCTION ones
+// (defaultIsDestructive, isNetworkCommand, confinePath) wired like
+// triggerContextFor, and the lane tests drive the real installSoloPolicy —
+// faux/no provider, zero network. Detection stays lexical: a variable-built
+// path (`$D/roles/r.md` with D set elsewhere), a symlink, `sed -i`, a script
+// file or an interpreter still reach `.kubic/` without raising — those
+// documented limits are pinned in the "still-documented misses" block so a
+// future fix is a conscious change.
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: `${HOME}` here is bash syntax under test, not a template literal
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -88,7 +87,7 @@ function refusal(command: string): string | undefined {
   return controlPlaneRefusal('bash', { command }, WS, { home: HOME });
 }
 
-describe('control-plane detector: cd tracking (issue #324)', () => {
+describe('control-plane detector: cd tracking', () => {
   it.each([
     [
       'cd into .kubic/roles then redirect',
@@ -187,7 +186,7 @@ describe('control-plane detector: cd tracking (issue #324)', () => {
   });
 });
 
-describe('control-plane detector: redirect forms (issue #324)', () => {
+describe('control-plane detector: redirect forms', () => {
   it.each([
     ['>&', 'echo x >& .kubic/roles/r.md'],
     ['>& without a space', 'echo x >&.kubic/roles/r.md'],
@@ -229,7 +228,7 @@ describe('control-plane detector: redirect forms (issue #324)', () => {
   });
 });
 
-describe('control-plane detector: quote-split and escaped segments (issue #324)', () => {
+describe('control-plane detector: quote-split and escaped segments', () => {
   it.each([
     ['quoted first segment', 'echo x > ".kubic"/roles/r.md'],
     ['single-quoted first segment', "echo x > '.kubic'/roles/r.md"],
@@ -261,7 +260,7 @@ describe('control-plane detector: quote-split and escaped segments (issue #324)'
   });
 });
 
-describe('control-plane detector: rm and mv operands (issue #324)', () => {
+describe('control-plane detector: rm and mv operands', () => {
   it('deleting or moving the journal is tampering: refused', () => {
     for (const command of [
       'rm .kubic/journal/index.jsonl',
@@ -302,7 +301,7 @@ describe('control-plane detector: rm and mv operands (issue #324)', () => {
   });
 });
 
-describe('control-plane detector: $HOME expands like ~ (issue #324)', () => {
+describe('control-plane detector: $HOME expands like ~', () => {
   it.each([
     ['$HOME', 'echo x > $HOME/.kubic/config.toml'],
     ['${HOME}', 'echo x > ${HOME}/.kubic/config.toml'],
@@ -406,7 +405,7 @@ describe('control-plane detector: $HOME expands like ~ (issue #324)', () => {
   });
 });
 
-describe('still-documented misses stay misses (honest limits, issue #324)', () => {
+describe('still-documented misses stay misses (honest limits)', () => {
   it('a variable-built or symlinked path is not seen', () => {
     expect(triggers('D=.kubic; echo x > $D/roles/r.md')).not.toContain(
       KUBIC_STATE_WRITE,
@@ -417,7 +416,7 @@ describe('still-documented misses stay misses (honest limits, issue #324)', () =
   });
 });
 
-describe('autoApprove never answers an always-ask capability (issue #230, #324)', () => {
+describe('autoApprove never answers an always-ask capability', () => {
   function workspaceWithState(): string {
     const workspace = mkTmp('kubic-230-ws-');
     mkdirSync(join(workspace, '.kubic'), { recursive: true });
@@ -471,7 +470,7 @@ describe('autoApprove never answers an always-ask capability (issue #230, #324)'
     expect(verdict).toEqual({ approved: true, challenged: true });
     expect(seen).toHaveLength(1);
     expect(seen[0]?.capability).toBe(KUBIC_STATE_WRITE);
-    // The seat branch carries the full command (issue #316); the autoApprove
+    // The seat branch carries the full command; the autoApprove
     // branch it used to take sent a bare summary.
     expect(seen[0]?.command).toBe('echo x > .kubic/config.toml');
   });
@@ -626,7 +625,7 @@ describe('autoApprove never answers an always-ask capability (issue #230, #324)'
   });
 });
 
-describe('route=deny beats autoApprove on the lane (issue #230)', () => {
+describe('route=deny beats autoApprove on the lane', () => {
   it('denies an autoApprove capability the doctor says can never apply', async () => {
     const workspace = mkTmp('kubic-230-deny-');
     const policy = installSoloPolicy({
@@ -722,7 +721,7 @@ describe('route=deny beats autoApprove on the lane (issue #230)', () => {
   });
 });
 
-describe('git-push detector is linear-time (issue #357)', () => {
+describe('git-push detector is linear-time', () => {
   const PUSH_TIMEOUT_MS = 250;
 
   // The destructive matcher is stubbed out: it belongs to the worker and is
@@ -857,7 +856,7 @@ describe('git-push detector is linear-time (issue #357)', () => {
   });
 });
 
-describe('git-push trigger boundary (issue #357)', () => {
+describe('git-push trigger boundary', () => {
   it.each([
     ['an absolute path to git', '/usr/bin/git push origin main'],
     ['a relative path to git', './node_modules/.bin/git push'],
@@ -922,7 +921,7 @@ describe('git-push trigger boundary (issue #357)', () => {
   });
 });
 
-describe('outside-write targets are read as the shell reads them (issue #355)', () => {
+describe('outside-write targets are read as the shell reads them', () => {
   it.each([
     ['a double-quoted dot-dot segment', 'echo x > ".."/x'],
     ['a single-quoted dot-dot segment', "echo x > '..'/x"],
@@ -956,7 +955,7 @@ describe('outside-write targets are read as the shell reads them (issue #355)', 
   });
 });
 
-describe('cd tracking recognises shell compound forms (issue #355)', () => {
+describe('cd tracking recognises shell compound forms', () => {
   it.each([
     ['a brace group', '{ cd /tmp; echo x > kubic-355-z; }'],
     ['then', 'if true; then cd /tmp; echo x > z; fi'],
@@ -1031,7 +1030,7 @@ async function runBash(command: string, workspace: string) {
   );
 }
 
-describe('prod run path: the re-audit bypasses are challenged (issues #324, #355, #357)', () => {
+describe('prod run path: the bypasses are challenged', () => {
   it('cd into .kubic/roles then a plain redirect is denied, named, and writes nothing', async () => {
     const workspace = mkTmp('kubic-bypass-ws-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });

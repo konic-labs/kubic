@@ -1,4 +1,4 @@
-// Issue #121, op layer: bash results that reach the model are capped per
+// Op layer: bash results that reach the model are capped per
 // stream (BASH_RESULT_MAX_CHARS) with a self-describing header and a
 // `truncated` flag — a grep over a giant file must not dump megabytes
 // into the model's context window. Real NodeExecutionEnv + real sh child.
@@ -37,7 +37,7 @@ function inv() {
   );
 }
 
-describe('bash result caps (issue #121)', () => {
+describe('bash result caps', () => {
   it('clips oversized stdout, keeps the tail, and reports truncated: true', async () => {
     const total = BASH_RESULT_MAX_CHARS + 40_000;
     const out = await callOperation(

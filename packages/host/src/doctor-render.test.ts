@@ -1,4 +1,4 @@
-// `kubic doctor` grouped summary (issue #448; docs/ui/06-cli.html 06-C).
+// `kubic doctor` grouped summary.
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import type { DoctorCheck } from './doctor.js';

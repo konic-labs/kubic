@@ -1,4 +1,4 @@
-// `kubic setup` (issue #451; docs/ui/06-cli.html 06-E). The prompt frame is
+// `kubic setup`. The prompt frame is
 // faked: every question the wizard asks is answered from a script.
 import { describe, expect, it } from 'vitest';
 import { createLineLogger } from '../../core/src/cli/logger.js';
@@ -97,7 +97,7 @@ function rig(
   };
 }
 
-describe('kubic setup (issue #451)', () => {
+describe('kubic setup', () => {
   it('one detected provider: model and thinking, then saves [model]', async () => {
     const r = rig(['sonnet', 'high']);
     expect(await runSetupCommand({}, r.deps)).toBe(0);

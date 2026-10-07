@@ -1,10 +1,10 @@
-// Kubic's pi-durable transcript adapter (issue #400; §21–§22, §46).
+// Kubic's pi-durable transcript adapter.
 //
 // Pi 0.87 stored a tree of `{ id, parentId, type: 'message', message }`
 // entries; pi-durable stores typed `EntryRecord`s (`pi.user`, `pi.assistant`
 // with `model: [AssistantMessage]`, `pi.tool-result`, `pi.system`,
 // `pi.compaction`, `pi.reset`). Every Kubic reader — `kubic sessions attach`,
-// `kubic cost`'s run usage, the §46 trajectory, replay/export/eval — reads a
+// `kubic cost`'s run usage, the trajectory, replay/export/eval — reads a
 // transcript through THIS module, so the entry-model change lands in one
 // place and a reader never matches entry-kind strings on its own.
 //
@@ -208,7 +208,7 @@ export async function readSessionEntries(
   storage: Storage,
   context: Context,
 ): Promise<EntryRecord[]> {
-  // Issue #265: the lane conversation — a fork's recorded one, else the
+  // The lane conversation — a fork's recorded one, else the
   // root. A session that never ran has no root conversation yet: no
   // transcript, and never a throw (a reader must not invent one).
   const laneId = laneConversationIdOf(

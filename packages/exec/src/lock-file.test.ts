@@ -1,5 +1,5 @@
-// Exclusive lock-file primitive (issue #118; §21–§22): the raw I/O half of
-// the session lock. Exec owns node:fs (I/O confinement, §9) — the worker's
+// Exclusive lock-file primitive: the raw I/O half of
+// the session lock. Exec owns node:fs (I/O confinement) — the worker's
 // session-store keeps the semantics (liveness, stale-steal) and calls these.
 // Hermetic: tmp dirs only, no process signalling anywhere.
 import {
@@ -36,7 +36,7 @@ function tmpFile(name = 'lock.json'): string {
   return join(root, name);
 }
 
-describe('lock file primitive (issue #118)', () => {
+describe('lock file primitive', () => {
   it('creates exclusively and never clobbers an existing lock', () => {
     const path = tmpFile();
     expect(createLockFile(path, '{"pid":1}')).toBe(true);
@@ -70,10 +70,10 @@ describe('lock file primitive (issue #118)', () => {
   });
 });
 
-// Atomic lock claim (issue #145): temp file + hard link, so exactly one
+// Atomic lock claim: temp file + hard link, so exactly one
 // stale-takeover racer lands each generation — the loser sees EEXIST and
 // must re-read the winner instead of deleting it.
-describe('atomic lock claim (issue #145)', () => {
+describe('atomic lock claim', () => {
   it('claims an absent lock and leaves no temp file behind', () => {
     const path = tmpFile();
     expect(claimLockLink(path, '{"pid":1,"nonce":"a"}')).toBe(true);
@@ -89,7 +89,7 @@ describe('atomic lock claim (issue #145)', () => {
     expect(readdirSync(join(path, '..')).sort()).toEqual(['lock.json']);
   });
 
-  it('a temp-name collision retries with a fresh name (#424)', () => {
+  it('a temp-name collision retries with a fresh name', () => {
     const path = tmpFile();
     const dir = dirname(path);
     const now = 1_700_000_000_000;
@@ -112,10 +112,10 @@ describe('atomic lock claim (issue #145)', () => {
   });
 });
 
-// Process start time (issue #145): the pid-reuse guard behind the stale
+// Process start time: the pid-reuse guard behind the stale
 // rule. Linux-only: /proc is the only portable-enough source, and anywhere
 // else the lock falls back to the pid probe.
-describe('process start time (issue #145)', () => {
+describe('process start time', () => {
   (process.platform === 'linux' && processStartTimeOf(process.pid) !== undefined
     ? it
     : it.skip)("reads this process's start from /proc", () => {
@@ -149,9 +149,9 @@ describe('process start time (issue #145)', () => {
   });
 });
 
-// Issue #361: the probe is POSIX-only — Windows cannot change the mode it
+// The probe is POSIX-only — Windows cannot change the mode it
 // reports, so a warn there would name a fix that does nothing.
-describe('looseStateDirMode platform gate (issue #361)', () => {
+describe('looseStateDirMode platform gate', () => {
   it('reports nothing on win32 even for a loose directory', () => {
     const dir = mkdtempSync(join(tmpdir(), 'loose-'));
     roots.push(dir);

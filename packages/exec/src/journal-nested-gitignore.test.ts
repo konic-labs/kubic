@@ -1,4 +1,4 @@
-// Nested `.gitignore` support in the baseline walk (issue #116; §42.5).
+// Nested `.gitignore` support in the baseline walk.
 //
 // `captureBaseline` read only the ROOT `.gitignore`, so every nested ignore
 // file — the standard monorepo mechanism, this repo's own layout included —
@@ -13,7 +13,7 @@
 // ordering git uses — and the stack pops on recursion exit, so siblings never
 // see each other's rules.
 //
-// RED first: with the root-only walk the fixture's `packages/foo/build/out.js`
+// With the root-only walk the fixture's `packages/foo/build/out.js`
 // IS in the baseline, the nested `!keep.log` has no effect, the walk probes
 // `.gitignore` once (root only), and the sweep records the nested-ignored
 // write. Each test below states the failure it expects before the fix.
@@ -97,7 +97,7 @@ function readable(path: string): boolean {
   }
 }
 
-describe('nested .gitignore in the baseline walk (issue #116)', () => {
+describe('nested .gitignore in the baseline walk', () => {
   it('excludes a nested-ignored subtree from the baseline', () => {
     const root = workspace();
     const baseline = captureBaseline(root);
@@ -164,7 +164,7 @@ describe('nested .gitignore in the baseline walk (issue #116)', () => {
     // throws, and nothing is silently un-ignored.
     expect(baseline['sub/scratch.tmp']).toBeUndefined();
     expect(baseline['sub/keep.txt']).toMatch(/^[0-9a-f]{64}$/);
-    // The unreadable file itself is recorded as unreadable (issue #351): its
+    // The unreadable file itself is recorded as unreadable: its
     // content could not be observed, so reconcile never reads the EACCES as
     // a delete of a file that is still there — and never invents a hash for
     // it either. A walk condition, never a crash.
@@ -281,7 +281,7 @@ describe('nested .gitignore in the baseline walk (issue #116)', () => {
   });
 });
 
-describe('gitignore dir rules at the walk (issue #353)', () => {
+describe('gitignore dir rules at the walk', () => {
   function dirRuleWorkspace(): string {
     const root = tmpRoot('ws-dir-rules-');
     writeFileSync(join(root, '.gitignore'), 'build/\n*.egg-info/\n');

@@ -1,4 +1,4 @@
-// The Kubic turn glue on pi-durable (issue #395; §20.5, §20.6, §20.7).
+// The Kubic turn glue on pi-durable.
 // A turn is one durably admitted input and its wait:
 //
 //   conversation.submit({ type: 'input', content, requestId, whenBusy })
@@ -37,12 +37,12 @@ import type { SoloLane } from './solo.js';
 // conversation is busy and the caller asked to be rejected rather than
 // queued. `reject` stays the default (a submit that races a settling turn
 // must fail loudly, never sit in the inbox unannounced); the TUI's busy
-// Enter passes `followUp` and its steer key `steer` (#334).
+// Enter passes `followUp` and its steer key `steer`.
 export const TURN_BUSY_REASON = 'busy';
 
 export type TurnAbortReason = 'guard' | 'user' | 'signal';
 
-// §52 code, or the one refusal Kubic raises itself (busy).
+// Failure code, or the one refusal Kubic raises itself (busy).
 export type TurnFailureReason = FailureCode | typeof TURN_BUSY_REASON;
 
 export type TurnOutcome =
@@ -85,7 +85,7 @@ export interface RunTurnOptions {
   // submission (README "Persist and Resume"), never a second prompt.
   requestId: string;
   context: Context;
-  // Issue #338 (§16.8): images attached to this prompt, in order. They are
+  // Images attached to this prompt, in order. They are
   // admitted as Pi's own user-message content parts (`{type:'image'}`), so
   // the committed entry stores them and a resumed session replays them. No
   // images (or an empty list) keeps the plain-string content the lane has
@@ -95,7 +95,7 @@ export interface RunTurnOptions {
   // default, `reject` throws ConversationBusy — mapped to the named busy
   // failure below.
   whenBusy?: 'reject' | 'followUp' | 'steer';
-  // #334: the admitted submission's id and whether the harness QUEUED it
+  // The admitted submission's id and whether the harness QUEUED it
   // (a busy conversation's follow-up/steer) or PLACED it at once. The TUI's
   // busy latch follows placed work only: a queue a failed run left behind
   // waits in the inbox without a spinner (pi-durable keeps queued inputs
@@ -104,7 +104,7 @@ export interface RunTurnOptions {
 }
 
 // One turn, settled. Never throws for a refusal, a failed run or a cancelled
-// guard: every way a durable run can end is one `TurnOutcome` (§7, §78).
+// guard: every way a durable run can end is one `TurnOutcome`.
 export async function runTurn(
   solo: SoloLane,
   prompt: string,
@@ -133,10 +133,10 @@ export async function runTurn(
   return awaitTurn(submission, options.context);
 }
 
-// The user-message content one turn admits (#338): the prompt as a text part
+// The user-message content one turn admits: the prompt as a text part
 // plus one image part per attachment. Without attachments the content stays
 // the bare string every existing reader (and the faux provider tests)
-// expects; an image-only prompt (attach + Enter, #338 review) sends no empty
+// expects; an image-only prompt (attach + Enter review) sends no empty
 // text part at all — the image IS the message.
 function promptContent(
   prompt: string,
@@ -159,7 +159,7 @@ function promptContent(
 }
 
 // Whether the harness admitted the input as a placed entry (an idle
-// conversation) or queued it in the inbox (#334). A status read that fails
+// conversation) or queued it in the inbox. A status read that fails
 // (a closed session) reports `placed`: the run's own settlement, never a
 // guess, decides what the caller sees next.
 async function admissionState(
@@ -175,7 +175,7 @@ async function admissionState(
 }
 
 // The wait half of a turn, for a submission admitted elsewhere: the durable
-// settlement of an input this process did not submit (issue #147's "resume
+// settlement of an input this process did not submit (the "resume
 // the pending run that carries this prompt as this run"). Same outcome
 // vocabulary as runTurn.
 export async function awaitTurn(
@@ -225,8 +225,8 @@ function failureOutcome(failure: SubmissionFailure): TurnOutcome {
   };
 }
 
-// D6.1: the lane/trajectory record for one settled turn. The `error` carries
-// the §52 code as `code` and the human message, the shape §46/§52 readers
+// The lane/trajectory record for one settled turn. The `error` carries
+// the failure code as `code` and the human message, the shape readers
 // classify; an aborted turn records no error (its cause is the abort).
 export function turnLaneRecord(outcome: TurnOutcome): {
   status: LaneTerminalStatus;
@@ -248,12 +248,11 @@ export function turnLaneRecord(outcome: TurnOutcome): {
   }
 }
 
-// Solo context-overflow recovery (issue #209; §53 retry_with_new_context).
-// The harness owns blind retries (its durable generation retry, #395), so
-// the lane retries exactly one failure: context overflow, compacted first
-// (#399) and retried once on the fresh context. Every other failure passes
-// through untouched — stronger-model and new-agent decisions belong to #210
-// and #184, which consume `chooseRetry`'s outcome, never this wrapper.
+// Solo context-overflow recovery. The harness owns blind retries (its durable
+// generation retry), so the lane retries exactly one failure: context overflow,
+// compacted first and retried once on the fresh context. Every other failure
+// passes through untouched — stronger-model and new-agent decisions belong to
+// and, which consume `chooseRetry`'s outcome, never this wrapper.
 export interface SoloOverflowRecovery {
   outcome: TurnOutcome;
   retried: boolean;
@@ -270,7 +269,7 @@ export interface OverflowRecoveryOptions {
 }
 
 // The focus the recovery compaction carries: the summarizer keeps what the
-// single retry needs, verbatim like every manual focus (#82 rule 7).
+// single retry needs, verbatim like every manual focus.
 const OVERFLOW_RECOVERY_FOCUS =
   'The context overflowed mid-run; keep what a single retry of the current task needs.';
 

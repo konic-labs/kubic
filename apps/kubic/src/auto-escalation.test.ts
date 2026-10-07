@@ -1,4 +1,4 @@
-// The single automatic escalation trigger (issue #210; §38.4): N
+// The single automatic escalation trigger: N
 // consecutive tool-failure turns climb the lane one rung — once per run,
 // never back. Pure state machine plus the row formatter; the boots own
 // the climb itself. Faux only, no lanes, no I/O.
@@ -15,7 +15,7 @@ import {
   toTrajectoryEscalation,
 } from './auto-escalation.js';
 
-describe('automatic escalation trigger (issue #210)', () => {
+describe('automatic escalation trigger', () => {
   it('fires after N consecutive tool failures, exactly once', () => {
     const state = createAutoEscalation();
     expect(shouldAutoEscalate(state)).toBe(false);
@@ -73,7 +73,7 @@ describe('automatic escalation trigger (issue #210)', () => {
   });
 });
 
-describe('ladder rung stepping (issue #210)', () => {
+describe('ladder rung stepping', () => {
   const steps = ['local/a', 'local/b', 'anthropic/x'];
   it('steps one rung up from the live model', () => {
     expect(nextLadderRung(steps, 'local/a')).toBe('local/b');
@@ -85,7 +85,7 @@ describe('ladder rung stepping (issue #210)', () => {
   });
 });
 
-describe('escalation reporting (issue #210)', () => {
+describe('escalation reporting', () => {
   it('formats the transcript row from the recorded event', () => {
     expect(
       formatEscalationRow({

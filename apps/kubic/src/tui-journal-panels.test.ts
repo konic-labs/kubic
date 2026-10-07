@@ -1,4 +1,4 @@
-// The §17 inspectable pair on the real `kubic tui` path (issue #311): the
+// The inspectable pair on the real `kubic tui` path: the
 // Ctrl-O diff panel and the Ctrl-R journal panel read the session journal
 // (the same diffEntries projection `kubic diff` uses) instead of showing
 // 'no changes' for the whole session.
@@ -131,7 +131,7 @@ async function submit(
   await new Promise((resolve) => setTimeout(resolve, 60));
 }
 
-describe('tool entries share the sweep turn numbering (issue #436)', () => {
+describe('tool entries share the sweep turn numbering', () => {
   it("a TUI turn's write entry carries that turn", async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot();
@@ -195,7 +195,7 @@ describe('tool entries share the sweep turn numbering (issue #436)', () => {
   });
 });
 
-describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () => {
+describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   it('after a write, Ctrl-O renders a hunk for the written path', async () => {
     const workspace = tmpRoot();
     const { fake, exit } = await openTui(tmpRoot(), workspace, [
@@ -250,8 +250,8 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     expect(await exit).toBe(0);
   });
 
-  // Issue #311: a `bash` write is not intercepted by the file tools, so the
-  // change reaches the journal only through the §42.5 sweep. It used to run
+  // A `bash` write is not intercepted by the file tools, so the
+  // change reaches the journal only through the sweep. It used to run
   // at quit alone, so both panels said `no changes` (Ctrl-O) / listed
   // nothing (Ctrl-R) for a change the user had just watched happen.
   it('a change made with bash shows in Ctrl-R and Ctrl-O when the turn settles, before any quit', async () => {
@@ -363,7 +363,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     expect(await exit).toBe(0);
   });
 
-  // The tool-end wiring (issue #311): a tool that ends mid-turn asks the feed
+  // The tool-end wiring: a tool that ends mid-turn asks the feed
   // for a (throttled) journal read, so the panels are current DURING a long
   // turn, not only at its settlement. Observed by counting the reads the
   // panel feed makes of the boot's journal store.
@@ -421,7 +421,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
     expect(await exit).toBe(0);
   });
 
-  // Issue #311 review: `apply` reads `stopped` / `screen`, which used to be
+  // `apply` reads `stopped` / `screen`, which used to be
   // declared AFTER the synchronous boot read — a TDZ ReferenceError on every
   // boot that the feed's catch swallowed. Nothing may be swallowed now.
   it('the feed swallows nothing at boot or at a settlement (no TDZ in the apply path)', async () => {
@@ -506,7 +506,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal (issue #311)', () 
   });
 });
 
-describe('JournalPanelFeed throttles journal reads (issue #311)', () => {
+describe('JournalPanelFeed throttles journal reads', () => {
   it('a burst of 10 tool-end events reads the journal at most once per window', () => {
     let reads = 0;
     const applied: number[] = [];
@@ -570,11 +570,11 @@ describe('JournalPanelFeed throttles journal reads (issue #311)', () => {
   });
 });
 
-// Issue #374 (§42.1): every prompt is a run. The sweep re-baselines at each
+// Every prompt is a run. The sweep re-baselines at each
 // turn start, so a file the operator edits between prompts is never
 // journaled as the agent's change, sweep entries carry their turn, and the
 // quit-time sweep after a settled turn appends nothing new.
-describe('per-turn reconciliation in the TUI (issue #374)', () => {
+describe('per-turn reconciliation in the TUI', () => {
   function sweptEntries(sessionsRoot: string) {
     const [id] = readdirSync(sessionsRoot).filter((e) => !e.startsWith('.'));
     if (id === undefined) return [];

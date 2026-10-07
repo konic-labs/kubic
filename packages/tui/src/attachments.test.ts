@@ -1,4 +1,4 @@
-// Prompt image attachments (issue #338; §16.5 Image, §16.8 Images).
+// Prompt image attachments (Image, Images).
 // Pure validation of an attached image's bytes and the two render paths:
 // the pi-tui Image component on kitty/iTerm2 terminals, a text placeholder
 // everywhere else. No I/O: the caller (the composition root) reads the file.
@@ -35,7 +35,7 @@ afterEach(() => {
   resetCapabilitiesCache();
 });
 
-describe('image validation (issue #338)', () => {
+describe('image validation', () => {
   it('detects png, jpeg, gif and webp from their magic bytes', () => {
     expect(detectImageMime(PNG)).toBe('image/png');
     expect(detectImageMime(JPEG)).toBe('image/jpeg');
@@ -83,7 +83,7 @@ describe('image validation (issue #338)', () => {
   });
 });
 
-describe('the transcript placeholder (issue #338)', () => {
+describe('the transcript placeholder', () => {
   it('names the file and its size on a terminal without image support', () => {
     setCapabilities({ images: null, trueColor: false, hyperlinks: false });
     expect(
@@ -125,7 +125,7 @@ describe('the transcript placeholder (issue #338)', () => {
   });
 });
 
-describe('terminal-pasted images (issue #338)', () => {
+describe('terminal-pasted images', () => {
   it('reads an iTerm2 inline image sequence', () => {
     const sequence = `\x1b]1337;File=name=${Buffer.from('shot.png', 'latin1').toString('base64')};size=68;inline=1:${PNG.toString('base64')}\x07`;
     const parsed = parseInlineImageSequence(sequence);
@@ -142,7 +142,7 @@ describe('terminal-pasted images (issue #338)', () => {
   // A >4 KB paste reaches the pty in chunks, and pi-tui's StdinBuffer flushes
   // a partial OSC after 50 ms — so the sequence must be reassembled across
   // listener calls instead of being typed into the draft as raw escape +
-  // base64 (issue #338 review).
+  // base64.
   it('reassembles a sequence split across two chunks', () => {
     const sequence = `\x1b]1337;File=name=${Buffer.from('big.png', 'latin1').toString('base64')};inline=1:${PNG.toString('base64')}\x07`;
     const cut = 30;
@@ -180,7 +180,7 @@ describe('terminal-pasted images (issue #338)', () => {
     expect(scanInlineImageChunk('', 'plain typing')).toEqual({ kind: 'none' });
   });
 
-  // Issue #338 review, cycle 2: a pty split can land inside the 12-character
+  // A pty split can land inside the 12-character
   // opener, and without holding the partial prefix the rest of the sequence
   // has nothing to match and is typed into the draft.
   it('holds a chunk that ends inside the opener', () => {

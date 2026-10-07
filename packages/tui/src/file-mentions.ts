@@ -1,4 +1,4 @@
-// @-file mention completion for the prompt editor (issue #336; §16.5, Pi
+// @-file mention completion for the prompt editor (Pi
 // parity). Typing `@` and part of a path offers matching workspace files;
 // Tab (or Enter on the popup) inserts the workspace-relative path as
 // `@path` — `@"path with spaces"` when it needs quoting — followed by a

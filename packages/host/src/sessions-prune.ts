@@ -1,4 +1,4 @@
-// Session-state retention core (issue #119; §21, §42.4): plan and execute
+// Session-state retention core: plan and execute
 // the prune of per-session state dirs under the sessions root.
 //
 // Scope: `<root>/<session-id>/` state dirs only — the journal store, spans,
@@ -22,7 +22,7 @@
 //   `[A-Za-z0-9_-]`, pi's `--<cwd>--` transcript dirs) are skipped;
 // - anything that cannot be inspected fails safe: skipped, reported.
 //
-// I/O goes through the exec FileBridge (I/O confinement, §9): this module
+// I/O goes through the exec FileBridge (I/O confinement): this module
 // never imports node:fs.
 
 import { join } from 'node:path';
@@ -56,7 +56,7 @@ export interface SessionPruneLocked {
 export interface SessionPruneKept {
   id: string;
   // `--keep-session` for an explicit name; `child of <id>` for a run
-  // member kept with its explicitly kept parent (issue #164).
+  // member kept with its explicitly kept parent.
   why: string;
 }
 
@@ -166,7 +166,7 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
     try {
       info = args.bridge.fileInfo(entry.name);
     } catch {
-      // Issue #419: a locked session whose header cannot be statted is
+      // A locked session whose header cannot be statted is
       // already reported in exactly one bucket (locked) — the live lock
       // read succeeded, only the stat failed.
       if (!lockedIds.has(entry.name)) plan.unreadable.push(entry.name);
@@ -199,7 +199,7 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
   return plan;
 }
 
-// One candidate's fate in the delete pass (issue #119). `deleted` was
+// One candidate's fate in the delete pass. `deleted` was
 // removed and accounted; `locked` had a lock go live between planning and
 // this candidate's delete — skipped and reported exactly like a
 // planning-time lock, never removed, never counted as deleted; `failed`
@@ -220,7 +220,7 @@ export interface SessionPruneDeleteArgs {
   candidates: readonly SessionPruneCandidate[];
 }
 
-// Delete the planned candidates (issue #119). Planning and deletion are two
+// Delete the planned candidates. Planning and deletion are two
 // passes, so a lock acquired in between must still stop the delete: the
 // liveness re-check sits immediately before each remove by construction —
 // a candidate that went live is skipped, reported, and never counted as

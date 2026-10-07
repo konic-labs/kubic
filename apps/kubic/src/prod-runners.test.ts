@@ -172,7 +172,7 @@ describe('kubic audit from a subdirectory', () => {
   });
 });
 
-describe('kubic doctor: enterprise policy and detection-only (issue #289)', () => {
+describe('kubic doctor: enterprise policy and detection-only', () => {
   function providerFixture(root: string, port: number): void {
     writeFileSync(
       join(root, 'models.json'),
@@ -272,7 +272,7 @@ describe('kubic doctor: enterprise policy and detection-only (issue #289)', () =
   });
 });
 
-describe('kubic doctor --session (prod wiring, issue #310)', () => {
+describe('kubic doctor --session (prod wiring)', () => {
   it('refuses a session id that cannot name a session directory', async () => {
     const { errs, r } = runners();
     expect(await r.doctor({ session: '../evil' }, noConfig)).toBe(2);
@@ -280,9 +280,9 @@ describe('kubic doctor --session (prod wiring, issue #310)', () => {
   });
 });
 
-// Config `[session] retentionDays` reaches the runners that prune (issue
-// #381: replaces the source-regex wiring pins with behaviour through
-// createProdRunners — an aged session is pruned, an aged entry healed).
+// Config `[session] retentionDays` reaches the runners that prune (replaces the
+// source-regex wiring pins with behaviour through createProdRunners — an aged
+// session is pruned, an aged entry healed).
 describe('kubic sessions/journal retention (prod wiring)', () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -366,7 +366,7 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
   });
 });
 
-// The models/doctor wiring through createProdRunners (issue #381): a
+// The models/doctor wiring through createProdRunners: a
 // broken project models.json is reported exactly once, and the roles
 // probe `kubic doctor` injects is visible in its report — the two
 // behaviours the deleted source-regex pins stood in for.
@@ -423,7 +423,7 @@ describe('kubic models/doctor (prod wiring)', () => {
   });
 });
 
-// run/tui config projections through createProdRunners (issue #381): the
+// run/tui config projections through createProdRunners: the
 // `[journal] outOfScope` exclusion and the `[agent] name` attribution the
 // deleted source-regex pins stood in for — observed in the journal the
 // lane writes, not in the composition root's source text.
@@ -538,7 +538,7 @@ describe('kubic tui (prod wiring)', () => {
     ).toBe('alice');
   });
 
-  // Issue #462: the first screen's version and trust row reach the run deps
+  // The first screen's version and trust row reach the run deps
   // through the real builders (a field the defaults drop stays green
   // otherwise).
   it('threads the version and the project trust to the first screen', () => {
@@ -576,7 +576,7 @@ describe('kubic tui (prod wiring)', () => {
 });
 
 // One positive smoke per remaining runner key through createProdRunners
-// (issue #381, acceptance "every key invoked"): each asserts an
+// (acceptance "every key invoked"): each asserts an
 // observable effect of the composed deps, never the composition source.
 describe('remaining runners (prod wiring smokes)', () => {
   it('git status names the branch of the working repo', async () => {
@@ -634,7 +634,7 @@ describe('remaining runners (prod wiring smokes)', () => {
   });
 });
 
-// The replay third of the lane projection (issue #381): a deterministic
+// The replay third of the lane projection: a deterministic
 // re-execution runs the recorded objective through the lane under the
 // config's projections — the journal it writes carries the configured
 // agent id, exactly as `kubic run` attributes its own.

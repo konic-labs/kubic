@@ -1,14 +1,13 @@
-// The live-replay runtime through the real builder (issues #239, #240;
-// review follow-up): `createProdRunners().replay` must hand the lane the
-// same `[session]` compaction policy and `[agent]` prompt section
-// `kubic run` threads — the construction used to ride an untyped spread
-// invisible to types and pinned by no test. Everything here is real
-// (prod runner, tier validation, lockfile check, trajectory load,
-// runProdReplay up to the lane) except the lane itself, captured at the
-// `runHeadlessPrompt` seam: if the production spread is dropped, the
-// captured deps miss the fields and this fails. Lane behavior under the
-// fields is pinned for real elsewhere (the autoCompact threshold test in
-// config-runtime.test.ts, the replay seam test in
+// The live-replay runtime through the real builder:
+// `createProdRunners().replay` must hand the lane the same `[session]`
+// compaction policy and `[agent]` prompt section `kubic run` threads — the
+// construction used to ride an untyped spread invisible to types and pinned by
+// no test. Everything here is real (prod runner, tier validation, lockfile
+// check, trajectory load, runProdReplay up to the lane) except the lane itself,
+// captured at the `runHeadlessPrompt` seam: if the production spread is
+// dropped, the captured deps miss the fields and this fails. Lane behavior
+// under the fields is pinned for real elsewhere (the autoCompact threshold test
+// in config-runtime.test.ts, the replay seam test in
 // replay-runtime-deps.test.ts).
 //
 // Faux provider only (`KUBIC_PROVIDER=faux`): zero network, zero paid
@@ -95,7 +94,7 @@ function runners() {
   };
 }
 
-describe('replay re-execution threads compaction and the prompt section (issues #239, #240)', () => {
+describe('replay re-execution threads compaction and the prompt section', () => {
   it('the real builder hands both projections to the lane', async () => {
     const dir = tmpRoot();
     const worktree = tmpRoot('kubic-replay-threading-wt-');

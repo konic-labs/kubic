@@ -1,8 +1,7 @@
-// Diff rendering: single-file journal diffs (issue #25; §16.5, §18, §80).
-// Text only (§16.8 fallback carries the whole view — no image diffs).
+// Diff rendering: single-file journal diffs.
+// Text only (fallback carries the whole view — no image diffs).
 // Pure render functions: the panel (view-panel.ts) owns the document and the
-// scrolling, so there is no per-view Component wrapper left here (issue #301
-// removed `DiffView`, which the panel's ScrollView superseded).
+// scrolling, so there is no per-view Component wrapper left here.
 //
 // Structural DiffFileChange mirrors exec FileChange
 // (packages/exec/src/journal-diff.ts) WITHOUT importing it: the tui
@@ -32,7 +31,7 @@ export interface DiffRenderOptions {
   readonly context?: number;
   readonly width?: number;
   readonly maxLines?: number;
-  // Issue #301: `(file k/N)` appended to the op-labelled header, so a
+  // `(file k/N)` appended to the op-labelled header, so a
   // multi-file panel says which file of how many it is showing. Only the TUI
   // diff panel sets it — `kubic diff` parity output never carries it (the
   // journal view drops the op-labelled header line entirely).
@@ -50,7 +49,7 @@ export function isBinaryText(content: string): boolean {
 
 // Changed region plus context lines with real @@ -a,b +c,d @@ headers.
 // Mirror of exec unifiedHunks (display only — never parsed back); the
-// header counts accumulate while emitting (issue #126) so they can never
+// header counts accumulate while emitting so they can never
 // disagree with the lines printed.
 export function unifiedHunks(
   before: string,
@@ -101,7 +100,7 @@ export function unifiedHunks(
 }
 
 // Path header with the op label (write/edit/create/delete/rename) plus
-// the unattributed badge for reconciliation-only entries (§42).
+// the unattributed badge for reconciliation-only entries.
 export function renderDiffHeader(change: DiffFileChange): string {
   return `${change.path} — ${change.op}${change.unattributed ? ' [unattributed]' : ''}`;
 }

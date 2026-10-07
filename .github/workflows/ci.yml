@@ -3,7 +3,7 @@ name: CI
 on:
   push:
   pull_request:
-  # Nightly full-scope mutation run is postponed (backlog #137); restore:
+  # The nightly full-scope mutation run is switched off; to restore it:
   # schedule:
   #   - cron: '0 3 * * *'
   workflow_dispatch:
@@ -62,9 +62,9 @@ jobs:
     # nightly report: a touched file below 80 may not drop below its
     # baseline, one at or above 80 must stay >= 80, and files new to the
     # baseline need 80.
-    # Postponed (#407): the EPIC K wave left touched files below 80% and the
-    # scope's time budget cannot finish a capped push in 26 minutes; re-enable
-    # by removing the condition below once #407 lands.
+    # Switched off: some touched files sit below 80% and a capped push cannot
+    # finish inside the 26-minute budget yet; re-enable by removing the
+    # condition below.
     if: false
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -138,8 +138,8 @@ jobs:
     # and tests re-run). Two caches: the incremental file is saved after
     # every run (speed); the ratchet baseline only when the ratchet passes,
     # so a regression can never become the new floor.
-    # Postponed (backlog #137): re-enable by restoring the schedule trigger
-    # above and the condition below.
+    # Switched off: re-enable by restoring the schedule trigger above and the
+    # condition below.
     if: false # github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # A cold run (no incremental cache) is ~2h+ on a 4-vCPU runner; warm

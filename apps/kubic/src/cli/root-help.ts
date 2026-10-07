@@ -1,4 +1,4 @@
-// The root help (`kubic --help`, issue #446; docs/ui/06-cli.html 06-A).
+// The root help (`kubic --help`).
 // Commands are grouped by job; the same table is the source of the command
 // names the dispatcher routes (dispatch.ts COMMAND_NAMES), so a command can
 // never ship without a place in the help. Plain when piped (the binary

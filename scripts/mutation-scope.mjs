@@ -1,4 +1,4 @@
-// Mutation scope helper (issues #66, #72): map a diff to the Stryker
+// Mutation scope helper: map a diff to the Stryker
 // `--mutate` entries for the per-push gate. The vitest side mutates only the
 // changed LINES of touched source files (`path:start-end` ranges) — a whole
 // core file can hold ~1k mutants covered by ~500 tests — so a push costs

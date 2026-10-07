@@ -1,4 +1,4 @@
-// Deterministic manifest encoding (design §74). canonicalJson is what
+// Deterministic manifest encoding. canonicalJson is what
 // makes RL manifests and verifier digests reproducible, so its edge cases
 // are pinned directly: key order at every depth, dropped undefined values,
 // the non-finite and uncapturable throws, and JSON.stringify escaping
@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalJson } from './manifest.js';
 
-describe('canonicalJson (design §74)', () => {
+describe('canonicalJson', () => {
   it('sorts keys at every depth and drops undefined object values', () => {
     expect(canonicalJson({ b: { d: 1, c: 2 }, a: [2, 1], u: undefined })).toBe(
       '{"a":[2,1],"b":{"c":2,"d":1}}',

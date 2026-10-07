@@ -1,12 +1,12 @@
-// Inspectable panel body for the diff and journal views (issue #96; §17).
+// Inspectable panel body for the diff and journal views.
 // The panel is the surface half of the two views: `renderDiffLines` renders
 // one file's effects, `JournalView` renders the session journal, and this
 // module owns which of them is on screen, the multi-file document each panel
-// produces (issue #301) plus the sanitisation of the journal rows that feed
+// produces plus the sanitisation of the journal rows that feed
 // them.
 //
-// Sanitisation belongs HERE, at ingress (issue #88's finding, applied to the
-// §17 list): journal rows come from tool calls — a path, an agent id and a
+// Sanitisation belongs HERE, at ingress (the finding, applied to the
+// list): journal rows come from tool calls — a path, an agent id and a
 // tool-call id are model-supplied strings, and the before/after bodies are
 // file content a tool read off disk. Whatever the model wrote into a file is
 // therefore untrusted terminal content, and it must be cleaned before any
@@ -14,7 +14,7 @@
 // they are handed and their own tests pin them at that level — they are not
 // the choke point).
 //
-// Presentation only (§66): the panels hold copied rows and a filter. They
+// Presentation only: the panels hold copied rows and a filter. They
 // know nothing about lanes, hosts or the approval policy.
 
 import type { DiffFileChange, DiffOp } from './diff-view.js';
@@ -114,7 +114,7 @@ export class DiffPanel implements Component {
     const matched = this.rows.filter((row) => row.toolCallId === effective);
     // An explicit pin is honoured exactly: an empty result says `no changes`.
     if (matched.length > 0 || this.selected !== null) return matched;
-    // Issue #311: following the run, the call the run last touched may have
+    // Following the run, the call the run last touched may have
     // written nothing (a read, a listing). The panel then shows the most
     // recent change instead of blanking. A `bash` write is journaled only by
     // the sweep, as unattributed rows (toolCallId null) that share one
@@ -133,7 +133,7 @@ export class DiffPanel implements Component {
     );
   }
 
-  // Issue #301: the WHOLE document — every visible row with its own header
+  // The WHOLE document — every visible row with its own header
   // and CLI-identical block, in journal order. The panel row is a ScrollView
   // over this, so nothing is dropped and a long change is reachable by
   // scrolling; `render` returns the same lines for callers that render the
@@ -149,7 +149,7 @@ export class DiffPanel implements Component {
     );
   }
 
-  // Issue #301: the line offset of each file's header in `lines(width)` — the
+  // The line offset of each file's header in `lines(width)` — the
   // jump targets for alt+up/alt+down. Width truncation never adds or removes
   // a line, so the count is width-independent.
   fileOffsets(): number[] {
@@ -209,7 +209,7 @@ export class JournalPanel implements Component {
     return this.view.render(width);
   }
 
-  // Issue #301: the same document contract as DiffPanel.lines — the panel row
+  // The same document contract as DiffPanel.lines — the panel row
   // is a ScrollView over this, so the journal panel's rows scroll too.
   lines(width: number): string[] {
     return this.view.render(width);

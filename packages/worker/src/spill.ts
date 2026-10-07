@@ -1,4 +1,4 @@
-// Session-scoped spill files (issue #182; §27.5, §27 compaction spill refs).
+// Session-scoped spill files (compaction spill refs).
 //
 // A tool result that clipped a stream keeps the TAIL in context and writes
 // the full (seam-capped) stream here, so the head — usually where the first

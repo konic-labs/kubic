@@ -11,8 +11,8 @@ import {
   validateClasses,
 } from './policy.js';
 
-describe('permission policy model (issue #15, slice A)', () => {
-  it('loads solo defaults matching §12.1', () => {
+describe('permission policy model', () => {
+  it('loads solo defaults matching', () => {
     expect(SOLO_DEFAULTS).toEqual({
       filesystem: 'workspace-write',
       shell: true,
@@ -57,7 +57,7 @@ describe('permission policy model (issue #15, slice A)', () => {
     expect(tools.sort()).toEqual(['find', 'grep', 'ls', 'read'].sort());
   });
 
-  // Issue #161: `read-only-allowlist` keeps the bash TOOL (the command
+  // `read-only-allowlist` keeps the bash TOOL (the command
   // allowlist is enforced by the lane's guard, not by removing bash) and
   // `shell: true` is unchanged — the level distinction never narrows the
   // full shell.
@@ -128,7 +128,7 @@ describe('permission policy model (issue #15, slice A)', () => {
   });
 });
 
-describe('checkAgreement every refuse branch (issue #220)', () => {
+describe('checkAgreement every refuse branch', () => {
   it("refuses fs 'none' with a read tool, naming the tool", () => {
     const result = checkAgreement({ ...SOLO_DEFAULTS, filesystem: 'none' }, [
       'read',
@@ -183,7 +183,7 @@ describe('checkAgreement every refuse branch (issue #220)', () => {
   });
 });
 
-describe('toolsForClasses over every level (issue #220)', () => {
+describe('toolsForClasses over every level', () => {
   it('filesystem: none holds no fs tools, read holds reads, writes need workspace-write/full', () => {
     const base: PermissionClasses = {
       ...SOLO_DEFAULTS,
@@ -230,7 +230,7 @@ describe('toolsForClasses over every level (issue #220)', () => {
       'git_commit',
       'git_branch',
       'git_checkpoint',
-      // Issue #380: merge plus the two read-only list ops.
+      // Merge plus the two read-only list ops.
       'git_merge',
       'git_conflict_status',
       'git_worktree_list',
@@ -252,7 +252,7 @@ describe('toolsForClasses over every level (issue #220)', () => {
   });
 });
 
-describe('validateClasses invalid literal per key (issue #220)', () => {
+describe('validateClasses invalid literal per key', () => {
   it.each([
     ['filesystem', 'sometimes'],
     ['shell', 'sometimes'],
@@ -266,7 +266,7 @@ describe('validateClasses invalid literal per key (issue #220)', () => {
   });
 });
 
-describe('inexpressible levels are reported, never silent (issue #166, §40.2)', () => {
+describe('inexpressible levels are reported, never silent', () => {
   it('reports network allowlist with no domain list as unsupported, enforced as none', () => {
     const found = checkExpressible(validateClasses({ network: 'allowlist' }));
     expect(found).toHaveLength(1);

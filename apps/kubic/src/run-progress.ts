@@ -1,8 +1,7 @@
-// `kubic run` on an interactive terminal (issue #447; docs/ui/06-cli.html
-// 06-B): a heading, the one-line solo notice, a spinner while the model
-// works, one settled line per tool call, then — after the answer the
-// command prints on stdout — the receipt and the next steps. Everything
-// here goes to stderr; the run's data (the answer) stays on stdout.
+// `kubic run` on an interactive terminal: a heading, the one-line solo notice,
+// a spinner while the model works, one settled line per tool call, then — after
+// the answer the command prints on stdout — the receipt and the next steps.
+// Everything here goes to stderr; the run's data (the answer) stays on stdout.
 //
 // Built only when stdout and stderr are both a coloured TTY and the run is
 // not `--json` (prod-runners.ts); every other run keeps the plain lines the
@@ -88,8 +87,8 @@ export function countDiffLines(diff: string): {
   return { added, removed };
 }
 
-// An edit's line counts: Kubic's display record (tools-adapter.ts, issue
-// #456) carries them; Pi's own `details.diff` is counted.
+// An edit's line counts: Kubic's display record (tools-adapter.ts) carries
+// them; Pi's own `details.diff` is counted.
 function editStat(
   details: Record<string, unknown> | undefined,
 ): { added: number; removed: number } | undefined {

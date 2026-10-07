@@ -1,6 +1,6 @@
-// Recursive walk over the FileSystem seam (issue #13, slice B).
+// Recursive walk over the FileSystem seam.
 // Shared by find and grep. Depth-capped so hostile trees terminate, and
-// symlink-aware (issue #172): links are never followed, so a loop cannot
+// symlink-aware: links are never followed, so a loop cannot
 // return the same file under every route. Both caps are reported via
 // WalkResult.hitCap / hitDepth so callers surface partial results honestly.
 // The ROOT is read as given — the caller named it, and a symlinked root (a
@@ -8,7 +8,7 @@
 // is skipped, file or directory, so results never repeat content under a
 // second route.
 //
-// Issue #172: the walk skips `.git` unconditionally and applies the default
+// The walk skips `.git` unconditionally and applies the default
 // ignore set plus every `.gitignore` on the way down, so a repo-root search
 // spends its budget on the repository, not on VCS internals and dependency
 // trees. Rules are matched against the path relative to the walk root, which
@@ -25,7 +25,7 @@ import {
 export const WALK_MAX_DEPTH = 100;
 export const WALK_MAX_ENTRIES = 10_000;
 
-// Default ignore set (issue #172), a gitignore fragment: dependency trees are
+// Default ignore set, a gitignore fragment: dependency trees are
 // never part of a repo-wide search. Root and nested `.gitignore` files can
 // still negate an entry (last match wins), exactly as git lets a closer file
 // override a broader one.

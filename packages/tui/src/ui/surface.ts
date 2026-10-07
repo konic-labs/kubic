@@ -1,4 +1,4 @@
-// Full-width surfaces (EPIC N, issue #452): a line painted on a background
+// Full-width surfaces: a line painted on a background
 // token role from edge to edge, keeping that background through any nested
 // style (inline code, a word-level diff highlight) via the style engine's
 // background reassertion. Without a background (depth none, the terminal

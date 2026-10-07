@@ -1,4 +1,4 @@
-// `kubic models` catalogue view (issue #449; docs/ui/06-cli.html 06-D).
+// `kubic models` catalogue view.
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import {

@@ -1,4 +1,4 @@
-// Box-drawn frames (EPIC N, issue #452): the editor box, overlays and the
+// Box-drawn frames: the editor box, overlays and the
 // blocking approval card. A title and a right label sit inside the top rule;
 // the body is fitted to the inner width; `sides` chooses a closed box
 // (`┌─┐ │ │ └─┘`), a left edge only (the heavy `┏ ┃ ┗` card), or rules

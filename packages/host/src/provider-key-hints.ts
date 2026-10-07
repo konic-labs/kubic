@@ -1,4 +1,4 @@
-// What a keyless provider needs (EPIC N, issue #461; docs/ui 03-D): the
+// What a keyless provider needs: the
 // variable Pi's own auth check would read, so the model picker can say
 // `○ no key  set OPENAI_API_KEY` instead of hiding the provider. Kubic keeps
 // no table of its own: a throwaway catalogue of Pi's built-ins whose auth

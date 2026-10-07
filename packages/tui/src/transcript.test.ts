@@ -1,4 +1,4 @@
-// Slice A: follow-end transcript fed by LaneSnapshot coarse cells (§16.1, §80).
+// Follow-end transcript fed by LaneSnapshot coarse cells.
 //
 // No VirtualTerminal exists in Pi 0.85.1: headless snapshots render the
 // ScrollView root directly (Component.render is pure) and assert document
@@ -31,7 +31,7 @@ afterEach(() => {
 
 const plainUi = createUiTheme(DARK_PALETTE, 'none');
 
-describe('transcript view (issue #23, slice A)', () => {
+describe('transcript view', () => {
   it('appends a text delta and shows it in a headless snapshot', () => {
     const view = createTranscriptView();
     view.appendDelta({ id: 'e1', kind: 'text', append: 'hello world' });
@@ -111,7 +111,7 @@ describe('transcript view (issue #23, slice A)', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  it('scrolls with the mouse wheel and re-pins at the end (behavioural, #321)', () => {
+  it('scrolls with the mouse wheel and re-pins at the end', () => {
     // Driven through a real alt-screen and SGR wheel input, not by reading
     // the ScrollView's constructor options back: the wheel over the
     // transcript moves it one line per event and leaves follow-end, and
@@ -227,7 +227,7 @@ describe('transcript view (issue #23, slice A)', () => {
   });
 });
 
-describe('transcript snapshot guards (issue #68; mutation hardening)', () => {
+describe('transcript snapshot guards (mutation hardening)', () => {
   it('ignores a same-revision resnapshot on the same lane', () => {
     const view = createTranscriptView();
     view.applyLaneSnapshot(
@@ -280,7 +280,7 @@ describe('transcript snapshot guards (issue #68; mutation hardening)', () => {
   });
 });
 
-describe('queued follow-ups (issue #334)', () => {
+describe('queued follow-ups', () => {
   it('renders each queued prompt under the transcript, first line only', () => {
     const view = createTranscriptView();
     view.appendDelta({ id: 'a1', kind: 'text', append: 'assistant spoke' });
@@ -296,14 +296,14 @@ describe('queued follow-ups (issue #334)', () => {
     );
   });
 
-  it('sanitizes a queued draft at ingress (#334 review)', () => {
+  it('sanitizes a queued draft at ingress', () => {
     const view = createTranscriptView();
     // A paste can carry ESC-prefixed sequences and C0 controls; a tab also
     // breaks the width math. The row is content, so it is stripped like the
     // pending echo.
     view.setQueuedPrompts(['\u001b[2Jclear\u0007\tend']);
     const row = view.render(80).find((line) => line.includes('queued:')) ?? '';
-    // Issue #299: the WHOLE sequence is gone (stripping only the ESC byte
+    // The WHOLE sequence is gone (stripping only the ESC byte
     // left `[2J` as visible parameter noise), and the BEL with it.
     expect(row).toContain('queued: clear');
     expect(row).not.toContain('\u001b');
@@ -331,7 +331,7 @@ describe('queued follow-ups (issue #334)', () => {
   });
 });
 
-describe('expanded tool output wraps instead of clipping (issue #300)', () => {
+describe('expanded tool output wraps instead of clipping', () => {
   function outputView(
     text: string,
     detail?: string,
@@ -369,7 +369,7 @@ describe('expanded tool output wraps instead of clipping (issue #300)', () => {
     expect(doc).toContain('E');
     expect(doc).toContain('Z');
     expect(doc).not.toContain('…');
-    // Continuation rows stay behind the card's gutter (`  │ `, #455).
+    // Continuation rows stay behind the card's gutter (`  │ `).
     expect(
       lines.filter((line) => line.startsWith('  │ ')).length,
     ).toBeGreaterThan(1);
@@ -407,7 +407,7 @@ describe('expanded tool output wraps instead of clipping (issue #300)', () => {
     expect(lines.join('\n').split('d').length - 1).toBe(200);
   });
 });
-describe('steady-state markdown caching (issue #298)', () => {
+describe('steady-state markdown caching', () => {
   it('parses each cell at most once across identical frames', () => {
     const view = createTranscriptView();
     view.applyLaneSnapshot(
@@ -513,7 +513,7 @@ describe('steady-state markdown caching (issue #298)', () => {
     expect(best).toBeLessThan(10);
   });
 });
-describe('transcript op log and snapshot reuse (issue #297)', () => {
+describe('transcript op log and snapshot reuse', () => {
   const cells = (count: number) =>
     Array.from({ length: count }, (_, i) => ({
       id: `c${i}`,
@@ -570,7 +570,7 @@ describe('transcript op log and snapshot reuse (issue #297)', () => {
   });
 });
 
-describe('compaction cells (issue #317)', () => {
+describe('compaction cells', () => {
   const SUMMARY_LINES = Array.from(
     { length: 12 },
     (_, i) => `summary line ${i}`,
@@ -595,7 +595,7 @@ describe('compaction cells (issue #317)', () => {
 
   it('shows a compaction marker cell and its summary, collapsed', () => {
     const doc = view().render(100).join('\n');
-    // Issue #455: a fg2 rule names it (`── compacted · auto ──`).
+    // A fg2 rule names it (`── compacted · auto ──`).
     expect(doc).toMatch(/─+ compacted · auto ─+/);
     expect(doc).toContain('summary line 0');
     // Collapsed: the first rows plus the expand hint, like a tool card.
@@ -622,7 +622,7 @@ describe('compaction cells (issue #317)', () => {
   });
 });
 
-describe('streamed assistant draft (issue #296)', () => {
+describe('streamed assistant draft', () => {
   it('renders the draft after the committed cells, before the commit', () => {
     const view = createTranscriptView();
     view.applyLaneSnapshot(
@@ -677,7 +677,7 @@ describe('streamed assistant draft (issue #296)', () => {
   });
 });
 
-describe('transcript blocks (issue #455; 01-B, 01-C)', () => {
+describe('transcript blocks', () => {
   const at = new Date(2026, 9, 6, 14, 1, 52).getTime();
 
   it('draws the prompt block with its edge and time, prose with its mark', () => {
@@ -733,7 +733,7 @@ describe('transcript blocks (issue #455; 01-B, 01-C)', () => {
   });
 });
 
-describe('thinking and turn receipts (issue #457; 01-F, 01-J)', () => {
+describe('thinking and turn receipts', () => {
   const thought =
     'addItem overwrites qty instead of adding to it. The fix is a +=.';
 
@@ -812,7 +812,7 @@ describe('thinking and turn receipts (issue #457; 01-F, 01-J)', () => {
   });
 });
 
-describe('markdown on the tokens (issue #458; 01-I)', () => {
+describe('markdown on the tokens', () => {
   const answer = [
     '# Fixed',
     '',
@@ -861,7 +861,7 @@ describe('markdown on the tokens (issue #458; 01-I)', () => {
   });
 });
 
-describe('a live theme switch (issue #461)', () => {
+describe('a live theme switch', () => {
   it('repaints cached markdown in the new theme at the same depth', async () => {
     const { builtinThemePalette, createThemeFromPalette } = await import(
       './theme.js'
@@ -892,7 +892,7 @@ describe('a live theme switch (issue #461)', () => {
   });
 });
 
-describe('file links in answers (issue #458)', () => {
+describe('file links in answers', () => {
   afterEach(() => {
     resetCapabilitiesCache();
   });

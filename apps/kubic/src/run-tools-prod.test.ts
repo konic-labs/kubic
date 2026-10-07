@@ -1,6 +1,6 @@
-// Issue #273 (§40.1 mechanism 1): the per-invocation tool selection
+// The per-invocation tool selection
 // (`--tools`/`--no-tools`) is validated before any lane boots. A selection
-// that contradicts the permission classes is refused with the §40.3 reason
+// that contradicts the permission classes is refused with the reason
 // as the usage terminus (exit 2); unknown names are refused by name; the
 // mutual exclusion is a usage error. The lane-level narrowing itself is
 // pinned in packages/worker/src/lane/solo-tools-line.test.ts.
@@ -52,8 +52,8 @@ function deps() {
   };
 }
 
-describe('kubic run tool selection (issue #273)', () => {
-  it('refuses --tools write under filesystem=read with the §40.3 reason (exit 2)', async () => {
+describe('kubic run tool selection', () => {
+  it('refuses --tools write under filesystem=read with the reason (exit 2)', async () => {
     const result = await runHeadlessPrompt(
       'do it',
       { tools: ['write'] },
@@ -106,7 +106,7 @@ describe('kubic run tool selection (issue #273)', () => {
   });
 });
 
-describe('kubic tui tool selection (issue #273)', () => {
+describe('kubic tui tool selection', () => {
   it('refuses a class-contradicting selection before any session exists', async () => {
     const root = tmpRoot();
     await expect(

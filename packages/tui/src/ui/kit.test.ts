@@ -1,4 +1,4 @@
-// The TUI kit primitives (EPIC N, issue #452). Pure renders: plain text at
+// The TUI kit primitives. Pure renders: plain text at
 // depth none (readable snapshots), plus SGR checks at truecolor.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../../core/src/ui/style.js';
@@ -197,7 +197,7 @@ describe('fuzzy match positions', () => {
     expect(highlightPositions('abc', [], mark)).toBe('abc');
   });
 
-  it('styles the unmatched runs too when asked (issue #460)', () => {
+  it('styles the unmatched runs too when asked', () => {
     const mark = (text: string): string => `[${text}]`;
     const rest = (text: string): string => `(${text})`;
     expect(highlightPositions('/model', [1, 2, 3], mark, rest)).toBe(

@@ -1,4 +1,4 @@
-// The app's chrome (EPIC N, issue #453): the header facts, the status
+// The app's chrome: the header facts, the status
 // line's state word and journal count, and the key-hint row per context.
 // Headless renders of the real app at colour depth none.
 import { describe, expect, it } from 'vitest';
@@ -19,7 +19,7 @@ const promptEntry = (id: string, seq: number, text: string) => ({
   message: { role: 'user', content: [{ type: 'text', text }] },
 });
 
-describe('header facts (issue #453)', () => {
+describe('header facts', () => {
   it('names the session by its short id, then by its first committed prompt', () => {
     const app = seed();
     expect(app.render(120)[0]).toContain('session 01a1…b6b8 │ approvals on');
@@ -67,7 +67,7 @@ describe('header facts (issue #453)', () => {
   });
 });
 
-describe('status line state word (issue #453)', () => {
+describe('status line state word', () => {
   const stateOf = (app: ReturnType<typeof seed>): string =>
     (app.render(100).at(-2) ?? '').trimEnd().split('  ').at(-1)?.trim() ?? '';
 
@@ -134,7 +134,7 @@ describe('status line state word (issue #453)', () => {
   });
 });
 
-describe('key-hint row (issue #453)', () => {
+describe('key-hint row', () => {
   it('switches between idle and working sets', () => {
     const app = seed();
     expect(app.render(100).at(-1)).toMatch(/^ ⏎ send {3}\^J newline/);
@@ -154,7 +154,7 @@ describe('key-hint row (issue #453)', () => {
   });
 });
 
-describe('tool cards on the app (issue #455)', () => {
+describe('tool cards on the app', () => {
   const call = (id: string) => ({
     id: 'a1',
     seq: 1,
@@ -240,7 +240,7 @@ describe('tool cards on the app (issue #455)', () => {
   });
 });
 
-describe('turn receipts and thinking time on the app (issue #457)', () => {
+describe('turn receipts and thinking time on the app', () => {
   const user = (id: string, seq: number, text: string) => ({
     id,
     seq,

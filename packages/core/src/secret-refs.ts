@@ -1,8 +1,8 @@
-// Secret-reference forms (issue #224; design §36.2): `$ENV_VAR`,
+// Secret-reference forms: `$ENV_VAR`,
 // `!command args` (no TTL — always re-run), `\$escaped` / `\!escaped`
 // literals, anything else literal. Lives in @kubic/core so the WORKER's
 // models.json parser and the HOST's request-time resolver share the one
-// table (same direction as secret-shapes.ts, issue #192): a worker → host
+// table (same direction as secret-shapes.ts): a worker → host
 // import would break `npm run lint:deps`. Pure string parsing — no env,
 // no processes, no audit; resolution stays in host/config/secrets.ts.
 
@@ -20,12 +20,12 @@ export type SecretRef =
 
 const ENV_REF = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
 
-// Shell-ish argv split for `!command` (issue #224): single- and
+// Shell-ish argv split for `!command`: single- and
 // double-quoted spans stay one element, a backslash quotes the next
 // character anywhere. No expansion, no globbing — the runner receives
 // argv verbatim (execFile, never a shell). An unterminated boundary quote
 // runs to the end rather than throwing. A quote OPENS quoting only at a
-// word boundary (review GAP, issue #224): a mid-word quote is far more
+// word boundary: a mid-word quote is far more
 // likely an apostrophe (`don't`) than grouping, so it stays literal and
 // the helper receives exactly what was written. A close always closes.
 export function splitSecretCommand(input: string): string[] {
@@ -57,7 +57,7 @@ export function splitSecretCommand(input: string): string[] {
       continue;
     }
     if (char === "'" || char === '"') {
-      // Word-boundary only (issue #224 GAP): mid-word quotes are
+      // Word-boundary only: mid-word quotes are
       // literal apostrophes, not grouping — fall through and keep them.
       if (current === '') {
         quote = char;

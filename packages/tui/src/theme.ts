@@ -1,4 +1,4 @@
-// Kubic TUI theme (TUI polish; tokens since EPIC N, issue #444).
+// Kubic TUI theme (TUI polish; tokens).
 // The colours come from the shared design tokens in packages/core/src/ui:
 // a palette (dark/default, light, terminal or a JSON theme file) bound to the
 // terminal's colour depth. `TuiTheme` keeps the named styles every view

@@ -1,4 +1,4 @@
-// Session storage on pi-durable (issue #392; §21–§22). One durable Session
+// Session storage on pi-durable. One durable Session
 // per session directory, one storage per session: sessions live under
 // <sessions-root>/<id>/, and the storage's JSONL files sit in that directory
 // beside the Kubic state it already held (journal, spans, posture, lock).
@@ -8,7 +8,7 @@
 //                                   documents, tasks — the session's truth)
 //   <root>/<id>/doc-<n>.jsonl       the storage's document sidecars
 //   <root>/<id>/session.json        Kubic's LISTING HEADER (see below)
-//   <root>/<id>/lock.json           the Kubic session lock (issue #118)
+//   <root>/<id>/lock.json           the Kubic session lock
 //   <root>/<id>/journal|spans…      the rest of the session's state
 //
 // Two records hold the session's metadata, and the split is deliberate:
@@ -28,12 +28,12 @@
 // fsynced, so this is parity, not a downgrade: a process crash loses nothing
 // (the page cache outlives it) and a power loss costs at most the newest
 // commit, which recovery drops whole. The change journal is Kubic's fsync'd
-// store (§42.4) — that is where "this change can be undone" is guaranteed.
+// store — that is where "this change can be undone" is guaranteed.
 //
 // Legacy sessions (Pi 0.87): a transcript written by the removed
 // JsonlSessionRepo lives at <root>/--<cwd>--/<ts>_<id>.jsonl. It is listed as
 // `format: 'legacy'` and refused on attach with SessionFormatError — no
-// converter, the repo is unreleased (§21).
+// converter, the repo is unreleased.
 
 import { dirname, join } from 'node:path';
 import type { RunMode } from '../../../agents/src/policy.js';
@@ -101,7 +101,7 @@ export function openSessionStore(
   return { root, bridge };
 }
 
-// Session metadata (issue #392; §21): what the store records about a session
+// Session metadata: what the store records about a session
 // at creation — the fields 0.87's `session.metadata` carried. `cwd` is the
 // directory the session was created against; `workspace` is the workspace it
 // belongs to when the caller declares one (the journal/overlap association),
@@ -114,12 +114,12 @@ export interface KubicSessionMeta {
   // The role and agent the session runs as, when the caller records them.
   role?: string;
   agentId?: string;
-  // Issue #265 (§22.3): a forked session's lane runs a FORK of the source's
+  // A forked session's lane runs a FORK of the source's
   // conversation, not the reserved root: its id is recorded here (absent ⇒
   // the root), with where it came from.
   conversation?: number;
   forkedFrom?: { session: string; at: number };
-  // Issue #278 (§19): the run's mode, recorded when the run names it
+  // The run's mode, recorded when the run names it
   // (absent ⇒ off by default, never assumed).
   mode?: RunMode;
   [k: string]: JsonValue | undefined;
@@ -147,7 +147,7 @@ export const KubicSessionDoc = defineDoc<{
 });
 
 // One attached session: the open storage, the session's metadata, and the
-// release that gives both back. Replaces Pi 0.87's `Session` (issue #392).
+// release that gives both back. Replaces Pi 0.87's `Session`.
 export interface SessionHandle {
   readonly id: string;
   /** `<sessions-root>/<id>`: the storage directory and the session's state dir. */
@@ -163,7 +163,7 @@ export interface SessionHandle {
   readonly storage: Storage;
   readonly meta: KubicSessionMeta;
   /**
-   * Hand the storage to a durable Harness (K5 #394):
+   * Hand the storage to a durable Harness:
    * `Harness.open(handle.adopt(), …)`. The handle stops owning the storage,
    * so `release()` gives the lock back without closing a storage a live
    * harness is using — the harness closes it. Returns the same object
@@ -196,16 +196,15 @@ export class SessionIdError extends Error {
   }
 }
 
-// Session locking (issue #118; §21–§22): one live attachment per session.
-// The lock file is <sessions-root>/<id>/lock.json — `{pid, startedAt,
-// procStart?, nonce?}` of the attaching process (`startedAt` is when the
-// lock was taken, `procStart` the holder process's own start time for the
-// pid-reuse guard in issue #145, `nonce` the per-attempt unique that makes
-// the post-write verification exact). It wraps EVERY storage open (issue
-// #392): pi-durable owns a storage exclusively and does no cross-process
-// locking, so the Kubic lock is the only guard against two processes
-// appending to one session. LOCAL FILESYSTEM ONLY: O_EXCL create and hard
-// links are atomic on a local fs (and on volumes that honor them), but no
+// Session locking: one live attachment per session. The lock file is
+// <sessions-root>/<id>/lock.json — `{pid, startedAt, procStart?, nonce?}` of
+// the attaching process (`startedAt` is when the lock was taken, `procStart`
+// the holder process's own start time for the pid-reuse guard, `nonce` the
+// per-attempt unique that makes the post-write verification exact). It wraps
+// EVERY storage open: pi-durable owns a storage exclusively and does no
+// cross-process locking, so the Kubic lock is the only guard against two
+// processes appending to one session. LOCAL FILESYSTEM ONLY: O_EXCL create and
+// hard links are atomic on a local fs (and on volumes that honor them), but no
 // network/shared-disk locking semantics are claimed — see
 // docs/packages/worker.md.
 export class SessionLockError extends Error {
@@ -253,7 +252,7 @@ function parseLockHolder(raw: string | undefined): LockHolder {
       ...(typeof parsed.procStart === 'number'
         ? { procStart: parsed.procStart }
         : {}),
-      // Issue #424: the nonce survives the parse so release can prove
+      // The nonce survives the parse so release can prove
       // ownership — it is the only per-attempt unique in the payload.
       ...(typeof parsed.nonce === 'string' ? { nonce: parsed.nonce } : {}),
     };
@@ -276,7 +275,7 @@ function pidIsAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    // Issue #424: EPERM means the process exists but belongs to another
+    // EPERM means the process exists but belongs to another
     // uid — alive, not stale. ESRCH (and any other failure) reads as not
     // alive; the start-time reuse guard above is what doubts toward the
     // holder, not the pid probe.
@@ -292,7 +291,7 @@ function pidIsAlive(pid: number): boolean {
 // in (reuse moves the start by the gap between the two processes).
 const PROC_START_TOLERANCE_MS = 1000;
 
-// Holder liveness (issue #145): the pid probe plus the start-time check
+// Holder liveness: the pid probe plus the start-time check
 // against pid reuse. A live pid number is not necessarily the holder — the
 // recorded process start must still match the pid's actual start. There is
 // NO age rule: a 48h-old lock with a live, matching holder is a long TUI
@@ -319,7 +318,7 @@ function lockErrorHolder(holder: LockHolder): {
   };
 }
 
-// Stale takeover (issue #145): temp lock + link claim, re-read and verify
+// Stale takeover: temp lock + link claim, re-read and verify
 // the owner. Each generation is arbitrated by the link — exactly one racer
 // lands, every loser sees EEXIST — and the clear only ever removes the
 // stale occupant this attempt judged: bytes that changed under us mean a
@@ -337,7 +336,7 @@ function stealSessionLock(
     if (holderIsLive(holder))
       throw new SessionLockError(sessionId, lockErrorHolder(holder));
     // Conditional clear: only remove the occupant judged stale above.
-    // Unconditional compare (review #145): an absent read licenses
+    // Unconditional compare: an absent read licenses
     // nothing — `undefined` compares correctly, so a live lock that lands
     // after an absent read is re-evaluated, never removed.
     if (readLockFile(lockPath) !== observed) continue;
@@ -358,7 +357,7 @@ export function acquireSessionLock(
   sessionDir: string,
   sessionId: string,
 ): string {
-  // Issue #361: a session directory is private state; an existing loose one
+  // A session directory is private state; an existing loose one
   // (created before this, or by hand) is closed on the way in — and so is the
   // sessions root, which is what `kubic doctor` reports and what the docs
   // promise the next open tightens. The root holds nothing but these session
@@ -369,7 +368,7 @@ export function acquireSessionLock(
   const ownStart = processStartTimeOf(process.pid);
   // The nonce makes the post-write verification exact: only these bytes
   // read as "acquired by this attempt". Returned so the owner's release
-  // can prove it (issue #424) — a stale handle's old nonce never matches
+  // can prove it — a stale handle's old nonce never matches
   // a re-acquired lock.
   const nonce = `${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`;
   const payload = JSON.stringify({
@@ -378,7 +377,7 @@ export function acquireSessionLock(
     ...(ownStart === undefined ? {} : { procStart: ownStart }),
     nonce,
   });
-  // O_EXCL test-and-set via the exec seam (I/O confinement, §9; the
+  // O_EXCL test-and-set via the exec seam (I/O confinement, the
   // primitive creates the session dir eagerly so the lock can land there).
   // The verify closes the fresh path against a stealer that observed a
   // stale lock before our create: bytes that are not ours fall through to
@@ -395,7 +394,7 @@ export function acquireSessionLock(
 }
 
 // Read-only liveness view for consumers that must never pull state out
-// from under a live attachment (issue #119: `kubic sessions prune`).
+// from under a live attachment (`kubic sessions prune`).
 // Pid-only on purpose, and deliberately stronger than the steal rule:
 // deletion is unrecoverable, so ANY live holder pid protects the session
 // — prune never applies the start-time reuse check, and a reused pid costs
@@ -416,7 +415,7 @@ export function sessionLockIsLive(
 export function releaseSessionLock(sessionDir: string, nonce?: string): void {
   const lockPath = join(sessionDir, 'lock.json');
   const holder = readLockHolder(lockPath);
-  // Owned-release only (issue #145, hardened in #424): a lock naming
+  // Owned-release only: a lock naming
   // another process is left alone. A nonced lock is ours exactly when it
   // carries the releasing handle's nonce — the pid alone is not enough,
   // because the same process can release, re-acquire, and then run a
@@ -453,7 +452,7 @@ function storagePathOf(sessionDir: string): string {
 
 // Best-effort directory listing: a missing or unreadable sessions root is a
 // fresh (or damaged) machine, never a throw — the listing's callers treat it
-// as "nothing recorded" (issue #362).
+// as "nothing recorded".
 function listDirOrNothing(bridge: FileBridge, path: string): BridgeFileInfo[] {
   try {
     return bridge.listDir(path);
@@ -547,7 +546,7 @@ function metaFrom(
       : {}),
     ...(role === undefined ? {} : { role }),
     ...(agentId === undefined ? {} : { agentId }),
-    // Issue #278 (§19): only the two RunMode spellings survive the read —
+    // Only the two RunMode spellings survive the read —
     // a foreign or hand-edited value is absent, never a third mode.
     ...(value.mode === 'autonomous' || value.mode === 'interactive'
       ? { mode: value.mode }
@@ -564,7 +563,7 @@ function metaFrom(
 }
 
 /**
- * Issue #265: the conversation a session's lane runs — a fork's recorded
+ * The conversation a session's lane runs — a fork's recorded
  * conversation, else the reserved root. Every reader of "the session's
  * transcript" resolves it through here.
  */
@@ -598,7 +597,7 @@ export interface ForkSessionResult {
 }
 
 /**
- * Issue #265 (§22.3): a new session forked from an existing one. The source
+ * A new session forked from an existing one. The source
  * storage files (`main.jsonl` + document sidecars) are copied into a fresh
  * session directory — under the source's own lock, so a live session is
  * refused (SessionLockError) and no run can start mid-copy — and nothing
@@ -685,7 +684,7 @@ export async function forkSession(
         if (meta.workspace !== undefined) doc.workspace = meta.workspace;
         delete doc.conversation;
         delete doc.forkedFrom;
-        // §22.3: a fork starts with no usage of its own — the copied
+        // A fork starts with no usage of its own — the copied
         // conversations' `pi.usage` documents are emptied in the creating
         // commit, so `kubic cost` never counts the source's spend twice.
         let page = await tx.scanConversations({}, 256);
@@ -751,7 +750,7 @@ function writeSessionHeader(
   id: string,
   meta: KubicSessionMeta,
 ): void {
-  // Issue #361: the header carries the session's workspace and metadata —
+  // The header carries the session's workspace and metadata —
   // private state, 0600 at creation.
   store.bridge.writeFile(
     headerPathOf(sessionDir),
@@ -780,9 +779,9 @@ function readSessionHeader(
   );
 }
 
-// The session's own metadata, read from the storage it was committed to
-// (issue #392). This is a `Storage` read, not a Session commit: it needs no
-// kernel, so the caller keeps the storage it will hand to the harness.
+// The session's own metadata, read from the storage it was committed to. This
+// is a `Storage` read, not a Session commit: it needs no kernel, so the caller
+// keeps the storage it will hand to the harness.
 export async function readSessionMetadata(
   storage: Storage,
   context: Context,
@@ -804,8 +803,8 @@ async function openSessionStorage(
   context: Context,
 ): Promise<Storage> {
   // The portable core over the exec bridge, never the `/node` entry point:
-  // session bytes keep crossing the I/O seam, where the #359 secret scrubbing
-  // and the #361 file modes live (see session-fs.ts). fsync stays off — the
+  // session bytes keep crossing the I/O seam, where the secret scrubbing
+  // and the file modes live (see session-fs.ts). fsync stays off — the
   // file header explains why.
   return JsonlStorage.open(
     sessionDir,
@@ -816,7 +815,7 @@ async function openSessionStorage(
 }
 
 // Release gives the lock back, and gives the storage back too while the handle
-// still owns it (issue #118, #392): every consumer's release path gets the
+// still owns it: every consumer's release path gets the
 // unlock for free, so no caller can leak a lock by forgetting an unlock step.
 // A storage a harness adopted is never closed from under it — the harness owns
 // it and closes it — and every step is idempotent.
@@ -825,8 +824,8 @@ function handleFor(
   sessionDir: string,
   id: string,
   meta: KubicSessionMeta,
-  // The acquire's nonce: the handle's release proves ownership with it
-  // (issue #424) instead of the pid alone.
+  // The acquire's nonce: the handle's release proves ownership with it instead
+  // of the pid alone.
   nonce: string,
 ): SessionHandle {
   let adopted = false;
@@ -857,7 +856,7 @@ export async function createSession(
     workspace?: string;
     role?: string;
     agentId?: string;
-    // Issue #278 (§19): the run's mode, recorded in the creating commit.
+    // The run's mode, recorded in the creating commit.
     mode?: RunMode;
   },
   context: Context,
@@ -874,7 +873,7 @@ export async function createSession(
     throw new Error(`Session already exists: ${sessionId}`);
   if (findLegacyTranscript(store, sessionId) !== undefined)
     throw new SessionFormatError(sessionId);
-  // The lock is acquired FIRST (issue #392): it is the only guard around a
+  // The lock is acquired FIRST: it is the only guard around a
   // storage open, so it must be held before the storage exists, not after.
   // The lock primitive creates the session dir eagerly, which is also the
   // storage's directory.
@@ -945,7 +944,7 @@ export class SessionAttachError extends Error {
   }
 }
 
-// A session directory written by Kubic on Pi 0.87 (issue #392). The repo is
+// A session directory written by Kubic on Pi 0.87. The repo is
 // unreleased, so there is no converter: the refusal is the whole behaviour.
 export class SessionFormatError extends Error {
   constructor(sessionId: string) {
@@ -994,7 +993,7 @@ export async function attachSession(
       throw new SessionFormatError(sessionId);
     throw new SessionAttachError(sessionId);
   }
-  // The lock is held before the storage is opened (issue #118, #392): no
+  // The lock is held before the storage is opened: no
   // reader ever observes a session another live attachment is writing, and no
   // second process ever opens the same pi-durable storage.
   const attachNonce = acquireSessionLock(sessionDir, sessionId);
@@ -1043,7 +1042,7 @@ export function listSessions(
       const header = parseJsonObject(readFirstLine(store.bridge, file.path));
       if (header === undefined) continue;
       if (header.kind !== 'header' || header.v !== 4) continue;
-      // The id is rendered by `kubic sessions list` (#400): a foreign or
+      // The id is rendered by `kubic sessions list`: a foreign or
       // hand-edited header whose id is not a session id is skipped, never
       // listed.
       if (typeof header.id !== 'string' || !isSessionId(header.id)) continue;
@@ -1081,7 +1080,7 @@ export function listSessions(
   );
 }
 
-// Repo-level overlap probe (issue #118; §42.5 blind spot): the ids of
+// Repo-level overlap probe (blind spot): the ids of
 // every session recorded against `workspace`. Two different sessions on
 // one workspace are LEGAL (warning only, never a block) — but each run's
 // end-of-run sweep attributes the other's in-flight changes as

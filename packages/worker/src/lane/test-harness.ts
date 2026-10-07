@@ -1,28 +1,24 @@
-// Faux-provider harness factory for Kubic tests (issue #401; EPIC K #389).
-//
+// Faux-provider harness factory for Kubic tests.
 // ONE place knows how a SoloLane is booted in tests: `bootSoloLane` over a
 // pi-durable Storage, with the faux provider and a `FakeExecutionEnv`. Tests
 // depend on the Kubic shapes this module returns (`SoloLane`, `EntryRecord`,
 // the parsed tool results) instead of assembling `Harness.open` + storage +
 // session handles themselves, so an upstream rename touches this file, not
 // every lane test.
-//
 // Two session backings:
 // - `storage: 'memory'` (default): a `MemoryStorage` behind a synthetic
 //   `SessionHandle`. Fast, and the right choice for a lane contract.
 // - `storage: 'jsonl'`: a REAL session created through `createSession` in a
-//   `root` the CALLER owns (worker may not import `node:fs` — §9 I/O
-//   confinement; the test's own scratch-dir helper mints and removes it), so
+//   `root` the CALLER owns (worker may not import `node:fs` — I/O confinement;
+//   the test's own scratch-dir helper mints and removes it), so
 //   recovery tests exercise the shipped JSONL format and the Kubic session
 //   lock. The returned `root`/`store` let a test reopen the same session
 //   (`attachSession`) as a second "process".
-//
 // The helpers are read-only views over the durable transcript: `run` is one
 // admitted input and its wait — the same `submit()` → `wait()` shape `kubic
-// run` drives (K6 #395 owns the production turn glue).
-//
+// run` drives (lane/turn.ts owns the production turn glue).
 // Test-only: imported by `*.test.ts` files. The build compiles it but no
-// runtime path reaches it (docs/dead-surface.md carries its ledger row).
+// runtime path reaches it (scripts/dead-surface.mjs lists it).
 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -82,7 +78,7 @@ export type FauxModel = NonNullable<
 
 export interface FauxLaneSessionOptions {
   // 'memory' (default) is a MemoryStorage behind a synthetic handle; 'jsonl'
-  // creates a real session through #392's store, so recovery tests can
+  // creates a real session store, so recovery tests can
   // `attachSession` the same directory afterwards.
   storage?: 'memory' | 'jsonl';
   // The sessions root for `storage: 'jsonl'`, owned by the caller (worker
@@ -366,7 +362,7 @@ export async function bootFauxLane(
     if (root === undefined) {
       throw new Error(
         "storage: 'jsonl' needs an explicit `root` (worker may not import " +
-          'node:fs — the test owns the sessions root, §9)',
+          'node:fs — the test owns the sessions root)',
       );
     }
     store = openSessionStore(root, createNodeFileBridge(root));

@@ -1,8 +1,8 @@
-// The composition of request-time key resolution with the §60 ledger (issue
-// #359; §36.1 rule 4): every models.json provider-key use appends ONE
-// credential-use record — the ref as a sentinel, the role, the purpose —
-// to the repo's audit ledger, which `kubic audit` reads. The value never
-// enters the record (emitAudit also refuses one carrying a live value).
+// The composition of request-time key resolution with the ledger: every
+// models.json provider-key use appends ONE credential-use record — the ref as a
+// sentinel, the role, the purpose — to the repo's audit ledger, which `kubic
+// audit` reads. The value never enters the record (emitAudit also refuses one
+// carrying a live value).
 
 import {
   appendToLedger,
@@ -24,7 +24,7 @@ export interface LedgerModelKeyResolverOptions {
   /** The run's provider/model ids: a key that is one of them is identity. */
   identity?: () => readonly string[];
   /**
-   * Runs a `!command` secret ref (issue #224): the production runner in
+   * Runs a `!command` secret ref: the production runner in
    * the run boots, a fake in tests. Required — a run without one refuses
    * command refs by name instead of leaving them unwired.
    */

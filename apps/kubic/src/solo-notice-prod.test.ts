@@ -1,11 +1,9 @@
-// Solo no-isolation notice on the real surfaces (issue #89).
-// #58 shipped the text and the module's own tests; the emission was never
+// Solo no-isolation notice on the real surfaces.
+// Shipped the text and the module's own tests; the emission was never
 // wired, so `kubic run` and `kubic tui` never told the operator the trust
 // model. This file proves the notice reaches the operator ON THE COMPOSITION
 // PATH (apps/kubic), not just inside the strings module: stderr for `run`
-// before the first turn, the welcome block for `tui` from the first render
-// (issue #453 retired the permanent footer: the header's SOLO badge stays on
-// every frame and `/safety` prints the full text).
+// before the first turn, the welcome block for `tui` from the first render.
 // Faux lane only — zero network, zero paid tokens.
 import {
   mkdtempSync,
@@ -111,7 +109,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('solo no-isolation notice on `kubic run` (issue #89)', () => {
+describe('solo no-isolation notice on `kubic run`', () => {
   it('emits the warning on stderr before the first turn', async () => {
     const root = tmpRoot('solo-notice-run-');
     const faux = fauxModels(['all done']);
@@ -182,7 +180,7 @@ describe('solo no-isolation notice on `kubic run` (issue #89)', () => {
   });
 });
 
-describe('solo no-isolation notice suppression (issue #89)', () => {
+describe('solo no-isolation notice suppression', () => {
   async function runOnce(label: string): Promise<CapturedWrite[]> {
     const root = tmpRoot(`solo-notice-${label}-`);
     const capture = captureStderr(() => 0);
@@ -303,7 +301,7 @@ async function waitFor(condition: () => boolean, ticks = 500): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
+describe('solo no-isolation notice on `kubic tui`', () => {
   it('shows the line at startup, before any turn or input', async () => {
     const lines: string[] = [];
     const fake = fakeTerminal(200);
@@ -345,7 +343,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     );
     await waitFor(() => fake.started() === 1);
     const frame = fake.writes.join('');
-    // Issue #462: the first screen's provider row says it.
+    // The first screen's provider row says it.
     expect(frame).toContain('faux/echo  testing provider, no model is called');
     expect(frame).toContain(soloTuiLine());
     fake.feed('\x03');
@@ -370,7 +368,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
     for (const ch of 'say done') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('all done, boss'));
-    // Issue #453: the notice is reachable AFTER the turn settled, not merely
+    // The notice is reachable AFTER the turn settled, not merely
     // left over from the startup frame — `/safety` prints the full text from
     // the limits module (read from what was written after the ask).
     const mark = fake.writes.length;
@@ -422,7 +420,7 @@ describe('solo no-isolation notice on `kubic tui` (issue #89)', () => {
   });
 });
 
-describe('the notice text has exactly one source (issue #89)', () => {
+describe('the notice text has exactly one source', () => {
   // A second copy of the text is how the two surfaces drift apart, so the
   // emission sites must call the module, never re-state it. Test files are excluded (they quote the
   // strings on purpose); this is about production sources.

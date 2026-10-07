@@ -101,7 +101,7 @@ async function transcriptOf(root: string, sessionId: string): Promise<string> {
   }
 }
 
-describe('kubic-state-write detection (issue #324)', () => {
+describe('kubic-state-write detection', () => {
   it('is a named capability', () => {
     expect(KUBIC_STATE_WRITE).toBe('kubic-state-write');
     expect(CAPABILITIES).toContain('kubic-state-write');
@@ -141,7 +141,7 @@ describe('kubic-state-write detection (issue #324)', () => {
   });
 });
 
-describe('refused control-plane state (issue #324)', () => {
+describe('refused control-plane state', () => {
   it.each([
     ['write', { path: '.kubic/journal/index.jsonl', content: '' }],
     [
@@ -180,7 +180,7 @@ describe('refused control-plane state (issue #324)', () => {
 // subdirectory has the project's real state ABOVE its workspace, and the
 // session root and the global config live under ~/.kubic. Every one of those
 // is classified.
-describe('control plane beyond the workspace (issue #324)', () => {
+describe('control plane beyond the workspace', () => {
   const HOME = '/home/u';
   const SUB = '/work/repo/packages/a';
   const classes = {
@@ -314,7 +314,7 @@ describe('control plane beyond the workspace (issue #324)', () => {
   });
 });
 
-describe('kubic-state-write always asks (issue #324)', () => {
+describe('kubic-state-write always asks', () => {
   it('autoApprove never answers it', async () => {
     const service = new ApprovalService({
       policy: validatePolicy({
@@ -379,7 +379,7 @@ describe('kubic-state-write always asks (issue #324)', () => {
   });
 });
 
-describe('prod run path: control-plane writes (issue #324)', () => {
+describe('prod run path: control-plane writes', () => {
   it('a faux write to .kubic/config.toml is asked (headless: denied, named) and the file is unchanged', async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot('ws-324-');

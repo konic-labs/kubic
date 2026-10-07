@@ -1,4 +1,4 @@
-// KubicPresentationState event/presentation contract (issue #5; §66, §3.1).
+// KubicPresentationState event/presentation contract.
 // Pure types with zero implementation imports. Every field is a replicated
 // value or a keyed service instance — no field requires the presentation to
 // hold authority, and commands are narrow and typed.
@@ -9,7 +9,7 @@
 // `scripts/dep-lint.mjs` rejects core → host/worker/exec imports structurally.
 //
 
-// Issue #338 (§16.8 "Images"): one image content part of a prompt. The
+// One image content part of a prompt. The
 // lane prompt contract carries text plus optional images; the worker maps
 // these onto Pi's user-message content parts unchanged, so a session stores
 // (and a resumed session replays) them exactly as Pi does. `data` is
@@ -24,7 +24,7 @@ export interface LaneImagePart {
 
 export interface SessionSnapshot {
   sessionId: string;
-  // Issue #333 (§66): the live session's replicated facts.
+  // The live session's replicated facts.
   model?: string;
   thinking?: string;
   approvalsSkipped: boolean;
@@ -38,9 +38,9 @@ export interface AgentSummary {
   workspace?: string;
 }
 
-// One tool call of a lane, as the presentation renders it (issue #333; §66,
-// §18). `args`/`entry` are the replicated payloads the view summarizes for
-// display — the state never carries a render string the projector invented.
+// One tool call of a lane, as the presentation renders it. `args`/`entry` are
+// the replicated payloads the view summarizes for display — the state never
+// carries a render string the projector invented.
 export interface LaneToolSnapshot {
   toolCallId: string;
   toolName: string;
@@ -57,10 +57,10 @@ export interface LaneSnapshot {
   status: 'idle' | 'running' | 'done';
   // The live turn's calls, oldest first; completed turns fold away.
   tools: readonly LaneToolSnapshot[];
-  // §66 queues: the prompts the conversation's inbox holds but no turn has
-  // placed yet (#334).
+  // Queues: the prompts the conversation's inbox holds but no turn has
+  // placed yet.
   queued: readonly string[];
-  // §27: a compaction is in flight / the last fault / a retry backoff.
+  // A compaction is in flight / the last fault / a retry backoff.
   compacting: boolean;
   fault?: string;
   retrying?: { attempt: number; error?: string };
@@ -96,7 +96,7 @@ export interface KubicPresentationState {
   connection: ConnectionState;
 }
 
-// Closed-world field coverage: §66 fixes the state shape exactly.
+// Closed-world field coverage: fixes the state shape exactly.
 export const PRESENTATION_STATE_FIELDS = {
   session: true,
   agents: true,

@@ -1,4 +1,4 @@
-// Composition-root half of the §46 trajectory (issue #383): gathers the I/O
+// Composition-root half of the trajectory: gathers the I/O
 // evidence a settled run left behind — the git base, the session journal,
 // the audit ledger and the used tool env — and hands it to the pure
 // assembler (packages/host/src/trajectory/
@@ -29,7 +29,7 @@ import {
 import type { TrajectoryEscalation } from '../../../packages/trajectory/src/schema.js';
 
 // Recorded when the workspace is not a git checkout: the journal, not git,
-// is Kubic's change record (§42), so there is no revision to pin — named,
+// is Kubic's change record, so there is no revision to pin — named,
 // never an invented sha.
 export const NO_VCS_REVISION = 'no-vcs';
 
@@ -58,9 +58,9 @@ export interface PersistRunTrajectoryInput {
   // The git base captured when the run STARTED (null outside git). Absent
   // means probe it now — the settle-time HEAD (a TUI turn, a direct call).
   base?: { revision: string; branch: string | null } | null;
-  // The run verifier's `signal:*` labels (issue #267).
+  // The run verifier's `signal:*` labels.
   evalLabels?: Record<string, string>;
-  // The lane's escalation record (issue #210): every model climb this
+  // The lane's escalation record: every model climb this
   // run recorded, oldest first. Absent means no climb.
   escalations?: TrajectoryEscalation[];
 }
@@ -94,7 +94,7 @@ function ledger(cwd: string): OrgAuditRecord[] {
   }
 }
 
-// `--session <id>` on export/replay (issue #383): the session's trajectory
+// `--session <id>` on export/replay: the session's trajectory
 // file stands in for `--trajectory <file>`. Both at once is a usage error,
 // and the id is validated before any path join can see it.
 export function resolveSessionTrajectory<

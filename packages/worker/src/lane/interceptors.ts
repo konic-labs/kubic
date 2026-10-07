@@ -1,5 +1,5 @@
-// Policy interceptors on the solo lane (issue #15, slice C; §40.1 mechanism 3).
-// Registered as ordered pi-durable `ToolTask.beforeTool` hooks (issue #397),
+// Policy interceptors on the solo lane.
+// Registered as ordered pi-durable `ToolTask.beforeTool` hooks,
 // so chaining, first-block-wins, and throw-becomes-block are the harness's
 // real semantics, not ours. Every handler is fail-closed: a policy exception
 // blocks with its redacted message. `beforeTool` runs before the tool's
@@ -7,31 +7,31 @@
 // re-runs the hook on resume instead of resuming an unapproved execution.
 //
 // Enforcement map (what each class means at this layer):
-//   filesystem — tool allowlist (slice B) + path confine below. Symlinks
+//   filesystem — tool allowlist + path confine below. Symlinks
 //     are NOT resolved (lexical confine only, same limit as the exec seam);
 //     a workspace symlink pointing outside is a known escape, documented
 //     here instead of silently "handled".
 //   shell true — bash present, destructive commands blocked.
 //   shell read-only-allowlist — bash present, destructive AND network
 //     commands blocked, and every `|`/`&&`/`;`/`&`/newline segment must pass
-//     the explicit read-only verb allowlist (issue #161): redirection,
+//     the explicit read-only verb allowlist: redirection,
 //     in-place edits, find write actions, write/exec flags, git options that
 //     execute code, shell expansion, process substitution and any
 //     non-allowlisted verb are refused by name.
 //   shell false — bash absent via allowlist.
-//   network none (and a domain-less allowlist, enforced as none — issue
-//     #166) — network-command verbs blocked in bash. full
+//   network none (and a domain-less allowlist, enforced as none) —
+//   network-command verbs blocked in bash. full
 //     change nothing at the tool layer (documented, not silent): there is
 //     no network tool to remove, and shell:true can still curl. The flag
-//     is consumed by approval triggers (issue #16).
-//   git/credentials — NO tool-layer enforcement today (no git/credential
-//     tools exist yet; git arrives with issue #19). The flags are stored
-//     validated config consumed by approval triggers (issue #16), never
+//     is consumed by approval triggers.
+//   git/credentials — NO tool-layer enforcement today (no git/credential tools
+//   exist yet; git arrives with). The flags are stored
+//     validated config consumed by approval triggers, never
 //     silently dropped.
 // The destructive matcher is a literal-pattern heuristic, not a sandbox:
 // it sees the command string only, so $CMD indirection, backslash escapes,
 // and eval-obfuscation bypass THIS guard (stated, not silent). Since issue
-// #131 the trigger layer raises on the cheap shapes this guard misses — a
+// The trigger layer raises on the cheap shapes this guard misses — a
 // destructive/network verb inside $(…)/backticks/eval and `sudo` anywhere
 // become approval asks instead of slipping through silently — but the
 // detection is still literal-pattern: python/node/npm exfiltration, quoted
@@ -53,13 +53,13 @@ export interface PolicyInterceptorOptions {
   workspace: string;
   shell?: ShellLevel;
   network?: NetworkLevel;
-  // Read-only confinement exception (issue #173; §29.3): the directories
+  // Read-only confinement exception: the directories
   // (or files) of the skills advertised with absolute paths outside the
   // workspace. Only the `read` tool may open a path inside one; write,
   // edit, ls, find and grep keep re-rooting every outside path.
   readRoots?: readonly string[];
   isDestructive?: (command: string, workspace: string) => boolean;
-  // Approval decider (issue #16, owned by the host). Consulted for every
+  // Approval decider. Consulted for every
   // call first: denials block; approvals let the call
   // through. Only challenged approvals (a real capability was raised and
   // granted) stand down the destructive/network/confine guards for that
@@ -75,7 +75,7 @@ export interface ApprovalCall {
   // detectors own the per-capability shape (same contract as before Pi 1.0).
   args: Record<string, unknown>;
   // The durable call id, which is the provider's toolCallId: the seat's
-  // stand-down set is keyed on exactly this value (issue #194).
+  // stand-down set is keyed on exactly this value.
   toolCallId: string;
 }
 
@@ -83,7 +83,7 @@ export type ApprovalAskVerdict =
   | {
       approved: true;
       challenged: boolean;
-      // Issue #467: the operator edited the call before allowing it — these
+      // The operator edited the call before allowing it — these
       // arguments replace the call's (and were judged themselves).
       arguments?: Record<string, unknown>;
     }
@@ -127,7 +127,7 @@ const WHOLE_COMMAND_PATTERNS = [
 // Every other destructive shape is a HEAD verb followed, later in the SAME
 // command segment (no `|`, `;` or `&` between), by a chain of further
 // tokens: `dd … of=/dev/`, `git clean … -f`, `chmod|chown … -R`, `find …
-// -delete`, `git … push … --force|-f|+refspec` (issue #357), `git … reset …
+// -delete`, `git … push … --force|-f|+refspec`, `git … reset …
 // --hard`, `git … checkout … (-- | . | -f | --force)` and `git … restore …
 // (--worktree | -W)`. They used to be one regex each with `[^|;&]*` gaps,
 // which backtracks polynomially: `git push ` repeated 2000 times took 13 s
@@ -238,13 +238,13 @@ const NETWORK_PATTERNS = [
 // Literal-pattern heuristic with the same stated scope as the destructive
 // matcher: python/node/npm/pip/git/openssl exfiltration bypasses
 // network:none today. The verbs above cover the interactive-transfer
-// layer; everything else is approvals' problem (issue #16).
+// layer; everything else is approvals' problem.
 
 export function isNetworkCommand(command: string): boolean {
   return NETWORK_PATTERNS.some((pattern) => pattern.test(command));
 }
 
-// --- read-only shell allowlist (issue #161; §12.1, §40) -------------------
+// --- read-only shell allowlist -------------------
 //
 // `shell: 'read-only-allowlist'` used to mean "full shell minus network", so
 // a read-only role could still write files and git state through bash. The
@@ -269,7 +269,7 @@ const READ_ONLY_VERBS: ReadonlySet<string> = new Set([
   'git',
 ]);
 
-// The git subcommands that only read — the same set §40 derives the git read
+// The git subcommands that only read — the same set derives the git read
 // tools from.
 const READ_ONLY_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   'status',
@@ -290,12 +290,11 @@ const GIT_OPTION_ARGUMENTS: ReadonlySet<string> = new Set([
   '--attr-source',
 ]);
 
-// git global options that can execute arbitrary code (review round 2 of
-// #161): `-c`/`--config-env` set any config git then honours (`core.pager`,
-// `diff.external`, `alias.*`), and `--exec-path`/`--upload-pack`/
-// `--receive-pack` name a binary git runs. A read-only role never needs
-// them, so they are refused by name — over-blocking is the correct
-// direction here.
+// git global options that can execute arbitrary code: `-c`/`--config-env` set
+// any config git then honours (`core.pager`, `diff.external`, `alias.*`), and
+// `--exec-path`/`--upload-pack`/ `--receive-pack` name a binary git runs. A
+// read-only role never needs them, so they are refused by name — over-blocking
+// is the correct direction here.
 const GIT_EXECUTING_OPTION =
   /^(?:-c|--(?:config-env|exec-path|upload-pack|receive-pack)(?:=|$))/;
 
@@ -307,14 +306,14 @@ const FIND_WRITE_ACTION =
 // `-pi`), or the long form.
 const IN_PLACE_FLAG = /^-[A-Za-z]*i/;
 
-// Flags that write or execute under an otherwise read-only verb (review of
-// #161): `git diff --output=<file>` writes, `rg --pre=<command>` runs a
-// command per file, `rg --hostname-bin` runs one per hostname lookup.
+// Flags that write or execute under an otherwise read-only verb: `git diff
+// --output=<file>` writes, `rg --pre=<command>` runs a command per file, `rg
+// --hostname-bin` runs one per hostname lookup.
 const WRITE_FLAG = /^--(?:output|pre|hostname-bin)(?:=|$)/;
 
 // `|`, `||`, `&&`, `;`, a single `&` and a newline all start a new command:
 // checking only the first verb of `ls & git commit -m x` left everything
-// after the `&` unchecked (review of #161). `&&` matches first, so it stays
+// after the `&` unchecked. `&&` matches first, so it stays
 // one separator, and `&>`/`&>>` land in a segment whose `>` scan blocks them.
 const SEGMENT_SPLIT = /\|\||&&|[|;&\n]/;
 // Both quote forms, for the redirect and verb scans: a quoted `>` is an
@@ -404,7 +403,7 @@ export function readOnlyViolation(command: string): string | undefined {
       return 'a command substitution is not read-only';
     }
     // Process substitution runs a command too (`<(…)`; the output form
-    // `>(…)` is already caught by the redirect scan above). Review round 2.
+    // `>(…)` is already caught by the redirect scan above).
     if (unquoted.includes('<(')) {
       return 'a process substitution is not read-only';
     }
@@ -441,8 +440,8 @@ export function redactReason(value: string): string {
   return redactSecrets(short);
 }
 
-// §36.1 rule 2 (issue #192): approval summaries, block reasons, the
-// trajectory and the audit ledger all pass through this redactor, so it composes the shared @kubic/core shape
+// Approval summaries, block reasons, the trajectory and the audit ledger all
+// pass through this redactor, so it composes the shared @kubic/core shape
 // table on top of the inline rules. It is deliberately at least as strong as
 // the host's display redactor (approval-display.ts): the display one keeps
 // prose readable because the operator must see what will run, this one may
@@ -454,7 +453,7 @@ const REDACTED = '[REDACTED]';
 // bad news`) stays readable while a short token still hits the keyword pass.
 const CREDENTIAL_WORD = '[A-Za-z0-9][A-Za-z0-9\\-._~+=]{9,}';
 
-// The FULL credential after an authorization scheme (issue #192). The scheme
+// The FULL credential after an authorization scheme. The scheme
 // word is kept so the reader sees what was hidden; `Authorization: Bearer
 // sk-live-123` used to redact only `Bearer` and leave the token in the clear.
 const AUTH_CREDENTIAL = new RegExp(
@@ -462,7 +461,7 @@ const AUTH_CREDENTIAL = new RegExp(
     // Header form: `Authorization[:=] [scheme] <credential>` — the separator
     // and the scheme are both optional, so the space-separated
     // `Authorization hunter2` and `--authorization hunter2` forms are covered
-    // too (review of #192: dropping `authorization` from the keyword pass had
+    // too (review of: dropping `authorization` from the keyword pass had
     // left the no-colon spelling in the clear).
     String.raw`(\bauthorization\s*[:=]?\s*(?:(?:bearer|basic|token|digest)\s+)?)\S+`,
     // Bare scheme form: `Bearer <credential>` / `Basic <credential>`.
@@ -480,7 +479,7 @@ const URL_USERINFO = /([a-z][a-z0-9+.-]{1,20}:\/\/)[^/\s@:]+:[^/\s@]+@/gi;
 
 // A user flag whose operand has the `user:password` shape: curl's `-u` /
 // `--user` and its proxy twin `-U` / `--proxy-user`. The short forms may be
-// attached (`-uadmin:hunter2`, review of #192); the long forms need `=` or a
+// attached (`-uadmin:hunter2`, review of); the long forms need `=` or a
 // space. The colon is required, so an unrelated `-u` (`cp -u a b`,
 // `sort -u names`) is left alone.
 const USER_FLAG_CREDENTIAL =
@@ -492,7 +491,7 @@ const USER_FLAG_CREDENTIAL =
 const KEYWORD_SECRET =
   /((?:token|password|passwd|secret|api[-_]?key|bearer|private[-_]?key)\s*(?:[=:]\s*|\s+))\S+/gi;
 
-// The redaction half alone, never truncating (issue #316): an approval
+// The redaction half alone, never truncating: an approval
 // dialog must show the whole command, so it redacts without cutting.
 export function redactSecrets(value: string): string {
   return redactSecretShapes(
@@ -527,10 +526,10 @@ function failClosed<T>(
   }
 }
 
-// The canonical form of a call's arguments for the stand-down key (issue
-// #194): JSON key order is not stable across providers, so every object is
-// sorted before hashing, and the hash keeps the map small whatever a tool's
-// arguments carry (a write's content can be megabytes).
+// The canonical form of a call's arguments for the stand-down key: JSON key
+// order is not stable across providers, so every object is sorted before
+// hashing, and the hash keeps the map small whatever a tool's arguments carry
+// (a write's content can be megabytes).
 function canonicalArgsHash(args: Record<string, unknown>): string {
   const sort = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(sort);
@@ -585,7 +584,7 @@ function confineArgs(
   return rewritten ? next : undefined;
 }
 
-// The lane's policy interception as ordered `ToolTask` hooks (issue #397).
+// The lane's policy interception as ordered `ToolTask` hooks.
 // Order is correctness: the approval seat first, then the
 // destructive/network guard, then the confine rewrite last — and the
 // harness skips every later hook once a block is returned. Each
@@ -603,7 +602,7 @@ export function policyInterceptorHooks(
   const isDestructive = options.isDestructive ?? defaultIsDestructive;
   const readRoots = (options.readRoots ?? []).map((root) => resolve(root));
   // Tool calls a real challenge cleared, keyed by the call id AND the exact
-  // arguments it was cleared for (issue #194). The id alone is not an
+  // arguments it was cleared for. The id alone is not an
   // identity: it comes from the provider (an OpenAI-compatible server can
   // repeat `call_0` or send `""`), so an approved `rm -rf x` must not stand
   // the guards down for a later, different call that reuses the id. Each
@@ -647,7 +646,7 @@ export function policyInterceptorHooks(
   const consumeApproved = (callId: string): void => {
     approvedCalls.delete(callId);
   };
-  // Issue #467: the shell calls the operator rewrote, by call id — the
+  // The shell calls the operator rewrote, by call id — the
   // result says what ran, so neither the model nor the transcript takes the
   // proposed command's output for its own. Capped like the stand-downs.
   const editedCalls = new Map<string, { from: string; to: string }>();
@@ -667,7 +666,7 @@ export function policyInterceptorHooks(
             toolCallId: call.id,
           });
           if (verdict.approved) {
-            // Issue #467: an edited call runs as edited — the later guards see
+            // An edited call runs as edited — the later guards see
             // (and a stand-down covers) exactly the arguments that were judged.
             const args = verdict.arguments ?? call.arguments;
             if (verdict.challenged) markApproved(call.id, args);
@@ -692,7 +691,7 @@ export function policyInterceptorHooks(
           }
           return block(`not approved: ${verdict.reason}`);
         }),
-      // Issue #467: an edited call's result opens with what actually ran.
+      // An edited call's result opens with what actually ran.
       afterTool: (call, result) => {
         const edit = editedCalls.get(call.id);
         if (edit === undefined) return undefined;
@@ -725,7 +724,7 @@ export function policyInterceptorHooks(
           if (isDestructive(command, options.workspace)) {
             return block(`destructive command blocked: ${command}`);
           }
-          // A domain-less `allowlist` allows nothing (issue #166): it is
+          // A domain-less `allowlist` allows nothing: it is
           // enforced as `none`, never as the unrestricted `full`.
           const network =
             options.network === undefined
@@ -740,7 +739,7 @@ export function policyInterceptorHooks(
               `network command blocked (network: ${declared}${declared === 'none' ? '' : ', enforced as none'}): ${command}`,
             );
           }
-          // §12.1 (issue #161): a read-only role gets the explicit allowlist,
+          // A read-only role gets the explicit allowlist,
           // not the full shell minus network.
           if (options.shell === 'read-only-allowlist') {
             const violation = readOnlyViolation(command);
@@ -782,7 +781,7 @@ export function policyInterceptorHooks(
 
   registrations.push(
     hook(ToolTask, {
-      // Last in the chain (issue #194): a stand-down is SPENT once the call
+      // Last in the chain: a stand-down is SPENT once the call
       // it was granted for has run its guards. Registered after every guard
       // so all of them saw it, and deleting by call id because the confine
       // guard may have rewritten the arguments a later hook receives.

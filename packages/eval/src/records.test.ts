@@ -25,7 +25,7 @@ function input(overrides: Partial<EvalRecordInput> = {}): EvalRecordInput {
   };
 }
 
-describe('validateEvalRecord (issue #53)', () => {
+describe('validateEvalRecord', () => {
   it('accepts a complete record', () => {
     const result = validateEvalRecord(input());
     expect(result.valid).toBe(true);
@@ -49,7 +49,7 @@ describe('validateEvalRecord (issue #53)', () => {
     expect(noGeneration.valid).toBe(false);
     if (!noGeneration.valid) {
       expect(noGeneration.errors).toEqual([
-        'generation is required: record which worker generation ran (§73)',
+        'generation is required: record which worker generation ran',
       ]);
     }
     const noSize = validateEvalRecord({
@@ -69,7 +69,7 @@ describe('validateEvalRecord (issue #53)', () => {
     expect(noDeterminism.valid).toBe(false);
     if (!noDeterminism.valid) {
       expect(noDeterminism.errors).toEqual([
-        'determinism is required: one of recorded, deterministic, live (§47.1/§72) — refusing to store a record whose comparisons cannot be trusted',
+        'determinism is required: one of recorded, deterministic, live — refusing to store a record whose comparisons cannot be trusted',
       ]);
     }
   });
@@ -99,7 +99,7 @@ describe('validateEvalRecord (issue #53)', () => {
   });
 });
 
-describe('reconcileUsage §39 (issue #53)', () => {
+describe('reconcileUsage', () => {
   it('reconciles cost/tokens/latency against usage rows', () => {
     const check = reconcileUsage(input(), [
       { inputTokens: 100, outputTokens: 50, costUsd: 0.02, latencyMs: 60000 },
@@ -124,7 +124,7 @@ describe('reconcileUsage §39 (issue #53)', () => {
     expect(check.errors.join(' ')).toMatch(/token/i);
   });
 
-  it('admits latency exactly equal to summed usage, denies 1ms over (issue #70)', () => {
+  it('admits latency exactly equal to summed usage, denies 1ms over', () => {
     const rows = [
       { inputTokens: 100, outputTokens: 50, costUsd: 0.02, latencyMs: 60000 },
     ];
@@ -134,20 +134,20 @@ describe('reconcileUsage §39 (issue #53)', () => {
     expect(over.errors.join(' ')).toMatch(/latency/i);
   });
 
-  it('treats rows without latencyMs as zero-latency (issue #70)', () => {
+  it('treats rows without latencyMs as zero-latency', () => {
     const check = reconcileUsage(input(), [
       { inputTokens: 100, outputTokens: 50, costUsd: 0.02 },
     ]);
     expect(check.ok).toBe(true);
   });
 
-  it('reconciles empty usage rows against a zero record (issue #70)', () => {
+  it('reconciles empty usage rows against a zero record', () => {
     const zero = input({ tokens: 0, costUsd: 0, latencyMs: 0 });
     expect(reconcileUsage(zero, []).ok).toBe(true);
     expect(reconcileUsage(input(), []).ok).toBe(false);
   });
 
-  it('sums tokens across multiple rows exactly (issue #70)', () => {
+  it('sums tokens across multiple rows exactly', () => {
     const rows = [
       { inputTokens: 60, outputTokens: 40, costUsd: 0.01, latencyMs: 1000 },
       { inputTokens: 30, outputTokens: 20, costUsd: 0.01, latencyMs: 2000 },
@@ -157,8 +157,8 @@ describe('reconcileUsage §39 (issue #53)', () => {
   });
 });
 
-describe('validateEvalRecord exact outputs (issue #70)', () => {
-  it('stamps a valid record with an ISO recordedAt, the size and the determinism tier (issues #70, #260)', () => {
+describe('validateEvalRecord exact outputs', () => {
+  it('stamps a valid record with an ISO recordedAt, the size and the determinism tier', () => {
     const result = validateEvalRecord(input());
     expect(result.valid).toBe(true);
     if (result.valid) {
@@ -169,14 +169,14 @@ describe('validateEvalRecord exact outputs (issue #70)', () => {
     }
   });
 
-  it('accepts generation 0 and success false (issue #70)', () => {
+  it('accepts generation 0 and success false', () => {
     expect(validateEvalRecord({ ...input(), generation: 0 }).valid).toBe(true);
     const failed = validateEvalRecord({ ...input(), success: false });
     expect(failed.valid).toBe(true);
     if (failed.valid) expect(failed.record.success).toBe(false);
   });
 
-  it('rejects whitespace-only suite/model/worktree and negative generations (issue #70)', () => {
+  it('rejects whitespace-only suite/model/worktree and negative generations', () => {
     for (const overrides of [
       { suite: '   ' },
       { model: '' },
@@ -189,7 +189,7 @@ describe('validateEvalRecord exact outputs (issue #70)', () => {
     }
   });
 
-  it('rejects empty-string thinking but keeps null (issue #70)', () => {
+  it('rejects empty-string thinking but keeps null', () => {
     expect(validateEvalRecord({ ...input(), thinking: '' }).valid).toBe(false);
     expect(validateEvalRecord({ ...input(), thinking: '  ' }).valid).toBe(
       false,
@@ -198,7 +198,7 @@ describe('validateEvalRecord exact outputs (issue #70)', () => {
     expect(nulled.valid).toBe(true);
   });
 
-  it('rejects NaN/negative cost, tokens, latency, toolCalls; 0 admits (issue #70)', () => {
+  it('rejects NaN/negative cost, tokens, latency, toolCalls; 0 admits', () => {
     for (const field of [
       'costUsd',
       'tokens',
@@ -212,7 +212,7 @@ describe('validateEvalRecord exact outputs (issue #70)', () => {
         );
       }
     }
-    // NOTE (issue #70): +Infinity currently validates (`>= 0` holds) —
+    // NOTE: +Infinity currently validates (`>= 0` holds) —
     // pinning the behavior here; tightening needs a src change, out of
     // scope for this test-only hardening pass.
     expect(
@@ -221,7 +221,7 @@ describe('validateEvalRecord exact outputs (issue #70)', () => {
     ).toBe(true);
   });
 
-  it('rejects null, array, and string inputs without storing (issue #70)', () => {
+  it('rejects null, array, and string inputs without storing', () => {
     for (const bad of [null, [], 'record', 42]) {
       const result = validateEvalRecord(bad);
       expect(result.valid).toBe(false);
@@ -229,7 +229,7 @@ describe('validateEvalRecord exact outputs (issue #70)', () => {
     }
   });
 
-  it('rejects an unknown size naming the allowed set (issue #70)', () => {
+  it('rejects an unknown size naming the allowed set', () => {
     const result = validateEvalRecord({ ...input(), size: 'full' });
     expect(result.valid).toBe(false);
     if (!result.valid) {
@@ -237,7 +237,7 @@ describe('validateEvalRecord exact outputs (issue #70)', () => {
     }
   });
 
-  it('accepts every size and determinism tier, keeping extra signal payloads (issues #70, #260)', () => {
+  it('accepts every size and determinism tier, keeping extra signal payloads', () => {
     for (const size of ['smoke', 'standard', 'extended']) {
       const result = validateEvalRecord({ ...input(), size });
       expect(result.valid).toBe(true);

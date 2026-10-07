@@ -1,5 +1,4 @@
-// Slice D: `kubic diff / undo / log / status` CLI (issue #18; §42.2, §78).
-// RED: runJournalCommand does not exist yet.
+// `kubic diff / undo / log / status` CLI.
 
 import {
   appendFileSync,
@@ -80,7 +79,7 @@ function setup(): {
   };
 }
 
-describe('journal CLI (issue #18, slice D)', () => {
+describe('journal CLI', () => {
   it('diffs with attribution and filters, --json parses', async () => {
     const { journalDir, root, out } = setup();
     const deps = { journalDir, root, out: out.write };
@@ -112,7 +111,7 @@ describe('journal CLI (issue #18, slice D)', () => {
       root: string | null;
       changes: Array<{ path: string }>;
     };
-    // Issue #362: the document names the resolved store.
+    // The document names the resolved store.
     expect(parsed.session).toBe(null);
     expect(parsed.root).toBe(root);
     expect(parsed.changes[0]?.path).toBe('a.txt');
@@ -154,7 +153,7 @@ describe('journal CLI (issue #18, slice D)', () => {
     expect(status.join('\n')).toContain('non-repo');
   });
 
-  it('records one undo-restore ledger row per real undo, none for dry-run (issue #284)', async () => {
+  it('records one undo-restore ledger row per real undo, none for dry-run', async () => {
     const { journalDir, root, out } = setup();
     const deps = { journalDir, root, out: out.write };
     expect(
@@ -175,7 +174,7 @@ describe('journal CLI (issue #18, slice D)', () => {
     process.platform === 'win32' ||
     (typeof process.getuid === 'function' && process.getuid() === 0);
   it.skipIf(posixOnly)(
-    'a failed ledger append surfaces on stderr and never fails the undo (issue #284)',
+    'a failed ledger append surfaces on stderr and never fails the undo',
     async () => {
       const { journalDir, root, out } = setup();
       const errs: string[] = [];
@@ -224,9 +223,9 @@ describe('journal CLI (issue #18, slice D)', () => {
   });
 });
 
-// Issue #108: `kubic undo` refuses to overwrite files that changed after
+// `kubic undo` refuses to overwrite files that changed after
 // the journaled entry (staleness check on afterHash); `--force` overrides.
-describe('journal CLI undo staleness (issue #108)', () => {
+describe('journal CLI undo staleness', () => {
   function seedStale(): {
     journalDir: string;
     root: string;
@@ -302,9 +301,9 @@ describe('journal CLI undo staleness (issue #108)', () => {
   });
 });
 
-// Blob integrity (issue #111): a torn delta blob must print the corrupt
+// Blob integrity: a torn delta blob must print the corrupt
 // marker and exit 0 — a readable journal is worth more than a crash.
-describe('journal CLI corrupt content (issue #111)', () => {
+describe('journal CLI corrupt content', () => {
   function seedTornDelta(): { journalDir: string; root: string } {
     const journalDir = mkTmp('j-');
     const root = mkTmp('ws-');
@@ -358,10 +357,10 @@ describe('journal CLI corrupt content (issue #111)', () => {
   });
 });
 
-// Torn index lines (issue #343): a fragment left by a crash or a full disk
+// Torn index lines: a fragment left by a crash or a full disk
 // is dropped from the read, and `status` names the count so an operator
 // does not read the loss as an empty journal.
-describe('journal CLI corrupt index lines (issue #343)', () => {
+describe('journal CLI corrupt index lines', () => {
   function seed(seedTorn: boolean): { journalDir: string; root: string } {
     const journalDir = mkTmp('j-');
     const root = mkTmp('ws-');
@@ -407,14 +406,14 @@ describe('journal CLI corrupt index lines (issue #343)', () => {
   });
 });
 
-// Issue #125: the bare journal CLI resolves `<root>/.kubic/journal` — a
+// The bare journal CLI resolves `<root>/.kubic/journal` — a
 // store no runtime path writes (runs journal under
 // `<sessions-root>/<id>/journal`), so `kubic diff` after `kubic run` printed
 // `no changes` from a dead store. With no workspace store, bare commands
-// fall back to the latest session journal recorded for this workspace (#362)
+// fall back to the latest session journal recorded for this workspace
 // and name it first (`session: <id>`)
 // so the fallback is never silent; `--json` keeps its parseable envelope.
-describe('journal CLI default store fallback (issue #125)', () => {
+describe('journal CLI default store fallback', () => {
   function seedSessions(): {
     root: string;
     sessionsRoot: string;
@@ -453,7 +452,7 @@ describe('journal CLI default store fallback (issue #125)', () => {
     return { root, sessionsRoot, oldId, newId };
   }
 
-  // Issue #362: both sessions were recorded for `root` (the fallback only
+  // Both sessions were recorded for `root` (the fallback only
   // considers sessions recorded for the current workspace).
   const recordedAt = (root: string) => async (): Promise<Map<string, string>> =>
     new Map([
@@ -706,11 +705,11 @@ describe('journal CLI default store fallback (issue #125)', () => {
   });
 });
 
-// Issue #117: a successful undo is journaled as a `kubic-undo` entry, so
+// A successful undo is journaled as a `kubic-undo` entry, so
 // `diff`/`log` describe the world after the undo instead of the pre-undo
 // world, and a second `undo --step` is the redo (undo the undo). A dry run
 // appends nothing.
-describe('journal CLI undo record + redo (issue #117)', () => {
+describe('journal CLI undo record + redo', () => {
   it('diff shows the undo as the latest change, attributed to kubic-undo', async () => {
     const { journalDir, root } = setup();
     expect(
@@ -841,10 +840,10 @@ describe('journal CLI undo record + redo (issue #117)', () => {
   });
 });
 
-// Issue #126: the status repo line follows a linked worktree's `gitdir:`
+// The status repo line follows a linked worktree's `gitdir:`
 // pointer — a linked worktree must not report `(detached)` (or a non-repo)
 // for a live branch.
-describe('journal CLI worktree status (issue #126)', () => {
+describe('journal CLI worktree status', () => {
   it('status names the worktree branch from the gitdir pointer', async () => {
     const journalDir = mkTmp('j-');
     const root = mkTmp('wt-');
@@ -864,8 +863,8 @@ describe('journal CLI worktree status (issue #126)', () => {
     expect(lines.join('\n')).toContain('repo: branch wt-feature');
   });
 
-  // Issue #380: on a real repo the status line also names the root (and
-  // ahead/behind plus conflicts when they exist). L-D37: real git runs
+  // On a real repo the status line also names the root (and
+  // ahead/behind plus conflicts when they exist). Real git runs
   // through the shared sandbox, never raw execFileSync.
   it('status names the repo root on a real repository', async () => {
     const journalDir = mkTmp('j-');
@@ -887,7 +886,7 @@ describe('journal CLI worktree status (issue #126)', () => {
     );
   });
 
-  // Review gap on issue #380: the ahead/behind and conflicts branches
+  // Review gap on: the ahead/behind and conflicts branches
   // of the repo line need a direct render pin — a mutant deleting those
   // parts.push lines must fail.
   it('status renders ahead/behind and conflicts on a real repository', async () => {
@@ -927,13 +926,13 @@ describe('journal CLI worktree status (issue #126)', () => {
   });
 });
 
-// Issue #126: `diff --json` carries full before/after strings, so a session
+// `diff --json` carries full before/after strings, so a session
 // that edited a few large files is a multi-megabyte single line with no
 // bound and no truncation marker. Default: clip each side at 64 KiB with
 // `contentTruncated: true` and a named marker line; `--max-content-bytes 0`
 // is the explicit-unlimited escape hatch for scripting. The human diff
 // renders hunks, not whole files, and is never clipped.
-describe('journal CLI diff --json content bounds (issue #126)', () => {
+describe('journal CLI diff --json content bounds', () => {
   const LIMIT = 64 * 1024;
   const MARKER = (bytes: number): string =>
     `\n[kubic: content truncated at ${bytes} bytes]`;
@@ -1284,15 +1283,15 @@ describe('journal CLI presentation (themes, tables)', () => {
       },
     );
     expect(errs).toHaveLength(1);
-    // Issue #450: a colour terminal shows the level as a status mark.
+    // A colour terminal shows the level as a status mark.
     expect(errs[0]?.startsWith(COLOR.ui.fg('info')('ℹ'))).toBe(true);
   });
 });
 
-// Issue #400: the default session-workspace lookup reads the durable session
+// The default session-workspace lookup reads the durable session
 // store's own metadata (`kubic.session` → listing meta), so a real session
 // created by the store associates its journal with the workspace it recorded.
-describe('journal CLI default session workspaces over the durable store (issue #400)', () => {
+describe('journal CLI default session workspaces over the durable store', () => {
   it('finds the latest journal of a session the store recorded for this workspace', async () => {
     const sessionsRoot = mkTmp('sr-');
     const root = mkTmp('ws-');
@@ -1340,7 +1339,7 @@ describe('journal CLI default session workspaces over the durable store (issue #
   });
 });
 
-describe('journal CLI HEAD moves (issue #378)', () => {
+describe('journal CLI HEAD moves', () => {
   const MOVE_A = { head: 'a'.repeat(40), branch: 'main', stash: 0 };
   const MOVE_B = { head: 'b'.repeat(40), branch: 'feature', stash: 0 };
 
@@ -1445,7 +1444,7 @@ describe('journal CLI HEAD moves (issue #378)', () => {
   });
 });
 
-describe('journal CLI diff path scope (issue #271)', () => {
+describe('journal CLI diff path scope', () => {
   it('a scoped request shows only that path', async () => {
     const { journalDir, root } = setup();
     const store = new FileJournalStore(journalDir);
@@ -1473,7 +1472,7 @@ describe('journal CLI diff path scope (issue #271)', () => {
   });
 });
 
-describe('journal CLI diff --stat (issue #335)', () => {
+describe('journal CLI diff --stat', () => {
   function statSetup(): { journalDir: string; root: string } {
     const journalDir = mkTmp('j-');
     const root = mkTmp('ws-');

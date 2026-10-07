@@ -1,10 +1,10 @@
-// Org audit trail (issue #57; §83 P4 engine, §60 record, §85 flow).
+// Org audit trail (P4 engine, audit record, flow).
 // Every privileged action is auditable at org scope with exactly the 14
-// §60 fields. Credential material never lands here: the credential leaf
+// Fields. Credential material never lands here: the credential leaf
 // carries a sentinel naming the ref, and any secret-shaped value in it is
 // refused loudly. Sinks are syslog-first ([[audit]] order); a sink failure
 // — or zero sinks — throws instead of losing records silently.
-// Read-only wrt doctor (#29), broker/ScopedToken (#38), approvals (#41):
+// Read-only wrt doctor, broker/ScopedToken, approvals:
 // nothing is imported from worker impl and nothing existing is modified.
 // Faux-only, zero network; no node:fs (sinks are injected).
 
@@ -118,7 +118,7 @@ export function createMemorySink(name = 'memory'): MemoryAuditSink {
   };
 }
 
-// RFC 5424 facilities (issue #286; §58): names plus local0–local7 for the
+// RFC 5424 facilities: names plus local0–local7 for the
 // enterprise collector. A `[[audit]] facility` that names none of these is
 // refused at sink construction, never silently mapped to a wrong facility.
 const SYSLOG_FACILITIES: Readonly<Record<string, number>> = {
@@ -169,7 +169,7 @@ export type SyslogTarget =
   | { kind: 'unix'; path: string }
   | { kind: 'udp'; host: string; port: number };
 
-// The platform's syslog socket (issue #286): `/var/run/syslog` on macOS,
+// The platform's syslog socket: `/var/run/syslog` on macOS,
 // `/dev/log` elsewhere. No import needed — `process.platform` is global.
 export function defaultSyslogSocketPath(): string {
   return process.platform === 'darwin' ? '/var/run/syslog' : '/dev/log';
@@ -206,7 +206,7 @@ export function parseSyslogTarget(target: string | undefined): SyslogTarget {
   return { kind: 'udp', host, port };
 }
 
-// The injectable syslog transport (issue #286): one RFC 5424 line per
+// The injectable syslog transport: one RFC 5424 line per
 // call, synchronously (`appendAudit` refuses async sinks). Prod transports
 // (unix datagram, UDP) live in `syslog-transport.ts` — this module stays
 // socket-free so its tests never touch the network.
@@ -430,7 +430,7 @@ export interface EmitAuditOptions {
 
 // Build, validate, and loudly append one org audit record. Mode and
 // posture are required on every record — there is no default posture. The
-// input spreads onto exactly the 14 §60 fields: any unknown top-level key
+// input spreads onto exactly the 14 fields: any unknown top-level key
 // is rejected fail-closed with AuditShapeError, never kept.
 const ALLOWED_AUDIT_INPUT_KEYS = new Set<string>([...AUDIT_FIELDS, 'when']);
 

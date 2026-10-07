@@ -1,4 +1,4 @@
-// @-file mention completion (issue #336; §16.5): typing `@` and part of a
+// @-file mention completion: typing `@` and part of a
 // path offers matching workspace files, fuzzy and capped, and Tab inserts the
 // workspace-relative path. The file list comes from the composition root
 // (a gitignore-aware walk), so this module never touches the filesystem.
@@ -30,7 +30,7 @@ async function popupShows(editor: PromptEditor, text: string): Promise<void> {
   });
 }
 
-describe('rankFileMentions (issue #336)', () => {
+describe('rankFileMentions', () => {
   it('offers every path matching the query, basename and prefix matches first', () => {
     expect(rankFileMentions(FILES, 'src/ma')).toEqual([
       'src/map.ts',
@@ -47,7 +47,7 @@ describe('rankFileMentions (issue #336)', () => {
   });
 });
 
-describe('@ mentions in the prompt editor (issue #336)', () => {
+describe('@ mentions in the prompt editor', () => {
   const editorWith = (files: readonly string[]) => {
     const editor = new PromptEditor();
     editor.setAutocomplete(

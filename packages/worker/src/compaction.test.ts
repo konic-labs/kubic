@@ -1,4 +1,4 @@
-// Compaction policy on pi-durable (issues #34, #399; §27.1-27.4).
+// Compaction policy on pi-durable.
 //
 // Pi 1.0 / pi-durable owns the mechanism (the threshold checkpoints, the
 // summarization request, the pi.compaction entry, the overflow retry). These
@@ -187,7 +187,7 @@ function entryReason(entry: { readonly data?: unknown }): unknown {
 
 // ─── soloCompactionSettings: the live clamped reserve ─────────────────────
 
-describe('soloCompactionSettings (issue #399: the reserve is read live)', () => {
+describe('soloCompactionSettings (the reserve is read live)', () => {
   it('defaults to the Kubic budget: enabled, 16384 reserve, 20000 keep-recent, background off', () => {
     const settings = soloCompactionSettings({ currentWindow: () => 200000 });
     expect(DEFAULT_RESERVE_TOKENS).toBe(16384);
@@ -242,7 +242,7 @@ describe('soloCompactionSettings (issue #399: the reserve is read live)', () => 
 
 // ─── the reserve as the harness reads it: a real threshold ────────────────
 
-describe('the harness threshold follows the live reserve (issue #399)', () => {
+describe('the harness threshold follows the live reserve', () => {
   it('keeps a small-window session below the clamped threshold, so nothing compacts', async () => {
     // Window 3000, clamped reserve 750: threshold 2250. Unclamped (16384) the
     // threshold would be negative and this exchange would compact.
@@ -264,7 +264,7 @@ describe('the harness threshold follows the live reserve (issue #399)', () => {
 
   it('uses the new clamp after configure({ model }) with no manual re-clamp', async () => {
     // The settings object is built ONCE. `laneModel` mirrors the lane's
-    // current model; #394 updates it on a switch and never touches settings.
+    // current model; updates it on a switch and never touches settings.
     let laneModel = { contextWindow: 3000, maxTokens: 5000 };
     const settings = soloCompactionSettings({
       configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
@@ -319,7 +319,7 @@ describe('the harness threshold follows the live reserve (issue #399)', () => {
 
 // ─── automatic (threshold) compaction ─────────────────────────────────────
 
-describe('automatic compaction (issue #399: threshold crossing)', () => {
+describe('automatic compaction (threshold crossing)', () => {
   it('crossing the threshold appends exactly one pi.compaction entry', async () => {
     // Window 3000, configured reserve 7000 -> clamped to 750; blocking
     // threshold 2250. The first exchange (~2600 estimated tokens) crosses it;
@@ -355,7 +355,7 @@ describe('automatic compaction (issue #399: threshold crossing)', () => {
 
 // ─── manual compaction: compactSoloLane ───────────────────────────────────
 
-describe('compactSoloLane (issue #399: manual compaction, #82 rule 7)', () => {
+describe('compactSoloLane (manual compaction)', () => {
   it('passes the focus verbatim into Kubic compact prompt as the instructions', async () => {
     const focus = 'keep the failing test names and exact file paths';
     const result = await openSolo({
@@ -394,7 +394,7 @@ describe('compactSoloLane (issue #399: manual compaction, #82 rule 7)', () => {
   });
 });
 
-describe('runManualCompaction (issue #330: the TUI /compact path)', () => {
+describe('runManualCompaction (the TUI /compact path)', () => {
   it('admits, awaits and reports the pre-cut context estimate', async () => {
     const focus = 'keep the failing test names';
     const result = await openSolo({
@@ -430,7 +430,7 @@ describe('runManualCompaction (issue #330: the TUI /compact path)', () => {
     expect(entryReason(entries[0] ?? {})).toBe('manual');
   });
 
-  it('reports Pi\'s "nothing to compact" completion as nothing, not a cut (#330 review)', async () => {
+  it('reports Pi\'s "nothing to compact" completion as nothing, not a cut', async () => {
     // The shipped TUI keep-recent window is 20000 tokens: a session below it
     // has nothing to cut, and Pi completes the task without placing a
     // `pi.compaction` entry (CompactionResult's entryId/submissionId both
@@ -521,7 +521,7 @@ describe('runManualCompaction (issue #330: the TUI /compact path)', () => {
 
 // ─── the background-compaction decision ───────────────────────────────────
 
-describe('background compaction is pinned off (issue #399)', () => {
+describe('background compaction is pinned off', () => {
   it('does not start below the blocking threshold with the Kubic default', async () => {
     // Window 3000, reserve 750, blocking threshold 2250. Pi's own default
     // (32768 below the threshold) would compact anywhere above -30518 -- i.e.
@@ -579,7 +579,7 @@ describe('reserve clamp (a reserve never eats more than a quarter of the window)
   });
 });
 
-describe('/compact focus instructions (issue #34)', () => {
+describe('/compact focus instructions', () => {
   it('carries caller focus instructions verbatim into the compact prompt', () => {
     const focus = parseCompactCommand('/compact focus on the auth flow');
     const prompt = buildCompactPrompt({ focus });
@@ -598,7 +598,7 @@ describe('/compact focus instructions (issue #34)', () => {
   });
 });
 
-describe('structured summaries with cumulative file ops (issue #34)', () => {
+describe('structured summaries with cumulative file ops', () => {
   it('lists cumulative created/modified/deleted structurally', async () => {
     const { accumulateFileOps, emptyFileOps, formatStructuredSummary } =
       await import('./compaction.js');
@@ -624,7 +624,7 @@ describe('structured summaries with cumulative file ops (issue #34)', () => {
   });
 });
 
-describe('tool-output spill helpers (issue #34: pure helpers; the spill path itself is not implemented)', () => {
+describe('tool-output spill helpers (pure helpers; the spill path itself is not implemented)', () => {
   it('resolves truncated bash output to its spill path artifact ref', async () => {
     const { buildSpillArtifact, resolveTruncatedOutput } = await import(
       './compaction.js'

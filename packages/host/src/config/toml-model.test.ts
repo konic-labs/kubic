@@ -1,4 +1,4 @@
-// The `[model]` table writer behind `kubic setup` (issue #451).
+// The `[model]` table writer behind `kubic setup`.
 import { describe, expect, it } from 'vitest';
 import { upsertModelTable } from './toml-model.js';
 

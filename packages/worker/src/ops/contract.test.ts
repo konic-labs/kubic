@@ -1,4 +1,4 @@
-// Operation tool contract (issue #67, EPIC A/B mutation hardening).
+// Operation tool contract (/B mutation hardening).
 // Pins every registered tool's name/description/replay triple exactly:
 // Stryker StringLiteral mutants on descriptions (→ "") survive suites that
 // only exercise behavior, so the contract itself is asserted here. Registry
@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { BASH_RESULT_MAX_CHARS, BASH_RESULT_MAX_LINES } from './bash.js';
 import { OPERATIONS } from './registry.js';
 
-// Issue #190: the git read ops clip to the shared model cap; the pin is
+// The git read ops clip to the shared model cap; the pin is
 // built from the same constants as the descriptions so the bound cannot
 // drift from the contract.
 const GIT_CLIP = `Output clips to the shared model cap (last ${BASH_RESULT_MAX_LINES} lines, at most ${BASH_RESULT_MAX_CHARS} chars, tail-kept; truncated reports the cut and the full text is spilled when the lane provides a sink)`;
@@ -73,7 +73,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   git_commit: {
     description:
-      'Commit staged changes; returns sha + file list (trajectory records commits from this result in EPIC F)',
+      'Commit staged changes; returns sha + file list (trajectory records commits from this result)',
     replay: 'never',
   },
   git_branch: {
@@ -101,7 +101,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
 };
 
-describe('operation tool contract (issue #67)', () => {
+describe('operation tool contract', () => {
   it('registers exactly the eighteen solo tools', () => {
     expect(Object.keys(OPERATIONS).sort()).toEqual(
       Object.keys(EXPECTED).sort(),

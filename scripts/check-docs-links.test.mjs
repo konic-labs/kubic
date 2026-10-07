@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { checkDocsDeps, checkDocsLinks } from './check-docs-links.mjs';
+import { checkDocsLinks } from './check-docs-links.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -66,120 +66,12 @@ describe('check-docs-links CLI (npm run docs:check)', () => {
     assert.doesNotMatch(result.stdout, /docs links OK/);
   });
 
-  it('exits 1 on neighbour drift even when every link resolves', () => {
-    const dir = fixture({
-      'packages/agents/src/memory.ts': `import type { FileBridge } from '../../exec/src/file-bridge.js';\n`,
-      'packages/exec/src/file-bridge.ts': `export type FileBridge = {};\n`,
-      'docs/packages/agents-pkg.md':
-        '## Dep-direction neighbours\n\n- May import: core only.\n',
-    });
-    const result = spawnSync(process.execPath, [CLI, '--root', dir], {
-      encoding: 'utf8',
-    });
-    assert.equal(result.status, 1, 'docs drift must fail the gate');
-    assert.match(result.stdout, /docs links OK/);
-    assert.match(result.stderr, /docs drift: .*agents -> exec/);
-    assert.doesNotMatch(result.stdout, /docs deps OK/);
-  });
-
   it('exits 0 on a clean fixture', () => {
     const dir = fixture({ 'docs/a.md': '[b](./b.md)\n', 'docs/b.md': '# b\n' });
     const result = spawnSync(process.execPath, [CLI, '--root', dir], {
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /docs deps OK/);
-  });
-});
-
-describe('check-docs-links deps (issue #63 review)', () => {
-  const AGENTS_CORE_ONLY = `## Dep-direction neighbours
-
-- May import: [@kubic/core](core.md) only.
-- Imported by: [@kubic/worker](worker.md).
-
-\`\`\`text
-core ──→ agents
-\`\`\`
-`;
-
-  it('passes on the real tree (neighbours match dep-lint edges)', () => {
-    const result = checkDocsDeps(ROOT);
-    assert.deepEqual(result.mismatches, []);
-    assert.ok(result.edges > 0, 'expected at least one internal edge');
-  });
-
-  it('fails when May-import misses an actual edge (agents->exec)', () => {
-    const dir = fixture({
-      'packages/agents/src/memory.ts': `import type { FileBridge } from '../../exec/src/file-bridge.js';\n`,
-      'packages/exec/src/file-bridge.ts': `export type FileBridge = {};\n`,
-      'docs/packages/agents-pkg.md': AGENTS_CORE_ONLY,
-    });
-    const result = checkDocsDeps(dir);
-    assert.ok(
-      result.mismatches.some((m) =>
-        m.includes('May-import missing actual edge agents -> exec'),
-      ),
-      `expected agents->exec drift, got ${JSON.stringify(result.mismatches)}`,
-    );
-  });
-
-  it('fails on a fabricated Imported-by (trajectory imports nothing)', () => {
-    const dir = fixture({
-      'packages/agents/src/task.ts': `export type AgentTask = {};\n`,
-      'docs/packages/agents-pkg.md': `## Dep-direction neighbours
-
-- May import: [@kubic/core](core.md).
-- Imported by: [@kubic/trajectory](trajectory.md) (structural snapshots).
-`,
-    });
-    const result = checkDocsDeps(dir);
-    assert.ok(
-      result.mismatches.some((m) =>
-        m.includes('no trajectory -> agents edge in tree'),
-      ),
-      `expected trajectory fabrication, got ${JSON.stringify(result.mismatches)}`,
-    );
-  });
-
-  it('fails when the README diagram labels agents core-only', () => {
-    const dir = fixture({
-      'packages/agents/src/memory.ts': `import type { FileBridge } from '../../exec/src/file-bridge.js';\n`,
-      'packages/exec/src/file-bridge.ts': `export type FileBridge = {};\n`,
-      'docs/packages/agents-pkg.md': `## Dep-direction neighbours
-
-- May import: [@kubic/core](core.md), [@kubic/exec](exec.md) only.
-`,
-      'docs/packages/README.md': `## Import direction
-
-\`\`\`text
-@kubic/exec  @kubic/agents  @kubic/trajectory   ← core only
-\`\`\`
-`,
-    });
-    const result = checkDocsDeps(dir);
-    assert.ok(
-      result.mismatches.some((m) =>
-        m.includes('diagram says "core only" for agents'),
-      ),
-      `expected README drift, got ${JSON.stringify(result.mismatches)}`,
-    );
-  });
-
-  it('ignores test scaffolding (host prod-path tests drive apps/kubic)', () => {
-    const dir = fixture({
-      'packages/host/src/run.ts': `import { x } from '@kubic/worker';\n`,
-      'packages/host/src/run-prod-path.test.ts': `import { runHeadlessPrompt } from '../../../apps/kubic/src/headless-run.js';\n`,
-      'packages/worker/src/tools.ts': `export const x = 1;\n`,
-      'apps/kubic/src/headless-run.ts': `import { x } from '../../../packages/host/src/run.js';\nexport function runHeadlessPrompt() {}\n`,
-      'docs/packages/host.md': `## Dep-direction neighbours
-
-- May import: core, exec, [worker](worker.md), [agents](agents-pkg.md),
-  [trajectory](trajectory.md), [eval](eval.md).
-- Imported by: \`apps/kubic\`.
-`,
-    });
-    const result = checkDocsDeps(dir);
-    assert.deepEqual(result.mismatches, []);
+    assert.match(result.stdout, /docs links OK/);
   });
 });

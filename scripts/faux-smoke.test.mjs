@@ -60,7 +60,7 @@ function healthy(overrides = {}) {
       };
     }
     if (args[0] === 'benchmark') {
-      // Issue #262: seven executable fixtures, one live-PTY stub.
+      // Seven executable fixtures, one live-PTY stub.
       const results = [
         'swe-bench-mini',
         'repo-mod-rename',
@@ -226,7 +226,7 @@ describe('faux smoke checker', () => {
   });
 });
 
-describe('faux smoke checker: run-produced trajectories (issue #383)', () => {
+describe('faux smoke checker: run-produced trajectories', () => {
   it('names a trajectory ref that resolves to nothing (the old trajectory:<id> string)', () => {
     const { problems } = smoke({
       [`run -p ${TOOL_PROMPT} --json|faux`]: {
@@ -245,7 +245,7 @@ describe('faux smoke checker: run-produced trajectories (issue #383)', () => {
     );
   });
 
-  it('names an unreadable or non-§46 trajectory file', () => {
+  it('names an unreadable or non-trajectory file', () => {
     const missing = smoke({}, {});
     assert.ok(
       missing.problems.some(
@@ -258,14 +258,12 @@ describe('faux smoke checker: run-produced trajectories (issue #383)', () => {
       { ...healthyFiles(), [TOOL_TRAJECTORY]: JSON.stringify({ x: 1 }) },
     );
     assert.ok(
-      foreign.problems.some((p) =>
-        p.includes('is not a §46 trajectory export'),
-      ),
+      foreign.problems.some((p) => p.includes('is not a trajectory export')),
     );
   });
 
-  it('accepts a legacy 1.0 §46 record and the current 1.1 one', () => {
-    // 1.1 additions are optional on read (issue #329): both majors pass.
+  it('accepts a legacy 1.0 trajectory record and the current 1.1 one', () => {
+    // 1.1 additions are optional on read: both majors pass.
     const legacy = smoke(
       {},
       {

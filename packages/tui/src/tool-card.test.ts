@@ -1,4 +1,4 @@
-// Tool cards (EPIC N, issue #455; docs/ui 01-D, 01-E, 01-H). Pure renders at
+// Tool cards. Pure renders at
 // depth none read like the design; the bash record and the exec truncation
 // notice never reach the collapsed card.
 import { describe, expect, it } from 'vitest';
@@ -46,7 +46,7 @@ const NODE_TEST_PASS = [
   'ℹ fail 0',
 ].join('\n');
 
-describe('the bash record (issue #455)', () => {
+describe('the bash record', () => {
   it('parses the head, both streams and the spill notice', () => {
     const parsed = parseShellText(
       [
@@ -94,7 +94,7 @@ describe('the bash record (issue #455)', () => {
   });
 });
 
-describe('tool cards (issue #455; 01-D, 01-H)', () => {
+describe('tool cards', () => {
   it('shows a failing test run: error lines first, the tally, the hidden count', () => {
     const lines = renderToolCard(
       plain,
@@ -283,7 +283,7 @@ describe('tool cards (issue #455; 01-D, 01-H)', () => {
   });
 });
 
-describe('file-change cards (issue #456; 01-G)', () => {
+describe('file-change cards', () => {
   const diffText = [
     ' 8   const existing = cart.items.find((i) => i.name === name);',
     ' 9   if (existing) {',

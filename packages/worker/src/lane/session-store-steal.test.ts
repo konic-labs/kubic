@@ -1,4 +1,4 @@
-// Review regression for issue #145: the steal path's conditional clear must
+// Review regression: the steal path's conditional clear must
 // compare unconditionally. A live lock landing after an absent read must
 // never be removed — the absent observation licenses nothing.
 import { describe, expect, it, vi } from 'vitest';
@@ -19,13 +19,13 @@ import {
 } from '../../../exec/src/lock-file.js';
 import { acquireSessionLock, SessionLockError } from './session-store.js';
 
-describe('steal conditional clear (issue #145 review)', () => {
+describe('steal conditional clear', () => {
   it('never removes a live lock that lands after an absent read', () => {
     const FAKE_PID = 424242;
     const rival = JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() });
-    // Read #1 (fresh-path holder check): nothing there — not live, so the
-    // steal path is entered. Read #2 (steal's observed): still nothing.
-    // Read #3 (conditional-clear re-read): the rival's live lock landed.
+    // Read (fresh-path holder check): nothing there — not live, so the
+    // steal path is entered. Read (steal's observed): still nothing.
+    // Read (conditional-clear re-read): the rival's live lock landed.
     // Every later read keeps reporting the rival.
     const reads: (string | undefined)[] = [undefined, undefined, rival];
     vi.mocked(readLockFile).mockImplementation(() =>
@@ -53,7 +53,7 @@ describe('steal conditional clear (issue #145 review)', () => {
     expect(claimLockLink).not.toHaveBeenCalled();
   });
 
-  it('EPERM counts as alive: a lock of another uid is never stolen (#424)', () => {
+  it('EPERM counts as alive: a lock of another uid is never stolen', () => {
     const FAKE_PID = 424243;
     const rival = JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() });
     // No procStart on the rival: liveness is the pid probe alone, and the

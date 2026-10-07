@@ -1,10 +1,7 @@
-// Real-filesystem walk behavior (issue #172): .git exclusion, .gitignore
+// Real-filesystem walk behavior: .git exclusion, .gitignore
 // support, the default node_modules ignore, symlink safety, and honest caps.
 // mkdtemp trees driven through NodeExecutionEnv — the binding production
 // actually runs — with every directory removed in afterEach.
-//
-// RED-first note: each test below was watched failing against the walk as it
-// shipped (every entry walked, no ignores, symlinks followed, cap silent).
 
 import {
   mkdirSync,
@@ -47,7 +44,7 @@ function inv(): ToolInvocation {
   );
 }
 
-describe('walk ignore rules on the node seam (issue #172)', () => {
+describe('walk ignore rules on the node seam', () => {
   it('skips node_modules so a repo-root grep does not spend the cap there', {
     timeout: 30_000,
   }, async () => {

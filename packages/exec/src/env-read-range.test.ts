@@ -1,5 +1,5 @@
-// Ranged reads on the ExecutionEnv seam (issue #122).
-// Mirrors #107's FileBridge.readFileRange exactly — same
+// Ranged reads on the ExecutionEnv seam.
+// Mirrors the FileBridge.readFileRange exactly — same
 // openSync/readSync/closeSync + confine() technique — so read windowing
 // costs one chunk of memory, not the file.
 
@@ -19,7 +19,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('NodeFileSystem.readFileRange (issue #122)', () => {
+describe('NodeFileSystem.readFileRange', () => {
   it('returns exactly the requested [start, end) byte window', () => {
     writeFileSync(join(dir, 'data.bin'), Buffer.from('abcdefghij'));
     const env = new NodeExecutionEnv(dir);

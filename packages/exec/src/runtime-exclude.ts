@@ -1,4 +1,4 @@
-// Runtime-state exclude rules (issue #91; design §35, D34/D35).
+// Runtime-state exclude rules.
 //
 // The split: `.kubic/config.toml` and `.kubic/roles/*.md` are committed —
 // `.kubic/{sessions,journal,artifacts,audit}/` is runtime state
@@ -13,7 +13,7 @@
 //   * `.kubic/` itself stays unignored, so `config.toml` + `roles/*.md`
 //     remain committable (mixed directory, by construction).
 //
-// Placement is forced by §9: only packages/exec may spawn processes or
+// Placement is forced by: only packages/exec may spawn processes or
 // touch node:fs. This module is deliberately self-contained (node:
 // builtins only, no relative imports) so the plain `node --test` gate
 // (`scripts/runtime-exclude.test.mjs`, no build step) can drive the real
@@ -56,15 +56,15 @@ export class RuntimeExcludeError extends Error {
   }
 }
 
-// The characters that can never appear in an exclude entry (issue #133
-// review): C0 controls + DEL, C1 controls, and the bidi overrides — the same
-// set `sanitizeReasonField` (@kubic/host) strips from operator-facing
-// fields, kept here because this module owns what may become a gitignore
-// line. An entry is written one line at a time, so a newline would inject
-// arbitrary patterns into `.git/info/exclude`; an ESC or bidi override would
-// reach whatever reads the file. The config load refuses such a value at the
-// door; render time refuses it again. Never stripped on the write path: a
-// hostile entry must not be silently repaired into a different rule.
+// The characters that can never appear in an exclude entry: C0 controls + DEL,
+// C1 controls, and the bidi overrides — the same set `sanitizeReasonField`
+// (@kubic/host) strips from operator-facing fields, kept here because this
+// module owns what may become a gitignore line. An entry is written one line at
+// a time, so a newline would inject arbitrary patterns into
+// `.git/info/exclude`; an ESC or bidi override would reach whatever reads the
+// file. The config load refuses such a value at the door; render time refuses
+// it again. Never stripped on the write path: a hostile entry must not be
+// silently repaired into a different rule.
 const UNSAFE_CHARACTERS =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching controls.
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
@@ -76,16 +76,15 @@ export function hasUnsafeCharacters(value: string): boolean {
   return UNSAFE_CHARACTERS.test(value);
 }
 
-// The gitignore metacharacters that may never appear in an exclude entry
-// (issue #133 re-review): an entry is written verbatim as one gitignore
-// pattern, and these make the line mean something other than the literal
-// path it names — `*`/`?`/`[`/`]` match other paths (hiding files from
-// `git add -A` and the pre-merge clean-tree guard), a leading `#` turns
-// the line into a comment, and a backslash escapes the following character
-// (a trailing one leaves an entry that matches nothing at all). The config
-// load refuses such a value at the door; render time refuses it again.
-// Never escaped on the write path: a hostile entry must not be silently
-// repaired into a different rule.
+// The gitignore metacharacters that may never appear in an exclude entry: an
+// entry is written verbatim as one gitignore pattern, and these make the line
+// mean something other than the literal path it names — `*`/`?`/`[`/`]` match
+// other paths (hiding files from `git add -A` and the pre-merge clean-tree
+// guard), a leading `#` turns the line into a comment, and a backslash escapes
+// the following character (a trailing one leaves an entry that matches nothing
+// at all). The config load refuses such a value at the door; render time
+// refuses it again. Never escaped on the write path: a hostile entry must not
+// be silently repaired into a different rule.
 const GITIGNORE_METACHARACTERS = /[*?[\]\\]/;
 
 export function hasGitignoreMetacharacters(value: string): boolean {
@@ -99,7 +98,7 @@ export function stripUnsafeCharacters(value: string): string {
 }
 
 function renderBlock(entries: readonly string[]): string {
-  // Defense in depth (issue #133 review): no entry carrying control
+  // Defense in depth: no entry carrying control
   // characters may ever be rendered — refused by name, never echoed.
   for (const entry of entries) {
     if (hasUnsafeCharacters(entry)) {
@@ -107,7 +106,7 @@ function renderBlock(entries: readonly string[]): string {
         'refusing to write an exclude entry with control characters: the entry would inject gitignore lines into .git/info/exclude',
       );
     }
-    // Same rule for the gitignore metacharacters (issue #133 re-review):
+    // Same rule for the gitignore metacharacters:
     // `*`/`?`/`[`/`]`, a leading `#` or a backslash would make the entry
     // act as a different rule than the literal path it names.
     if (hasGitignoreMetacharacters(entry)) {
@@ -154,11 +153,11 @@ export interface RuntimeExcludeOutcome {
   detail?: string;
 }
 
-// The sync git probe the writer and the ignore-split checker share
-// (issue #292): `rev-parse` runs no hooks, and a missing git binary
-// reports `{ code: 1 }` instead of throwing. Exported for the doctor's
-// checker (host) and the CLI config load (apps/kubic) — both stay
-// process-free behind this seam per the §9 I/O confinement rule.
+// The sync git probe the writer and the ignore-split checker share: `rev-parse`
+// runs no hooks, and a missing git binary reports `{ code: 1 }` instead of
+// throwing. Exported for the doctor's checker (host) and the CLI config load
+// (apps/kubic) — both stay process-free behind this seam per the I/O
+// confinement rule.
 export function gitSync(
   cwd: string,
   args: readonly string[],

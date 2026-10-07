@@ -1,10 +1,10 @@
-// The ONE lane-model projection `kubic run` and `kubic tui` share
-// (issue #227; §38.1, issue #133). Both boots resolve the same inputs in the
-// same order — the faux testing pin, then the runtime pin the config's
-// `cli`/`env`/`[model]` layers projected (runtimeModelPin), then the
-// resolved role's `[roles.<name>].model` default, then the first usable
-// provider — so the interactive path can never pick a different model than
-// the headless one, and the #148 resume rule reads one answer for both.
+// The ONE lane-model projection `kubic run` and `kubic tui` share. Both boots
+// resolve the same inputs in the same order — the faux testing pin, then the
+// runtime pin the config's `cli`/`env`/`[model]` layers projected
+// (runtimeModelPin), then the resolved role's `[roles.<name>].model` default,
+// then the first usable provider — so the interactive path can never pick a
+// different model than the headless one, and the resume rule reads one answer
+// for both.
 
 import {
   FAUX_MODEL_ID,
@@ -26,11 +26,11 @@ export interface LaneModelInput {
   pin: ModelSelection | undefined;
   /** The resolved role's `[roles.<name>].model` ref, if it declares one. */
   roleModel: string | undefined;
-  /** Issue #221: implicit picks never take a keyless built-in. */
+  /** Implicit picks never take a keyless built-in. */
   fallbackProviders: readonly string[] | undefined;
 }
 
-// Where a selection came from, keyed by the selection OBJECT (issue #295): the
+// Where a selection came from, keyed by the selection OBJECT: the
 // named "unknown model/provider" refusal says which input carried the bad pin
 // (`--model`, `KUBIC_MODEL`, a config layer, a role) instead of calling every
 // explicit selection `--model`. The label rides beside the object, never on
@@ -81,7 +81,7 @@ export function selectLaneModel(input: LaneModelInput): AnyModel {
   );
 }
 
-// Issue #148 (§26.1): a pin (any explicit selection — faux, runtime, or
+// A pin (any explicit selection — faux, runtime, or
 // role) switches a resumed session whose stored model differs; the default
 // pick never does. One answer for both boots.
 export function hasExplicitModelSelection(input: {

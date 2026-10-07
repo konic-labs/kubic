@@ -1,4 +1,4 @@
-// Read-only skill roots (issue #173; §29.2, §29.3): the discovered skills
+// Read-only skill roots: the discovered skills
 // outside the workspace are advertised with absolute paths, so exactly those
 // paths are readable through the env — every other outside path, and every
 // write, keeps the cwd confinement.
@@ -42,7 +42,7 @@ function skillTree(): { workspace: string; skillDir: string; skill: string } {
   return { workspace, skillDir, skill };
 }
 
-describe('read roots (issue #173)', () => {
+describe('read roots', () => {
   it('matches a path inside a root, never a sibling or a prefix-shaped name', () => {
     expect(readRootFor(['/h/skills/a'], '/h/skills/a/SKILL.md')).toBe(
       '/h/skills/a',
@@ -81,7 +81,7 @@ describe('read roots (issue #173)', () => {
     expect(env.fs.readFile('inside.txt')).toBe('ok');
   });
 
-  it('forwards lstat so symlinks stay visible in the workspace and inside a root (issue #172)', () => {
+  it('forwards lstat so symlinks stay visible in the workspace and inside a root', () => {
     const { workspace, skillDir } = skillTree();
     symlinkSync('.', join(workspace, 'loop'));
     writeFileSync(join(workspace, 'real.txt'), 'x');
@@ -117,7 +117,7 @@ describe('read roots (issue #173)', () => {
     ).toThrow(/confinement/);
   });
 
-  it('forwards realpath and unlink so the write path resolves and cleans up through the wrapper (issue #140)', () => {
+  it('forwards realpath and unlink so the write path resolves and cleans up through the wrapper', () => {
     const { workspace, skillDir, skill } = skillTree();
     writeFileSync(join(workspace, 'real.txt'), 'x\n');
     symlinkSync('real.txt', join(workspace, 'link.txt'));

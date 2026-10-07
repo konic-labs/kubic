@@ -1,4 +1,4 @@
-// Content hashing for write/edit provenance (issue #13, slice C).
+// Content hashing for write/edit provenance.
 // Pure string hashing — node:crypto only, no fs access, so this stays
 // outside the I/O confinement rule (which covers fs/child_process).
 

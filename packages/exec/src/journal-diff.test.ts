@@ -1,5 +1,4 @@
-// Slice A: journal diff core — attributed hunks from entries (issue #18; §42.2).
-// RED: diffEntries/renderDiff do not exist yet.
+// Journal diff core — attributed hunks from entries.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -69,7 +68,7 @@ function seed(): FileJournalStore {
   return store;
 }
 
-describe('journal diff core (issue #18, slice A)', () => {
+describe('journal diff core', () => {
   it('lists every change with attribution and reversibility', () => {
     const changes = diffEntries(seed(), {});
     expect(changes.map((c) => c.path)).toEqual(['a.txt', 'b.txt', 'c.txt']);
@@ -110,7 +109,7 @@ describe('journal diff core (issue #18, slice A)', () => {
   });
 });
 
-// Issue #126: every emitted `@@` header must count exactly the lines the
+// Every emitted `@@` header must count exactly the lines the
 // hunk prints for its side (`-`/context for A, `+`/context for B) — a
 // consumer (the TUI view, a future patch applier) reads the counts. The
 // counts are accumulated while emitting, never derived from pre-loop
@@ -148,7 +147,7 @@ function hunkCountMismatches(
   return out;
 }
 
-describe('truthful hunk header counts (issue #126)', () => {
+describe('truthful hunk header counts', () => {
   it('counts the lines emitted, not the pre-loop window (issue example)', () => {
     const lines = unifiedHunks('1\n2\n3\n4\n5', '1\n5');
     expect(lines[0]).toBe('@@ -1,5 +1,2 @@');
@@ -183,9 +182,9 @@ describe('truthful hunk header counts (issue #126)', () => {
   });
 });
 
-// Issue #126: the `diff --json` content bound — byte-exact clipping with a
+// The `diff --json` content bound — byte-exact clipping with a
 // named marker, `0` meaning unlimited, null sides untouched.
-describe('diff --json content clipping (issue #126)', () => {
+describe('diff --json content clipping', () => {
   it('clips at the byte bound and names it in a marker line', () => {
     const text = 'x'.repeat(100);
     const clipped = clipContent(text, 10);
@@ -242,9 +241,9 @@ describe('diff --json content clipping (issue #126)', () => {
   });
 });
 
-// Blob integrity (issue #111): corrupt journal content must surface as a
+// Blob integrity: corrupt journal content must surface as a
 // named flag/marker, never crash the read path.
-describe('corrupt journal content (issue #111)', () => {
+describe('corrupt journal content', () => {
   function tornDeltaStore(): {
     store: FileJournalStore;
     dir: string;
@@ -321,7 +320,7 @@ describe('corrupt journal content (issue #111)', () => {
   });
 });
 
-describe('HEAD-move markers (issue #378)', () => {
+describe('HEAD-move markers', () => {
   it('never surfaces a marker as a diff hunk', () => {
     const store = seed();
     store.append({
@@ -350,7 +349,7 @@ describe('HEAD-move markers (issue #378)', () => {
   });
 });
 
-describe('diff --stat (issue #335)', () => {
+describe('diff --stat', () => {
   function change(over: Record<string, unknown>): FileChange {
     return {
       path: 'a.txt',

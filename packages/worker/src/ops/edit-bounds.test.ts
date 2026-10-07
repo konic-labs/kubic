@@ -1,4 +1,4 @@
-// Edit size guard (issue #122, slice 1; §9.1).
+// Edit size guard.
 // edit must refuse files above EDIT_MAX_BYTES (8 MiB) with a named
 // `file_too_large` OpError BEFORE any content allocation — a huge edit is
 // one tool call away and today it allocates the whole file.
@@ -84,7 +84,7 @@ function sparseFile(name: string, bytes: number): void {
   }
 }
 
-describe('edit size guard (issue #122)', () => {
+describe('edit size guard', () => {
   it('refuses a file just over 8 MiB with file_too_large before any content allocation', async () => {
     sparseFile('big.txt', 8 * MIB + 1);
     let caught: unknown;

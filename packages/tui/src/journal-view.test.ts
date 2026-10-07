@@ -1,4 +1,4 @@
-// Slice B RED: JournalView file→hunks + path/agent filters (issue #25).
+// JournalView file→hunks + path/agent filters.
 // Filters mirror `kubic diff --path/--agent` (host journal-cli.ts over
 // exec diffEntries): exact match on path and agent. The flattened text
 // of a 2-file view equals `kubic diff` output line-for-line (the view
@@ -54,7 +54,7 @@ function changes(): DiffFileChange[] {
   ];
 }
 
-describe('journal filters (issue #25; mirrors `kubic diff`)', () => {
+describe('journal filters (mirrors `kubic diff`)', () => {
   it('narrows by path exactly like --path', () => {
     expect(
       filterJournalChanges(changes(), { path: 'b.txt' }).map((c) => c.path),
@@ -74,7 +74,7 @@ describe('journal filters (issue #25; mirrors `kubic diff`)', () => {
   });
 });
 
-describe('journal view (issue #25; §80)', () => {
+describe('journal view', () => {
   it('2-file text snapshot equals `kubic diff` text line-for-line', () => {
     const text = renderJournalLines(changes().slice(0, 2)).join('\n');
     expect(text).toBe(
@@ -153,7 +153,7 @@ describe('journal view (issue #25; §80)', () => {
   });
 });
 
-describe('journal mutation hardening (issue #68)', () => {
+describe('journal mutation hardening', () => {
   it('combines path and agent filters with AND', () => {
     expect(
       filterJournalChanges(changes(), { path: 'a.txt', agent: 'root' }).map(

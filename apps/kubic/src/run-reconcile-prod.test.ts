@@ -1,4 +1,4 @@
-// End-of-run reconciliation on the real composition path (issue #87):
+// End-of-run reconciliation on the real composition path:
 // `runHeadlessPrompt` must capture a baseline before the first turn and
 // sweep after the last, so a file mutated through `bash` lands in the
 // session journal as an unattributed entry — and stays reachable through
@@ -79,7 +79,7 @@ function baselinePathFor(sessionsRoot: string, id: string): string {
   return join(sessionsRoot, id, 'journal', `baseline-${id}.json`);
 }
 
-describe('end-of-run reconciliation, prod path (issue #87)', () => {
+describe('end-of-run reconciliation, prod path', () => {
   it('captures a baseline at boot and sweeps a bash mutation into the journal', async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot('ws-');
@@ -147,7 +147,7 @@ describe('end-of-run reconciliation, prod path (issue #87)', () => {
     expect(statusOut.join('\n')).toContain('unattributed: 1 of 1');
 
     // (e) `kubic undo --session <id>` reports it non-reversible, exits 1
-    // (issue #372 — the partial outcome never reuses the usage code), and
+    // (the partial outcome never reuses the usage code), and
     // writes nothing.
     const undoOut: string[] = [];
     expect(

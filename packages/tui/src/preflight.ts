@@ -1,10 +1,10 @@
-// The first screen (EPIC N, issue #462; docs/ui/05-welcome.html 05-A … F):
+// The first screen:
 // a preflight that answers "can I start?" instead of a wall of shortcuts —
 // a two-row half-block wordmark (`■ kubic <version>` below 70 columns),
 // five rows (provider, project, trust, journal, isolation), the start
 // keys, and this project's recent sessions. It sits at the top of an empty
 // transcript and is gone after the first prompt. `renderNoKeyPreflight` is
-// the same block for a launch with no provider key (05-F): printed to the
+// the same block for a launch with no provider key: printed to the
 // terminal, then exit 6. Pure over a UiTheme.
 
 import type { UiTheme } from '../../core/src/ui/style.js';
@@ -232,14 +232,14 @@ export function renderPreflight(
   );
 }
 
-// 05-F: the variables to set, Pi's own names for the common providers.
+// the variables to set, Pi's own names for the common providers.
 const NO_KEY_FIXES: ReadonlyArray<readonly [string, string]> = [
   ['export ANTHROPIC_API_KEY=…', 'anthropic'],
   ['export OPENAI_API_KEY=…', 'openai'],
   ['export OPENROUTER_API_KEY=…', 'many models through one key'],
 ];
 
-/** 05-F: no provider has a key — the fix, printed before exit 6. */
+/** no provider has a key — the fix, printed before exit 6. */
 export function renderNoKeyPreflight(
   ui: UiTheme,
   info: { readonly project?: PreflightInfo['project'] },

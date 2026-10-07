@@ -1,26 +1,18 @@
-// Detector gaps found in the post-#107 full-tree review (issue #131):
-// shell-side outside-writes (`tee`, `cp`/`mv`/`install`), `sudo` privilege
-// escalation, and destructive/network verbs behind command indirection.
-// RED first per detector — each block below was written and watched fail
-// before the detector it pins landed.
-// The fix cycles after that review widened the indirection unwrap to a
-// bounded fixpoint (eval-of-substitution, nested substitutions, mixed
-// backtick/`$()`) and trimmed the substitution closer off LIFTED tokens
-// only: the first cut trimmed every target token, which turned a literal
-// trailing `)`/`]` on a plain path into a silent grant (a real sibling of
-// the workspace read as inside) — the second cycle scoped the trim to
-// tokens actually lifted out of a span and pinned the effective depth
-// threshold. Those blocks carry their own RED note, and the review's
-// remaining shapes are PINNED as the documented gaps they are, never
-// silently assumed handled.
+// Detector coverage: shell-side outside-writes (`tee`, `cp`/`mv`/`install`),
+// `sudo` privilege escalation, and destructive/network verbs behind command
+// indirection. The indirection unwrap runs to a bounded fixpoint
+// (eval-of-substitution, nested substitutions, mixed backtick/`$()`), and the
+// substitution closer is trimmed off LIFTED tokens only: trimming every target
+// token would turn a literal trailing `)`/`]` on a plain path into a silent
+// grant (a real sibling of the workspace read as inside). The remaining shapes
+// are PINNED as the documented gaps they are, never silently assumed handled.
 // The classifiers here are the PRODUCTION ones (defaultIsDestructive,
 // isNetworkCommand, confinePath) wired exactly like triggerContextFor, so a
-// green run proves the detectors work against what a real run classifies
-// with — not against a stub that would hide an unwrap bug.
-// Stated heuristics (not sandbox parsing): the last-argument target
-// heuristic for tee/cp/mv/install, and word-boundary `sudo` matching that
-// deliberately over-triggers — a raised capability becomes an ask, never a
-// silent grant.
+// green run proves the detectors work against what a real run classifies with —
+// not against a stub that would hide an unwrap bug. Stated heuristics (not
+// sandbox parsing): the last-argument target heuristic for tee/cp/mv/install,
+// and word-boundary `sudo` matching that deliberately over-triggers — a raised
+// capability becomes an ask, never a silent grant.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -71,7 +63,7 @@ function triggerContext(
   };
 }
 
-describe('outside-write detectors (issue #131, slice 1)', () => {
+describe('outside-write detectors', () => {
   it('raises outside-write when tee writes outside the workspace', () => {
     const ctx = triggerContext();
     expect(
@@ -138,7 +130,7 @@ describe('outside-write detectors (issue #131, slice 1)', () => {
     ).toEqual([]);
   });
 
-  it('trims the substitution-lifted delimiter off a write target (fix cycle)', () => {
+  it('trims the substitution-lifted delimiter off a write target', () => {
     const ctx = triggerContext();
     // A target lifted out of `$(…)` arrives with the substitution's closing
     // `)` glued on: `$(cp a /etc/b)` → `/etc/b)`. The boundary check must
@@ -149,16 +141,15 @@ describe('outside-write detectors (issue #131, slice 1)', () => {
     expect(
       detectTriggers('bash', { command: 'echo $(tee /etc/cron.d/y)' }, ctx),
     ).toEqual(['outside-write']);
-    // …and must not false-positive on an inside one just because of the
-    // lifted delimiter. RED before the trim: `/work)` resolved outside and
-    // raised a spurious outside-write ask.
+    // …and must not false-positive on an inside one just because of the lifted
+    // delimiter. Before the trim, `/work)` resolved outside and raised a
+    // spurious outside-write ask.
     expect(
       detectTriggers('bash', { command: 'echo $(cp a /work)' }, ctx),
     ).toEqual([]);
     // `]` is NOT a span closer: `$(tee /work])` names the literal path
-    // `/work]`, a real sibling of the workspace, so it must raise. The
-    // first cut trimmed it as glue; the scoping block below carries the
-    // security re-review that fixed that class.
+    // `/work]`, a real sibling of the workspace, so it must raise (the
+    // scoping block below covers that class).
     expect(
       detectTriggers('bash', { command: 'echo $(tee /work])' }, ctx),
     ).toEqual(['outside-write']);
@@ -172,15 +163,14 @@ describe('outside-write detectors (issue #131, slice 1)', () => {
     ).toEqual([]);
   });
 
-  it('scopes the delimiter trim to lifted tokens; plain targets are never trimmed (fix cycle 2)', () => {
+  it('scopes the delimiter trim to lifted tokens; plain targets are never trimmed', () => {
     const ctx = triggerContext();
-    // Security re-review of the fix cycle: the trim applied to EVERY target
-    // token, so a literal `)`/`]` at the end of a real path was silently
-    // trimmed and the path flipped from outside to inside — an ask became a
-    // silent grant (and there is no bash confine backstop for tee/cp to
-    // catch it downstream). A plain token keeps its trailing characters
+    // Trimming EVERY target token would silently drop a literal `)`/`]` at
+    // the end of a real path and flip it from outside to inside — an ask would
+    // become a silent grant (and there is no bash confine backstop for tee/cp
+    // to catch it downstream). A plain token keeps its trailing characters
     // verbatim; only a token lifted out of `$(…)` loses the span's closer.
-    // RED before the scoping: every plain-target case below raised nothing.
+    // Without that scoping, every plain-target case below raises nothing.
     expect(detectTriggers('bash', { command: 'tee /work)' }, ctx)).toEqual([
       'outside-write',
     ]);
@@ -201,7 +191,7 @@ describe('outside-write detectors (issue #131, slice 1)', () => {
     ).toEqual(['outside-write']);
     // The rule is general — any literal trailing character is path text,
     // not only the `)`/`]` the first cut trimmed: `tee /work,` names
-    // `/work,`, a sibling of the workspace (also RED pre-fix).
+    // `/work,`, a sibling of the workspace.
     expect(detectTriggers('bash', { command: 'tee /work,' }, ctx)).toEqual([
       'outside-write',
     ]);
@@ -217,7 +207,7 @@ describe('outside-write detectors (issue #131, slice 1)', () => {
   });
 });
 
-describe('privilege escalation + indirection (issue #131, slice 2)', () => {
+describe('privilege escalation + indirection', () => {
   it('raises privilege-escalation for sudo anywhere in the command', () => {
     const ctx = triggerContext();
     // The acceptance case: sudo alone, and nothing else fires.
@@ -280,9 +270,9 @@ describe('privilege escalation + indirection (issue #131, slice 2)', () => {
 
   it('unwraps indirection to a fixpoint: eval-of-substitution and nesting', () => {
     const ctx = triggerContext();
-    // RED before the iterative unwrap — all three of these were [] (silent),
-    // the reviewed gap: the single-level regex truncated at the first `)`,
-    // so a destructive verb behind a compound wrapper ran unasked.
+    // A single-level unwrap truncates at the first `)`, so all three of these
+    // would read as [] (silent) and a destructive verb behind a compound
+    // wrapper would run unasked.
     expect(
       detectTriggers('bash', { command: 'eval $(rm -rf /)' }, ctx),
     ).toEqual(['destructive-shell']);
@@ -322,7 +312,7 @@ describe('privilege escalation + indirection (issue #131, slice 2)', () => {
     ).toEqual([]);
   });
 
-  it('pins the effective nesting threshold: 31 levels raise, 32 stay silent (fix cycle 2)', () => {
+  it('pins the effective nesting threshold: 31 levels raise, 32 stay silent', () => {
     const ctx = triggerContext();
     // The scan tracks at most MAX_UNWRAP_DEPTH (16) real openers; the
     // unmatched markers it pushes past the cap still consume closers, so
@@ -448,7 +438,7 @@ describe('capability vocabulary', () => {
   });
 });
 
-describe('shell-expanded and cd-relative write targets (issue #355)', () => {
+describe('shell-expanded and cd-relative write targets', () => {
   it('treats ~, ~user, $HOME, braced HOME and $VAR prefixes as outside', () => {
     const ctx = triggerContext();
     for (const command of [
@@ -572,7 +562,7 @@ describe('shell-expanded and cd-relative write targets (issue #355)', () => {
   });
 });
 
-describe('every redirect is scanned (issue #326)', () => {
+describe('every redirect is scanned', () => {
   it('raises outside-write for an outside redirect after an inside one', () => {
     const ctx = triggerContext();
     for (const command of [
@@ -651,12 +641,12 @@ describe('every redirect is scanned (issue #326)', () => {
   });
 });
 
-// Issue #275: `credentials` had no detector at all — its installed `none`
+// `credentials` had no detector at all — its installed `none`
 // default was informational, so `cat ~/.aws/credentials` or a read of a
 // committed `.env` ran with no approval. The detector is lexical and
-// documented as detection, not enforcement (§59.1): over-triggering becomes
+// documented as detection, not enforcement: over-triggering becomes
 // an ask, never a silent grant.
-describe('credential-access detector (issue #275)', () => {
+describe('credential-access detector', () => {
   it('raises credentials for home credential paths in a bash command', () => {
     const ctx = triggerContext();
     for (const command of [
@@ -763,7 +753,7 @@ describe('credential-access detector (issue #275)', () => {
 
   it('flags ~/.ssh children except the known-public files', () => {
     const ctx = triggerContext();
-    // A widened arm (issue #275 review): `~/.ssh/github` is a common key
+    // A widened arm: `~/.ssh/github` is a common key
     // name and `~/.ssh/*` a common glob — both used to be silent misses.
     for (const command of [
       'cat ~/.ssh/github',
@@ -840,7 +830,7 @@ describe('credential-access detector (issue #275)', () => {
     }
   });
 
-  it('gates on the effective credentials level (§40.2, issue #166)', () => {
+  it('gates on the effective credentials level', () => {
     // The installed safe default (and an absent level) asks.
     expect(
       detectTriggers(
@@ -849,7 +839,7 @@ describe('credential-access detector (issue #275)', () => {
         triggerContext({ credentials: 'none' }),
       ),
     ).toEqual(['credentials']);
-    // §40.2: `allowlist` carries no credential list and no credential tool
+    // `allowlist` carries no credential list and no credential tool
     // exists, so the lane enforces it as `none` — it asks too, exactly like
     // the domain-less network allowlist, never a silent grant.
     expect(
@@ -862,8 +852,8 @@ describe('credential-access detector (issue #275)', () => {
   });
 });
 
-describe('git-dir writes raise kubic-state-write (issue #363)', () => {
-  // RED first: written before the isGitDirTarget check landed in
+describe('git-dir writes raise kubic-state-write', () => {
+  // Written before the isGitDirTarget check landed in
   // detectTriggers — each of these returned [] on the unpatched detector.
   const ctx = triggerContext();
   it('raises for write/edit paths under .git/', () => {
@@ -910,8 +900,8 @@ describe('git-dir writes raise kubic-state-write (issue #363)', () => {
   });
 });
 
-describe('git config mutation raises kubic-state-write (issue #428)', () => {
-  // RED first: `git config core.hooksPath …` mutates .git/config with no
+describe('git config mutation raises kubic-state-write', () => {
+  // `git config core.hooksPath …` mutates .git/config with no
   // file-write target, so no approval fired at all.
   const ctx = triggerContext();
   it('raises for git config sets, unsets and adds', () => {
@@ -961,9 +951,9 @@ describe('git config mutation raises kubic-state-write (issue #428)', () => {
   });
 });
 
-describe('git argv bypass spellings (issue #435)', () => {
-  // RED first: attached short options, display-modifier writes and the
-  // push detector's twin miss all slipped past the #428 guards.
+describe('git argv bypass spellings', () => {
+  // Attached short options, display-modifier writes and the
+  // push detector's twin miss all slipped past the guards.
   const ctx = triggerContext();
   it.each([
     'git -C/tmp/repo config core.hooksPath /dev/null',

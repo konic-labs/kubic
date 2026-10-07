@@ -1,4 +1,4 @@
-// `kubic sessions` commands (issue #14, slice F): create, list, attach.
+// `kubic sessions` commands: create, list, attach.
 // Thin over the worker session store; presentation only (one line per
 // fact). attach prints metadata plus the transcript tail so a user can
 // confirm what they are resuming before driving it.
@@ -39,7 +39,7 @@ import {
 
 export interface SessionsCommandDeps extends CliIo {
   sessionsRoot?: string;
-  // `session.retentionDays` (issue #119): the default keep-window for
+  // `session.retentionDays`: the default keep-window for
   // `prune`. Undefined means the config sets none — prune then demands an
   // explicit --keep-days rather than inventing a window.
   retentionDays?: number;
@@ -69,7 +69,7 @@ export type SessionsInvocation =
       readonly id: string;
       readonly tail?: number;
       readonly ids?: boolean;
-      // Issue #318: the raw form the readable rendering replaces — one
+      // The raw form the readable rendering replaces — one
       // full (untruncated) entry JSON per line, for scripting.
       readonly json?: boolean;
     }
@@ -92,7 +92,7 @@ export function defaultSessionsRoot(): string {
   return join(homedir(), '.kubic', 'sessions');
 }
 
-// `prune` (issue #119): explicit, opt-in session-state retention. Dry-run
+// `prune`: explicit, opt-in session-state retention. Dry-run
 // is the DEFAULT — deletion needs --yes — and the keep window must come
 // from --keep-days or config `session.retentionDays`: no window is ever
 // invented. Live-locked sessions, --keep-session names, and non-session
@@ -188,7 +188,7 @@ async function runPruneCommand(
   let reclaimed = 0;
   for (const outcome of outcomes) {
     if (outcome.status === 'locked') {
-      // A lock went live between planning and this delete (issue #119):
+      // A lock went live between planning and this delete:
       // reported exactly like a planning-time lock, and never counted as
       // deleted.
       deps.out(
@@ -222,14 +222,14 @@ export async function runSessionsCommand(
   }
   const store = openSessionStore(root, createNodeFileBridge(root));
   if (invocation.command === 'create') {
-    // Issue #261: a relative --cwd resolves against the INVOKING
+    // A relative --cwd resolves against the INVOKING
     // directory, never the sessions root the store's bridge is built on —
     // `--cwd .` must record the caller's directory. Resolve-only, no
     // realpath: the overlap probe (sessionsTouchingWorkspace) compares
     // strict === against the run side's unresolved process.cwd(), so
     // canonicalizing one side would introduce the mismatch realpath is
     // meant to prevent (journal-cli canonicalizes its own compare).
-    // I/O confinement (§9): the check rides a root-anchored bridge, so an
+    // I/O confinement: the check rides a root-anchored bridge, so an
     // absolute operand passes through unconfined.
     const cwd = resolve(process.cwd(), invocation.cwd ?? process.cwd());
     let isDirectory = false;
@@ -250,7 +250,7 @@ export async function runSessionsCommand(
     // and announced on the diagnostics channel. Fresh sessions start safe —
     // the flag must be passed explicitly every time.
     if (invocation.dangerouslySkipApprovals === true) {
-      // Issue #308: the shared enable path — posture.json, one §60 row
+      // The shared enable path — posture.json, one audit row
       // naming this session and command, and the common warning.
       const grant = enableSessionFullAccess({
         sessionDir: join(root, id),
@@ -268,7 +268,7 @@ export async function runSessionsCommand(
     const sessions = await listSessions(store, BACKGROUND_CONTEXT);
     if (invocation.json === true) {
       // Always one JSON array — `[]` when there are no sessions, so a
-      // `| jq` consumer never reads an empty stream (§78).
+      // `| jq` consumer never reads an empty stream.
       deps.out(
         formatJson(
           sessions.map((entry) => ({
@@ -329,10 +329,10 @@ export async function runSessionsCommand(
           ? `posture: full-access (enabled ${posture.enabledAt ?? 'unknown'} by ${posture.enabledBy ?? 'unknown'})`
           : 'posture: approvals enforced',
       );
-      // Issue #147 (§21): unfinished durable work a crashed process left
+      // Unfinished durable work a crashed process left
       // behind is named, so the operator knows the next `kubic run --session`
       // / `kubic tui --session` settles it before taking a new prompt. The
-      // storage-level probe (#396 `inspectStoredWork`) owns the format, so
+      // storage-level probe owns the format, so
       // this line and the run path's settlement line are the same string;
       // attach must not boot a harness.
       const pending = await inspectStoredWork(
@@ -342,9 +342,9 @@ export async function runSessionsCommand(
       if (pending.pending && pending.summary !== undefined) {
         deps.out(pending.summary);
       }
-      // The transcript through the shared adapter (#400): one readable line
-      // per turn instead of a truncated JSON entry (#318). Issue #265:
-      // `--ids` prefixes each line with its entry id — the `--at` that
+      // The transcript through the shared adapter: one readable line
+      // per turn instead of a truncated JSON entry. `--ids` prefixes each
+      // line with its entry id — the `--at` that
       // `kubic sessions fork` takes.
       const entries = [
         ...(await readSessionEntries(session.storage, BACKGROUND_CONTEXT)),
@@ -367,10 +367,10 @@ export async function runSessionsCommand(
       await session.release(BACKGROUND_CONTEXT);
     }
   } catch (error) {
-    // A live second attachment (issue #118): the refusal is the answer —
+    // A live second attachment: the refusal is the answer —
     // printed as-is (it names the holder pid + start time), exit 1, and
     // no transcript was ever read (attach acquires before it opens).
-    // A 0.87 session directory (#392) is refused by name the same way.
+    // A 0.87 session directory is refused by name the same way.
     if (
       error instanceof SessionLockError ||
       error instanceof SessionAttachError ||
@@ -384,7 +384,7 @@ export async function runSessionsCommand(
   return 0;
 }
 
-// One attach line per transcript item (#318): role + text, one line each.
+// One attach line per transcript item: role + text, one line each.
 // Whitespace is collapsed so a multi-line message or tool output stays one
 // readable row, and the line keeps the documented 300-character bound.
 // Transcript text is untrusted (model- and tool-authored): control
@@ -424,7 +424,7 @@ function renderTranscriptItem(item: TranscriptItem): string {
   }
 }
 
-// `fork` (issue #265; §22.3): a new session from an existing one — a branch
+// `fork`: a new session from an existing one — a branch
 // fork at an entry (default: the newest), or the whole tree with --tree. The
 // new id is printed (or `{id, source, at}` with --json) and is usable at once
 // with `kubic run --session` / `kubic tui --session`. The store refuses a

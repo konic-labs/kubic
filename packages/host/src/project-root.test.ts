@@ -1,4 +1,4 @@
-// Project-root resolution (issue #229; §35.1). One derivation for the
+// Project-root resolution. One derivation for the
 // config project layer, the repo role documents and the runtime-exclude
 // check, so a run from a subdirectory sees the same project files as a run
 // from the root. Pure probe over an injected `exists` — no node:fs here,
@@ -13,7 +13,7 @@ function bridgeFor(paths: readonly string[]): {
   return { exists: (p: string): boolean => hit.has(p) };
 }
 
-describe('findProjectRoot (issue #229)', () => {
+describe('findProjectRoot', () => {
   it('returns the nearest ancestor holding .kubic', () => {
     const bridge = bridgeFor(['/repo/.kubic', '/repo/.git']);
     expect(findProjectRoot(bridge, '/repo/a/b', '/home/u')).toBe('/repo');

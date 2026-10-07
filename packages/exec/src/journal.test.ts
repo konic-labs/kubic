@@ -1,5 +1,4 @@
-// Slice A: content-addressed journal store (issue #17; §42.4).
-// RED: FileJournalStore does not exist yet.
+// Content-addressed journal store.
 import {
   appendFileSync,
   mkdirSync,
@@ -52,7 +51,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   };
 }
 
-describe('journal store (issue #17, slice A)', () => {
+describe('journal store', () => {
   it('appends entries and reads them back with hashes and toolCallId', () => {
     const store = new FileJournalStore(tmpRoot());
     const recorded = store.append(entry());
@@ -125,9 +124,9 @@ describe('journal store (issue #17, slice A)', () => {
   });
 
   it('applyDelta returns null on malformed delta JSON instead of throwing', () => {
-    // Hash-valid but malformed deltas must never crash a caller
-    // (issue #111): torn content that happens to parse-check fails
-    // closed to null, and callers treat it as missing.
+    // Hash-valid but malformed deltas must never crash a caller: torn content
+    // that happens to parse-check fails closed to null, and callers treat it as
+    // missing.
     expect(applyDelta('a\n', '{torn')).toBe(null);
   });
 
@@ -151,9 +150,8 @@ describe('journal store (issue #17, slice A)', () => {
     expect(store.entries()[0]?.path).toBe('new.txt');
     expect(store.blobCount()).toBe(1);
 
-    // Size: the oldest is evicted, and the newest entry is never dropped
-    // (issue #348) — its excess over the whole-store bound (index + blobs,
-    // issue #350) is reported instead.
+    // Size: the oldest is evicted, and the newest entry is never dropped — its
+    // excess over the whole-store bound (index + blobs) is reported instead.
     store.append(entry({ path: 'newest.txt', after: 'nw\n', timestamp: 3000 }));
     const small = store.enforceRetention({ maxBytes: 1, now: 2000 });
     expect(small.entries).toBe(1);
@@ -163,8 +161,8 @@ describe('journal store (issue #17, slice A)', () => {
   });
 });
 
-// Blob integrity (issue #111): the delta base is recorded, never guessed.
-describe('deltaBaseEmpty schema (issue #111)', () => {
+// Blob integrity: the delta base is recorded, never guessed.
+describe('deltaBaseEmpty schema', () => {
   const big = `${'line\n'.repeat(20_000)}tail\n`;
 
   it('append records deltaBaseEmpty when the delta is encoded against an empty before', () => {
@@ -193,9 +191,9 @@ describe('deltaBaseEmpty schema (issue #111)', () => {
   });
 });
 
-// Blob integrity (issue #111): readAfter reconstructs from the recorded
+// Blob integrity: readAfter reconstructs from the recorded
 // base, never from a guess.
-describe('readAfter delta bases (issue #111)', () => {
+describe('readAfter delta bases', () => {
   const big = `${'r\n'.repeat(40_000)}tail\n`;
 
   it('a reconcile-authored large-file entry reconstructs from its recorded empty base', () => {
@@ -325,9 +323,9 @@ describe('readAfter delta bases (issue #111)', () => {
   });
 });
 
-// Blob integrity (issue #111): blobs are content-addressed, so a blob whose
+// Blob integrity: blobs are content-addressed, so a blob whose
 // content does not hash to its name must read as missing — never as truth.
-describe('blob hash verification (issue #111)', () => {
+describe('blob hash verification', () => {
   it('a blob whose content does not hash to its name reads as missing', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir);
@@ -351,7 +349,7 @@ describe('blob hash verification (issue #111)', () => {
   });
 
   it('a delta reconstruction that fails the recorded after-hash reads as corrupt, never as content', () => {
-    // Defense in depth (issue #111): if a base is ever mis-guessed again,
+    // Defense in depth: if a base is ever mis-guessed again,
     // the reconstruction will not hash to entry.afterHash — fail closed to
     // null with a named report instead of serving wrong after-content.
     const dir = tmpRoot();
@@ -401,7 +399,7 @@ describe('blob hash verification (issue #111)', () => {
   });
 });
 
-describe('sweep bytesDelta (issue #371)', () => {
+describe('sweep bytesDelta', () => {
   it('is nonzero for a sweep entry that changed size', () => {
     const root = tmpRoot('journal-delta-');
     writeFileSync(join(root, 'grown.ts'), 'before\n');

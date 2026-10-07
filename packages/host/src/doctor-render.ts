@@ -1,10 +1,9 @@
-// `kubic doctor` on an interactive terminal (issue #448; docs/ui/06-cli.html
-// 06-C): a summary line, the checks grouped by area with ✓ / ▲ / ✕ / ○, and
-// the full per-check report behind `--verbose`. Passing checks pack onto one
-// line per group; every warning, skip and failure gets its own row, and a
-// failure is always shown in full so the fix is on screen. The five "honest
-// limit" warnings (never fixable, always present) fold into one row; the
-// verbose report keeps each of them.
+// `kubic doctor` on an interactive terminal: a summary line, the checks grouped
+// by area with ✓ / ▲ / ✕ / ○, and the full per-check report behind `--verbose`.
+// Passing checks pack onto one line per group; every warning, skip and failure
+// gets its own row, and a failure is always shown in full so the fix is on
+// screen. The five "honest limit" warnings (never fixable, always present) fold
+// into one row; the verbose report keeps each of them.
 
 import {
   brandHeading,
@@ -167,7 +166,7 @@ export function renderDoctorGrouped(
     failed === 0 ? ui.fg('fg2')('0 failed') : ui.fg('err')(`${failed} failed`),
     skipped === 0 ? undefined : ui.fg('fg2')(`${skipped} skipped`),
   ].filter((part) => part !== undefined);
-  // Issue #468: a narrow terminal takes the totals on their own line.
+  // A narrow terminal takes the totals on their own line.
   const heading = `${brandHeading(theme, 'doctor')} ${ui.fg('fg2')('·')} ${totals.join(ui.fg('fg2')(' · '))}`;
   const lines: string[] =
     visibleWidth(heading) <= columns
@@ -203,7 +202,7 @@ export function renderDoctorGrouped(
       const mark = statusMark(theme, MARK[check.status]);
       if (check.status === 'fail') {
         // A failure reads whole: its detail wraps under it, never cut
-        // (issue #468: it used to run past the terminal's edge).
+        // (it used to run past the terminal's edge).
         const [first = '', ...rest] = wrapVisible(
           `${check.id} ${check.detail}`,
           Math.max(1, room - 2),
@@ -247,7 +246,7 @@ export function renderDoctorGrouped(
         ? `${warnings} warning${warnings === 1 ? '' : 's'}, nothing blocking`
         : 'all clear';
   const footer = `${verdict} · \`kubic doctor --verbose\` for the full report`;
-  // Issue #468: too wide for the terminal, the pointer takes its own line.
+  // Too wide for the terminal, the pointer takes its own line.
   if (visibleWidth(hintLine(theme, footer, 0)) <= columns) {
     lines.push(hintLine(theme, footer, 0));
   } else {

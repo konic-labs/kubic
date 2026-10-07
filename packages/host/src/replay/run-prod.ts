@@ -1,8 +1,8 @@
-// Prod replay re-execution runner (issue #78): the composition root's
+// Prod replay re-execution runner: the composition root's
 // `ReplayRunRequest` handler for the deterministic/live tiers. The
 // recorded objective is re-run through the injected lane prompt runner
 // (the binary's standard lane path — the same one `kubic run` drives);
-// the settled lane terminus is mapped into replay's §78 subset
+// the settled lane terminus is mapped into replay's subset
 // (0/1/2/5/6): the four known termini pass through, anything coarser
 // (turn limit/approval/usage) coarsens to failed with the summary preserved
 // — the envelope still says exactly why the re-execution did not
@@ -23,7 +23,7 @@ export interface LanePromptOutcome {
 
 export interface ProdReplayRunDeps {
   loadTrajectory: (path: string) => TrajectoryExport;
-  // Issue #272: the whole request travels with the prompt, so the
+  // The whole request travels with the prompt, so the
   // re-execution can honor its pins (worktree root, role config) instead
   // of receiving them and dropping them.
   runPrompt: (
@@ -67,11 +67,10 @@ export function createProdReplayRun(
     }
     let outcome: LanePromptOutcome;
     try {
-      // The runtime projections ride through to the lane seam unchanged
-      // (issue #114): the re-execution runs under the effective config's
-      // policy, never under defaults invented here. The request rides with
-      // them (issue #272) so the composition root can root the lane at the
-      // pinned worktree and boot the pinned role.
+      // The runtime projections ride through to the lane seam unchanged: the
+      // re-execution runs under the effective config's policy, never under
+      // defaults invented here. The request rides with them so the composition
+      // root can root the lane at the pinned worktree and boot the pinned role.
       outcome = await deps.runPrompt(
         objective,
         request.model,

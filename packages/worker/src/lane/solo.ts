@@ -1,9 +1,9 @@
 // Solo root lane: one pi-durable Harness + its root conversation, in-process
-// (issue #11; §5.1, §20.7; ported to the Pi 1.0 durable harness in #394).
+// (ported to the Pi 1.0 durable harness).
 // Zero IPC on the path — the harness, the conversation, and the Kubic tools
 // all live in this process. Kubic adds no loop: a turn is
 // `conversation.submit(...)` → `submission.wait(...)`, and durable
-// retry/backoff belongs to the harness (K6 owns the turn glue).
+// retry/backoff belongs to the harness (lane/turn.ts owns the turn glue).
 
 import type { PermissionClasses } from '../../../agents/src/policy.js';
 import {
@@ -75,8 +75,8 @@ export const SOLO_LANE_NAME = 'main';
 // appending a second one.
 export const SOLO_PROMPT_SECTION = 'kubic';
 
-// Stable role seed for the assembled solo prompt (issue #82). The
-// sentences match the pre-#82 ad-hoc prompt; the wiring delta is that
+// Stable role seed for the assembled solo prompt. The
+// sentences match the pre ad-hoc prompt; the wiring delta is that
 // boot now appends the byte-stable `cwd:` / `tools:` / `meta:` lines
 // from prompts.ts instead of the `Working directory:` sentence.
 export const SOLO_ROLE = [
@@ -90,7 +90,7 @@ export interface SoloPromptInput {
   toolNames: string[];
   metadata: Record<string, string>;
   extraSections?: string[];
-  // §12.1 role text override (issue #99): the role document's `## Prompt`
+  // Role text override: the role document's `## Prompt`
   // body replaces the SOLO_ROLE constant. Absent means the constant, so
   // every pre-existing caller assembles identical bytes.
   role?: string;
@@ -100,7 +100,7 @@ export interface SoloPromptInput {
 // joined by "\n\n" (pi-ai `getSystemMessageText`), so per-line sections
 // would change the model-visible bytes; a single untagged section carries
 // exactly the pre-1.0 prompt, and the harness still diffs it as one
-// positional `pi.system` entry (#33/#82 prefix stability).
+// positional `pi.system` entry.
 export function assembleSoloPrompt(input: SoloPromptInput): string {
   const full: SystemPromptInput = {
     role: input.role ?? SOLO_ROLE,
@@ -121,21 +121,21 @@ export function defaultSoloModelId(model: {
   return `${model.provider}/${model.id}`;
 }
 
-// NOTE (issue #215): defaultSoloPrompt lived here — deleted, it had no
+// NOTE: defaultSoloPrompt lived here — deleted, it had no
 // callers (the run paths always assemble an explicit prompt).
 export interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];
   /**
-   * Issue #98: perf spans for every executed tool, registered as the
+   * Perf spans for every executed tool, registered as the
    * `kubic.spans` extension between policy and the Kubic extension. The
-   * caller builds them (`runSpanHooks(spans)`, #397) so the lane keeps no
+   * caller builds them (`runSpanHooks(spans)`) so the lane keeps no
    * perf import of its own.
    */
   spanHooks?: () => HookRegistration[];
   /**
-   * §58 enterprise tool gate (issue #288): the composition root closes this
+   * Enterprise tool gate: the composition root closes this
    * over `isToolAllowedByEnterprise(effectivePolicy, tool)`, so the lane
    * has no policy import of its own. When present, the base/class/role
    * intersection is filtered through it for BOTH the active tool set and
@@ -144,9 +144,9 @@ export interface SoloPolicyOptions {
    */
   toolAllowed?: (tool: string) => boolean;
   /**
-   * §58 enterprise model gate (issue #288): closed over
+   * Enterprise model gate: closed over
    * `isModelAllowed(effectivePolicy, provider, id)` by the composition root.
-   * The stored-model rule (issue #148) lets a resumed session keep its own
+   * The stored-model rule lets a resumed session keep its own
    * model, and the boot selection is gated but the stored one never was — a
    * session file could carry a refused provider past the policy. A stored
    * model the gate refuses is dropped for the selected (gated) one.
@@ -155,7 +155,7 @@ export interface SoloPolicyOptions {
 }
 
 // Harness compaction budget overrides. keepRecentTokens defaults inside
-// compaction.ts (#399's soloCompactionSettings), so Kubic keeps ONE home for
+// compaction.ts (the soloCompactionSettings), so Kubic keeps ONE home for
 // the 20000 figure.
 export interface SoloCompactionOptions {
   enabled?: boolean;
@@ -182,7 +182,7 @@ function withPolicyContributions(
 }
 
 export interface SoloBootOptions {
-  // The session handle (#392): its storage is what the harness opens, and
+  // The session handle: its storage is what the harness opens, and
   // its lock stays held for the handle's lifetime. The caller releases it
   // after `close()`.
   session: SessionHandle;
@@ -194,54 +194,54 @@ export interface SoloBootOptions {
   systemPrompt?: string;
   context?: Context;
   policy?: SoloPolicyOptions;
-  // Model affinity pin (issue #82, rule 6): when set, boot pins the
+  // Model affinity pin: when set, boot pins the
   // boot model for the task; escalateSoloModel is the only path off it.
   taskId?: string;
-  // Harness compaction budget (issue #82): reserve defaults to Kubic's
+  // Harness compaction budget: reserve defaults to Kubic's
   // DEFAULT_RESERVE_TOKENS so the harness automatic path fires on the
   // same threshold as shouldCompact.
   compaction?: SoloCompactionOptions;
-  // Session journal for interception (issue #17): when set, every
+  // Session journal for interception: when set, every
   // write/edit through the lane is recorded with its tool call id.
   journal?: FileJournalStore;
-  // Interactive turn supplier (issue #436): sampled per tool call, so
+  // Interactive turn supplier: sampled per tool call, so
   // tool-journaled entries carry the same turn as that turn's sweep
   // entries. Absent on headless runs by design — their entries carry no
   // `turn` field at all (pi-durable exposes no numeric turn). A supplier
   // that returns `undefined` (the TUI's cell before its counter is
   // installed) also writes no field.
   currentTurn?: () => number | undefined;
-  // Appended prompt sections (issue #99; §29.3 skills first): the caller
+  // Appended prompt sections (skills first): the caller
   // composes context blocks (skill listings, role prompt) and the lane
   // appends them to the assembled system prompt. Ordered, so the
   // cache-stable prefix (role/cwd/tools/meta) is never rewritten — the
   // blocks land as suffix sections only. Ignored when `systemPrompt` is
   // given: an explicit prompt is byte-authoritative.
   promptSections?: string[];
-  // Issue #173 (§29.3): the roots of the skills advertised with absolute
+  // The roots of the skills advertised with absolute
   // paths outside the workspace. The read tool (and only it) may open a
   // path inside one — the env serves those reads and the confine guard
   // leaves them un-rerooted; every other tool and path stays confined.
   skillReadRoots?: readonly string[];
-  // §12.1 role prompt (issue #99): replaces the hardcoded SOLO_ROLE seed
+  // Role prompt: replaces the hardcoded SOLO_ROLE seed
   // with the role document's own `## Prompt` text. The assembled
   // cwd/tools/meta lines are unchanged — the role supplies the instruction
-  // half only, so the prompt-cache prefix rules (#33) still hold.
+  // half only, so the prompt-cache prefix rules still hold.
   rolePrompt?: string;
-  // §40 role tool allowlist (issue #99): the resolved role tool set is
+  // Role tool allowlist: the resolved role tool set is
   // applied with `configure({ tools })`, so a tool the role does not
   // declare is never registered — absence, not approval. Applied AFTER the
   // class-derived policy so the role is the narrower of the two (a role
   // can only narrow, never widen, what the permission classes allow).
   toolAllowlist?: string[];
-  // §40.1 mechanism 1 (issue #273): the per-invocation tool selection
+  // The per-invocation tool selection
   // (`--tools <a,b>`). Intersected with the class/role/enterprise sets — a
   // selection can only narrow, never widen. `noTools` is the empty set (a
   // chat-only run); the two are mutually exclusive and a library caller
   // that sets both is refused by name.
   toolSelection?: string[];
   noTools?: boolean;
-  // Resumed-session model identity (issue #148; §21, §26.1). The root
+  // Resumed-session model identity. The root
   // conversation's `pi.agent` document restores a resumed session's STORED
   // model; `model` only seeds a new conversation. When they differ:
   // 'selected' (the caller's selection was an explicit pin) switches the
@@ -254,11 +254,11 @@ export interface SoloBootOptions {
   // The one-line notice for either reconciliation (stderr on `run`, the
   // debug channel elsewhere). Absent means silent.
   onModelNotice?: (line: string) => void;
-  // Issue #225: the thinking level is a per-conversation agent choice. Given
+  // The thinking level is a per-conversation agent choice. Given
   // here it is written on boot; absent, a resumed session keeps its stored
-  // level (and #225 becomes a config/flag issue only).
+  // level (and becomes a config/flag issue only).
   thinkingLevel?: ModelThinkingLevel;
-  // Issue #225 (§38.3): the lane's thinking-level request. `override` is a
+  // The lane's thinking-level request. `override` is a
   // per-run level (cli `--thinking` / `KUBIC_MODEL_THINKING`, source named);
   // `role` is the `[roles.<name>] thinking` default; `config` is the
   // `[model].thinking` file default with its layer. `persisted` is never
@@ -266,7 +266,7 @@ export interface SoloBootOptions {
   // precedence (override > session > role > config) holds on attach too.
   // An explicit `thinkingLevel` above is the same level as `override`.
   thinking?: Omit<ThinkingInputs, 'persisted'>;
-  // The one-line clamp notice for the resolved level (issue #225): a
+  // The one-line clamp notice for the resolved level: a
   // request the model does not support is never silently rewritten.
   // Absent means `onModelNotice` — both name stderr on `kubic run`.
   onThinkingNotice?: (line: string) => void;
@@ -275,7 +275,7 @@ export interface SoloBootOptions {
   // soloCompactionSettings so the Kubic clamp cannot be bypassed. Extension
   // selection is NOT passable either: the lane owns the four Kubic
   // extensions, and a caller-supplied selection could uninstall the tools,
-  // the prompt and every policy hook silently (review #394 low 3).
+  // the prompt and every policy hook silently.
   settings?: Omit<HarnessSettings, 'compaction' | 'extensions'>;
 }
 
@@ -307,7 +307,7 @@ export interface SoloLane {
   // re-installs them.
   registry: Registry;
   kills: OperationKillRegistry;
-  // The model the conversation runs after boot (issue #148): the selection
+  // The model the conversation runs after boot: the selection
   // for a new conversation or an explicit switch, else the session's stored
   // model. Every report (prompt metadata, status, usage, envelope) names
   // this one; a later configure is read live through `conversation.agent()`.
@@ -315,8 +315,7 @@ export interface SoloLane {
   sessionId: string;
   affinity?: TaskAffinity;
   // The configured (unclamped) compaction reserve and a window lookup, so a
-  // model switch re-clamps the harness reserve to the NEW model's window
-  // (#399 reads them through the live CompactionPolicy getter).
+  // model switch re-clamps the harness reserve to the NEW model's window.
   configuredReserveTokens?: number;
   modelWindow?: (provider: string, modelId: string) => number | undefined;
   // Shuts the harness down (and with it the session's storage). Releasing
@@ -361,7 +360,7 @@ export async function escalateSoloModel(
       'no pinned affinity: boot with taskId before escalating',
     );
   }
-  // Issue #215: the per-turn model read goes through the affinity helper,
+  // The per-turn model read goes through the affinity helper,
   // so the helper has a lane-level caller (not a test-only export).
   const from = taskModelForTurn(solo.affinity);
   if (to === from) {
@@ -373,7 +372,7 @@ export async function escalateSoloModel(
   validateEscalation(ladder, from, to);
   // The reserve follows the live model through soloCompactionSettings'
   // `currentWindow` getter (which reads affinity first), so no explicit
-  // re-clamp is needed (#399).
+  // re-clamp is needed.
   await solo.conversation.configure({ model: parsed }, context);
   const result = escalatePinnedModel(solo.affinity, ladder, to, reason, sink);
   solo.affinity = result.affinity;
@@ -394,25 +393,25 @@ export async function bootSoloLane(
     agentId: options.agentId,
     kills,
     ...(options.journal === undefined ? {} : { journal: options.journal }),
-    // Issue #436: the interactive turn supplier rides the tool context so
+    // The interactive turn supplier rides the tool context so
     // every intercepted write/edit samples the live turn at call time.
     ...(options.currentTurn === undefined
       ? {}
       : { currentTurn: options.currentTurn }),
-    // Issue #182: clipped bash output spills into the session directory, so
+    // Clipped bash output spills into the session directory, so
     // it is pruned with the session and never lands in the workspace.
     spill: createSessionSpillSink(options.session.dir),
   };
   const baseTools = kubicToolsToPiTools(toolContext);
-  // §12.1/§40/§58 intersection (issues #99, #143, #288): the tools the
+  // Intersection: the tools the
   // conversation offers and the tools the prompt advertises are ONE set —
   // base tools, narrowed by the permission classes when declared, by the
   // role allowlist when declared, and by the enterprise tool policy when
   // configured. A role or an enterprise deny can only narrow what the
   // classes allow, never widen it. Computed before the prompt is assembled
   // so the `tools:` line names exactly what the conversation offers: the
-  // model must be told the truth about its own tool set (§40.3), and the
-  // value is fixed for the boot, so the prompt-cache prefix (#33) is still
+  // model must be told the truth about its own tool set, and the
+  // value is fixed for the boot, so the prompt-cache prefix is still
   // byte-stable across turns.
   const classAllowed =
     options.policy?.classes === undefined
@@ -456,7 +455,7 @@ export async function bootSoloLane(
     options.noTools === true ||
     enterpriseGate !== undefined;
 
-  // Compaction (#399): reserveTokens is a live getter over the window of the
+  // Compaction: reserveTokens is a live getter over the window of the
   // conversation's CURRENT model. It reads the attached `pi.agent` document
   // first, so EVERY model switch — `escalateSoloModel`, the TUI/headless
   // `configure({ model })`, a boot — re-clamps on the next use, with no
@@ -542,14 +541,14 @@ export async function bootSoloLane(
   }
 
   const harness = await Harness.open(
-    // Adopt, never take `storage` directly (D8.1): the handle must know a
+    // Adopt, never take `storage` directly: the handle must know a
     // harness owns the storage, or its `release()` would close the storage
     // under the live harness.
     options.session.adopt(),
     { models: options.models, registry, settings },
     context,
   );
-  // Issue #265: a forked session's lane runs its recorded fork, never the
+  // A forked session's lane runs its recorded fork, never the
   // reserved root (which holds the source's whole history in the copy).
   const forkedLane = options.session.meta.conversation;
   const conversation =
@@ -567,7 +566,7 @@ export async function bootSoloLane(
   // disposed by close(). `value` is the committed state, so a configure from
   // any caller (this module, the TUI, a headless switch) moves the reserve.
   agentState = await harness.documentState(AgentDoc, conversation.id, context);
-  // Issue #148: reconcile the stored conversation model with the selection
+  // Reconcile the stored conversation model with the selection
   // BEFORE the extension fixes the system prompt and the reserve.
   const selectedId = defaultSoloModelId(options.model);
   const storedAgent = await harness.snapshot(
@@ -612,10 +611,10 @@ export async function bootSoloLane(
         lane: SOLO_LANE_NAME,
         model: effectiveId,
       },
-      // §12.1 role prompt (issue #99): the document's own text replaces
+      // Role prompt: the document's own text replaces
       // the solo constant; absent, the constant stands.
       ...(options.rolePrompt === undefined ? {} : { role: options.rolePrompt }),
-      // Context blocks appended as suffix sections (issue #99): the
+      // Context blocks appended as suffix sections: the
       // role/cwd/tools/meta prefix stays byte-stable for the prompt
       // cache, and a caller with no blocks assembles the same bytes
       // it always did.
@@ -633,8 +632,8 @@ export async function bootSoloLane(
     }),
   );
 
-  // Issue #225 (§38.3): resolve the thinking request against the session's
-  // stored level and clamp it to the EFFECTIVE model (the #148 rule above
+  // Resolve the thinking request against the session's
+  // stored level and clamp it to the EFFECTIVE model (the rule above
   // may keep the session's own model, so clamping to the selection would
   // answer for the wrong model). A clamp is never silent.
   const resolvedThinking = resolveThinkingLevel(effectiveModel, {
@@ -669,7 +668,7 @@ export async function bootSoloLane(
     context,
   );
   if (switchToSelected) {
-    // An explicit selection is an explicit model change (§26.1): applied
+    // An explicit selection is an explicit model change: applied
     // to the restored conversation (and persisted) and announced.
     options.onModelNotice?.(
       `model: session model '${storedId}' switched to '${selectedId}' (${
@@ -691,11 +690,11 @@ export async function bootSoloLane(
       context,
     );
   }
-  // §12.1 role narrowing (issue #99): the role's resolved tool set is the
+  // Role narrowing: the role's resolved tool set is the
   // NARROWER of the two allowlists — applied after the class-derived one,
   // so a role can never widen what the permission classes permit. An empty
   // set is the noTools case (the conversation offers nothing). The absence
-  // guard (issue #43's createRoleToolGuard) stays available to callers;
+  // guard (the createRoleToolGuard) stays available to callers;
   // offer-time absence is what this pins.
   if (mustActivateTools) {
     await conversation.configure(
@@ -703,11 +702,11 @@ export async function bootSoloLane(
       context,
     );
   } else if (classAllowed === undefined && storedAgent?.tools !== undefined) {
-    // The stored filter is durable (configure writes it), so a session
-    // booted with a role/enterprise narrowing would otherwise keep it while
-    // this boot's prompt advertises the full intersection (review #394 med
-    // 1). Clearing it makes the offered set total on every boot; the
-    // prompt's `tools:` line is the same set by construction.
+    // The stored filter is durable (configure writes it), so a session booted
+    // with a role/enterprise narrowing would otherwise keep it while this
+    // boot's prompt advertises the full intersection. Clearing it makes the
+    // offered set total on every boot; the prompt's `tools:` line is the same
+    // set by construction.
     await conversation.configure({ tools: null }, context);
   }
 

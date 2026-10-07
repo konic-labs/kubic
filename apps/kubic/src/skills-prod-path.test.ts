@@ -1,12 +1,12 @@
-// Skills on the live solo path (issue #99, scope item 2; §29).
-// Before #99 nothing in the shipped binary called discoverSkills /
+// Skills on the live solo path.
+// Before nothing in the shipped binary called discoverSkills /
 // formatSkillsForSystemPrompt and `--no-skills` did not exist. These tests
 // pin that the composition root runs discovery through the real FileBridge
 // and hands the model-visible blocks to the lane boot.
 //
 // Faux provider only (zero network, zero paid tokens): the assertions are
 // about the committed solo prompt bytes, read back from the session
-// transcript (#400's reader) after a real `kubic run`.
+// transcript (the reader) after a real `kubic run`.
 import {
   mkdirSync,
   mkdtempSync,
@@ -74,7 +74,7 @@ function writeSkill(root: string, name: string, description: string): string {
   return file;
 }
 
-// The solo prompt the lane committed for this session (#400's reader): the
+// The solo prompt the lane committed for this session (the reader): the
 // run's own durable record of the bytes the model saw.
 async function committedPrompt(
   root: string,
@@ -115,7 +115,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
+describe('skills reach the live solo prompt', () => {
   it("injects a discovered skill's name, description and path into the assembled system prompt", async () => {
     const home = tmpRoot('skills-home-');
     const skillFile = writeSkill(
@@ -138,7 +138,7 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
     );
     expect(result.terminus).toBe('completed');
     const prompt = await committedPrompt(root, result.sessionId);
-    // The §29 injection block itself.
+    // The injection block itself.
     expect(prompt).toContain('<skills>');
     expect(prompt).toContain('<name>deploy-widget</name>');
     expect(prompt).toContain(
@@ -264,7 +264,7 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
 
   it('reads the documented trust opt-in from the environment on the production default', async () => {
     // The prod default for `trusted` is the same switch the config layer
-    // reads (`KUBIC_TRUST_PROJECT`, §35.1/§29.3) — not an always-on. With
+    // reads — not an always-on. With
     // the variable absent the project skill stays out; with it set the
     // skill lands, so the flag is genuinely read rather than hardcoded.
     const home = tmpRoot('skills-home-');
@@ -304,8 +304,8 @@ describe('skills reach the live solo prompt (issue #99, §29.3)', () => {
   });
 });
 
-// Issue #173: the advertised <filePath> must be openable by the read tool.
-describe('advertised skills outside the workspace are readable (issue #173, §29.3)', () => {
+// The advertised <filePath> must be openable by the read tool.
+describe('advertised skills outside the workspace are readable', () => {
   async function readResults(
     calls: { name: string; args: Parameters<typeof fauxToolCall>[1] }[],
     skills: { homeDir: string; cwd: string; trusted: boolean },
@@ -315,7 +315,7 @@ describe('advertised skills outside the workspace are readable (issue #173, §29
     const models = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      // Only a toolUse turn runs its calls (fauxToolUse, #401).
+      // Only a toolUse turn runs its calls.
       fauxToolUse(calls.map((call) => fauxToolCall(call.name, call.args))),
       fauxAssistantMessage('done'),
     ]);
@@ -400,8 +400,8 @@ describe('advertised skills outside the workspace are readable (issue #173, §29
   it('reads a trusted ancestor project skill', async () => {
     const home = tmpRoot('skills-home-');
     const ancestor = tmpRoot('skills-ancestor-');
-    // Ancestor project skills load inside a repository (issue #189:
-    // the walk stops at the git top level), so mark the ancestor root.
+    // Ancestor project skills load inside a repository (the walk stops at the
+    // git top level), so mark the ancestor root.
     mkdirSync(join(ancestor, '.git'), { recursive: true });
     const cwd = join(ancestor, 'pkg');
     mkdirSync(cwd, { recursive: true });
@@ -419,10 +419,10 @@ describe('advertised skills outside the workspace are readable (issue #173, §29
   });
 });
 
-// Pi contract parity on the live path (issue #186, §29): a hidden skill
+// Pi contract parity on the live path: a hidden skill
 // contributes no prompt block, and a skill-less boot keeps the prompt
-// byte-identical (issue #33 — the block is undefined, not empty).
-describe('hidden skills stay out of the live prompt (issue #186)', () => {
+// byte-identical (the block is undefined, not empty).
+describe('hidden skills stay out of the live prompt', () => {
   it('hides disable-model-invocation skills from the committed prompt', async () => {
     const home = tmpRoot('skills-hidden-home-');
     const dir = join(home, '.agents', 'skills', 'secret-helper');
@@ -450,7 +450,7 @@ describe('hidden skills stay out of the live prompt (issue #186)', () => {
     expect(prompt).not.toContain('<skills>');
   });
 
-  it('keeps a no-skill boot prompt byte-identical (issue #33)', () => {
+  it('keeps a no-skill boot prompt byte-identical', () => {
     const dir = tmpRoot('skills-empty-');
     const boot = bootSkills({
       bridge: createNodeFileBridge(dir),
@@ -465,7 +465,7 @@ describe('hidden skills stay out of the live prompt (issue #186)', () => {
   });
 });
 
-describe('settings skills from config (issue #237, §29.2)', () => {
+describe('settings skills from config', () => {
   it('kubic run loads a settings skill dir with source settings', async () => {
     const home = tmpRoot('skills-settings-home-');
     // Outside every discovery root: only the settings projection loads it.
@@ -500,7 +500,7 @@ describe('settings skills from config (issue #237, §29.2)', () => {
   });
 });
 
-describe('the role/capability gate reaches the live solo prompt (issue #181, §29.4)', () => {
+describe('the role/capability gate reaches the live solo prompt', () => {
   function writeScopedSkill(
     root: string,
     name: string,
@@ -645,7 +645,7 @@ describe('the role/capability gate reaches the live solo prompt (issue #181, §2
       role: 'reviewer',
     });
     expect(checks).toEqual([
-      // Issue #238: the counts line rides first — the per-skill warns
+      // The counts line rides first — the per-skill warns
       // follow unchanged.
       {
         id: 'skills',
@@ -665,10 +665,10 @@ describe('the role/capability gate reaches the live solo prompt (issue #181, §2
   });
 });
 
-// The invocable set for explicit invocation (issue #183 review):
+// The invocable set for explicit invocation:
 // admitted + gate-passed, hidden included, withheld excluded — so a
 // role/capability-withheld skill resolves as unknown on the invoke path.
-describe('the invocable set gates explicit invocation (issue #183)', () => {
+describe('the invocable set gates explicit invocation', () => {
   function writeRawSkill(dir: string, name: string, frontmatter: string): void {
     mkdirSync(join(dir, name), { recursive: true });
     writeFileSync(

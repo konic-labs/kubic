@@ -1,10 +1,9 @@
-// The shared pi-durable → Kubic transcript adapter (issue #400; §21–§22).
-// Entries are pi-durable `EntryRecord`s (typed records: pi.user,
-// pi.assistant, pi.tool-result, pi.system, pi.compaction, pi.reset), read
-// through `Conversation.context()` or the session storage. The adapter is
-// the ONE reader every Kubic surface shares (sessions attach, cost, §46
-// trajectory), so its mapping is pinned here: per-kind extraction, entry
-// order, and the kinds it ignores.
+// The shared pi-durable → Kubic transcript adapter. Entries are pi-durable
+// `EntryRecord`s (typed records: pi.user, pi.assistant, pi.tool-result,
+// pi.system, pi.compaction, pi.reset), read through `Conversation.context()` or
+// the session storage. The adapter is the ONE reader every Kubic surface shares
+// (sessions attach, cost, trajectory), so its mapping is pinned here: per-kind
+// extraction, entry order, and the kinds it ignores.
 //
 // The live half of this file drives a REAL pi-durable Harness over
 // MemoryStorage with the faux provider (zero network, zero paid tokens), so
@@ -80,7 +79,7 @@ function entry(kind: string, fields: Partial<EntryRecord> = {}): EntryRecord {
   };
 }
 
-describe('entriesToTranscript kinds (issue #400)', () => {
+describe('entriesToTranscript kinds', () => {
   it('maps a user entry to its text', () => {
     const items = entriesToTranscript([
       entry(UserEntry.kind, {
@@ -296,7 +295,7 @@ describe('entriesToTranscript kinds (issue #400)', () => {
   });
 });
 
-describe('entriesToTranscript over a real harness (issue #400)', () => {
+describe('entriesToTranscript over a real harness', () => {
   it('reads the user turn, the tool call, its result and the answer the harness stored', async () => {
     const { faux, root } = await fauxHarness();
     faux.setResponses([

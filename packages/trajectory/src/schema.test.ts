@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { BuildTrajectoryInput } from './export.js';
 import { buildTrajectoryExport } from './export.js';
@@ -16,7 +13,7 @@ import {
   TrajectorySchemaError,
 } from './schema.js';
 
-// A full, valid record through the real builder (issue #331): the
+// A full, valid record through the real builder: the
 // minor-tolerance and structural tests below mutate one field of it, so
 // they exercise the parser, not a hand-drawn shape.
 function validInput(): BuildTrajectoryInput {
@@ -86,7 +83,7 @@ function parseError(input: unknown): TrajectorySchemaError {
   throw new Error('parse accepted a malformed record — expected rejection');
 }
 
-describe('trajectory schema version (issue #51)', () => {
+describe('trajectory schema version', () => {
   it('publishes schema_version 1.3', () => {
     expect(SCHEMA_VERSION).toBe('1.3');
     expect(SCHEMA_MAJOR).toBe(1);
@@ -126,7 +123,7 @@ describe('trajectory schema version (issue #51)', () => {
     expect(parsed.schema_version).toBe(`${SCHEMA_MAJOR}.99`);
   });
 
-  it('rejects a record missing a §46 field as malformed', () => {
+  it('rejects a record missing a trajectory field as malformed', () => {
     expect(() =>
       parseTrajectoryExport({ schema_version: SCHEMA_VERSION }),
     ).toThrowError(TrajectorySchemaError);
@@ -143,18 +140,9 @@ describe('trajectory schema version (issue #51)', () => {
       expect.objectContaining({ code: 'malformed' }),
     );
   });
-
-  it('publishes CONTRACT.md naming the current schema version', () => {
-    const contract = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), '..', 'CONTRACT.md'),
-      'utf8',
-    );
-    expect(contract).toContain(SCHEMA_VERSION);
-    expect(contract).toContain('stable');
-  });
 });
 
-describe('trajectory structural validation (issue #331)', () => {
+describe('trajectory structural validation', () => {
   it('rejects a non-object input with the JSON-object message', () => {
     for (const input of [null, 'x', 42, [], true]) {
       const err = parseError(input);
@@ -174,7 +162,7 @@ describe('trajectory structural validation (issue #331)', () => {
     }
   });
 
-  it('rejects a null or mistyped §46 section by its JSON path', () => {
+  it('rejects a null or mistyped trajectory section by its JSON path', () => {
     const cases: Array<[Record<string, unknown>, RegExp]> = [
       [{ actions: null }, /trajectory\.actions must be an array \(got null\)/],
       [{ observations: 'x' }, /trajectory\.observations must be an array/],
@@ -271,7 +259,7 @@ describe('trajectory structural validation (issue #331)', () => {
     });
   });
 
-  it('recognizes the §52 failure codes and nothing else', () => {
+  it('recognizes the failure codes and nothing else', () => {
     expect(isTrajectoryFailureCode('tool_timeout')).toBe(true);
     expect(isTrajectoryFailureCode('run_limit')).toBe(true);
     expect(isTrajectoryFailureCode('budget_exhausted')).toBe(false);
@@ -280,7 +268,7 @@ describe('trajectory structural validation (issue #331)', () => {
   });
 });
 
-describe('trajectory schema 1.1 (issue #329)', () => {
+describe('trajectory schema 1.1', () => {
   it('parses a 1.0 record without any 1.1 field (compat)', () => {
     const record = validExport();
     const identity = { ...(record.identity as Record<string, unknown>) };

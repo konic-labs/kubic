@@ -12,14 +12,14 @@
 //   - text mode prints the result block on stdout;
 //   - an unknown KUBIC_PROVIDER is refused by name (exit 6), never a
 //     silent fall-through to a real provider;
-//   - the tool run's §46 trajectory (issue #383): the envelope's trajectory
+//   - the tool run's trajectory: the envelope's trajectory
 //     ref is the absolute path of `<sessions-root>/<id>/trajectory.json`,
 //     the file parses, and `replay <file> --tier recorded`, `eval
-//     --trajectory <file>` (issue #258; the inline-JSON form is also
-//     exercised for back-compat) and `export --trajectory <file> --type
+//     --trajectory <file>` (the inline-JSON form is also exercised for
+//     back-compat) and `export --trajectory <file> --type
 //     sft` all succeed on it;
 //   - `benchmark --model faux/echo --worktree <scratch> --generation 0
-//     --size smoke --json`: the built-in fixture suites (issue #262) run
+//     --size smoke --json`: the built-in fixture suites run
 //     through the real lane in a temp workspace, every executed row is
 //     `success: true` with `determinism: "live"`, and the matrix exits 0.
 //
@@ -57,7 +57,7 @@ function envelopeOf(label, probe, problems) {
 }
 
 // A run's trajectory file, parsed; a problem (and undefined) when the ref
-// does not name a readable §46 record.
+// does not name a readable trajectory record.
 function trajectoryAt(label, path, readFile, problems) {
   if (typeof path !== 'string' || !path.endsWith('/trajectory.json')) {
     problems.push(
@@ -67,14 +67,14 @@ function trajectoryAt(label, path, readFile, problems) {
   }
   try {
     const parsed = JSON.parse(readFile(path));
-    // The §46 reader supports major 1; the 1.1 additions are optional on
-    // read (issue #329), so pin the major, not the minor.
+    // The reader supports major 1; the 1.1 additions are optional on
+    // read, so pin the major, not the minor.
     if (
       typeof parsed?.schema_version !== 'string' ||
       !parsed.schema_version.startsWith('1.') ||
       parsed?.provenance === undefined
     ) {
-      problems.push(`${label}: ${path} is not a §46 trajectory export`);
+      problems.push(`${label}: ${path} is not a trajectory export`);
       return undefined;
     }
     return parsed;
@@ -84,7 +84,7 @@ function trajectoryAt(label, path, readFile, problems) {
   }
 }
 
-// Replay, eval and export all consume the run-produced file (issue #383):
+// Replay, eval and export all consume the run-produced file:
 // the analysis surfaces are no longer fixture-only.
 function consumeTrajectory(run, path, readFile, problems) {
   const replay = run(['replay', path, '--tier', 'recorded', '--json'], {
@@ -113,7 +113,7 @@ function consumeTrajectory(run, path, readFile, problems) {
       `eval --trajectory of a run trajectory: exit ${scored.code}, want 0 (${scored.stdout.trim().slice(-300)} ${scored.stderr.trim().slice(-300)})`,
     );
   }
-  // Issue #258: `--trajectory <file>` is the documented form (the inline
+  // `--trajectory <file>` is the documented form (the inline
   // JSON stays for back-compat); the file the run wrote must score.
   const scoredFile = run(
     [
@@ -199,7 +199,7 @@ export function fauxSmoke({ run, readFile, cwd }) {
     }
   }
 
-  // The live suite runner (issue #262): every executable built-in fixture
+  // The live suite runner: every executable built-in fixture
   // runs through the real lane in a temp workspace, and the matrix exits by
   // verdict. This is the shipped-binary proof that `kubic benchmark` is not
   // a refusal anymore.

@@ -1,4 +1,4 @@
-// OSC 52 copies (EPIC N, issue #463): the escape sequence a terminal turns
+// OSC 52 copies: the escape sequence a terminal turns
 // into a system-clipboard write — the only clipboard a remote session (ssh,
 // a container) reaches. Pure: the composition root writes the sequence to
 // the terminal, and decides whether this terminal takes it.

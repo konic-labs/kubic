@@ -1,5 +1,5 @@
-// The interactive lane under the §58 enterprise policy, built through the REAL
-// production deps builder (`prodTuiDeps`, issues #288, #294, #295, #227): the
+// The interactive lane under the enterprise policy, built through the REAL
+// production deps builder: the
 // audit found the enterprise model/tool/role gates inert on `kubic tui` and
 // bare `kubic` because `modelPolicy` was spread into `tuiDepsWithDefaults` but
 // missing from the projection's forwarding table — and every test hand-spread
@@ -184,7 +184,7 @@ function advertisedTools(prompt: string): string[] {
     .filter((name) => name !== '');
 }
 
-describe('prodTuiDeps hands bootTuiLane every config seam (issues #230, #288, #295)', () => {
+describe('prodTuiDeps hands bootTuiLane every config seam', () => {
   it('forwards the enterprise policy, the model pin, the approvals and the journal projections', async () => {
     const cfg = cliConfig({
       [ENTERPRISE]:
@@ -212,7 +212,7 @@ describe('prodTuiDeps hands bootTuiLane every config seam (issues #230, #288, #2
     expect(seen?.approvals?.maxPendingMs).toBe(1234);
     expect(seen?.journalRetention).toEqual({ maxAgeMs: 2 * 86_400_000 });
     expect(seen?.reconcileOutOfScope).toEqual(['dist']);
-    // Issue #304: the `[ui] theme` reference reaches the deps the runner
+    // The `[ui] theme` reference reaches the deps the runner
     // reads (dropping the prod spread must not stay green).
     expect(seen?.theme).toBe('light');
   });
@@ -235,7 +235,7 @@ describe('prodTuiDeps hands bootTuiLane every config seam (issues #230, #288, #2
   });
 });
 
-describe('the prod tui builder enforces the enterprise gates on the real boot (issue #288)', () => {
+describe('the prod tui builder enforces the enterprise gates on the real boot', () => {
   it('refuses a pinned model outside allowed_models before any provider call', async () => {
     const cfg = cliConfig({
       [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
@@ -357,7 +357,7 @@ describe('the prod tui builder enforces the enterprise gates on the real boot (i
   });
 });
 
-describe('`kubic tui --model` cannot bypass the projected pin (issues #227, #295)', () => {
+describe('`kubic tui --model` cannot bypass the projected pin', () => {
   // What runTuiCommand really builds from commander's parsed options, with a
   // boot that stops right after capturing the flags (exit 6, no terminal).
   async function flagsFor(model: {
@@ -409,7 +409,7 @@ describe('`kubic tui --model` cannot bypass the projected pin (issues #227, #295
   });
 });
 
-describe('/model switch under the enterprise policy (issue #288)', () => {
+describe('/model switch under the enterprise policy', () => {
   const POLICY = { [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*"]\n' };
   const twoProviders = (): MutableModels =>
     providers([
@@ -480,11 +480,11 @@ describe('/model switch under the enterprise policy (issue #288)', () => {
   });
 });
 
-// §35.1/§38.1: `--model` and `/model` are the one "session override" level,
+// `--model` and `/model` are the one "session override" level,
 // and enterprise restrictions cannot be overridden by any lower layer — so a
 // frozen enterprise `[model]` binds the live switch exactly as it binds the
 // flag (a `/model` away from it would be the bypass the freeze exists to stop).
-describe('/model cannot leave a frozen enterprise model pin (issues #227, #295)', () => {
+describe('/model cannot leave a frozen enterprise model pin', () => {
   const twoProviders = (): MutableModels =>
     providers([
       { provider: 'faux', models: ['big', 'small'] },
@@ -559,7 +559,7 @@ describe('/model cannot leave a frozen enterprise model pin (issues #227, #295)'
   });
 });
 
-describe('advertised skills outside the workspace stay readable on the tui lane (issue #173)', () => {
+describe('advertised skills outside the workspace stay readable on the tui lane', () => {
   function writeSkill(root: string, name: string): string {
     const dir = join(root, name);
     mkdirSync(dir, { recursive: true });
@@ -636,7 +636,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('a refused /model switch is named in the footer and the lane keeps its model (issue #288)', () => {
+describe('a refused /model switch is named in the footer and the lane keeps its model', () => {
   it('prints the boot-time refusal text and answers the next prompt on the original model', async () => {
     const cfg = cliConfig({
       [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*"]\n',
@@ -682,7 +682,7 @@ describe('a refused /model switch is named in the footer and the lane keeps its 
   });
 });
 
-describe('a resumed TUI session never keeps a model the enterprise gate refuses (issue #288)', () => {
+describe('a resumed TUI session never keeps a model the enterprise gate refuses', () => {
   it('boots the resumed session on the gated selection, not its stored provider', async () => {
     const workspace = tmpRoot();
     const sessionsRoot = tmpRoot();

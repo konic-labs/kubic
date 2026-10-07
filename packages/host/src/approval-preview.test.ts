@@ -1,4 +1,4 @@
-// The change an edit or write ask would make (issue #459): the approval
+// The change an edit or write ask would make: the approval
 // card's diff preview, computed against the file on disk.
 import { describe, expect, it } from 'vitest';
 import {
@@ -30,7 +30,7 @@ function files(contents: Record<string, string>) {
   };
 }
 
-describe('approval preview (issue #459)', () => {
+describe('approval preview', () => {
   const disk = files({
     'src/cart.js': 'a\r\nexisting.qty = qty;\r\nb\r\nqty\r\n',
   });

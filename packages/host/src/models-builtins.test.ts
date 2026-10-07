@@ -1,7 +1,7 @@
-// Pi's built-in providers in the assembled catalog (issue #221; §37.1,
-// §37.2). Hermetic: every assembly gets a stubbed env and a temp home, so
-// the machine's own keys never decide an outcome, and nothing is dialled
-// (auth checks read the stubbed env only; streams are never opened).
+// Pi's built-in providers in the assembled catalog. Hermetic: every assembly
+// gets a stubbed env and a temp home, so the machine's own keys never decide an
+// outcome, and nothing is dialled (auth checks read the stubbed env only;
+// streams are never opened).
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,7 +37,7 @@ function assemble(
   return assembleModels(cwd, env, { home: tmpDir() });
 }
 
-describe('built-in providers (issue #221)', () => {
+describe('built-in providers', () => {
   it('registers the Pi built-ins with no models.json', async () => {
     const assembled = await assemble({});
     for (const id of ['anthropic', 'openai', 'google', 'amazon-bedrock']) {
@@ -204,7 +204,7 @@ describe('built-in providers (issue #221)', () => {
     expect(lines.join('\n')).toContain('selected anthropic/claude-sonnet-4-6');
   });
 
-  it('`kubic models --json` carries a custom model cache cost and input modalities (issue #223)', async () => {
+  it('`kubic models --json` carries a custom model cache cost and input modalities', async () => {
     const cwd = tmpDir();
     writeFileSync(
       join(cwd, 'models.json'),
@@ -254,11 +254,11 @@ describe('built-in providers (issue #221)', () => {
   });
 });
 
-// Issue #402 (pi-ai 0.99.0): a catalogue entry now carries
+// A catalogue entry now carries
 // `type: 'chat' | 'image' | 'classifier'`, and ONLY the unqualified reads
 // (`getModels`/`getModel`) stay chat-only. `kubic models` and model selection
 // must never list or pick an image/classifier entry.
-describe('chat-only model lists (issue #402)', () => {
+describe('chat-only model lists', () => {
   it('`kubic models --json` lists only chat models of a mixed catalogue', async () => {
     const assembled = await assemble({});
     // The chat-only read the CLI uses never yields a non-chat entry …
@@ -334,11 +334,11 @@ describe('chat-only model lists (issue #402)', () => {
   });
 });
 
-// Issue #402 (pi-ai 0.99.2): Anthropic workload identity federation. Pi's
+// Anthropic workload identity federation. Pi's
 // provider resolves it only when no stored credential or key is configured,
 // from three required ANTHROPIC_* variables (plus two optional ids) read
 // through the auth context.
-describe('Anthropic workload identity federation (issue #402)', () => {
+describe('Anthropic workload identity federation', () => {
   const FEDERATION_ENV = {
     ANTHROPIC_FEDERATION_RULE_ID: 'fdrl_123',
     ANTHROPIC_ORGANIZATION_ID: 'org_123',

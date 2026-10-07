@@ -1,4 +1,4 @@
-// `kubic eval` / `kubic benchmark` command surface (issue #53).
+// `kubic eval` / `kubic benchmark` command surface.
 // Presentation only: parsed options in (commander, apps/kubic/src/
 // commands/analysis.ts), exit code out. Suite execution and worktree
 // checks arrive through injected deps (faux in tests); the CLI never
@@ -31,7 +31,7 @@ export const EVAL_EXIT_FAILED = EXIT_FAILED;
 export const EVAL_EXIT_USAGE = EXIT_USAGE;
 
 // The documented default model of a record (`--model` unset).
-// The registered id of the shipped testing provider (issue #262): the
+// The registered id of the shipped testing provider: the
 // fixture suites run through the real lane, so the default must name a
 // model the catalog actually holds. The host's faux provider registers
 // `faux/echo` (FAUX_MODEL_REF); the eval package cannot import host (dep
@@ -39,7 +39,7 @@ export const EVAL_EXIT_USAGE = EXIT_USAGE;
 export const EVAL_DEFAULT_MODEL = 'faux/echo';
 
 export interface EvalCliDeps extends EvalTaskDeps {
-  // §48 (issue #258): `--trajectory <file>` reads the export through this
+  // `--trajectory <file>` reads the export through this
   // seam (the exec FileBridge in prod); `--trajectory -` reads stdin.
   // Absent means a path operand is refused by name (the inline-JSON form
   // stays available).
@@ -77,7 +77,7 @@ export interface EvalOptions {
 }
 
 // model/thinking/worktree/generation stay undefined when their flag is
-// absent: the --trajectory path takes them from the export (§48, #256);
+// absent: the --trajectory path takes them from the export;
 // the --task and benchmark paths apply the defaults (EVAL_DEFAULT_MODEL,
 // thinking null) and require the rest (see forTask).
 interface Parsed {
@@ -130,7 +130,7 @@ function normalize(options: EvalOptions): Parsed | string {
   }
   let generation: number | undefined;
   if (options.generation !== undefined) {
-    // Issue #266: only decimal digits name a generation. `Number('')` is 0,
+    // Only decimal digits name a generation. `Number('')` is 0,
     // `Number('1e3')` is 1000 and `Number(' 2 ')` is 2 — accepting those
     // invented a generation the caller never wrote.
     if (
@@ -161,7 +161,7 @@ function emitRecord(
   json: boolean,
 ): void {
   if (json) {
-    // The envelope reports the record's own verdict (issue #370): `ok` and
+    // The envelope reports the record's own verdict: `ok` and
     // `exitCode` follow `record.success`, exactly like benchmark's
     // `{ok: allOk, exitCode}` — a gated-fail record must not print
     // `exitCode: 0` from a process that exits 1.
@@ -214,11 +214,11 @@ function emitError(
   return EVAL_EXIT_FAILED;
 }
 
-// §48 (issue #258): `--trajectory` takes a file path like `export` and
+// `--trajectory` takes a file path like `export` and
 // `replay` do; `-` reads stdin; a value that starts with `{`/`[` is the
-// pre-#258 inline-JSON form, kept for back-compat. Every failure is a named
+// pre inline-JSON form, kept for back-compat. Every failure is a named
 // refusal: `trajectory-unreadable` (the read failed) or
-// `trajectory-malformed` (not JSON, or not a valid §46 export).
+// `trajectory-malformed` (not JSON, or not a valid export).
 function loadTrajectoryInput(value: string, deps: EvalCliDeps): unknown {
   const trimmed = value.trim();
   const inline = trimmed.startsWith('{') || trimmed.startsWith('[');
@@ -272,12 +272,12 @@ function loadTrajectoryInput(value: string, deps: EvalCliDeps): unknown {
   } catch (error) {
     throw new EvalRunnerError(
       'trajectory-malformed',
-      `trajectory ${JSON.stringify(value)} is not a valid §46 export: ${error instanceof Error ? error.message : String(error)}`,
+      `trajectory ${JSON.stringify(value)} is not a valid export: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
 
-// kubic eval --task ... | --trajectory ... (design §48).
+// kubic eval --task ... | --trajectory ....
 export async function runEvalCommand(
   options: EvalOptions,
   deps: EvalCliDeps,
@@ -292,7 +292,7 @@ export async function runEvalCommand(
     log.error("required option '--suite <id>' not specified");
     return EVAL_EXIT_USAGE;
   }
-  // Issue #262 (§73): the selector is a suite id or a category alias
+  // The selector is a suite id or a category alias
   // (`--suite swe`). eval scores ONE record, so a category with more than
   // one suite is refused by name rather than silently picking one.
   const selected = resolveSuites(parsed.suite);
@@ -376,10 +376,10 @@ export interface BenchmarkResult {
   stub: boolean;
   skipped: boolean;
   success: boolean;
-  // Issue #260 (§47.1/§72): the executed row publishes the record's own
+  // The executed row publishes the record's own
   // determinism tier; a skipped stub names the tier it would run at (live).
   determinism: EvalDeterminism;
-  // §73 record fields on an executed row (issue #262); absent on a stub.
+  // Record fields on an executed row; absent on a stub.
   costUsd?: number;
   tokens?: number;
   latencyMs?: number;
@@ -390,7 +390,7 @@ export interface BenchmarkResult {
   generation?: number;
 }
 
-// kubic benchmark [--suite <id>|all] (design §82): the reproducible
+// kubic benchmark [--suite <id>|all]: the reproducible
 // matrix. Stub suites are reported skipped:true with success:false (never
 // as passing work); exit 0 iff every executed suite succeeded — skipped
 // stubs never count toward the verdict either way.
@@ -409,7 +409,7 @@ export async function runBenchmarkCommand(
     log.error(provenance);
     return EVAL_EXIT_USAGE;
   }
-  // Issue #264: validate provenance once, before the matrix. A stub-only
+  // Validate provenance once, before the matrix. A stub-only
   // selection never reaches runEvalTask (which owns this check), so without
   // it `benchmark --suite agentic-live` reported `ok` with no size or
   // worktree at all.
@@ -421,7 +421,7 @@ export async function runBenchmarkCommand(
     }
     throw error;
   }
-  // Issue #262 (§73): the selector is a suite id, a category alias
+  // The selector is a suite id, a category alias
   // (`--suite swe` → every swe-category suite), or `all`/absent.
   const selected = resolveSuites(parsed.suite);
   if (selected === undefined) {
@@ -466,7 +466,7 @@ export async function runBenchmarkCommand(
         skipped: false,
         success: record.success,
         determinism: record.determinism,
-        // §73 record fields (issue #262): every executed row carries how it
+        // Record fields: every executed row carries how it
         // ran, not just the verdict.
         costUsd: record.costUsd,
         tokens: record.tokens,
@@ -478,7 +478,7 @@ export async function runBenchmarkCommand(
         generation: record.generation,
       });
     } catch (error) {
-      // A named runner refusal keeps its code (issues #262, #266): a dirty
+      // A named runner refusal keeps its code: a dirty
       // worktree is `dirty-worktree`, not a generic `eval-failed`; an
       // unnamed throw falls back to the benchmark's documented mapping. The
       // envelope also carries the rows already completed — a matrix that
@@ -504,7 +504,7 @@ export async function runBenchmarkCommand(
     }
   }
   const executed = results.filter((r) => !r.skipped);
-  // Issue #264: a matrix with no executable suite proves nothing — it is a
+  // A matrix with no executable suite proves nothing — it is a
   // refusal (exit 2), never `benchmark ok` over an empty run.
   if (executed.length === 0) {
     return emitError(

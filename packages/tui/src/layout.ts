@@ -1,18 +1,17 @@
-// §16.2 VStack root (issue #22; panel row #96; EPIC N issue #453 order).
-// Rows top to bottom: the one-row header; the AgentTreeView (sized to its
-// content, hidden below 80 cols and wherever the caller turns it off); the
-// ScrollView transcript (grow 1, follow-end); the inspectable panel (#96:
-// diff / journal, basis 12, present only while open); the transient notice
-// row (0–2 rows); the editor; the one-row status line; the key-hint row.
-// Slots are Components — contents belong to their own issues; this module
-// owns arrangement only.
+// VStack root (panel row; order). Rows top to bottom: the one-row header; the
+// AgentTreeView (sized to its content, hidden below 80 cols and wherever the
+// caller turns it off); the ScrollView transcript (grow 1, follow-end); the
+// inspectable panel (diff / journal, basis 12, present only while open); the
+// transient notice row (0–2 rows); the editor; the one-row status line; the
+// key-hint row. Slots are Components — contents belong to their own issues;
+// this module owns arrangement only.
 
 import type { Component } from './tui-boundary.js';
 import { VStack } from './tui-boundary.js';
 
 export const NARROW_COLUMNS = 80;
 
-// The panel row's height while a panel is open (issue #96). Same basis as
+// The panel row's height while a panel is open. Same basis as
 // the tree so toggling a panel does not resize the transcript unevenly.
 export const PANEL_BASIS = 12;
 
@@ -31,19 +30,19 @@ export interface LayoutSlots {
   // Optional one-line header above everything else.
   header?: Component;
   tree: Component;
-  // Issue #453: whether the tree row shows at all (solo hides it until
+  // Whether the tree row shows at all (solo hides it until
   // Ctrl-T asks for it). Absent keeps it on; the width gate applies either
   // way.
   treeVisible?: () => boolean;
   transcript: Component;
   status: Component;
   editor: Component;
-  // Issue #453: the transient notice row above the editor (turn outcome,
+  // The transient notice row above the editor (turn outcome,
   // command replies, the working line) and the key-hint row at the bottom.
   // Both size to their content, so an empty notice takes no row.
   notice?: Component;
   hints?: Component;
-  // Issue #96: the diff/journal panel row. Optional so the #22 four-row
+  // The diff/journal panel row. Optional so the four-row
   // arrangement is unchanged for callers that have no panel; when present,
   // the row is only laid out while `panel.isOpen()` — a closed panel must
   // not reserve blank rows. NOT width-gated: an operator on a narrow
@@ -57,8 +56,7 @@ export function buildLayoutRoot(slots: LayoutSlots): VStack {
   const treeVisible = (viewport: Viewport): boolean =>
     viewport.width >= NARROW_COLUMNS && (slots.treeVisible?.() ?? true);
   // Structural StackEntry (Pi's StackChild): field-for-field compatible with
-  // the seam's VStack children without widening tui-boundary.ts (#96 keeps
-  // the #22 boundary frozen).
+  // the seam's VStack children without widening tui-boundary.ts.
   type Row = {
     component: Component;
     basis?: number | 'auto';

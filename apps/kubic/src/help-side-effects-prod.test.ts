@@ -38,7 +38,7 @@ afterEach(() => {
 });
 
 function repo(): string {
-  // Real repo from the shared sandbox (issue #420): setup spawns run under
+  // Real repo from the shared sandbox: setup spawns run under
   // its scrubbed env, and it is injected into process.env so any git the
   // dispatch shells inherits the same scrubbed view (the per-run HOME stub
   // in kubic() only narrows further).
@@ -90,7 +90,7 @@ async function kubic(
   return { code, lines, errs };
 }
 
-describe('--help is side-effect free (issue #245)', () => {
+describe('--help is side-effect free', () => {
   for (const command of ['run', 'tui']) {
     it(`kubic ${command} --help prints usage and writes no exclude rules`, async () => {
       const cwd = repo();

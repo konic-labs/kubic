@@ -1,5 +1,4 @@
-// Slice B: undo core — reverse-chronological restore (issue #18; §42.2).
-// RED: planUndo/applyUndo do not exist yet.
+// Undo core — reverse-chronological restore.
 import {
   existsSync,
   mkdtempSync,
@@ -73,7 +72,7 @@ function seed(): { store: FileJournalStore; root: string } {
   return { store, root };
 }
 
-describe('journal undo core (issue #18, slice B)', () => {
+describe('journal undo core', () => {
   it('plans whole-run undo reverse-chronologically with a summary', () => {
     const { store } = seed();
     const plan = planUndo(store, {});
@@ -100,7 +99,7 @@ describe('journal undo core (issue #18, slice B)', () => {
     const result = applyUndo(store, before, root, { dryRun: true });
     expect(result.restored).toEqual(['a.txt', 'a.txt']);
     expect(result.skipped).toEqual(['ghost.txt']);
-    // A dry run is a pure simulation: no restore happens and — issue #117 —
+    // A dry run is a pure simulation: no restore happens and —
     // no undo record is appended either.
     expect(store.entries()).toHaveLength(entriesBefore);
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v3\n');
@@ -113,7 +112,7 @@ describe('journal undo core (issue #18, slice B)', () => {
     expect(result.restored).toEqual(['a.txt', 'a.txt']);
     expect(result.skipped).toEqual([]);
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
-    // Issue #117: the undo is a change too. The journal's last two entries
+    // The undo is a change too. The journal's last two entries
     // are the undo records for the two steps the walk restored, attributed
     // to kubic-undo and carrying the pre-undo content as `before`.
     const tail = store.entries().slice(-2);
@@ -140,9 +139,9 @@ describe('journal undo core (issue #18, slice B)', () => {
 
   it('reports already-undone instead of rewriting when disk sits at a journaled before-state', () => {
     const { store, root } = seed();
-    // Issue #117 changed what a re-planned walk sees (the walk now contains
-    // undo records, so a second undo redid the first), so this pins the
-    // already-undone verdict through a hand-built plan: the first a.txt
+    // A re-planned walk contains the undo records (a second undo would redo
+    // the first), so this pins the already-undone verdict through a
+    // hand-built plan: the first a.txt
     // entry judged against a disk that already sits at its before-state.
     writeFileSync(join(root, 'a.txt'), 'v1\n');
     const [first] = store.entries();
@@ -155,7 +154,7 @@ describe('journal undo core (issue #18, slice B)', () => {
         nonReversible: [],
         stale: 0,
         stalePaths: [],
-        // Issue #378: no marker in this store — nothing blocks the step.
+        // No marker in this store — nothing blocks the step.
         headMoves: [],
       },
       root,
@@ -172,11 +171,11 @@ describe('journal undo core (issue #18, slice B)', () => {
   });
 });
 
-// Issue #117: a successful undo appends the inverse entry — before is the
+// A successful undo appends the inverse entry — before is the
 // pre-undo content, after is the content just restored, attributed to
 // `kubic-undo`. That makes the undo reviewable (`kubic diff`/`log` describe
 // the world after it) and reversible: a second `undo --step` is the redo.
-describe('undo record + redo (issue #117)', () => {
+describe('undo record + redo', () => {
   function seedOne(): { store: FileJournalStore; root: string } {
     const store = new FileJournalStore(tmpRoot('j-'));
     const root = tmpRoot('ws-');
@@ -245,12 +244,9 @@ describe('undo record + redo (issue #117)', () => {
     const first = applyUndo(store, planUndo(store, {}), root, {});
     expect(first.restored).toEqual(['a.txt']);
     expect(store.entries()).toHaveLength(2); // the agent write + its undo record
-    // RED (issue #117 review fix): the plain plan walks the first undo's own
-    // record too, so this run restores twice and appends two more records —
-    // every repeat doubles the walk (an exponential append/fsync amplifier).
     // The plain plan must exclude the journal's own kubic-undo bookkeeping,
     // leaving the disk at the entry's before-state: already-undone, nothing
-    // appended — the pre-#117 idempotent behavior.
+    // appended — the pre idempotent behavior.
     const second = applyUndo(store, planUndo(store, {}), root, {});
     expect(second.restored).toEqual([]);
     expect(second.skipped).toEqual(['a.txt']);
@@ -362,7 +358,7 @@ describe('undo record + redo (issue #117)', () => {
   });
 });
 
-// Issue #108: undo must never overwrite a file whose current content no
+// Undo must never overwrite a file whose current content no
 // longer matches the entry's recorded afterHash — any change that landed
 // after the journaled edit (manual edit, another run) would be silently
 // destroyed. Stale steps skip with a named reason; --force overrides.
@@ -380,7 +376,7 @@ function seedStale(): { store: FileJournalStore; root: string } {
   return { store, root };
 }
 
-describe('undo staleness safety (issue #108)', () => {
+describe('undo staleness safety', () => {
   it('skips a write whose current content differs from the recorded after-state, disk untouched', () => {
     const { store, root } = seedStale();
     // Journaled v1→v2, then a manual edit landed v3 after the fact.
@@ -508,7 +504,7 @@ describe('undo staleness safety (issue #108)', () => {
   });
 });
 
-// §42.2 "kubic undo reverts the run": a file the agent CREATED has no
+// "kubic undo reverts the run": a file the agent CREATED has no
 // pre-image by definition — its pre-state is "absent". Reverting the run
 // removes it; reporting it non-reversible leaves the agent's new files
 // behind after every undo.
@@ -671,13 +667,13 @@ describe('undo of an agent-created file', () => {
   });
 });
 
-// Issue #348 review: the inverse record is appended AFTER the mutation, so a
+// The inverse record is appended AFTER the mutation, so a
 // store whose bound cannot take that record must refuse the step BEFORE the
 // file changes. Otherwise `kubic undo` restores a file, throws, and leaves
 // the workspace changed with no undo/redo entry and no report of what
 // happened — reachable even at the default bound, because the inverse record
 // measures the pre-undo content whole plus the restored pre-image.
-describe('undo refuses a step whose inverse record cannot fit (issue #348)', () => {
+describe('undo refuses a step whose inverse record cannot fit', () => {
   it('leaves a restored file as it is when the record cannot fit', () => {
     const dir = tmpRoot('j-');
     const root = tmpRoot('ws-');
@@ -760,12 +756,12 @@ describe('undo refuses a step whose inverse record cannot fit (issue #348)', () 
   });
 });
 
-// Issue #352: the inverse record's before-side is a copy of the file as it is
+// The inverse record's before-side is a copy of the file as it is
 // NOW (the pre-undo state). Reading it as utf-8 mangles binary bytes into
 // U+FFFD, and a following `undo --step` (the redo) would write that mangled
 // text back — corrupting the user's bytes. The create-removal path already
 // applies the byte-exact lossless rule; the restore path must too.
-describe('undo refuses to record a lossy pre-undo copy (issue #352)', () => {
+describe('undo refuses to record a lossy pre-undo copy', () => {
   it('records the pre-undo state hash-only when it is not lossless utf-8', () => {
     const dir = tmpRoot('j-');
     const root = tmpRoot('ws-');
@@ -797,7 +793,7 @@ describe('undo refuses to record a lossy pre-undo copy (issue #352)', () => {
     expect(record?.beforeHash).toBe(sha256HexOfBytes(binary));
     // `bytesDelta` counts the bytes that were actually there: the 4-byte
     // binary pre-image against the 3-byte restored text (an omitted pre-image
-    // is not "0 bytes before" — review of #352).
+    // is not "0 bytes before" — review of).
     expect(record?.bytesDelta).toBe(
       Buffer.byteLength('v1\n', 'utf8') - binary.length,
     );
@@ -815,7 +811,7 @@ describe('undo refuses to record a lossy pre-undo copy (issue #352)', () => {
   });
 });
 
-describe('HEAD-move barrier (issue #378)', () => {
+describe('HEAD-move barrier', () => {
   const MOVE_A = { head: 'a'.repeat(40), branch: 'main', stash: 0 };
   const MOVE_B = { head: 'b'.repeat(40), branch: 'feature', stash: 0 };
 

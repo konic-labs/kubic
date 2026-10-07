@@ -1,4 +1,4 @@
-// Journal byte bound includes the index (issue #350; §42.4 "bounded by size
+// Journal byte bound includes the index ("bounded by size
 // and age with configurable limits").
 //
 // Content addressing dedupes blobs, so a file toggling between two contents —
@@ -7,9 +7,6 @@
 // index.jsonl unbounded, which contradicts "unbounded growth is impossible by
 // construction" (journal.ts header). The bound is the whole store now: the
 // index's own size plus the blob bytes it references.
-//
-// RED: blobBytes/the drop loop count blobs only, and the index size is never
-// tracked.
 import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,7 +50,7 @@ function storeBytes(dir: string): number {
   return index + blobs;
 }
 
-describe('journal index size counts against the bound (issue #350)', () => {
+describe('journal index size counts against the bound', () => {
   it('keeps index + blobs under the bound across 10k alternating appends', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir, {
@@ -120,7 +117,7 @@ describe('journal index size counts against the bound (issue #350)', () => {
     }
     expect(store.blobCount()).toBe(1);
     expect(storeBytes(dir)).toBeLessThanOrEqual(2000);
-    // The newest entry survives, as always (issue #348).
+    // The newest entry survives, as always.
     expect(store.entries().at(-1)?.path).toBe('f39.txt');
     expect(store.entries().length).toBeLessThan(40);
   });

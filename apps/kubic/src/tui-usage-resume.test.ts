@@ -1,5 +1,5 @@
 // `kubic tui --session` seeds the status bar from the session's committed
-// `pi.usage` spend (issue #346; §18 "token usage, cache hits, and cost").
+// `pi.usage` spend ("token usage, cache hits, and cost").
 // Before the fix the rows started empty and were filled only by live usage
 // events, so a resumed session that had already spent money rendered $0.00
 // until its next turn. Faux provider only: zero network, zero paid tokens.
@@ -129,7 +129,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('kubic tui --session seeds the committed spend (issue #346)', () => {
+describe('kubic tui --session seeds the committed spend', () => {
   it('maps pi.usage buckets to status rows', () => {
     const rows = statusRowsFromSessionUsage([
       // A model id may itself contain slashes: split at the FIRST one.

@@ -1,17 +1,17 @@
-// Kubic operations on the real pi-durable harness (issue #393; EPIC K #389).
+// Kubic operations on the real pi-durable harness.
 // End to end with the faux provider and pi-durable JSONL storage — the
 // format Kubic ships — so the harness contracts the adapter leans on are
 // pinned rather than assumed:
 //
 // - the journal carries the pi-durable call id (`api.callId`), and Kubic's
-//   own result text survives the harness output bound untouched (#121, #176)
+//   own result text survives the harness output bound untouched
 // - an unsafe call interrupted mid-effect reaches the model as an
 //   `interrupted` error result carrying the output it had committed, and is
 //   never re-executed; a safe one reruns
 // - `api.memo` answers a replayed invocation from the durable task record
-//   (issue #153: memos are durable and first-writer-wins)
+//   (memos are durable and first-writer-wins)
 //
-// Issue #401 folds this boot into the shared faux harness-test factory.
+// Folds this boot into the shared faux harness-test factory.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -219,7 +219,7 @@ function crashableEnv(options: { spawned: () => void; firstOutput?: string }): {
 const toolUse = (calls: Parameters<typeof fauxAssistantMessage>[0]) =>
   fauxAssistantMessage(calls, { stopReason: 'toolUse' });
 
-describe('Kubic tools on the pi-durable harness (issue #393)', () => {
+describe('Kubic tools on the pi-durable harness', () => {
   it('journals a lane write under the pi-durable call id', async () => {
     const dir = scratch('kubic-durable-journal-');
     const env = new FakeExecutionEnv({});
@@ -355,7 +355,7 @@ describe('Kubic tools on the pi-durable harness (issue #393)', () => {
     await opened.harness.close(BACKGROUND_CONTEXT);
   });
 
-  it('bounds an interrupted call to the op cap and keeps the stream tail (issue #121)', async () => {
+  it('bounds an interrupted call to the op cap and keeps the stream tail', async () => {
     const dir = scratch('kubic-durable-bounded-');
     const spawned = deferred();
     // ~360 KB of output — well past the 4×64 KiB window bash retains — with
@@ -428,7 +428,7 @@ describe('Kubic tools on the pi-durable harness (issue #393)', () => {
       (tool) => tool.name === 'bash',
     ) as ToolRegistration;
     // bash is Kubic's only crashable op (its effect is a child process, and
-    // git's child is not abortable until #190), so the shipped `read`-style
+    // git's child is not abortable), so the shipped `read`-style
     // safe path is exercised with bash's own registration declared safe —
     // both the stored and the current policy then say safe.
     const tools = [{ ...bash, replay: 'safe' as const }];
@@ -463,7 +463,7 @@ describe('Kubic tools on the pi-durable harness (issue #393)', () => {
     await opened.harness.close(BACKGROUND_CONTEXT);
   });
 
-  it('answers a replayed invocation with the memo the crashed attempt stored (issue #153)', async () => {
+  it('answers a replayed invocation with the memo the crashed attempt stored', async () => {
     const dir = scratch('kubic-durable-memo-');
     const stored = deferred();
     const setup = chat();

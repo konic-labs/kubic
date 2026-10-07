@@ -1,5 +1,5 @@
-// Cost/Model status line (issue #27; one row since EPIC N issue #453).
-// §39 usage rows aggregated with the cache split; §18 model + thinking,
+// Cost/Model status line (one row).
+// Usage rows aggregated with the cache split; model + thinking,
 // context gauge, cost; the turn state word. The approvals posture moved to
 // the header (chrome.ts), which reads it from this bar's state.
 //
@@ -9,7 +9,7 @@
 // the Component seam stays in ./tui-boundary.js. No node:fs (I/O
 // confinement). Faux-only tests: fixtures, zero network.
 //
-// Issue #346: the TTFT/tool-ms segments were deleted, not repaired. Pi 1.0
+// The TTFT/tool-ms segments were deleted, not repaired. Pi 1.0
 // routes no streaming/timing field Kubic could read (message deltas stay
 // inside the harness; the lane watch commits whole entries), so the two
 // segments could never render — dead code, which was the bug.
@@ -56,13 +56,13 @@ export interface StatusSummary {
   readonly cacheRead: number;
   readonly cacheWrite: number;
   readonly costTotal: number;
-  // Issue #347: the prompt size of the last COMMITTED request — its input
+  // The prompt size of the last COMMITTED request — its input
   // plus BOTH cache counters. pi-ai normalises `input` to exclude the cached
   // prefix it reused (cacheRead) and the prefix it wrote (cacheWrite), so
   // input + cacheRead + cacheWrite is the context the model actually
   // processed, the same quantity the harness's own compaction baseline
   // counts. Undefined until a row names its committed entry: the seeded
-  // `pi.usage` buckets (#346) are cumulative, so reading them here would show
+  // `pi.usage` buckets are cumulative, so reading them here would show
   // total spend as context pressure.
   readonly contextTokens?: number;
 }
@@ -108,7 +108,7 @@ export function formatStatusCost(total: number): string {
   return `$${total.toFixed(2)}`;
 }
 
-// Issue #453: the word at the right end of the status line.
+// The word at the right end of the status line.
 export type StatusTurnState =
   | 'ready'
   | 'working'
@@ -120,23 +120,22 @@ export interface StatusBarState {
   readonly model: string;
   readonly thinking: string;
   readonly rows: ReadonlyArray<StatusUsageRow>;
-  // The session facts the header shows (issue #453 moved them off this
-  // line); the bar stays their one holder so the posture has a single
-  // source the app and the loop read.
+  // The session facts the header shows; the bar stays their one holder so the
+  // posture has a single source the app and the loop read.
   readonly approvalsSkipped: boolean;
   readonly sessionId: string;
-  // Issue #347 (§18): the model's context window and the token level at
-  // which the solo lane compacts (window − reserve, #399's policy; #239 will
+  // The model's context window and the token level at
+  // which the solo lane compacts (window − reserve, the policy; will
   // make the reserve configurable). Both absent means the gauge stays off —
   // an unknown window must never render a made-up percentage.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
-  // Issue #453: the turn state word, when the running turn started (the
+  // The turn state word, when the running turn started (the
   // spinner's clock), and the session journal's change count.
   readonly turn?: StatusTurnState;
   readonly busySince?: number;
   readonly journalChanges?: number;
-  // Issue #467: an `allow all edits this turn` answer applies right now.
+  // An `allow all edits this turn` answer applies right now.
   readonly turnEdits?: boolean;
 }
 
@@ -179,7 +178,7 @@ interface StatusSegments {
   readonly journal: string;
 }
 
-// Issue #347: the context gauge. Unknown (no window, or no committed
+// The context gauge. Unknown (no window, or no committed
 // request yet) means no segment at all — a wrong percentage is worse than a
 // missing one. At or above the compaction threshold the gauge and the
 // percentage take the warning colour: the next turn is about to compact.
@@ -240,7 +239,7 @@ function assemble(
 }
 
 /**
- * The one-row status line (EPIC N, issue #453; docs/ui 01-L):
+ * The one-row status line:
  * `● model · thinking │ ctx ━━━ 31% of 200k │ $0.031 │ journal 2 changes`
  * and the turn state word on the right, painted on bg1. A
  * running turn turns the mark into the spinner.
@@ -261,7 +260,7 @@ export function renderStatusLine(
       ? spinnerFrame(Math.max(0, now - (state.busySince ?? now)))
       : TOOL;
   const lead = ui.fg(role)(` ${mark} `);
-  // Issue #467: a turn's edits approved at once say so beside the state.
+  // A turn's edits approved at once say so beside the state.
   const word = `${
     state.turnEdits === true
       ? `${ui.fg('warn')('edits auto-approved this turn')}${ui.fg('fg3')(SEPARATOR)}`
@@ -298,7 +297,7 @@ export function renderStatusLine(
 }
 
 export interface StatusBarOptions {
-  // Issue #453: the turn facts read at render time (the app's busy,
+  // The turn facts read at render time (the app's busy,
   // approval and cancel state), so the state word never lags a frame.
   readonly live?: () => Pick<
     StatusBarState,

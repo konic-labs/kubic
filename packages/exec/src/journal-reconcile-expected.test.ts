@@ -1,4 +1,4 @@
-// Issue #341 (§42.1 mechanism 2, §42.5): the sweep compares each path
+// The sweep compares each path
 // against its EXPECTED state — the last entry journaled during THIS run, or
 // the boot baseline when there is none — never against the whole journal
 // history. A same-run revert, a resumed session's change back to an older
@@ -68,7 +68,7 @@ function toolWrite(
   });
 }
 
-describe('reconcile expected state (issue #341)', () => {
+describe('reconcile expected state', () => {
   it('journals a same-run out-of-band revert to the baseline content', () => {
     const root = tmpRoot('ws-341a-');
     const store = new FileJournalStore(tmpRoot('j-341a-'));
@@ -203,7 +203,7 @@ describe('reconcile expected state (issue #341)', () => {
   });
 
   it('records no delete for a tool-written path the walk skips but that still exists', () => {
-    // #341 regression: sinceStart paths became delete candidates, but the
+    // Regression: sinceStart paths became delete candidates, but the
     // sweep walk never sees gitignored / `.git/` / `.kubic/` files, so they
     // read as absent from `current` — a FALSE unattributed delete for a
     // file that is right there on disk.

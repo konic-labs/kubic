@@ -65,7 +65,7 @@ function repo(): { root: string; sub: string } {
 
 const TRUST = { KUBIC_TRUST_PROJECT: '1' };
 
-describe('models.json lookup (issue #222)', () => {
+describe('models.json lookup', () => {
   it('lists a provider declared only in the global file from any cwd', async () => {
     const home = tmpDir();
     globalFile(home, provider('mine'));
@@ -145,7 +145,7 @@ describe('models.json lookup (issue #222)', () => {
   // global models.json is resolved through os.homedir(). A worker thread's
   // process.env copy never reaches the C environment os.homedir() reads, so
   // the file written under the stubbed HOME is never found and the run
-  // reports 'no models available' (issues #377, #385). The contract is
+  // reports 'no models available'. The contract is
   // proven by `npm run test:unit` (forks); the explicit-home tests above
   // keep covering the lookup itself in every pool.
   it.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
@@ -182,7 +182,7 @@ describe('models.json lookup (issue #222)', () => {
   );
 });
 
-it('scopes a store grant to the tree the models.json lives in (issue #228 review)', async () => {
+it('scopes a store grant to the tree the models.json lives in', async () => {
   const home = tmpDir();
   const { root, sub } = repo();
   const path = writeJson(join(root, 'models.json'), provider('mine'));
@@ -211,7 +211,7 @@ it('scopes a store grant to the tree the models.json lives in (issue #228 review
   );
 });
 
-it('never lets a subdirectory grant reach the ancestor models.json (issue #228 review)', async () => {
+it('never lets a subdirectory grant reach the ancestor models.json', async () => {
   const home = tmpDir();
   const { root, sub } = repo();
   const path = writeJson(join(root, 'models.json'), provider('mine'));

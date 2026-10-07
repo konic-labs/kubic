@@ -1,7 +1,6 @@
 # Package pages
 
-One page per package (owner: issue
-[#63](https://github.com/konic-labs/kubic/issues/63)). Each page
+One page per package. Each page
 documents its package's public API, contracts, and dep-direction
 neighbours — no architecture rationale, no CLI usage.
 
@@ -18,10 +17,8 @@ neighbours — no architecture rationale, no CLI usage.
 
 One-way dependencies: packages may only import "downward". The diagram
 below summarizes the allowed direction — the allowlist itself lives in
-`scripts/dep-lint.mjs` (run `node scripts/dep-lint.mjs`); if the two
-disagree, the lint governs. `node scripts/check-docs-links.mjs`
-cross-checks these neighbour lists against the lint's edge set so drift
-fails CI.
+`scripts/dep-lint.mjs` (`npm run lint:deps`); if the two disagree, the
+lint governs.
 
 ```text
 @kubic/core         ← imports nothing internal; imported by all
@@ -35,9 +32,9 @@ fails CI.
 apps/kubic          ← composition root: wires host + tui together
 ```
 
-I/O confinement (design §7 component split; enforced by
+I/O confinement (component split; enforced by
 `scripts/dep-lint.mjs`): only `@kubic/exec` touches
-`node:fs`/`node:child_process`, with test scaffolding exempt. Pi seams (§65):
+`node:fs`/`node:child_process`, with test scaffolding exempt. Pi seams:
 `@kubic/worker` via `src/pi-boundary.ts` only, `@kubic/tui` via
 `src/tui-boundary.ts` only.
 

@@ -51,7 +51,7 @@ function setup(extra: Partial<TuiAppSeed> = {}, rows = 40) {
 const doc = (app: ReturnType<typeof setup>['app']): string =>
   app.render(120).join('\n');
 
-describe('the first screen (issue #462)', () => {
+describe('the first screen', () => {
   it('opens on the preflight', () => {
     const { app } = setup();
     const frame = doc(app);

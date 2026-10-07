@@ -1,4 +1,4 @@
-// `kubic sessions fork` (issue #265; §22.3): the CLI over the store's fork —
+// `kubic sessions fork`: the CLI over the store's fork —
 // the printed id is a real session usable at once, --json prints
 // {id, source, at}, a live-locked source exits 1 like attach, and the flags
 // reach the runner through commander. Faux provider; temp dirs cleaned up.
@@ -63,7 +63,7 @@ function cli(root: string) {
   };
 }
 
-describe('kubic sessions fork (issue #265)', () => {
+describe('kubic sessions fork', () => {
   it('prints a new session id that attaches at once', async () => {
     const root = tmpRoot();
     const source = await sourceSession(root);

@@ -166,7 +166,7 @@ describe('solo commands: unknown flags exit 2', () => {
     expect(result.err.join('\n')).toContain("unknown command 'bogus'");
   });
 
-  it('`sessions --json` lists as one JSON array (issue #268)', async () => {
+  it('`sessions --json` lists as one JSON array', async () => {
     const result = await kubic(['sessions', '--json']);
     expect(result.code).toBe(0);
     expect(result.calls).toEqual([
@@ -182,7 +182,7 @@ describe('solo commands: unknown flags exit 2', () => {
   });
 });
 
-describe('kubic attach / resume (issue #268)', () => {
+describe('kubic attach / resume', () => {
   for (const name of ['attach', 'resume'] as const) {
     it(`kubic ${name} <id> boots the TUI on that session`, async () => {
       const result = await kubic([name, 'my-session']);
@@ -259,7 +259,7 @@ describe('kubic run', () => {
     expect(result.calls).toEqual([{ key: 'run', input: { prompt: 'hi' } }]);
   });
 
-  // Issue #278 (§19): autonomous mode is explicit — the flag reaches
+  // Autonomous mode is explicit — the flag reaches
   // the runner, and its absence leaves the key out (off by default).
   it('parses --autonomous into the runner options', async () => {
     expect((await kubic(['run', '-p', 'hi', '--autonomous'])).calls).toEqual([
@@ -270,7 +270,7 @@ describe('kubic run', () => {
     ]);
   });
 
-  it('returns the runner exit code (the §78 terminus map)', async () => {
+  it('returns the runner exit code (the terminus map)', async () => {
     for (const exit of [0, 1, 3, 4, 5, 6]) {
       expect((await kubic(['run', '-p', 'x'], exit)).code).toBe(exit);
     }
@@ -317,7 +317,7 @@ describe('kubic run', () => {
     expect(result.calls[0]?.input).toEqual({ prompt: '- fix the tests' });
   });
 
-  // Issue #227: `--model` is a config-layer input (dispatch reads it from
+  // `--model` is a config-layer input (dispatch reads it from
   // the raw argv into the ONE load), not a runner option — the runner
   // consumes its effect through the loaded config (runtimeModelPin).
   it('accepts the config-layer --model flag without copying it into the runner options', async () => {
@@ -335,7 +335,7 @@ describe('kubic run', () => {
     );
   });
 
-  // Issue #225: `--thinking` is the same kind of input as `--model` — a
+  // `--thinking` is the same kind of input as `--model` — a
   // config-layer value dispatch pre-scans, never a runner option — so the
   // runner input carries no trace of it, and a malformed level is
   // commander's exit 2 with the levels named, never a silent default.
@@ -363,7 +363,7 @@ describe('kubic run', () => {
     );
   });
 
-  it('accepts a positional prompt as the -p alternative (issue #268)', async () => {
+  it('accepts a positional prompt as the -p alternative', async () => {
     const result = await kubic(['run', 'fix tests']);
     expect(result.code).toBe(0);
     expect(result.calls).toEqual([
@@ -381,7 +381,7 @@ describe('kubic run', () => {
     expect(result.calls[0]?.input).toEqual({ prompt: '--weird prompt' });
   });
 
-  it('parses --tools (comma-separated, repeatable) and --no-tools (issue #273)', async () => {
+  it('parses --tools (comma-separated, repeatable) and --no-tools', async () => {
     const tools = await kubic(['run', '-p', 'x', '--tools', 'read,ls']);
     expect(tools.calls[0]?.input).toMatchObject({ tools: ['read', 'ls'] });
     const repeat = await kubic([
@@ -399,7 +399,7 @@ describe('kubic run', () => {
     expect(none.calls[0]?.input).not.toHaveProperty('tools');
   });
 
-  it('refuses --tools together with --no-tools, in either order (issue #273)', async () => {
+  it('refuses --tools together with --no-tools, in either order', async () => {
     expect(
       await usageError(['run', '-p', 'x', '--tools', 'read', '--no-tools']),
     ).toContain('mutually exclusive');
@@ -408,7 +408,7 @@ describe('kubic run', () => {
     ).toContain('mutually exclusive');
   });
 
-  it('refuses an empty --tools value (issue #273)', async () => {
+  it('refuses an empty --tools value', async () => {
     expect(await usageError(['run', '-p', 'x', '--tools', ''])).toContain(
       'at least one tool name',
     );
@@ -417,7 +417,7 @@ describe('kubic run', () => {
     );
   });
 
-  it('parses --tools / --no-tools on tui too (issue #273)', async () => {
+  it('parses --tools / --no-tools on tui too', async () => {
     const tools = await kubic(['tui', '--tools', 'read,ls']);
     expect(tools.calls[0]?.input).toMatchObject({ tools: ['read', 'ls'] });
     const none = await kubic(['tui', '--no-tools']);
@@ -500,7 +500,7 @@ describe('kubic tui', () => {
     expect((await kubic(['tui'])).calls).toEqual([{ key: 'tui', input: {} }]);
   });
 
-  // Issue #295: the explicit model pin, same `provider/id` rule as replay.
+  // The explicit model pin, same `provider/id` rule as replay.
   it('parses --model <provider/id> and refuses a malformed ref', async () => {
     expect((await kubic(['tui', '--model', 'faux/b'])).calls).toEqual([
       { key: 'tui', input: { model: { provider: 'faux', id: 'b' } } },
@@ -511,7 +511,7 @@ describe('kubic tui', () => {
     expect(await usageError(['tui', '--model'])).toContain('argument missing');
   });
 
-  // Issue #227: the flag is documented, and the `=` spelling (the cli config
+  // The flag is documented, and the `=` spelling (the cli config
   // layer reads the same token for the one config load) reaches the runner
   // exactly like the space form above.
   it('documents and accepts the config-layer --model flag', async () => {
@@ -531,7 +531,7 @@ describe('kubic tui', () => {
     );
   });
 
-  // Issue #36: skills never fetch — no fetch/install flag exists on the
+  // Skills never fetch — no fetch/install flag exists on the
   // skill surface (run and tui), so commander refuses one by name.
   it('refuses fetcher/install skill flags on run and tui', async () => {
     for (const flag of ['--fetch-skills', '--install-skill', '--skill-fetch']) {
@@ -620,7 +620,7 @@ describe('kubic models / config', () => {
     expect((await kubic(['config', '--json'])).calls).toEqual([
       { key: 'config', input: { json: true } },
     ]);
-    // Issue #227: the flag feeds the load dispatch already performed (the
+    // The flag feeds the load dispatch already performed (the
     // runner input is the rendering options only).
     expect((await kubic(['config', '--model', 'faux/small'])).calls).toEqual([
       { key: 'config', input: {} },
@@ -632,8 +632,8 @@ describe('kubic models / config', () => {
 });
 
 describe('kubic trust', () => {
-  // One grant covers the whole project tree; the help says what "yes" means
-  // (issue #228 review) — not only the committed config.toml.
+  // One grant covers the whole project tree; the help says what "yes" means —
+  // not only the committed config.toml.
   it('its help names everything a grant covers: config.toml, models.json and skills', async () => {
     const help = (await kubic(['trust', '--help'])).out.join('\n');
     expect(help).toContain('.kubic/config.toml');
@@ -778,7 +778,7 @@ describe('kubic sessions', () => {
   });
 });
 
-describe('--dangerously-skip-approvals on run and tui (issue #308)', () => {
+describe('--dangerously-skip-approvals on run and tui', () => {
   it('run passes the session-scoped flag to the runner', async () => {
     const result = await kubic([
       'run',

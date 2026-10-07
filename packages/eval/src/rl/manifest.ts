@@ -1,4 +1,4 @@
-// Deterministic manifest encoding (issue #54; design §74).
+// Deterministic manifest encoding.
 // canonicalJson sorts object keys recursively so the same trajectory +
 // verifier always serializes byte-identically. Builders emit no
 // timestamps or random ids, so determinism holds by construction.

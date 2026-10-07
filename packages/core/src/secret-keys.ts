@@ -6,7 +6,7 @@ export const REDACTED_ENV_VALUE = '<redacted>';
 
 const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
 
-// Anthropic workload identity federation (issue #402; pi-ai 0.99.2). The
+// Anthropic workload identity federation (pi-ai 0.99.2). The
 // names carry none of SECRET_SUFFIXES' endings — the identity token is a
 // FILE path and the ids end in _ID — yet the block IS the credential: the
 // SDK exchanges the file's token for an access token, and the rule and

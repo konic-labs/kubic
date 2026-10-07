@@ -1,4 +1,4 @@
-// Private journal state (issue #361; §36.2 by analogy, §42.4).
+// Private journal state.
 //
 // A journal blob is a copy of file content — including 0600 sources like
 // `.env` — and the index holds every path and hash of the run. Written with
@@ -6,8 +6,6 @@
 // read every snapshot on a shared machine. Kubic now creates its own state
 // private: 0700 directories, 0600 files, and an existing loose directory is
 // tightened on the way in.
-//
-// RED: mkdir/writeFile/appendFile set no mode.
 import {
   chmodSync,
   mkdirSync,
@@ -25,8 +23,8 @@ const roots: string[] = [];
 let priorUmask = 0o022;
 
 // The modes are asserted exactly, so the ambient umask must not decide the
-// outcome: under umask 077 the pre-fix code also produced 0700/0600 and the
-// RED would be invisible. Pinned to the common 022 and restored per test.
+// outcome: under umask 077 code that set no mode would also produce 0700/0600
+// and pass. Pinned to the common 022 and restored per test.
 beforeEach(() => {
   priorUmask = process.umask(0o022);
 });
@@ -62,7 +60,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   };
 }
 
-describe('journal state permissions (issue #361)', () => {
+describe('journal state permissions', () => {
   it('creates the journal directory 0700 and its blobs and index 0600', () => {
     const dir = tmpRoot();
     const store = new FileJournalStore(dir, { durable: false });

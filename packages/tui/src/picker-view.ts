@@ -1,4 +1,4 @@
-// A "choose one" overlay (EPIC N, issue #461; docs/ui 03-D, 03-E): the
+// A "choose one" overlay: the
 // model, session, theme, thinking and prompt pickers. Pi's Input owns the
 // filter; ui/picker.ts owns the list. The app routes keys here while it is
 // open: `↑↓` move, `⏎` chooses (or opens a folded group), `→` opens a

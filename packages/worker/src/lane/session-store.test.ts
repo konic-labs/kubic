@@ -1,4 +1,4 @@
-// Session storage on pi-durable JSONL (issue #392; §21–§22).
+// Session storage on pi-durable JSONL.
 //
 // One pi-durable Storage per <sessions-root>/<id>/, one durable Session per
 // storage, one Kubic `kubic.session` document written in the creating commit,
@@ -145,8 +145,9 @@ function writeLegacySession(
   return path;
 }
 
-// The harness a Kubic caller boots over a session's storage (K5 #394 boots
-// the real lane; here the same Harness.open + root() shape, no model call).
+// The harness a Kubic caller boots over a session's storage (the real lane
+// boots the same way; here the same Harness.open + root() shape, no model
+// call).
 async function openHarness(
   session: SessionHandle,
 ): Promise<Awaited<ReturnType<typeof Harness.open>>> {
@@ -157,7 +158,7 @@ async function openHarness(
   );
 }
 
-describe('pi-durable session storage (issue #392)', () => {
+describe('pi-durable session storage', () => {
   it('creates a session: JSONL storage, the kubic.session document, and the listing header', async () => {
     const root = tmpRoot();
     const store = storeFor(root);
@@ -192,7 +193,7 @@ describe('pi-durable session storage (issue #392)', () => {
     expect(
       first.writes.some((write) => write.record.kind === 'kubic.session'),
     ).toBe(true);
-    // Issue #278 (§19): the run's mode rides the session metadata when
+    // The run's mode rides the session metadata when
     // given, and stays absent otherwise (off by default).
     const withMode = track(
       await createSession(
@@ -520,7 +521,7 @@ describe('pi-durable session storage (issue #392)', () => {
   });
 });
 
-describe('session listing (issue #392)', () => {
+describe('session listing', () => {
   it('lists sessions with their recorded metadata, newest first', async () => {
     const root = tmpRoot();
     const store = storeFor(root);
@@ -618,7 +619,7 @@ describe('session listing (issue #392)', () => {
     const root = tmpRoot();
     const store = storeFor(root);
     // A hand-edited or foreign header: its id never reaches a listing that
-    // #400's CLI renders, and it can never be attached.
+    // 's CLI renders, and it can never be attached.
     writeLegacySession(root, '/work', '../escape', Date.now() - 60_000);
     expect(await listSessions(store, BACKGROUND_CONTEXT)).toEqual([]);
     await expect(
@@ -664,11 +665,11 @@ describe('session listing (issue #392)', () => {
   });
 });
 
-// Session locking (issue #118): the exclusive, stale-safe lock primitive.
+// Session locking: the exclusive, stale-safe lock primitive.
 // Hermetic by rule: pid liveness is probed through `process.kill(pid, 0)`,
 // so every test here uses fake pid numbers and stubs `process.kill` — no
 // test ever signals a real process.
-describe('session lock primitive (issue #118)', () => {
+describe('session lock primitive', () => {
   const FAKE_PID = 424242;
   const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -723,7 +724,7 @@ describe('session lock primitive (issue #118)', () => {
     }
   });
 
-  it('does not steal a 48h-old lock whose holder pid is alive (issue #145)', () => {
+  it('does not steal a 48h-old lock whose holder pid is alive', () => {
     const dir = lockDir();
     // A legacy-shaped lock (no procStart): a long TUI session's holder is
     // alive, so the 24h age rule must not take it.
@@ -749,7 +750,7 @@ describe('session lock primitive (issue #118)', () => {
     expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(fixture);
   });
 
-  it('does not steal a 48h-old lock whose recorded process start still matches (issue #145)', () => {
+  it('does not steal a 48h-old lock whose recorded process start still matches', () => {
     const dir = lockDir();
     const procStart = processStartTimeOf(process.pid);
     const fixture = JSON.stringify({
@@ -772,7 +773,7 @@ describe('session lock primitive (issue #118)', () => {
   });
 
   (processStartTimeOf(process.pid) === undefined ? it.skip : it)(
-    'steals a lock whose pid is alive but whose process start moved (pid reuse, issue #145)',
+    'steals a lock whose pid is alive but whose process start moved (pid reuse)',
     () => {
       const dir = lockDir();
       // Our own pid is alive, but epoch-1 is not when this process started:
@@ -797,7 +798,7 @@ describe('session lock primitive (issue #118)', () => {
     },
   );
 
-  it('a simulated concurrent stale takeover leaves exactly one owner (issue #145)', () => {
+  it('a simulated concurrent stale takeover leaves exactly one owner', () => {
     const dir = lockDir();
     writeFileSync(
       join(dir, 'lock.json'),
@@ -829,7 +830,7 @@ describe('session lock primitive (issue #118)', () => {
     expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(owned);
   });
 
-  it("release does not remove another process's lock (issue #145)", () => {
+  it("release does not remove another process's lock", () => {
     const dir = lockDir();
     const fixture = JSON.stringify({ pid: FAKE_PID, startedAt: Date.now() });
     writeFileSync(join(dir, 'lock.json'), fixture);
@@ -842,7 +843,7 @@ describe('session lock primitive (issue #118)', () => {
     expect(readFileSync(join(dir, 'lock.json'), 'utf8')).toBe(fixture);
   });
 
-  it('a stale release cannot remove a re-acquired lock (#424)', () => {
+  it('a stale release cannot remove a re-acquired lock', () => {
     const dir = lockDir();
     const first = acquireSessionLock(dir, 'sess-nonce');
     releaseSessionLock(dir, first);
@@ -904,8 +905,8 @@ describe('session lock primitive (issue #118)', () => {
   });
 });
 
-// Lock wiring (issue #118): create/attach acquire, release gives the lock back.
-describe('session locking wiring (issue #118)', () => {
+// Lock wiring: create/attach acquire, release gives the lock back.
+describe('session locking wiring', () => {
   const FAKE_PID = 424242;
 
   function stubKill(alive: boolean): ReturnType<typeof vi.spyOn> {
@@ -981,7 +982,7 @@ describe('session locking wiring (issue #118)', () => {
     }
   });
 
-  it("a refused attach leaves the live holder's lock alone (issue #145)", async () => {
+  it("a refused attach leaves the live holder's lock alone", async () => {
     const root = tmpRoot();
     const store = storeFor(root);
     const session = await createSession(
@@ -1035,11 +1036,11 @@ describe('session locking wiring (issue #118)', () => {
   });
 });
 
-// Issue #361: session state is private — transcripts hold the conversation,
+// Session state is private — transcripts hold the conversation,
 // and `session.json` holds the workspace. The directory is 0700, every file
 // in it 0600, and an existing loose directory is tightened when the lock is
 // taken.
-describe('session state permissions (issue #361)', () => {
+describe('session state permissions', () => {
   it.skipIf(process.platform === 'win32')(
     'creates the session directory 0700 and its files 0600',
     async () => {

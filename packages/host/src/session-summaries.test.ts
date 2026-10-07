@@ -1,4 +1,4 @@
-// The sessions the TUI's `/resume` picker lists (issue #461): this project's
+// The sessions the TUI's `/resume` picker lists: this project's
 // sessions, newest first, with their first prompt, turns and cost, read
 // without a lock; a session held live is listed but never opened.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -79,7 +79,7 @@ async function stored(
   await session.release(BACKGROUND_CONTEXT);
 }
 
-describe('session summaries for /resume (issue #461)', () => {
+describe('session summaries for /resume', () => {
   it('lists this project newest first with title, turns and cost', async () => {
     const root = tmpRoot();
     await stored(root, 'older', '/proj', [

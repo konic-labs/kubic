@@ -20,7 +20,7 @@ function inv(id = 'inv-1'): ToolInvocation {
   );
 }
 
-describe('find operation (issue #13, slice B)', () => {
+describe('find operation', () => {
   it('walks recursively and filters by name substring', async () => {
     const out = await callOperation(
       'find',
@@ -84,7 +84,7 @@ describe('find operation (issue #13, slice B)', () => {
   });
 });
 
-describe('grep operation (issue #13, slice B)', () => {
+describe('grep operation', () => {
   it('matches lines with numbers across files', async () => {
     const out = await callOperation(
       'grep',

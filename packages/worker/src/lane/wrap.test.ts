@@ -1,4 +1,4 @@
-// Slice D: deterministic wrap composition (issue #15; EPIC K #393).
+// Deterministic wrap composition.
 // Composition stays pre-registration: `composeTools` returns the tool
 // registrations the Kubic extension is installed with, and the wrappers ride
 // the pi-durable `execute(args, api, context)` signature unchanged.
@@ -81,7 +81,7 @@ function only(tools: ToolRegistration[]): ToolRegistration {
   return tool;
 }
 
-describe('wrap composition (issue #15, slice D)', () => {
+describe('wrap composition', () => {
   it('composes in listed order: telemetry(permission(core))', async () => {
     const log: string[] = [];
     const contributions = [

@@ -1,18 +1,18 @@
-// Journal undo core (issue #18, slice B; §42.2).
+// Journal undo core.
 // Whole-run undo walks entries reverse-chronologically so layered edits
 // unwind in order (v1→v2→v3 restores v2, then v1). Steps without
 // before-content are skipped and reported — never guessed — except an
 // agent-authored create, whose pre-state is exactly "absent": undoing it
 // removes the file (journaled as a `kubic-undo` delete, so --step redoes).
 //
-// Issue #117: a successful restore appends its inverse entry under
+// A successful restore appends its inverse entry under
 // `agentId: kubic-undo`. Plain plans exclude those records — they are the
 // walk's own bookkeeping, so repeated plain undo stays idempotent (the disk
 // sits at a journaled before-state → already-undone, nothing appended).
 // `--step` targets the newest entry including a bookkeeping record: that is
 // the redo.
 //
-// Issue #108: a step may only restore when the file's CURRENT state is one
+// A step may only restore when the file's CURRENT state is one
 // the journal accounts for. Three verdicts, evaluated walk-aware (the walk
 // itself changes the file, so each step is judged against the state the
 // previous steps left — a dry-run simulates exactly what a real run writes):
@@ -29,8 +29,8 @@
 //                   Restoring would destroy it; refuse with a reason and
 //                   let --force override.
 //
-// Issue #348 review: a fourth refusal sits before the file is touched — the
-// inverse record the step would append (issue #117) is planned and measured
+// A fourth refusal sits before the file is touched — the
+// inverse record the step would append is planned and measured
 // against the store's bound first. A restore whose record cannot fit is
 // skipped with a warning and a named reason, because recording it after the
 // mutation would leave the workspace changed with no undo/redo entry.
@@ -56,7 +56,7 @@ export interface UndoScope {
   step?: boolean;
 }
 
-// The agent id the journal's own undo bookkeeping carries (issue #117):
+// The agent id the journal's own undo bookkeeping carries:
 // every successful restore appends its inverse entry under this id. Plain
 // undo plans exclude it — see planUndo.
 const UNDO_AGENT_ID = 'kubic-undo';
@@ -74,14 +74,14 @@ export interface UndoPlan {
   stale: number;
   stalePaths: string[];
   /**
-   * Issue #378: in-scope markers newer than at least one step — restoring
+   * In-scope markers newer than at least one step — restoring
    * such a step would write pre-move content onto the moved HEAD, so it
    * needs `--force`. Oldest first. Empty when no marker blocks a step.
    */
   headMoves: HeadMove[];
 }
 
-// Issue #378: chronological positions of in-scope markers in `all`, and
+// Chronological positions of in-scope markers in `all`, and
 // whether `step` is older than any of them (restoring it crosses the move).
 // Position-matched by value, not reference: applyUndo re-reads the index,
 // so its entry objects differ from the plan's. Duplicate-shaped entries
@@ -136,7 +136,7 @@ function canUndo(store: FileJournalStore, entry: JournalEntry): boolean {
 // steps for which "absent" is a journaled earlier state — the steps at or
 // after an agent create with no delete in between. Order matters: absence
 // after a create masks nothing, but absence that follows a DELETE is that
-// delete's after-state, which undo must still restore (review fix: a later
+// delete's after-state, which undo must still restore (a later
 // create must never make an earlier delete read as already undone).
 interface PlanBefore {
   hashes: Set<string>;
@@ -197,7 +197,7 @@ function verdictFor(
   }
   if (force) return { kind: 'restore' };
   if (state.missing) {
-    // The recreate path of the #108 matrix: a missing file can always be
+    // The recreate path of the matrix: a missing file can always be
     // restored — there is nothing on disk for the restore to destroy.
     return { kind: 'restore' };
   }
@@ -232,7 +232,7 @@ export function planUndo(
   scope: UndoScope,
   root?: string,
 ): UndoPlan {
-  // Issue #378: markers are scope-less bookkeeping — never steps, but the
+  // Markers are scope-less bookkeeping — never steps, but the
   // barrier applies in every scope (a `--path` restore crosses the move
   // exactly like a whole-run one), so they survive the path filter and are
   // dropped only when steps are selected.
@@ -252,14 +252,14 @@ export function planUndo(
     // content — so --step must never skip bookkeeping.
     steps = steps.slice(0, 1);
   } else {
-    // Plain undo restores real agent work only (issue #117 review fix): the
+    // Plain undo restores real agent work only: the
     // journal's own `kubic-undo` records are bookkeeping, not work. Without
     // this filter, a second plain undo walks the first undo's records too,
     // restores every pre-undo state again and appends one new record per
     // step — the walk doubles on every run (an exponential append/fsync
     // amplifier bounded only by retention pruning). With it, the second
     // plain undo finds the disk sitting at a journaled before-state, reports
-    // `already undone` and appends nothing — the pre-#117 idempotent
+    // `already undone` and appends nothing — the pre idempotent
     // behavior. Mixed logs still unwind in reverse-chronological order:
     // bookkeeping records are skipped over, and an agent step an earlier
     // undo already unwound reads as already-undone.
@@ -296,7 +296,7 @@ export function planUndo(
       }
     }
   }
-  // Issue #378: the markers blocking at least one step — oldest first,
+  // The markers blocking at least one step — oldest first,
   // deduplicated (one marker can block many steps).
   const headMoves: HeadMove[] = [];
   for (const step of steps) {
@@ -340,25 +340,24 @@ export interface UndoOptions {
   dryRun?: boolean;
   force?: boolean;
   /**
-   * Clock for the undo record's timestamp (issue #117). Production passes
+   * Clock for the undo record's timestamp. Production passes
    * nothing (`Date.now()`); tests pin it. Only the appended record reads it —
    * the restore itself is unaffected.
    */
   now?: () => number;
 }
 
-// The inverse record a step will append (issue #117), planned before the
-// mutation so its size can be checked against the store's bound first
-// (issue #348 review). `entry` is null when the step records nothing: a
-// restore with no retrievable pre-image, or a create whose removal did not
-// happen. The pre-state reads live here so the branches below act on the
-// same bytes the record was measured from.
+// The inverse record a step will append, planned before the mutation so its
+// size can be checked against the store's bound first. `entry` is null when the
+// step records nothing: a restore with no retrievable pre-image, or a create
+// whose removal did not happen. The pre-state reads live here so the branches
+// below act on the same bytes the record was measured from.
 interface InversePlan {
   entry: JournalEntryInput | null;
   /** Create-shaped steps: the removed content (null when it was not
    *  lossless utf-8 text — the removal then cannot be redone). */
   removedContent: string | null;
-  /** Write-shaped steps (issue #352): the pre-undo content could not be
+  /** Write-shaped steps: the pre-undo content could not be
    *  recorded as text (binary/invalid utf-8), so the record carries its raw
    *  hash only and the undo cannot be redone. */
   lossyBefore: boolean;
@@ -407,18 +406,18 @@ function planInverse(
       },
     };
   }
-  // Pre-undo state for the record: read before the restore overwrites it —
-  // as BYTES, with the same lossless rule the create-removal path applies
-  // (issue #352). A utf-8 decode that cannot round-trip (binary content) must
-  // not become the record's before-side: a following `undo --step` would
-  // write the mangled text back over the user's bytes. The raw hash is
-  // recorded instead, marked as a designed omission — never U+FFFD text.
-  // A missing file (null) is recorded as such — no content is invented.
+  // Pre-undo state for the record: read before the restore overwrites it — as
+  // BYTES, with the same lossless rule the create-removal path applies. A utf-8
+  // decode that cannot round-trip (binary content) must not become the record's
+  // before-side: a following `undo --step` would write the mangled text back
+  // over the user's bytes. The raw hash is recorded instead, marked as a
+  // designed omission — never U+FFFD text. A missing file (null) is recorded as
+  // such — no content is invented.
   let preUndo: string | null = null;
   let preUndoHash: string | null = null;
   // The pre-image's byte length, whether or not it survived the utf-8 round
   // trip: `bytesDelta` is the change this record describes, and an omitted
-  // (lossy) pre-image is still bytes that were there (review of #352 — the
+  // (lossy) pre-image is still bytes that were there (review of — the
   // same accounting `write` uses for a hash-only pre-image).
   let preUndoBytes = 0;
   let lossyBefore = false;
@@ -476,7 +475,7 @@ export function applyUndo(
   const force = options.force === true;
   const now = options.now ?? ((): number => Date.now());
   const planBefore = collectPlanBefore(store, plan.steps);
-  // Issue #378: the barrier, evaluated against the live index (which may
+  // The barrier, evaluated against the live index (which may
   // have grown since planning — a concurrent append cannot smuggle a step
   // past a marker).
   const undoAll = store.entries();
@@ -495,7 +494,7 @@ export function applyUndo(
       });
       continue;
     }
-    // Issue #378: a step older than a newer in-scope marker restores only
+    // A step older than a newer in-scope marker restores only
     // with `--force` — its pre-move content does not belong on the moved
     // HEAD. The dry run reports the same skip, so it never promises a
     // restore the real run refuses.
@@ -519,7 +518,7 @@ export function applyUndo(
       skippedDetails.push({ path: step.path, reason: verdict.reason });
       continue;
     }
-    // Issue #348 review: the inverse record is appended AFTER the mutation,
+    // The inverse record is appended AFTER the mutation,
     // so whether it can be recorded is decided BEFORE the file is touched.
     // A restore the store would refuse (its own bound is the whole journal:
     // index + blobs) would otherwise leave the workspace changed with no
@@ -571,7 +570,7 @@ export function applyUndo(
           `restored '${step.path}' without a recoverable copy of its pre-undo content (it was not lossless utf-8 text) — this undo cannot be redone`,
         );
       }
-      // The undo is itself a change (issue #117): journal the inverse so
+      // The undo is itself a change: journal the inverse so
       // `kubic diff`/`log` describe the world after the undo — and so a
       // second `undo --step` re-applies the pre-undo content (the redo).
       // The record was planned (and measured against the store's bound)

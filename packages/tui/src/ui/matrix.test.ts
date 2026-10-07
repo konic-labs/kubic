@@ -356,7 +356,7 @@ const SURFACES: Surface[] = [
   },
 ];
 
-describe('the render matrix (issue #468)', () => {
+describe('the render matrix', () => {
   it('every surface fits, closes its styles and paints its full width, in every palette, level and width', () => {
     const failures: string[] = [];
     for (const [paletteName, palette] of PALETTES) {
@@ -410,7 +410,7 @@ describe('the render matrix (issue #468)', () => {
   });
 });
 
-describe('16 colours (issue #468)', () => {
+describe('16 colours', () => {
   const ansi16 = createUiTheme(DARK_PALETTE, '16', 'dark');
   // biome-ignore lint/suspicious/noControlCharactersInRegex: SGR escapes are what this reads
   const SGR_ESCAPE = /\u001b\[([0-9;]*)m/g;

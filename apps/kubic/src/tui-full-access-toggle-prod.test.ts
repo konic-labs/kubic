@@ -1,8 +1,8 @@
-// The in-session full-access toggle on the real `kubic tui` loop (issue
-// #309; §41.4, §80). The prod boot (`bootTuiLane`) is driven through the real
-// alt-screen key path: Alt+A asks, Ctrl-S confirms, and the posture file, the
-// §60 ledger, the installed policy and the status-bar indicator all move.
-// Zero network, zero paid tokens; every temp dir is removed in afterEach.
+// The in-session full-access toggle on the real `kubic tui` loop. The prod boot
+// (`bootTuiLane`) is driven through the real alt-screen key path: Alt+A asks,
+// Ctrl-S confirms, and the posture file, the Ledger, the installed policy and
+// the status-bar indicator all move. Zero network, zero paid tokens; every temp
+// dir is removed in afterEach.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -61,7 +61,7 @@ function postureRows(workspace: string) {
   );
 }
 
-describe('the TUI full-access toggle (issue #309)', () => {
+describe('the TUI full-access toggle', () => {
   it('asks, then flips posture.json, the ledger and the indicator in one frame', async () => {
     const workspace = tmpRoot('ws-');
     const sessionsRoot = tmpRoot('sessions-');
@@ -145,7 +145,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     expect(await pending).toBe(0);
   });
 
-  it('a printable letter typed ahead cannot accept the dialog (issue #309)', async () => {
+  it('a printable letter typed ahead cannot accept the dialog', async () => {
     const workspace = tmpRoot('ws-');
     const sessionsRoot = tmpRoot('sessions-');
     const fake = fakeTerminal(120, 30);
@@ -197,7 +197,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     expect(await pending).toBe(0);
   });
 
-  it('answers /approvals on|off and reports the live posture (issue #309)', async () => {
+  it('answers /approvals on|off and reports the live posture', async () => {
     const workspace = tmpRoot('ws-');
     const sessionsRoot = tmpRoot('sessions-');
     const fake = fakeTerminal(120, 30);
@@ -229,7 +229,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     await waitFor(() =>
       fake.output().includes('approvals: enforced — challenged calls ask'),
     );
-    // Issue #309 review finding 1: `off` while already off is a REPORT — no
+    // Review finding 1: `off` while already off is a REPORT — no
     // dialog, no second posture row for a change that did not happen.
     const beforeOff = fake.writes.length;
     run('/approvals off');
@@ -289,7 +289,7 @@ describe('the TUI full-access toggle (issue #309)', () => {
     expect(await pending).toBe(0);
   });
 
-  it('refuses to open the confirmation over a pending approval (issue #309 review)', async () => {
+  it('refuses to open the confirmation over a pending approval', async () => {
     const workspace = tmpRoot('ws-');
     const sessionsRoot = tmpRoot('sessions-');
     const fake = fakeTerminal(120, 30);

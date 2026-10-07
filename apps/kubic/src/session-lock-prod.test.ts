@@ -1,4 +1,4 @@
-// Session locking + repo-level overlap warning, prod paths (issue #118).
+// Session locking + repo-level overlap warning, prod paths.
 // Lives in host because vitest only includes packages/*: it reaches the
 // composition root (apps/kubic) and the operator CLIs as a black-box
 // caller, exactly as run-prod-path.test.ts does. Faux provider only.
@@ -106,7 +106,7 @@ async function closedSessionWithEntry(root: string): Promise<string> {
   return id;
 }
 
-describe('session lock, prod paths (issue #118)', () => {
+describe('session lock, prod paths', () => {
   it('maps a live lock refusal to workspace_unavailable (exit 5), naming the holder', async () => {
     const root = tmpRoot();
     const id = await closedSessionWithEntry(root);
@@ -174,13 +174,13 @@ describe('session lock, prod paths (issue #118)', () => {
       },
     );
     expect(result.terminus).toBe('completed');
-    // Close released the lock (issue #118): the lock file exists only while
+    // Close released the lock: the lock file exists only while
     // a session is actually attached.
     expect(existsSync(join(root, result.sessionId, 'lock.json'))).toBe(false);
   });
 });
 
-describe('repo-level overlap warning (issue #118)', () => {
+describe('repo-level overlap warning', () => {
   it('emits the overlap warning on the debug channel when another session touches the workspace', async () => {
     const root = tmpRoot();
     const workspace = tmpRoot('ws-');

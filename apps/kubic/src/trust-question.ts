@@ -1,4 +1,4 @@
-// The project-trust question, restyled (EPIC N, issue #462; docs/ui 05-C):
+// The project-trust question, restyled:
 // one row in the first screen's language — `◆ trust  <path> found — load
 // project config?` — the full disclosure under it (what a grant lets the
 // project's files do, the key risk included), and one key to answer:

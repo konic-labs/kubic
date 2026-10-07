@@ -1,13 +1,13 @@
-// `kubic cost [--session <id>] [--json]` (issue #79; §62, §49.2).
+// `kubic cost [--session <id>] [--json]`.
 // Presentation only over per-agent cost rows: one table row per agent plus
 // the task total, or the in-code `toCostJson` shape under --json. Rows
 // arrive injected (faux in tests); the prod loader below reads real
 // session stats out of the session store — this module never invents
 // costs, and the task total is always Σ(per-agent) by construction.
 //
-// Issue #98 (criterion 4) wires the §62 cache lever here: the same rows
+// Wires the cache lever here: the same rows
 // that carry tokens and cost also carry `cacheRead`/`cacheWrite`, so the
-// prefix hit-rate (§62 lever 2, cache.ts) is measured over real usage rows
+// prefix hit-rate (lever 2, cache.ts) is measured over real usage rows
 // and reported on the readout. No new top-level --json field: the extra
 // per-row numbers are additive inside the existing `agents` entries.
 
@@ -69,7 +69,7 @@ import {
 export interface CostOptions {
   readonly session?: string;
   readonly json?: boolean;
-  // Issue #250 (§39): `--all` lifts the default project scope; `--by`
+  // `--all` lifts the default project scope; `--by`
   // picks the aggregation level (default per-agent).
   readonly all?: boolean;
   readonly by?: string;
@@ -119,7 +119,7 @@ export interface SessionUsageRow {
 }
 
 // The session's own token/cost totals, summed over every conversation's
-// usage document — the same numbers `Harness.usage()` reports (issue #400).
+// usage document — the same numbers `Harness.usage()` reports.
 export interface SessionUsageTotals {
   input: number;
   output: number;
@@ -153,7 +153,7 @@ function emptyUsage(): Usage {
   };
 }
 
-// Every usage bucket of one session, read straight from its Storage (#400):
+// Every usage bucket of one session, read straight from its Storage:
 // one `pi.usage` document per conversation, summed by bucket key. No harness
 // is booted and nothing is written — `kubic cost` reads sessions it must not
 // open as a run.
@@ -216,7 +216,7 @@ export async function readSessionUsage(
 }
 
 // A session's tool calls: one per committed tool result, the count a run's
-// `--json` usage reports (issue #185).
+// `--json` usage reports.
 function toolCallsOf(items: ReturnType<typeof entriesToTranscript>): number {
   let count = 0;
   for (const item of items) if (item.kind === 'tool-result') count += 1;
@@ -239,7 +239,7 @@ export function totalSessionUsage(
 }
 
 // Prod loader: usage facts out of the session store, aggregated to the
-// `--by` level (issue #250; default per-agent). One base fact per session
+// `--by` level (default per-agent). One base fact per session
 // per usage bucket (each `provider/model`, and each tool that reported its
 // own spend, labelled `tool:<name>`), so the task total is still exactly
 // Σ(rows).
@@ -247,7 +247,7 @@ export function totalSessionUsage(
 // (pi-durable: one process per storage), and reported as a zero row so the
 // operator sees what the readout could not read.
 //
-// Issue #251: the read path is lock-free by construction. Sessions are
+// The read path is lock-free by construction. Sessions are
 // classified by `listSessions` (header reads only) and a live holder is
 // detected by the read-only `sessionLockIsLive` probe — `attachSession`
 // never appears here, so `kubic cost` creates no `lock.json`, removes none,
@@ -277,7 +277,7 @@ export async function loadSessionCostRows(
   if (named?.format === 'legacy') {
     throw new SessionFormatError(named.id);
   }
-  // Issue #250: the default scope is the invoking project — sessions
+  // The default scope is the invoking project — sessions
   // touching its workspace — with `--all` for the machine-global total the
   // command used to print.
   const workspace = query?.workspace;
@@ -362,17 +362,17 @@ export async function loadSessionCostRows(
       }
       throw error;
     }
-    // Issue #426: the race the pre-read probe cannot see. Between the
+    // The race the pre-read probe cannot see. Between the
     // probe above and the reads below, the session can go live — cost
     // then reads a store another process is appending to. The torn tail
     // needs no handling here (the JSONL core truncates a partial trailing
-    // record before it parses, #392 — the in-flight commit is skipped,
+    // record before it parses — the in-flight commit is skipped,
     // never a parse error), but the rows may be partial, so the lock is
     // re-probed AFTER the read and a live session gets a zero marker row
     // beside its rows — the same convention as `(locked)`/`(unreadable)`.
     let wentLive = false;
     try {
-      // Issue #250 (§39 request level): one row per assistant entry that
+      // One row per assistant entry that
       // carries its response's usage — the model spend of that request.
       // Tools that report their own spend aggregate at the higher levels;
       // a request row never invents their attribution.
@@ -406,7 +406,7 @@ export async function loadSessionCostRows(
             costUsd: num(row.usage.cost?.total),
             input: row.usage.input,
             output: row.usage.output,
-            // §62 lever 2 (issue #98): the real prefix-cache counters off the
+            // Lever 2: the real prefix-cache counters off the
             // session's usage rollup.
             cacheRead: row.usage.cacheRead,
             cacheWrite: row.usage.cacheWrite,
@@ -447,7 +447,7 @@ export async function readSessionRunUsage(
     sessionsRoot,
     createNodeFileBridge(sessionsRoot),
   );
-  // Issue #251: the same lock-free contract as `loadSessionCostRows` — a
+  // The same lock-free contract as `loadSessionCostRows` — a
   // named unknown id, a live lock and a 0.87 transcript escape exactly as
   // `attachSession` reported them, but nothing is ever locked.
   const found = (await listSessions(store, BACKGROUND_CONTEXT)).find(
@@ -497,7 +497,7 @@ export async function readSessionRunUsage(
   }
 }
 
-// Presentation over the grouped rows (issue #250; §39): the group column
+// Presentation over the grouped rows: the group column
 // names the `--by` level, then the session's role, the model, and the
 // separate in/out/cacheRead/cacheWrite counters the old combined-tokens
 // column hid. The kit table only on a coloured terminal, plain aligned text
@@ -572,7 +572,7 @@ export async function runCostCommand(
     );
     return EXIT_USAGE;
   }
-  // Issue #250: `--by` takes exactly the four §39 levels; anything else is
+  // `--by` takes exactly the four levels; anything else is
   // a usage error, and the rejected value is argv-controlled, so it is
   // redacted like the session id above.
   const by =
@@ -633,7 +633,7 @@ export async function runCostCommand(
       `task total ${formatCostUsd(summary.taskTotal)} (${summary.perAgent.length} ${unit})`,
     ),
   );
-  // §62 lever 2 over real usage rows (issue #98): reported only when the
+  // Lever 2 over real usage rows: reported only when the
   // rows actually carried cache counters, so an unmeasured readout never
   // shows a fabricated 0%.
   if (summary.cache !== null) {

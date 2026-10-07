@@ -1,4 +1,4 @@
-// The project-trust question, restyled (issue #462; docs/ui 05-C): one row
+// The project-trust question, restyled: one row
 // with the full disclosure, one key to answer, and `v` showing the file.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,7 +27,7 @@ function tmp(prefix: string): string {
   return dir;
 }
 
-describe('the trust question (issue #462)', () => {
+describe('the trust question', () => {
   it('is one row in the first screen language with the full disclosure', () => {
     const lines = trustQuestionLines(
       plain,

@@ -1,4 +1,4 @@
-// `kubic run` live progress on an interactive terminal (issue #447; 06-B).
+// `kubic run` live progress on an interactive terminal.
 import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
@@ -56,7 +56,7 @@ const RESULT: HeadlessRunResult = {
   },
 };
 
-describe('run progress (issue #447)', () => {
+describe('run progress', () => {
   let clock = 0;
   beforeEach(() => {
     vi.useFakeTimers();
@@ -128,7 +128,7 @@ describe('run progress (issue #447)', () => {
   });
 
   // Kubic's own edit tool reports its change as a display record
-  // (tools-adapter.ts, issue #456), not Pi's `details.diff`: the stat must
+  // (tools-adapter.ts), not Pi's `details.diff`: the stat must
   // come from it, or a real run never shows `+a −r`.
   it("counts an edit from Kubic's display record", () => {
     const { chunks, progress } = rig();

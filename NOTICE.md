@@ -35,7 +35,7 @@ non-permissive licence.
 
 ## TUI code highlighting (runtime dependency)
 
-Fenced code in `kubic tui` answers is highlighted with (issue #458):
+Fenced code in `kubic tui` answers is highlighted with:
 
 - `lowlight` (MIT) — highlight.js grammars as a syntax tree, loaded when the
   TUI starts

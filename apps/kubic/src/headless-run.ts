@@ -1,5 +1,5 @@
-// Prod `kubic run -p` runner (issue #28): the composition root drives the
-// real solo lane headless and derives the §78 terminus from the lane's own
+// Prod `kubic run -p` runner: the composition root drives the
+// real solo lane headless and derives the terminus from the lane's own
 // settled outcome (E1). Everything durable lands under
 // <sessionsRoot>/<id>/ (E3): the transcript and usage rows in the session
 // store, file effects in <id>/journal/ via lane interception, and the
@@ -197,38 +197,38 @@ export interface HeadlessRunOptions {
   sessionId?: string;
   timeoutMs?: number;
   maxTurns?: number;
-  // §29.3 skills surface (issue #99): `--no-skills` disables layered
+  // Skills surface: `--no-skills` disables layered
   // discovery and `--skill <path>` adds one explicitly (repeatable —
   // explicit intent applies even under --no-skills).
   noSkills?: boolean;
   skills?: string[];
-  // Issue #183 (§29.4): `--invoke-skill <name>` — one explicit skill
+  // `--invoke-skill <name>` — one explicit skill
   // (hidden included) whose content runs as the turn prompt, with the
   // run's prompt as instructions. Unknown names fail the run closed.
   invokeSkill?: string;
-  // §12.1 role selection (issue #99): `--role <name>` boots the lane as
+  // Role selection: `--role <name>` boots the lane as
   // the role document `.kubic/roles/<name>.md` defines — its prompt text
   // replaces the solo constant and its resolved tool set becomes the
   // lane's allowlist. Absent means the solo default, unchanged.
   role?: string;
-  // §50 debug channel (issue #98): when set, the run emits its lane/tool
+  // Debug channel: when set, the run emits its lane/tool
   // debug lines to the injected sink (stderr in prod). The span artifact is
   // written either way — spans are the durable half.
   debug?: boolean;
-  // §41.4 (issue #308): `--dangerously-skip-approvals` — full access for the
+  // `--dangerously-skip-approvals` — full access for the
   // session this run creates or resumes, recorded in its posture.json and
   // the audit ledger, never in config.
   dangerouslySkipApprovals?: boolean;
-  // §40.1 mechanism 1 (issue #273): `--tools <a,b>` narrows the run's tool
+  // `--tools <a,b>` narrows the run's tool
   // set (intersected with the classes/role/enterprise sets — never widened);
   // `--no-tools` is the empty set. Mutually exclusive, validated before the
   // lane boots.
   tools?: readonly string[];
   noTools?: boolean;
-  // §19 (issue #278): explicit autonomous mode, recorded on the run's
+  // Explicit autonomous mode, recorded on the run's
   // session. Absent means off (interactive), never assumed.
   autonomous?: boolean;
-  // Issue #447: live progress on an interactive terminal (heading, compact
+  // Live progress on an interactive terminal (heading, compact
   // solo notice, one line per tool call). Absent: today's stderr warning
   // block and no progress output.
   progress?: RunProgressSink;
@@ -238,12 +238,12 @@ export interface HeadlessRunDeps {
   sessionsRoot?: string;
   models?: MutableModels;
   model?: ModelSelection;
-  // §37.4 request options (issue #257): the merged `[model]` tuning plus
+  // Request options: the merged `[model]` tuning plus
   // every `[roles.<name>]` table that sets a key (runtimeStreamTuning).
   // The boot resolves them against the run's role into `settings.stream`.
   // Absent means untuned — the provider defaults stand.
   streamTuning?: StreamTuningTables;
-  // The lane's agent id (issue #133): the configured `[agent].name`, threaded
+  // The lane's agent id: the configured `[agent].name`, threaded
   // from runtimeLaneDeps. Absent means 'root' — the shipped behaviour, byte
   // for byte (journal attribution and `kubic diff --agent` follow it).
   agentId?: string;
@@ -251,66 +251,66 @@ export interface HeadlessRunDeps {
   context?: Context;
   /** Diagnostics sink (reconcile and overlap notices, skill-load reports). */
   debug?: (line: string) => void;
-  // Runtime config projections (issue #90): the permission classes and the
+  // Runtime config projections: the permission classes and the
   // journal retention bound the loaded configuration produced. Absent means
   // the lane's own defaults and an unbounded journal (never an invented
   // limit).
   policyClasses?: PermissionClasses;
-  // Issue #86: the config layer's own record of where the classes came from
+  // The config layer's own record of where the classes came from
   // ('default' when nothing configured them). Absent means 'default' — the
   // documented safe default, never an assumed operator choice.
   policySource?: 'config' | 'default';
-  // Issue #230: the config `[approvals]` policy (route, maxPendingMs,
+  // The config `[approvals]` policy (route, maxPendingMs,
   // autoApprove, requireJustification, sessionScoped). Absent means the
   // documented defaults.
   approvals?: SoloApprovalConfig;
-  // §58 enterprise policy (issue #288): the composition root resolves it
+  // Enterprise policy: the composition root resolves it
   // once (`runtimePolicy` in config-runtime) and threads it here. A run only
   // gates its tool set and model selection when the layer actually
   // configured those halves — an absent [policy] section never narrows
   // anything.
   modelPolicy?: EffectivePolicy;
   journalRetention?: JournalRetention;
-  // §48 gate commands (issue #267), from `[verify]` via runtimeRunDeps. Run
+  // Gate commands, from `[verify]` via runtimeRunDeps. Run
   // in the worktree after the run settles; their verdicts become the
   // trajectory's `signal:*` labels. Absent means nothing is verified.
   verify?: RuntimeVerify;
-  // §38.3 thinking level (issue #225), from `runtimeLaneDeps` via
+  // Thinking level, from `runtimeLaneDeps` via
   // prodRunDeps: the effective level with its source. A per-run source
   // (`cli` `--thinking` / `env` `KUBIC_MODEL_THINKING`, enterprise-frozen
   // included) is the lane's override; a file-layer source is the lane's
   // config default. Absent means the lane boots at the session's stored
   // level, a role default, or Pi's 'off'.
   thinking?: RuntimeThinking;
-  // The installed-policy seat (issue #86). Absent means the shipped
+  // The installed-policy seat. Absent means the shipped
   // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
   // network/confine guards and the approval ask, all derived by
   // installSoloPolicy. Tests inject a variant here; nothing else may skip
   // the install, which is why the default is not an opt-in.
   policy?: InstalledSoloPolicy;
-  // Declared out-of-scope paths for the §42.5 baseline (issue #87; §35).
-  // Populated by `[journal] outOfScope` through runtimeRunDeps (issue #115);
+  // Declared out-of-scope paths for the baseline.
+  // Populated by `[journal] outOfScope` through runtimeRunDeps;
   // absent means the mechanism's own skips only — `.git/`, `.kubic/` and
   // `.gitignore` hits.
   reconcileOutOfScope?: string[];
-  // [agent] systemPromptFile contents (issue #240), from the same config
+  // [agent] systemPromptFile contents, from the same config
   // load — the boot composes them ahead of the skills block. Absent means
   // the lane assembles its prompt unchanged.
   systemPromptSection?: string;
-  // §27.1 (issue #239): the `[session]` compaction policy from the same
-  // config load — the boot hands it to #399's settings. Absent means the
+  // The `[session]` compaction policy from the same
+  // config load — the boot hands it to the settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent
   // window).
   compaction?: SoloCompactionOptions;
-  // Debug sink for the §50 lines (issue #98). Defaults to stderr so a live
+  // Debug sink for the debug lines. Defaults to stderr so a live
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
   debugSink?: DebugSink;
-  // Operator notices (issue #147): the line naming what happened to a
+  // Operator notices: the line naming what happened to a
   // pending operation a crashed run left open. Defaults to stderr; tests
   // inject a collector.
   notice?: (line: string) => void;
-  // §29.3 skills inputs (issue #99). Absent means the prod defaults: the
+  // Skills inputs. Absent means the prod defaults: the
   // real home directory, this process's cwd, and the documented trust
   // opt-in (`KUBIC_TRUST_PROJECT`, the same switch the config layer reads).
   // Tests inject a home/cwd/trust triple to drive discovery over a fixture.
@@ -319,27 +319,27 @@ export interface HeadlessRunDeps {
     cwd?: string;
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
-    // Issue #237 (§29.2): the config `skills` projection — resolved at
+    // The config `skills` projection — resolved at
     // load, loaded with source 'settings'. Absent means none configured.
     settingsSkills?: string[];
   };
-  // Issue #228 (§35.1): the per-path trust check (the store's resolved-root
+  // The per-path trust check (the store's resolved-root
   // decision plus the env opt-in), threaded from the composition root's
   // config load. It gates the project models.json and the ancestor project
   // skills on the path each resolves to. Absent falls back to the env flag.
   trustProject?: (path: string) => boolean;
-  // §12.1 role-document inputs (issue #99). Absent means the prod defaults:
+  // Role-document inputs. Absent means the prod defaults:
   // this process's cwd (so `.kubic/roles/*.md` is read from the workspace)
   // through the real FileBridge. Tests inject a fixture cwd.
   roles?: {
     cwd?: string;
     layers?: RoleLayerInput[];
-    // Issue #430 (§33, L-D27): project trust for the repo documents.
+    // Project trust for the repo documents.
     // The composition root threads the config load's per-path check here
     // (`runtimeLaneDeps`); absent both means the root is untrusted.
     trusted?: boolean;
     trustProject?: (dir: string) => boolean;
-    // Issue #241 (§35): the home directory whose `.kubic/roles` layer
+    // The home directory whose `.kubic/roles` layer
     // under the project documents. Absent means no global source — the
     // composition root passes the real home; tests inject a fixture.
     homeDir?: string;
@@ -389,7 +389,7 @@ class WallClockError extends Error {
 }
 
 // An interrupt (SIGINT/SIGTERM/SIGHUP) ends the turn like a guard does:
-// control flow, mapped to `cancelled` (issue #280) after the drain — the
+// control flow, mapped to `cancelled` after the drain — the
 // run's exit code is 128+signo, the POSIX convention `kubic tui` uses.
 class InterruptedError extends Error {
   readonly signal: string;
@@ -409,7 +409,7 @@ function refs(
   };
 }
 
-// Issue #209 review: the user-facing overflow line must tell the truth.
+// The user-facing overflow line must tell the truth.
 // The decision hook fires for every decision (including abandon), but
 // only a retry_with_new_context compacts and retries — anything else
 // stays silent, and the failure terminus already reports the failure.
@@ -420,7 +420,7 @@ export function overflowRecoveryNotice(
   return `context overflow — compacting and retrying once (${decision.reason})`;
 }
 
-// Issue #209 review: the envelope record carries whether the retry
+// The envelope record carries whether the retry
 // happened, so --json distinguishes retried-then-failed (retried: true)
 // from decided-to-retry-but-compaction-refused and abandoned
 // (retried: false). Absent when the lane made no decision.
@@ -439,7 +439,7 @@ function finished(
   errorMessage?: string,
   signal?: string,
   failure?: ClassifiedFailure,
-  // Issue #209: the retry decision when the lane made one (solo overflow
+  // The retry decision when the lane made one (solo overflow
   // recovery) — strategy, reason, notBefore and whether the retry
   // happened, also on success.
   retry?: RetryRecord,
@@ -464,7 +464,7 @@ function storeFailure(
 ): HeadlessRunResult {
   const message = error instanceof Error ? error.message : String(error);
   const terminus = mapCaughtErrorToTerminus(error);
-  // Issue #155: a caught failure carries its §52 classification too, so the
+  // A caught failure carries its failure classification too, so the
   // envelope never has to guess the domain from the exit code.
   const failure =
     terminus === 'workspace_unavailable'
@@ -481,13 +481,13 @@ function storeFailure(
   };
 }
 
-// The named non-answer a completed run with no assistant text reports
-// (issue #129): the summary is the model's own output or this sentence —
-// never the operator's prompt echoed back as if it were a result.
+// The named non-answer a completed run with no assistant text reports: the
+// summary is the model's own output or this sentence — never the operator's
+// prompt echoed back as if it were a result.
 export const NO_ASSISTANT_TEXT_SUMMARY =
   '(no assistant text — the run settled without output)';
 
-// The lane's appended prompt sections (issue #240), shared by the headless
+// The lane's appended prompt sections, shared by the headless
 // and interactive boots: the `[agent] systemPromptFile` text first (the
 // user's own instructions), the skills block second (discovered context).
 // Undefined when neither is set, so the lane assembles its prompt
@@ -507,7 +507,7 @@ export function composePromptSections(
 // Final assistant text of the settled run for the result summary. A run
 // that left no assistant text yields undefined; the caller reports the
 // named non-answer (NO_ASSISTANT_TEXT_SUMMARY) instead of the prompt.
-// Takes the shared transcript (#400): newest assistant item wins.
+// Takes the shared transcript: newest assistant item wins.
 export function assistantSummary(
   items: readonly TranscriptItem[],
 ): string | undefined {
@@ -521,7 +521,7 @@ export function assistantSummary(
   return undefined;
 }
 
-// §78 terminus + §52 failure for a settled turn (issue #155): the §52 code
+// Terminus + failure for a settled turn: the failure code
 // and its message go through the same settlement kernel the lane record
 // does, so approval/workspace/provider failures keep their 4/5/6 classes
 // and the precise code rides beside the terminus.
@@ -558,7 +558,7 @@ function stoppedResult(
   return finished(id, 'turn_limit', error.message, error.message);
 }
 
-// §46 capture of the run's transcript (#400's readers): the live conversation
+// Capture of the run's transcript (the readers): the live conversation
 // while the lane is open, the session storage otherwise. A read failure
 // leaves the trajectory without actions, never the run without its result.
 async function captureEntries(
@@ -653,7 +653,7 @@ async function appendPromptEntry(
     context,
   );
   try {
-    // Issue #265: a forked session's prompt lands on its lane conversation.
+    // A forked session's prompt lands on its lane conversation.
     const conversation =
       session.meta.conversation === undefined
         ? await harness.root(context)
@@ -675,7 +675,7 @@ async function appendPromptEntry(
   }
 }
 
-// #247: `submit` writes `pi.user` itself, so a run that reached its turn has
+// `submit` writes `pi.user` itself, so a run that reached its turn has
 // exactly ONE user entry. Every other exit path — no model, a refused role,
 // a signal between boot and the turn, a busy refusal — still keeps the
 // prompt durable (the pre-1.0 guarantee `kubic run -p` always had) through
@@ -712,13 +712,13 @@ async function ensurePromptDurable(
   }
 }
 
-// Issue #185: the finished run reports its OWN usage — the session's usage
+// The finished run reports its OWN usage — the session's usage
 // rollup (what `kubic cost` reads), the tool calls it executed and the
 // model that answered. Read after the session is closed; a run that never
 // created a session, or a read that fails, keeps the refs-only report
 // (never invented numbers).
 
-// What the settled run leaves for its §46 trajectory (issue #383): filled
+// What the settled run leaves for its trajectory: filled
 // as the run boots, read once after it settles.
 interface RunCapture {
   startedAt: number;
@@ -726,7 +726,7 @@ interface RunCapture {
   sessionId?: string;
   cwd?: string;
   model?: { provider: string; id: string };
-  // §38.3 (issue #225): the thinking level the lane actually booted with
+  // The thinking level the lane actually booted with
   // (post-clamp) — the trajectory names the applied level, the same source
   // as the envelope, never the request that may have been clamped.
   thinking?: string;
@@ -735,24 +735,24 @@ interface RunCapture {
   entries: unknown[];
   lane?: RunOutcome['lane'];
   interrupted: boolean;
-  // Every provider key the request-time resolver has handed out so far
-  // (issue #359): what the debug channel, the session writes, the result and
-  // the trajectory are scrubbed of. Empty until a models.json key is used.
+  // Every provider key the request-time resolver has handed out so far: what
+  // the debug channel, the session writes, the result and the trajectory are
+  // scrubbed of. Empty until a models.json key is used.
   liveSecrets: () => string[];
 }
 
-// kubic run -p (issue #28) plus its §46 trajectory (issue #383): every run
+// kubic run -p plus its trajectory: every run
 // that attached a session writes <sessions-root>/<id>/trajectory.json when
 // it settles — completed or not — and the result's trajectory ref names
 // that file. A trajectory that cannot be written is reported on the warning
 // channel; it never changes the run's own result.
 
-// Issue #150: the `[lane]` debug line for a retry or compaction event, or
+// The `[lane]` debug line for a retry or compaction event, or
 // undefined for any other event. The 1.0 harness reports the attempt and the
-// error (#398's contract — no maxAttempts, no notBefore).
-// Issue #246: a lane fault (pi-durable `task_failed` — Pi 1.0 has no
-// `handler_error` event) maps to the §50 handler_error line, and a
-// committed response maps to the §50 [model] token line. Both reuse the
+// error (the contract — no maxAttempts, no notBefore).
+// A lane fault (pi-durable `task_failed` — Pi 1.0 has no
+// `handler_error` event) maps to the handler_error line, and a
+// committed response maps to the [model] token line. Both reuse the
 // spans vocabulary formatters, so every path emits byte-identical lines.
 export function laneActivityDebugLine(
   event: KubicLaneEvent,
@@ -794,7 +794,7 @@ export async function runHeadlessPrompt(
   options: HeadlessRunOptions,
   deps: HeadlessRunDeps = {},
 ): Promise<HeadlessRunResult> {
-  // The settled run's §46 trajectory capture (issue #383).
+  // The settled run's trajectory capture.
   const capture: RunCapture = {
     startedAt: Date.now(),
     skills: [],
@@ -802,17 +802,17 @@ export async function runHeadlessPrompt(
     interrupted: false,
     liveSecrets: () => [],
   };
-  // Issue #148/#308: the live lane model and the approval posture the lane
+  // The live lane model and the approval posture the lane
   // was installed with travel on the result (and so the --json envelope),
   // whatever path the run ends on.
   const report: {
     model?: string;
     posture?: 'approvals' | 'full-access';
-    // Issue #278 (§19): the run's §19 mode, set from the session record
+    // The run's mode, set from the session record
     // once the session exists and merged onto the result below.
     mode?: RunMode;
   } = {};
-  // The base the run starts from (issue #267): captured before any turn, so
+  // The base the run starts from: captured before any turn, so
   // an agent that commits mid-run cannot move the baseline it is judged by.
   const base = gitHeadOf(deps.env?.cwd ?? process.cwd());
   const result = await runHeadlessPromptOnce(
@@ -842,7 +842,7 @@ export async function runHeadlessPrompt(
       settled = {
         ...settledMode,
         usage: measured.usage,
-        // Issue #148: the live lane model reported by the boot wins over the
+        // The live lane model reported by the boot wins over the
         // session's recorded usage model — a pin may have switched models in
         // this run, and the result must name the one that actually ran.
         ...(settledMode.model !== undefined || measured.model === undefined
@@ -853,7 +853,7 @@ export async function runHeadlessPrompt(
       settled = settledMode;
     }
   }
-  // Issue #359: a provider that echoes the key it rejected puts the value in
+  // A provider that echoes the key it rejected puts the value in
   // the run's own failure text. The result (the --json envelope) and the
   // trajectory's prompt are scrubbed of every live provider key before either
   // leaves the run; the session JSONL (which the trajectory's entries are
@@ -862,7 +862,7 @@ export async function runHeadlessPrompt(
   const scrub = <T>(value: T): T =>
     liveKeys.length === 0 ? value : (redactSecretValues(value, liveKeys) as T);
   settled = scrub(settled);
-  // kubic run -p plus its §46 trajectory (issue #383): every run that
+  // kubic run -p plus its trajectory: every run that
   // attached a session writes <sessions-root>/<id>/trajectory.json when it
   // settles — completed or not — and the result's trajectory ref names that
   // file. A trajectory that cannot be written is reported on the warning
@@ -870,7 +870,7 @@ export async function runHeadlessPrompt(
   if (capture.sessionId === undefined || capture.sessionsRoot === undefined) {
     return settled;
   }
-  // §48 gates after settlement (issue #267): the configured `[verify]`
+  // Gates after settlement: the configured `[verify]`
   // commands run in the run's worktree — the same workspace the lane ran
   // in — and their verdicts become the trajectory's `signal:*` labels. A
   // run that never reached a workspace (a refused boot) has nothing to
@@ -923,7 +923,7 @@ export async function runHeadlessPrompt(
   }
 }
 
-// §48 gates after settlement (issue #267): the `[verify]` commands run in
+// Gates after settlement: the `[verify]` commands run in
 // the run's worktree, then — when the run started from a git revision — in
 // a throwaway detached checkout of that revision, so a gate that passed
 // before the run and fails after it is recorded as a regression. The
@@ -960,12 +960,12 @@ async function runHeadlessPromptOnce(
   report: {
     model?: string;
     posture?: 'approvals' | 'full-access';
-    // Issue #278 (§19): the run's §19 mode, set from the session record.
+    // The run's mode, set from the session record.
     mode?: RunMode;
   },
   capture: RunCapture,
 ): Promise<HeadlessRunResult> {
-  // Issue #148: every result after the lane booted names the model the
+  // Every result after the lane booted names the model the
   // lane actually ran (the live lane model, never the bare selection).
   const result = await runHeadlessPromptImpl(
     prompt,
@@ -986,7 +986,7 @@ async function runHeadlessPromptImpl(
   report: {
     model?: string;
     posture?: 'approvals' | 'full-access';
-    // Issue #278 (§19): the run's §19 mode, set from the session record.
+    // The run's mode, set from the session record.
     mode?: RunMode;
   },
   capture: RunCapture,
@@ -1028,13 +1028,13 @@ async function runHeadlessPromptImpl(
     const invalid = `invalid maxTurns ${JSON.stringify(options.maxTurns)} (need a positive integer of turns)`;
     return finished('unassigned', 'usage', invalid, invalid);
   }
-  // Issue #183 (§29.4): the turn prompt `--invoke-skill` expands to.
+  // The turn prompt `--invoke-skill` expands to.
   // Assigned after the skills boot below; every downstream prompt use
   // reads this, never the raw parameter.
   let effectivePrompt = prompt;
-  // §40.1 mechanism 1 (issue #273): the per-invocation tool selection is
+  // The per-invocation tool selection is
   // validated before any lane boots — mutual exclusion, unknown names and
-  // the §40.3 agreement with the permission classes all fail closed as the
+  // the agreement with the permission classes all fail closed as the
   // usage terminus (exit 2), never a silently narrowed run.
   if (options.tools !== undefined && options.noTools === true) {
     const invalid = '--tools and --no-tools are mutually exclusive';
@@ -1062,7 +1062,7 @@ async function runHeadlessPromptImpl(
   }
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
   const context = deps.context ?? BACKGROUND_CONTEXT;
-  // §50 debug channel: `--debug` routes the span lines AND the run's
+  // Debug channel: `--debug` routes the span lines AND the run's
   // diagnostics (extension receipt, reconcile/overlap notices, skill-load
   // reports, drain failures) to one sink. An injected deps.debug still wins;
   // without either, the diagnostics are off — the prod `kubic run` wires
@@ -1071,9 +1071,9 @@ async function runHeadlessPromptImpl(
     options.debug === true
       ? (deps.debugSink ?? ((line: string) => console.error(line)))
       : undefined;
-  // The §50 vocabulary is closed: a diagnostic without its own class rides
+  // The vocabulary is closed: a diagnostic without its own class rides
   // the sink as `[session]`.
-  // Issue #359: every resolved provider key is redacted from the debug
+  // Every resolved provider key is redacted from the debug
   // channel — the values are known only once the resolver has run, so the
   // redaction reads them at emit time.
   const rawDebug: ((line: string) => void) | undefined =
@@ -1086,8 +1086,8 @@ async function runHeadlessPromptImpl(
     rawDebug === undefined
       ? undefined
       : redactingSink(rawDebug, () => capture.liveSecrets());
-  // §49.3 spans on the live path (issue #98): the run, its lane accept/drive
-  // steps and every harness tool call are recorded on the §29 SpanRecorder
+  // Spans on the live path: the run, its lane accept/drive
+  // steps and every harness tool call are recorded on the SpanRecorder
   // and persisted to <root>/<id>/spans.jsonl when the run settles. The
   // recorder is created before the store so a store failure still leaves a
   // (run-only) trace behind.
@@ -1095,7 +1095,7 @@ async function runHeadlessPromptImpl(
   const runSpan = spans.startRun();
   // Every session write goes through the one bridge, so it is the choke
   // point for scrubbing the live provider keys out of the session JSONL and
-  // the span artifact (issue #359): a provider echoing a rejected key in its
+  // the span artifact: a provider echoing a rejected key in its
   // error body must not persist it.
   const bridge = redactBridgeWrites(createNodeFileBridge(root), () =>
     capture.liveSecrets(),
@@ -1109,7 +1109,7 @@ async function runHeadlessPromptImpl(
             store,
             {
               cwd: deps.env?.cwd ?? process.cwd(),
-              // Issue #278 (§19): the run's mode is always recorded —
+              // The run's mode is always recorded —
               // explicit `--autonomous` or off by default.
               mode: options.autonomous === true ? 'autonomous' : 'interactive',
             },
@@ -1122,20 +1122,20 @@ async function runHeadlessPromptImpl(
   const id = session.id;
   capture.sessionId = id;
   capture.sessionsRoot = root;
-  // Issue #278 (§19): the result and envelope name the session's recorded
+  // The result and envelope name the session's recorded
   // mode — a resumed or attached session keeps the creating run's mode.
-  // A pre-#278 record (no mode) falls back to this invocation's flag.
+  // A pre record (no mode) falls back to this invocation's flag.
   report.mode =
     session.meta.mode ??
     (options.autonomous === true ? 'autonomous' : 'interactive');
-  // Issue #246: the [session] debug line names the session.
+  // The [session] debug line names the session.
   debug?.(`[session] id=${id}`);
-  // Declared outside the try so the `finally` sweep below can reach it
-  // (issue #87): assigned once the lane's env (the workspace root) exists.
+  // Declared outside the try so the `finally` sweep below can reach it:
+  // assigned once the lane's env (the workspace root) exists.
   let reconciliation: RunReconciliation | undefined;
-  // Issue #325: the installed policy's end-of-session posture check.
+  // The installed policy's end-of-session posture check.
   let settlePolicy: (() => void) | undefined;
-  // Issue #109: the booted lane is hoisted so every exit path can stop the
+  // The booted lane is hoisted so every exit path can stop the
   // in-flight turn — a guard firing mid-turn must not abandon the tool
   // processes it interrupted.
   let solo: SoloLane | undefined;
@@ -1143,7 +1143,7 @@ async function runHeadlessPromptImpl(
   // states the durable conversation abort (plus the kill drain) instead of
   // dropping handles for work that is still running.
   let abandoned = false;
-  // The run's guard (issue #84): every wait runs on this cancellable context,
+  // The run's guard: every wait runs on this cancellable context,
   // cancelled by the wall clock, the turn count (guard) or a signal. The
   // DURABLE stop is conversation.abort() on the divert paths; this context
   // only stops waiting.
@@ -1161,17 +1161,17 @@ async function runHeadlessPromptImpl(
     guardError ??= error;
     guard.cancel(turnAbort(reason, error.message));
   };
-  // Counted from the committed usage events (#398): one per assistant
+  // Counted from the committed usage events: one per assistant
   // response, the turn unit `--max-turns` bounds.
   let turns = 0;
 
-  // The run's guard timer (issue #84): armed with the wall-clock bound once
+  // The run's guard timer: armed with the wall-clock bound once
   // the session exists, cleared on every exit path.
   let deadline: ReturnType<typeof setTimeout> | undefined;
   // Interrupts (SIGINT/SIGTERM/SIGHUP): installed from here until the finally
   // has drained, so the default handler can no longer kill the run past its
   // own cleanup. The first signal kills the running children synchronously
-  // (they sit in their own process groups and never saw the signal — D1 keys
+  // (they sit in their own process groups and never saw the signal — keys
   // them by conversation id) and cancels the guard; the listeners detach at
   // once, so a second Ctrl-C force-quits through the default handler.
   const signals = deps.signals ?? process;
@@ -1223,12 +1223,12 @@ async function runHeadlessPromptImpl(
       // write is not a run failure.
     }
   };
-  // Solo no-isolation notice (issue #89): the trust model is announced on
+  // Solo no-isolation notice: the trust model is announced on
   // stderr before the first turn, once per process start, using the module
   // strings verbatim so `kubic tui` reads identically. Suppressed by the
   // documented KUBIC_NO_NOTICE opt-out. stderr, never stdout: `--json`
   // stays parseable.
-  // Issue #447: with a progress sink the notice is its compact one-liner,
+  // With a progress sink the notice is its compact one-liner,
   // printed by `progress.begin` once the lane has booted (still before the
   // first turn); the three-line block stays for every other run.
   const soloNotice = shouldEmitSoloNotice(process.env);
@@ -1241,7 +1241,7 @@ async function runHeadlessPromptImpl(
     bridge.createDir(join(id, 'journal'));
     // The wall clock starts with the run's own work (the pending settlement
     // and the turn), not with the boot: a slow boot is not a slow turn. The
-    // prompt entry is written by `submit` itself (#247), so there is no
+    // prompt entry is written by `submit` itself, so there is no
     // pre-boot prompt write to fail here.
     const boundMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
     deadline = setTimeout(
@@ -1250,21 +1250,21 @@ async function runHeadlessPromptImpl(
     );
     const afterBound = bootInterrupted();
     if (afterBound !== undefined) return afterBound;
-    // §12.1 role selection (issue #99; issue #133 adds the config layers):
+    // Role selection (adds the config layers):
     // `--role` loads the role document and derives ALL THREE halves of the
     // lane boot from it — the prompt text (the document's `## Prompt`), the
     // tool allowlist (the resolved set), and the model default (a layer's
     // `[roles.<name>].model` pin). It resolves BEFORE the model selection so
     // the pin can act as the selection default. All four refusals are
     // fail-closed with a named reason: an unknown role, a contradictory
-    // document (§40.3), a document with no instructions, and a parse failure.
+    // document, a document with no instructions, and a parse failure.
     // Nothing is invented, and an absent --role leaves the solo boot
     // byte-identical.
     let role: { resolved: ResolvedRole; prompt: string } | undefined;
-    // Issue #181 (§29.4): the resolved role document's `skills` list for
+    // The resolved role document's `skills` list for
     // the skill gate — hoisted because `selected` lives in the branch.
     let roleDocSkills: string[] | undefined;
-    // §58 enterprise gates (issue #288): one local view of the resolved
+    // Enterprise gates: one local view of the resolved
     // policy, so the role resolution, the model selection and the lane tool
     // set all read the same object.
     const enterprisePolicy = deps.modelPolicy;
@@ -1273,7 +1273,7 @@ async function runHeadlessPromptImpl(
         ? (tool: string): boolean =>
             isToolAllowedByEnterprise(enterprisePolicy, tool)
         : undefined;
-    // The stored model of a resumed session is gated too (issue #288): the
+    // The stored model of a resumed session is gated too: the
     // selection is checked at boot, the stored one only by this closure.
     const modelGate =
       enterprisePolicy !== undefined && hasModelPolicy(enterprisePolicy)
@@ -1285,7 +1285,7 @@ async function runHeadlessPromptImpl(
         deps.roles?.cwd ?? process.cwd(),
       );
       const rolesCwd = deps.roles?.cwd ?? process.cwd();
-      // Issue #229: role documents resolve at the project root, so
+      // Role documents resolve at the project root, so
       // `--role` from a subdirectory finds `<root>/.kubic/roles/*.md`.
       const rolesRoot = findProjectRoot(rolesBridge, rolesCwd, homedir());
       let selected: SelectedRole;
@@ -1298,7 +1298,7 @@ async function runHeadlessPromptImpl(
           ...(deps.roles?.layers === undefined
             ? {}
             : { layers: deps.roles.layers }),
-          // Issue #430 (§33, L-D27): an untrusted root's documents are
+          // An untrusted root's documents are
           // withheld — `--role` naming one refuses with the trust message.
           ...(deps.roles?.trusted === undefined
             ? {}
@@ -1306,12 +1306,12 @@ async function runHeadlessPromptImpl(
           ...(deps.roles?.trustProject === undefined
             ? {}
             : { trustProject: deps.roles.trustProject }),
-          // Issue #241 (§35): the global `~/.kubic/roles` layer under the
+          // The global `~/.kubic/roles` layer under the
           // project documents — absent means no global source.
           ...(deps.roles?.homeDir === undefined
             ? {}
             : { home: deps.roles.homeDir }),
-          // §58 enterprise policy (issue #288): a role document declaring a
+          // Enterprise policy: a role document declaring a
           // denied tool is refused here, by name, before the lane boots.
           ...(enterprisePolicy === undefined
             ? {}
@@ -1323,7 +1323,7 @@ async function runHeadlessPromptImpl(
       }
       let promptText: string;
       try {
-        // The prompt comes from the winning document (issue #203): a repo
+        // The prompt comes from the winning document: a repo
         // override's text, or the preset embedded in the binary.
         promptText = rolePromptFor(selected.doc, selected.markdown);
       } catch (error) {
@@ -1337,20 +1337,20 @@ async function runHeadlessPromptImpl(
       roleDocSkills = selected.doc.skills;
       capture.role = selected.resolved.name;
     } else {
-      // Issue #246: the stock solo run resolves no role document — the
-      // §50 [policy] line still names the default role it runs as.
+      // The stock solo run resolves no role document — the
+      // [policy] line still names the default role it runs as.
       debug?.(`[policy] role=solo (default)`);
     }
     // A refused models.json is a config error the user must see: it goes
     // to the warning channel unconditionally; a successful load is a
     // receipt for the debug channel only.
     let models: MutableModels;
-    // Issue #221: the implicit pick only considers customs and built-ins
+    // The implicit pick only considers customs and built-ins
     // whose auth is configured — a keyless built-in is never picked.
     let fallbackProviders: readonly string[] | undefined;
     if (deps.models === undefined) {
-      // Request-time provider keys (issue #359, §36.1): a models.json key is
-      // resolved per request and each use lands in the §60 ledger of the
+      // Request-time provider keys: a models.json key is
+      // resolved per request and each use lands in the ledger of the
       // run's workspace.
       let identityWords: string[] | undefined;
       const keyResolver = createLedgerModelKeyResolver({
@@ -1360,7 +1360,7 @@ async function runHeadlessPromptImpl(
         onError: (message) =>
           debug?.(`[session] credential use not audited: ${message}`),
         // A dummy key that IS its provider's name (LM Studio's `lm-studio`)
-        // is identity, not a secret (issue #359): the catalog's provider and
+        // is identity, not a secret: the catalog's provider and
         // model ids are read once assembled — a line emitted before that
         // (the models receipts) has nothing to exempt yet.
         identity: () => {
@@ -1370,7 +1370,7 @@ async function runHeadlessPromptImpl(
           identityWords = catalogIdentity(catalog);
           return identityWords;
         },
-        // `!command` secret refs (issue #224) execute in the run's
+        // `!command` secret refs execute in the run's
         // workspace through the production runner — rerun per request.
         runCommand: createSecretCommandRunner({
           cwd: deps.env?.cwd ?? process.cwd(),
@@ -1426,10 +1426,10 @@ async function runHeadlessPromptImpl(
     try {
       // An explicit pin (replay re-execution at the declared model, or the
       // `[model]`/env/cli pin runtimeModelPin projects) wins over default
-      // selection; the role layer's own `provider/id` pin (issue #133) is
+      // selection; the role layer's own `provider/id` pin is
       // the next default, and `kubic run` with neither takes the first
       // usable provider (customs first; never a keyless built-in). The
-      // §58 enterprise policy (issue #288) gates the explicit/role
+      // Enterprise policy gates the explicit/role
       // selection and the implicit provider pool the same way on this
       // path and on `kubic tui`.
       const explicitSelection = fauxPinned
@@ -1442,7 +1442,7 @@ async function runHeadlessPromptImpl(
         roleSelection,
         fallbackProviders,
         enterprisePolicy,
-        // The role's allowed set (issue #255; §38.2) gates the
+        // The role's allowed set gates the
         // explicit/role selection and the implicit pick alike.
         roleModelScope(role?.resolved),
       );
@@ -1460,17 +1460,17 @@ async function runHeadlessPromptImpl(
     capture.model = { provider: model.provider, id: model.id };
     const env = deps.env ?? new NodeExecutionEnv(process.cwd());
     capture.cwd = env.cwd;
-    // Installed policy (issue #86; §40, §41): the composition root derives
+    // Installed policy: the composition root derives
     // the classes and interceptor options the lane runs on, ONCE, from the
     // same function doctor reads (host/approvals.installSoloPolicy). Config-
-    // sourced classes (issue #90) replace the documented SOLO_DEFAULTS; the
+    // sourced classes replace the documented SOLO_DEFAULTS; the
     // destructive/network/confine guards and the approval ask are installed
     // either way, so a run with no config is no longer a run with no policy.
     // The workspace root is explicit — the lane cannot invent one.
     const warnLine =
       deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
-    // §41.4 (issue #308): the explicit flag enables full access for THIS
-    // session through the one host enable path (posture.json + one §60 row +
+    // The explicit flag enables full access for THIS
+    // session through the one host enable path (posture.json + one audit row +
     // the shared warning) BEFORE the policy is installed, so the lane boots
     // under the posture the user asked for.
     const fullAccessGrant =
@@ -1484,13 +1484,13 @@ async function runHeadlessPromptImpl(
               debug?.(`audit: ledger append failed: ${message}`),
           })
         : undefined;
-    // The `provider/id` the §60 rows name (issue #148): seeded with the
+    // The `provider/id` the audit rows name: seeded with the
     // selection and re-pointed at the model the lane REPORTS once the boot
     // has applied the stored-model rule — the policy is installed before the
     // lane exists, so it reads this at record time instead of freezing the
     // pre-boot pick.
     let liveModelRef = `${model.provider}/${model.id}`;
-    // §60 audit identity (issue #282): the base revision this run started
+    // Audit identity: the base revision this run started
     // from — `git rev-parse HEAD` captured once here, `none` outside git.
     // The policy is installed before the lane boots, so the revision is
     // resolved now and carried on the install.
@@ -1507,7 +1507,7 @@ async function runHeadlessPromptImpl(
         })
         .wait(),
     );
-    // The thinking level the lane runs (issue #282): re-pointed at the
+    // The thinking level the lane runs: re-pointed at the
     // conversation's agent document once the boot has applied the stored
     // level — read at record time, like the model.
     let liveThinkingRef: string | undefined;
@@ -1515,7 +1515,7 @@ async function runHeadlessPromptImpl(
       deps.policy ??
       installSoloPolicy({
         workspace: env.cwd,
-        // Issue #196 (§40.2): the lane enforces the most restrictive
+        // The lane enforces the most restrictive
         // merge of the config classes and the role's — a role declaring
         // `network: none` runs under it even when config allows full.
         // No role means the config (or the lane default).
@@ -1540,22 +1540,22 @@ async function runHeadlessPromptImpl(
         // The layer's own record, so the posture's `source` is the same
         // answer doctor prints — never inferred from the object's shape.
         source: deps.policySource ?? 'default',
-        // Issue #230: the configured approval policy, never the defaults.
+        // The configured approval policy, never the defaults.
         ...(deps.approvals ?? {}),
         sessionDir: join(root, id),
-        // The session root in use is refused control-plane state (#324).
+        // The session root in use is refused control-plane state.
         sessionsRoot: root,
-        // §60 audit identity for the ledger record of each resolved ask.
+        // Audit identity for the ledger record of each resolved ask.
         sessionId: id,
         model: () => liveModelRef,
-        // Issue #282: the thinking level at record time, and the base
+        // The thinking level at record time, and the base
         // revision captured above.
         thinking: () => liveThinkingRef,
         base: runBase,
       });
     report.posture = installed.posture.fullAccess ? 'full-access' : 'approvals';
     settlePolicy = installed.settle;
-    // Issue #278 (§19): the run's start names the §19 mode in the §60
+    // The run's start names the mode in the
     // ledger — a fresh session only (a resume continues the recorded run).
     // Best-effort: a dead ledger never fails the run.
     if (options.sessionId === undefined) {
@@ -1570,7 +1570,7 @@ async function runHeadlessPromptImpl(
           workspace: env.cwd,
           posture: report.posture,
           autonomous: options.autonomous === true,
-          // Review #278 (low): the resolved base was in scope
+          // Review (low): the resolved base was in scope
           // (`runBase`, passed to installSoloPolicy above) while the row
           // hardcoded `unknown`.
           base: runBase,
@@ -1578,7 +1578,7 @@ async function runHeadlessPromptImpl(
         (message) => debug?.(`audit: run start not recorded: ${message}`),
       );
     }
-    // A headless run on a full-access session is never silent (issue #308):
+    // A headless run on a full-access session is never silent:
     // the grant's own warning when this run enabled it, otherwise the named
     // in-force warning — on stderr, so stdout stays consumable.
     if (installed.posture.fullAccess) {
@@ -1588,7 +1588,7 @@ async function runHeadlessPromptImpl(
       join(root, id, 'journal'),
       deps.journalRetention ?? {},
     );
-    // §42.5 baseline (issue #87, §42.1 mechanism 2): captured ONCE, before
+    // Baseline: captured ONCE, before
     // the first turn, as a metadata walk (hashes only, no blobs) that skips
     // `.git/`, `.kubic/` and `.gitignore` hits on its own. A capture failure
     // is not a run failure — the sweep then simply has no baseline to
@@ -1600,7 +1600,7 @@ async function runHeadlessPromptImpl(
         runId: id,
         sessionId: id,
         agentId: resolveRunAgentId(deps.agentId),
-        // #107 review follow-up: a very large file (or a bridge without ranged
+        // Review follow-up: a very large file (or a bridge without ranged
         // reads) is named on the existing debug channel rather than silently
         // costing its size at boot.
         onNotice: (detail: string) => debug?.(`reconcile: ${detail}`),
@@ -1613,7 +1613,7 @@ async function runHeadlessPromptImpl(
         `reconcile: baseline capture failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    // Repo-level overlap warning (issue #118; §42.5 blind spot): two
+    // Repo-level overlap warning (blind spot): two
     // DIFFERENT sessions in one workspace are legal — this is a warning on
     // the debug channel, never a block. But each run sweeps against its own
     // boot baseline, so a live sibling's in-progress changes land in this
@@ -1634,10 +1634,10 @@ async function runHeadlessPromptImpl(
         `reconcile: overlap probe failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    // The installed policy's tool wrappers (issue #86); the harness is
-    // destructured too so the tool-span hooks can attach (issue #98).
+    // The installed policy's tool wrappers; the harness is
+    // destructured too so the tool-span hooks can attach.
     const contributions = [...installed.contributions];
-    // §29.3 skills on the live path (issue #99): discovery runs at boot
+    // Skills on the live path: discovery runs at boot
     // through the real FileBridge, the project roots stay gated behind the
     // documented trust opt-in, and the model-visible blocks are appended to
     // the assembled system prompt as a suffix section. A refusal here is
@@ -1655,25 +1655,25 @@ async function runHeadlessPromptImpl(
       ...(trustProject === undefined ? {} : { trustProject }),
       ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
       ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
-      // Issue #237 (§29.2): the config `skills` projection loads with
+      // The config `skills` projection loads with
       // source 'settings'.
       ...(deps.skills?.settingsSkills === undefined
         ? {}
         : { settingsSkills: deps.skills.settingsSkills }),
-      // Issue #181 (§29.4): the injected set depends on the resolved
+      // The injected set depends on the resolved
       // role and the installed classes.
       ...(role?.resolved.name === undefined
         ? {}
         : { role: role.resolved.name }),
       ...(roleDocSkills === undefined ? {} : { roleSkills: roleDocSkills }),
       classes: installed.classes,
-      // Issue #177: an unresolvable explicit --skill warns on stderr —
+      // An unresolvable explicit --skill warns on stderr —
       // never only on the debug channel — so a typo cannot read as loaded.
       warn: warnLine,
       log: (line) => debug?.(`skills: ${line}`),
     });
     capture.skills = skills.skills.map((skill) => skill.name);
-    // Issue #183 (§29.4): `--invoke-skill` expands against the invocable
+    // `--invoke-skill` expands against the invocable
     // set (admitted + gate-passed, hidden included, withheld excluded) —
     // the skill content runs as the turn prompt with the operator's prompt
     // as instructions. An unknown name fails the run with the named error
@@ -1702,7 +1702,7 @@ async function runHeadlessPromptImpl(
     }
     const beforeBoot = bootInterrupted();
     if (beforeBoot !== undefined) return beforeBoot;
-    // Issue #148 (§26.1): a pin (the faux pin, the `[model]`/env pin, or
+    // A pin (the faux pin, the `[model]`/env pin, or
     // the role's model) is an explicit selection and switches a resumed
     // session whose stored model differs; the default pick never does —
     // the session keeps its own model. Either way it is named on stderr.
@@ -1712,7 +1712,7 @@ async function runHeadlessPromptImpl(
       pin: deps.model,
       roleModel: role?.resolved.model,
     });
-    // §37.4 request options (issue #257): the merged `[model]` tuning with
+    // Request options: the merged `[model]` tuning with
     // the run's role layered over it becomes this lane's `settings.stream`.
     const streamRoleName = options.role;
     const stream = resolveStreamOptions(
@@ -1721,7 +1721,7 @@ async function runHeadlessPromptImpl(
         ? undefined
         : deps.streamTuning?.roles?.[streamRoleName],
     );
-    // Issue #225 (§38.3): the lane's thinking request. A per-run source
+    // The lane's thinking request. A per-run source
     // (cli `--thinking` / env `KUBIC_MODEL_THINKING`, enterprise-frozen
     // included) is the override and beats the session's stored level; a
     // file-layer source is the config default the stored level and the
@@ -1729,8 +1729,8 @@ async function runHeadlessPromptImpl(
     // to the effective model — the notice channel stays the model's (a
     // clamp names the model, the request, and the level applied).
     const requestThinking = deps.thinking;
-    // A matching set entry's thinking wins over the flat role default
-    // (issue #255; §38.2) — resolved against the SELECTED model.
+    // A matching set entry's thinking wins over the flat role default —
+    // resolved against the SELECTED model.
     const roleThinking = resolveRoleThinking(
       role?.resolved,
       model.provider,
@@ -1759,7 +1759,7 @@ async function runHeadlessPromptImpl(
                   }),
             ...(roleThinking === undefined ? {} : { role: roleThinking }),
           };
-    // Issue #210 (§38.4/affinity): the session id pins the boot model for
+    // The session id pins the boot model for
     // the task — escalation is the only path off it (the headless lane
     // climbs only via the single auto trigger; explicit switches are a
     // TUI affordance).
@@ -1776,10 +1776,10 @@ async function runHeadlessPromptImpl(
         sessionId: id,
         agentId: resolveRunAgentId(deps.agentId),
         journal,
-        // §37.4 (issue #257): an untuned run omits `stream` — the
+        // An untuned run omits `stream` — the
         // provider defaults stand, never an invented Kubic one.
         ...(stream === undefined ? {} : { settings: { stream } }),
-        // [agent] systemPromptFile (issue #240): the configured file text
+        // [agent] systemPromptFile: the configured file text
         // lands ahead of the skills block — the user's own instructions
         // first, discovered context second. Shared with the TUI boot.
         ...(() => {
@@ -1789,7 +1789,7 @@ async function runHeadlessPromptImpl(
           );
           return sections === undefined ? {} : { promptSections: sections };
         })(),
-        // Issue #173: the advertised skills outside the cwd stay readable.
+        // The advertised skills outside the cwd stay readable.
         ...(skills.readRoots.length === 0
           ? {}
           : { skillReadRoots: skills.readRoots }),
@@ -1809,12 +1809,12 @@ async function runHeadlessPromptImpl(
         ...(options.tools === undefined
           ? {}
           : { toolSelection: [...options.tools] }),
-        // §27.1 (issue #239): the configured compaction policy reaches the
-        // lane boot — absent means #399's own defaults.
+        // The configured compaction policy reaches the
+        // lane boot — absent means the own defaults.
         ...(deps.compaction === undefined
           ? {}
           : { compaction: deps.compaction }),
-        // One policy object carrying every mechanism (#86 + #90, #397): the
+        // One policy object carrying every mechanism: the
         // classes come from the config layer when it supplies them and from
         // the documented safe default otherwise, the interceptors are always
         // installed, and the hook factory registers the tool spans
@@ -1823,17 +1823,17 @@ async function runHeadlessPromptImpl(
           classes: installed.classes,
           interceptors: installed.interceptors,
           ...(contributions.length === 0 ? {} : { contributions }),
-          // §49.3 (issue #98): the tool spans, installed after policy so a
-          // blocked call never opens one (issue #397's ordering rule).
+          // The tool spans, installed after policy so a
+          // blocked call never opens one (the ordering rule).
           spanHooks: () => runSpanHooks(spans),
-          // §58 enterprise tool gate (issue #288): the same predicate drives
+          // Enterprise tool gate: the same predicate drives
           // the active tool set and the prompt tools line.
           ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
           ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
         },
       });
     } catch (error) {
-      // A stored session model that is no longer registered (issue #148)
+      // A stored session model that is no longer registered
       // is the same terminus as an unknown selection: exit 6, named.
       if (error instanceof ModelSelectError) {
         return finished(
@@ -1845,20 +1845,20 @@ async function runHeadlessPromptImpl(
       }
       throw error;
     }
-    // The boot reconciled the selection with the session's stored model
-    // (issue #148): the trajectory and the audit rows name what the lane
-    // reports, the same source as the envelope and the usage rows.
+    // The boot reconciled the selection with the session's stored model: the
+    // trajectory and the audit rows name what the lane reports, the same source
+    // as the envelope and the usage rows.
     const running = await liveModel(solo, context);
     if (running !== undefined) {
       capture.model = { provider: running.provider, id: running.id };
       liveModelRef = `${running.provider}/${running.id}`;
     }
-    // Issue #282: the thinking level the lane actually runs (pi-durable
+    // The thinking level the lane actually runs (pi-durable
     // defaults an unset level to `off`, the same answer `/thinking`
-    // reports) — the §60 rows name this, not the pre-boot pick.
+    // reports) — the audit rows name this, not the pre-boot pick.
     liveThinkingRef =
       (await solo.conversation.agent(context)).thinkingLevel ?? 'off';
-    // Issue #225 (§38.3): what the lane booted with (post-clamp), read
+    // What the lane booted with (post-clamp), read
     // from the committed agent doc — the same source the envelope reports.
     // Unset stays unset: the trajectory omits the key rather than
     // inventing a level the lane never committed.
@@ -1870,14 +1870,14 @@ async function runHeadlessPromptImpl(
       ...(report.model === undefined ? {} : { model: report.model }),
       notice: soloNotice,
     });
-    // The turn guard: one event subscription per conversation (#398) counts
+    // The turn guard: one event subscription per conversation counts
     // the run's turns for `--max-turns`. Durable retries are the harness's own
     // (they commit no assistant entry), so a turn is one committed response.
     const detachEvents = await subscribeLaneEvents(
       solo.harness,
       solo.conversation.id,
       (event) => {
-        // Issue #150 (§20.6, §27.1): a retry backoff and a compaction are
+        // A retry backoff and a compaction are
         // named on the debug channel — tens of silent seconds otherwise.
         const activity = laneActivityDebugLine(event);
         if (activity !== undefined) debug?.(activity);
@@ -1911,7 +1911,7 @@ async function runHeadlessPromptImpl(
     try {
       const beforeTurn = bootInterrupted();
       if (beforeTurn !== undefined) return beforeTurn;
-      // Issue #147 (§21): a turn a dead process left open would refuse this
+      // A turn a dead process left open would refuse this
       // prompt. The documented policy: when the pending run carries this very
       // prompt (a retried script), it is resumed AS this run — never
       // re-prompted.
@@ -1919,7 +1919,7 @@ async function runHeadlessPromptImpl(
       // prompt is admitted; a resume that cannot settle (guard fired,
       // approval with no TTY) is durably aborted. Each choice is named on
       // stderr.
-      // §49.3 lane spans (§98): `accept` covers admitting this run's work —
+      // Lane spans: `accept` covers admitting this run's work —
       // the pending turn a dead process left, settled first — and `drive`
       // covers the durable turn itself (submit → wait → settlement). Tool
       // spans nest under `drive` because `startLane('drive')` is the lane
@@ -1935,7 +1935,7 @@ async function runHeadlessPromptImpl(
           );
           if (
             pendingPrompt !== undefined &&
-            // Issue #183: an `--invoke-skill` retry coalesces with its
+            // An `--invoke-skill` retry coalesces with its
             // own pending expanded prompt (identical to `prompt` for
             // non-invoke runs).
             pendingPrompt === effectivePrompt &&
@@ -1967,7 +1967,7 @@ async function runHeadlessPromptImpl(
       // prompting twice, while a fresh invocation is a fresh prompt.
       const requestId = `kubic-run:${randomUUID()}`;
       let outcome: TurnOutcome;
-      // Issue #209: the solo overflow-recovery decision, when the lane
+      // The solo overflow-recovery decision, when the lane
       // made one — carried into the envelope on every exit path below.
       let retryDecision: RetryDecision | undefined;
       let retryRetried = false;
@@ -1976,7 +1976,7 @@ async function runHeadlessPromptImpl(
         if (resumed !== undefined) {
           outcome = await awaitTurn(resumed, guard.context);
         } else {
-          // Issue #209: a context overflow compacts (#399) and retries
+          // A context overflow compacts and retries
           // once on the fresh context; every other outcome passes through
           // exactly as runTurn reports it.
           const recovered = await runTurnWithOverflowRecovery(
@@ -1987,7 +1987,7 @@ async function runHeadlessPromptImpl(
               context: guard.context,
               // Headless keeps today's refusal: a run that somehow finds the
               // conversation busy fails by name instead of queueing behind a
-              // turn nobody is watching (#334 owns follow-up UX).
+              // turn nobody is watching.
               whenBusy: 'reject',
               onRetryDecision: (decision) => {
                 const text = overflowRecoveryNotice(decision);
@@ -2016,19 +2016,19 @@ async function runHeadlessPromptImpl(
         const message = 'run guard exhausted';
         return finished(id, 'turn_limit', message, message);
       }
-      // The installed policy refused an approval (issue #86). The block reaches
+      // The installed policy refused an approval. The block reaches
       // the model as a tool error, so the lane settles `completed` — but a
       // dangerous operation the user never approved did NOT happen, and
       // reporting exit 0 would be the dishonest half of this issue. Read the
       // recorded refusals directly: a run whose policy denied an approval maps
-      // to the §78 approval terminus (exit 4) with the refusal named. Checked
+      // to the approval terminus (exit 4) with the refusal named. Checked
       // BEFORE the outcome is mapped: a denial OUTRANKS a settled turn.
       //
-      // Issue #129: exit 4 covers the whole approval terminus; the STATUS is
+      // Exit 4 covers the whole approval terminus; the STATUS is
       // the honest half. A denial whose reason carries the timeout marker is
       // a bound that elapsed, everything else is a refusal — a script can
       // tell "the operator said no" from "nobody answered in time". The
-      // timeout latch (#110) has not yet put a structured `code` on
+      // timeout latch has not yet put a structured `code` on
       // RecordedApprovalDeny, so classification keys off the one
       // TIMEOUT_REASON_MARKER string (the same one classifyVerdict uses)
       // rather than a private regex that could drift from the producers.
@@ -2077,7 +2077,7 @@ async function runHeadlessPromptImpl(
   } catch (error) {
     return storeFailure(id, error);
   } finally {
-    // Issue #109: drain in-flight work FIRST — the sweep must observe the
+    // Drain in-flight work FIRST — the sweep must observe the
     // tree after orphaned tool processes are dead, or their late writes
     // land outside both the journal and the reconciliation. Runs on every
     // exit path (guard exhaustion, an abandoned turn, an unexpected throw,
@@ -2096,7 +2096,7 @@ async function runHeadlessPromptImpl(
     // In-flight work is dead: a later signal takes the default path again.
     detachSignals();
     if (deadline !== undefined) clearTimeout(deadline);
-    // §42.1 mechanism 2 (issue #87): the end-of-run sweep — after the last
+    // The end-of-run sweep — after the last
     // turn, on every exit path (completed, guard exhaustion, deferred wait,
     // malformed outcome, an unexpected throw). Runs BEFORE the session close
     // so a close failure cannot skip it, and never changes the mapped
@@ -2113,17 +2113,17 @@ async function runHeadlessPromptImpl(
       }
     }
     flushSpans();
-    // Issue #325: a posture.json written after the last ask is restored to
+    // A posture.json written after the last ask is restored to
     // the boot posture (and recorded) before the session closes.
     try {
       settlePolicy?.();
     } catch {
       // Best-effort: the mapped result stands.
     }
-    // The prompt guarantee first (#247): a run that never admitted the
+    // The prompt guarantee first: a run that never admitted the
     // prompt still gets its one durable entry, and the transcript decides —
     // never a second copy for a prompt that is already carried. Done before
-    // the capture below so the §46 trajectory carries the fallback write.
+    // the capture below so the trajectory carries the fallback write.
     try {
       await ensurePromptDurable(
         solo,
@@ -2138,8 +2138,8 @@ async function runHeadlessPromptImpl(
         `session: prompt not persisted: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    // The §46 trajectory's entries (issue #383), read while the session is
-    // still open through the shared transcript adapter (#400); a read
+    // The trajectory's entries, read while the session is
+    // still open through the shared transcript adapter; a read
     // failure leaves the trajectory without actions, never the run without
     // its result.
     capture.entries = await captureEntries(solo, session, context);
@@ -2168,7 +2168,7 @@ async function runHeadlessPromptImpl(
   }
 }
 
-// The provider ids and model ids a run names (issue #359): the words a live
+// The provider ids and model ids a run names: the words a live
 // key value must not be scrubbed out of. Empty before the catalog exists.
 function catalogIdentity(models: MutableModels | undefined): string[] {
   if (models === undefined) return [];
@@ -2180,7 +2180,7 @@ function catalogIdentity(models: MutableModels | undefined): string[] {
     ]);
 }
 
-// The `provider/id` the lane actually runs (issue #148): the live
+// The `provider/id` the lane actually runs: the live
 // conversation's agent model, else the boot's effective model. Tolerant of
 // liveness gaps, which report nothing rather than fail.
 async function liveModel(

@@ -1,4 +1,4 @@
-// Session-state retention: `kubic sessions prune` (issue #119; §21, §42.4).
+// Session-state retention: `kubic sessions prune`.
 //
 // The rails are the contract, so this file pins them behaviourally through
 // the CLI surface: dry-run is the DEFAULT (deletion needs --yes), a session
@@ -112,7 +112,7 @@ function prune(
   ).then((code) => ({ code, lines: o.lines }));
 }
 
-describe('sessions prune, dry-run default (issue #119)', () => {
+describe('sessions prune, dry-run default', () => {
   it('lists candidates and deletes nothing without --yes', async () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-one', 31 * DAY_MS);
@@ -233,7 +233,7 @@ describe('sessions prune, interactive confirmation', () => {
   });
 });
 
-describe('sessions prune, age window (issue #119)', () => {
+describe('sessions prune, age window', () => {
   it('the boundary is exact: at the cutoff is eligible, past it is not', async () => {
     const root = tmpRoot();
     const now = Date.UTC(2026, 0, 15);
@@ -306,7 +306,7 @@ describe('sessions prune, age window (issue #119)', () => {
   });
 });
 
-describe('sessions prune, one bucket per session (issue #419)', () => {
+describe('sessions prune, one bucket per session', () => {
   it('a locked session whose header cannot be statted is locked, not unreadable', async () => {
     const root = tmpRoot();
     sessionDir(root, 'locked-dark', 90 * DAY_MS);
@@ -335,7 +335,7 @@ describe('sessions prune, one bucket per session (issue #419)', () => {
   });
 });
 
-describe('sessions prune, protection rails (issue #119)', () => {
+describe('sessions prune, protection rails', () => {
   it('a live lock protects an aged session and is reported', async () => {
     const root = tmpRoot();
     const dir = sessionDir(root, 'held-live', 90 * DAY_MS);
@@ -425,7 +425,7 @@ describe('sessions prune, protection rails (issue #119)', () => {
   });
 });
 
-describe('sessions prune, bash spill files (issue #182)', () => {
+describe('sessions prune, bash spill files', () => {
   // A clipped bash stream spills into <sessionDir>/spill/. The prune's whole
   // effect on a candidate is one recursive remove, so the spill goes with the
   // session — pinned here through the real CLI path (runSessionsCommand →
@@ -452,7 +452,7 @@ describe('sessions prune, bash spill files (issue #182)', () => {
   });
 });
 
-describe('sessions prune, the plan→delete window (issue #119)', () => {
+describe('sessions prune, the plan→delete window', () => {
   // Per-pid call counting drives the window deterministically: a holder
   // reads dead on the planning pass (its first liveness call) and live on
   // the delete re-check (its second). No timing, no real process.
@@ -509,7 +509,7 @@ describe('sessions prune, the plan→delete window (issue #119)', () => {
   });
 });
 
-describe('sessions prune, keep-window resolution (issue #119)', () => {
+describe('sessions prune, keep-window resolution', () => {
   it('refuses without a window: no flag, no config, no invented default', async () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
@@ -587,7 +587,7 @@ describe('sessions prune, keep-window resolution (issue #119)', () => {
   });
 });
 
-describe('sessions prune, config flow (issue #119)', () => {
+describe('sessions prune, config flow', () => {
   // A real config load (global layer under a tmp home), the composition
   // root's seam, then the CLI — the same chain `kubic sessions prune` runs.
   function loadedHome(retention?: string): string {
@@ -665,7 +665,7 @@ describe('sessions prune, config flow (issue #119)', () => {
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
   });
 
-  it('a refused config leaves no window either: prune refuses, deletes nothing (issue #242)', async () => {
+  it('a refused config leaves no window either: prune refuses, deletes nothing', async () => {
     // A typo refuses the whole load, so sessionRetentionDays is undefined
     // exactly like the unset case — prune still demands --keep-days.
     const home = tmpRoot('home-');

@@ -1,4 +1,4 @@
-// The inline approval card (EPIC N, issue #459; docs/ui/02-approval.html).
+// The inline approval card.
 //
 // An approval no longer opens a centered modal over the transcript: it takes
 // the editor's slot as a blocking card, so the conversation above stays
@@ -28,7 +28,7 @@ const APPROVAL_PREVIEW_ROWS = 12;
 
 const LABEL_WIDTH = 13;
 
-// What each capability means, in the operator's words (02-C). An unknown
+// What each capability means, in the operator's words. An unknown
 // capability shows its own name.
 const REASONS: Readonly<Record<string, readonly [string, string]>> = {
   network: ['network', 'it can reach the network'],
@@ -68,7 +68,7 @@ function emphasize(ui: UiTheme, text: string): string {
 export interface ApprovalCardOptions {
   /** False during the arming window: only Esc (deny) acts. */
   readonly armed: boolean;
-  /** False while the card cannot show the whole command (#316). */
+  /** False while the card cannot show the whole command. */
   readonly allowable: boolean;
   readonly keys: Record<ApprovalAction, readonly string[]>;
   /** The page of a long command (or the open full diff). */
@@ -84,11 +84,11 @@ export interface ApprovalCardOptions {
   readonly cwd?: string;
   readonly pageKey: string;
   readonly explainKey: string;
-  /** Issue #467: the open comment or command input, if any. */
+  /** The open comment or command input, if any. */
   readonly input?: { readonly kind: 'comment' | 'edit'; readonly text: string };
 }
 
-// Issue #316: the card shows what will actually run. A command wraps across
+// The card shows what will actually run. A command wraps across
 // rows; one page holds this many, and a taller command says which rows are
 // shown (`… lines a–b of n`) — the height is capped honestly, never by a
 // silent cut.
@@ -96,7 +96,7 @@ export const APPROVAL_COMMAND_PAGE_LINES = 8;
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-// Issue #316: one command line as rows of at most `room` terminal COLUMNS,
+// One command line as rows of at most `room` terminal COLUMNS,
 // cut exactly where the room ends — never at a space, so a row break never
 // hides one (`rm -rf /` + `tmp` reads the same as `rm -rf /tmp` under word
 // wrap). The unit is the grapheme cluster (a combining or emoji ZWJ sequence
@@ -263,7 +263,7 @@ export function renderApprovalCard(
     key(cap('allow-once'), 'allow once'),
     key(cap('allow-session'), 'allow for session'),
     key(cap('deny'), 'deny'),
-    // Issue #467: steering — only where the host offered it.
+    // Steering — only where the host offered it.
     key(cap('comment'), 'deny + comment'),
     request.editable === true ? key(cap('edit'), 'edit command') : '',
     request.batchable === true
@@ -276,7 +276,7 @@ export function renderApprovalCard(
   ].filter((part) => part !== '');
   let parts: string[];
   if (options.input !== undefined) {
-    // Issue #467: the open input stands where the keys were.
+    // The open input stands where the keys were.
     const editing = options.input.kind === 'edit';
     parts = [
       `${ui.fg('fg2')(editing ? 'edit the command ›' : 'deny with a comment ›')} ${ui.fg('fg0')(options.input.text)}${ui.fg('accent')('▏')}`,

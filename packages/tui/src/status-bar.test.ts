@@ -1,9 +1,8 @@
-// Slice A: session aggregates from usage rows (issue #27; §39).
-// Fixture rows must sum to exact session cost/tokens with the cache
-// split kept. Issue #346 deleted the TTFT/tool-ms segments (Pi 1.0 routes
-// no timing Kubic can read); the bar renders what the lane really reports.
-// Issue #453 made the bar one row (docs/ui 01-L): plain text at depth none
-// reads like the design.
+// Session aggregates from usage rows.
+// Fixture rows must sum to exact session cost/tokens with the cache split
+// kept. The bar renders only what the lane really reports (Pi 1.0 routes no
+// timing Kubic can read, so there is no TTFT or tool-ms segment). The bar is
+// one row: plain text at depth none reads like the design.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../core/src/ui/style.js';
 import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
@@ -39,7 +38,7 @@ function row(over: Partial<StatusUsageRow>): StatusUsageRow {
   };
 }
 
-describe('status aggregates (issue #27, slice A)', () => {
+describe('status aggregates', () => {
   it('sums fixture rows to exact session cost/tokens with cache split', () => {
     const summary = summarizeStatusRows([
       row({
@@ -92,9 +91,9 @@ describe('status aggregates (issue #27, slice A)', () => {
     expect(formatStatusCost(summary.costTotal)).toBe('$0.00');
   });
 
-  it('reports the last committed request as the context size (issue #347)', () => {
+  it('reports the last committed request as the context size', () => {
     const summary = summarizeStatusRows([
-      // Seeded cumulative buckets (#346) are not a request: no entry id.
+      // Seeded cumulative buckets are not a request: no entry id.
       row({ usage: { ...priced().usage, input: 5000, cacheRead: 900 } }),
       row({
         entryId: 'e1',
@@ -157,7 +156,7 @@ function requestRow(input: number, cacheRead: number): StatusUsageRow {
   });
 }
 
-describe('status line (issue #453; 01-L)', () => {
+describe('status line', () => {
   it('renders model · thinking, cost and the state word on one row', () => {
     expect(line({ rows: [priced()] }, 100)).toBe(
       between(' ● test/model-long-name · medium  │  $0.033', 'ready ', 100),
@@ -283,7 +282,7 @@ describe('status line (issue #453; 01-L)', () => {
     }
   });
 
-  it('never renders a TTFT or tool-ms segment (issue #346 deleted them)', () => {
+  it('never renders a TTFT or tool-ms segment', () => {
     const text = line({ rows: [priced()] }, 120);
     expect(text).not.toContain('TTFT');
     expect(text).not.toContain('tool ');
@@ -314,7 +313,7 @@ describe('status line (issue #453; 01-L)', () => {
   });
 });
 
-describe('context-window gauge (issue #347; §18)', () => {
+describe('context-window gauge', () => {
   // A committed request whose prompt was 420 tokens (300 new + 120 cached)
   // against a 1000-token window: `ctx 42%`.
   it('renders 42% for a 1000-token window and a 420-token request', () => {
@@ -328,7 +327,7 @@ describe('context-window gauge (issue #347; §18)', () => {
   });
 
   it('hides the gauge until a committed request reports its prompt size', () => {
-    // A seeded cumulative bucket (#346) is not context pressure.
+    // A seeded cumulative bucket is not context pressure.
     expect(line({ rows: [priced()], contextWindow: 1000 }, 100)).not.toContain(
       'ctx',
     );
@@ -360,7 +359,7 @@ describe('context-window gauge (issue #347; §18)', () => {
     ).toContain('ctx ━━━━━━━━━━ 100%');
   });
 
-  it('counts the cache-write prefix, not just the reused one (review #347)', () => {
+  it('counts the cache-write prefix, not just the reused one', () => {
     // The first request of a session (or one after the cache TTL lapses)
     // writes the whole prefix: pi's `input` is then only the new user text,
     // and a gauge that ignored cacheWrite would read 0% while the context is
@@ -376,7 +375,7 @@ describe('context-window gauge (issue #347; §18)', () => {
   });
 });
 
-describe('status bar review fixes (issue #27, fix cycle 1)', () => {
+describe('status bar regressions', () => {
   it('floors sub-cent spend to <$0.01 instead of $0.00', () => {
     expect(formatStatusCost(0)).toBe('$0.00');
     expect(formatStatusCost(0.001)).toBe('<$0.01');
@@ -446,7 +445,7 @@ describe('status bar review fixes (issue #27, fix cycle 1)', () => {
   });
 });
 
-describe('a turn of auto-approved edits (issue #467)', () => {
+describe('a turn of auto-approved edits', () => {
   it('says so beside the state word while it applies', () => {
     const line = renderStatusLine(
       state({ turn: 'working', turnEdits: true }),

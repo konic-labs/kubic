@@ -1,4 +1,4 @@
-// Secret-reference parsing (issue #224; design §36.2). The WORKER's
+// Secret-reference parsing. The WORKER's
 // models.json parser and the HOST's request-time resolver share this one
 // table through @kubic/core (same direction as secret-shapes.ts) — the
 // parse shapes carry no secrets, only forms.
@@ -9,7 +9,7 @@ import {
   splitSecretCommand,
 } from './secret-refs.js';
 
-describe('splitSecretCommand (issue #224)', () => {
+describe('splitSecretCommand', () => {
   it('splits plain whitespace like before', () => {
     expect(splitSecretCommand('pass show api-key')).toEqual([
       'pass',
@@ -44,7 +44,7 @@ describe('splitSecretCommand (issue #224)', () => {
     expect(splitSecretCommand('echo "unclosed')).toEqual(['echo', 'unclosed']);
   });
 
-  it('treats quotes as syntax only at word boundaries (issue #224 GAP)', () => {
+  it('treats quotes as syntax only at word boundaries', () => {
     // A mid-word quote is far more likely an apostrophe than grouping:
     // it stays literal so the helper receives what was written.
     expect(splitSecretCommand("echo don't")).toEqual(['echo', "don't"]);
@@ -65,7 +65,7 @@ describe('splitSecretCommand (issue #224)', () => {
   });
 });
 
-describe('parseSecretRef (issue #224)', () => {
+describe('parseSecretRef', () => {
   it('parses $ENV refs', () => {
     expect(parseSecretRef('$MY_KEY')).toEqual({
       kind: 'env',

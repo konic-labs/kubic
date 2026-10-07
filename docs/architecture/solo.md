@@ -1,8 +1,5 @@
 # Solo mode
 
-> Owner: issue
-> [#62](https://github.com/konic-labs/kubic/issues/62).
-
 Solo is Kubic's default and its architecture: one agent working
 directly in the user's directory. One Pi session plus one agent lane
 run in-process — harness, lane, and tools in a single process with
@@ -16,7 +13,7 @@ user's own authority over files, network, and credentials. There is no
 containment and no prompt-injection prevention: model output is never
 trusted, and anything the agent can reach, a mistaken or manipulated
 instruction can reach too. Solo is a single trust zone, and these docs
-never imply otherwise (§59.1).
+never imply otherwise.
 
 This is announced, not buried: every process start announces it from one
 source (`packages/host/src/limits/solo-warning.ts`), so the two surfaces
@@ -61,18 +58,18 @@ no second process.
   installed as a single untagged `kubic` section. The harness stores
   sections as positional `pi.system` entries and re-sends only what
   changed, so an unchanged lane's second turn commits no new system entry
-  — the #33/#82 prompt-cache prefix holds by construction. An explicit
+  — the prompt-cache prefix holds by construction. An explicit
   `systemPrompt` stays byte-authoritative.
 - **The conversation's agent document is the source of truth.** Model,
   thinking level and offered tools live in the conversation's `pi.agent`
   document and are written with `configure()`. A resumed session keeps its
   stored model under the default `stored` policy; an explicit selection
   (`selected`) switches it and prints the one-line notice; a stored model
-  the §58 enterprise gate refuses is dropped for the selection instead.
+  the enterprise gate refuses is dropped for the selection instead.
   The prompt's `tools:` line and the offered tool set are one
   intersection (base ∩ permission classes ∩ role allowlist ∩ enterprise
-  policy), so the model is never told about a tool it cannot call (§40.3).
-  The thinking level persists per conversation, so #225 is a config/flag
+  policy), so the model is never told about a tool it cannot call.
+  The thinking level persists per conversation, so is a config/flag
   question only.
 - **Compaction** is Pi's mechanism under Kubic's policy: the harness
   compaction reserve is a live getter over the window of the conversation's

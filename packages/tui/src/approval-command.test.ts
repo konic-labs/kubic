@@ -1,5 +1,5 @@
-// The approval card shows the whole command (issue #316, carried onto the
-// inline card by #459; §41.2): a long command wraps by terminal columns, a
+// The approval card shows the whole command (carried onto the
+// inline card): a long command wraps by terminal columns, a
 // taller one pages with an explicit `… lines a–b of n` marker — never a
 // silent cut — and a terminal too short to show it cannot approve it.
 // Headless renders only.
@@ -71,7 +71,7 @@ function request(command: string): ApprovalViewRequest {
 
 const PADDED = `echo 'running formatter' ${'x'.repeat(360)}; rm -rf ~/work`;
 
-describe('approval card command display (issue #316)', () => {
+describe('approval card command display', () => {
   it('a 400-char command renders in full, wrapped, with its tail visible', () => {
     expect(PADDED.length).toBeGreaterThan(390);
     const lines = card(request(PADDED), 80);
@@ -171,11 +171,11 @@ describe('approval card command display (issue #316)', () => {
   });
 });
 
-// Issue #316 (re-audit): the command wraps by terminal COLUMNS, not UTF-16
+// The command wraps by terminal COLUMNS, not UTF-16
 // length, and exactly where the room ends — a row of wide characters is
 // twice as wide as it is long, and a word wrap would hide which row breaks
 // were spaces.
-describe('approval card wraps by display width (issue #316)', () => {
+describe('approval card wraps by display width', () => {
   const WIDE = `echo ${'日'.repeat(30)}; rm -rf ~/precious; ${'日'.repeat(5)}`;
 
   it('a command padded with wide characters keeps the destructive tail on screen', () => {
@@ -249,11 +249,11 @@ describe('approval card wraps by display width (issue #316)', () => {
   });
 });
 
-// Issue #316 (re-audit): a terminal too short to show the command cannot be
+// A terminal too short to show the command cannot be
 // used to approve it. Deny (and Esc) always work; every allow key is inert
 // until the terminal is tall enough — what the operator can see is what they
 // can allow.
-describe('a terminal too short to show the command cannot allow it (issue #316)', () => {
+describe('a terminal too short to show the command cannot allow it', () => {
   const REQUEST = request(PADDED);
 
   function setup(size: { rows: number; columns: number }) {
@@ -293,7 +293,7 @@ describe('a terminal too short to show the command cannot allow it (issue #316)'
   it('a and Ctrl-S are inert on a 9-row terminal, and the card says why', async () => {
     const { app, advance } = setup({ rows: 9, columns: 100 });
     const pending = app.requestApproval(REQUEST);
-    // Issue #459: the card itself says the terminal is too short.
+    // The card itself says the terminal is too short.
     expect(app.render(100).join('\n')).toContain(
       'the terminal is too short to show this command',
     );
@@ -354,7 +354,7 @@ describe('a terminal too short to show the command cannot allow it (issue #316)'
   });
 
   it('a terminal exactly tall enough for the card allows normally', async () => {
-    // Issue #459: the card and CARD_CHROME_ROWS (header, status, hints and
+    // The card and CARD_CHROME_ROWS (header, status, hints and
     // three transcript rows) must fit; one row less keeps allow inert.
     const { app, term, advance } = setup({ rows: 60, columns: 100 });
     const pending = app.requestApproval(REQUEST);

@@ -1,8 +1,8 @@
-// The CLI render matrix for the host's grouped reports (EPIC N, issue
-// #468): `kubic doctor`'s grouped summary at 60/80/120 columns and the
-// `kubic models` catalog, for every palette (dark, light, terminal) × colour
-// level (truecolor, 256, 16, none). A line fits the columns it was given,
-// carries no escape at depth none and closes every style it opens.
+// The CLI render matrix for the host's grouped reports: `kubic doctor`'s
+// grouped summary at 60/80/120 columns and the `kubic models` catalog, for
+// every palette (dark, light, terminal) × colour level (truecolor, 256, 16,
+// none). A line fits the columns it was given, carries no escape at depth none
+// and closes every style it opens.
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import { visibleWidth } from '../../core/src/cli/width.js';
@@ -71,7 +71,7 @@ const CATALOG: CatalogProvider[] = [
   { id: 'openai', usable: false, models: [] },
 ];
 
-describe('the host CLI render matrix (issue #468)', () => {
+describe('the host CLI render matrix', () => {
   it('doctor and models fit, close their styles and carry none at depth none', () => {
     const failures: string[] = [];
     for (const [paletteName, palette] of PALETTES) {

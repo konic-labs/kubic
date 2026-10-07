@@ -1,4 +1,4 @@
-// The block viewer (EPIC N, issue #463; docs/ui 01-D): one transcript block
+// The block viewer: one transcript block
 // whole — the full tool output or diff, the whole answer or thinking — in a
 // framed overlay that scrolls on its own: `↑↓`/`j k` a row, `PgUp/PgDn` a
 // page, `g`/`G` the ends, `y` copies, `esc` closes. Its rows come from the

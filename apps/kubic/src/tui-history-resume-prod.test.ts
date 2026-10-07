@@ -1,4 +1,4 @@
-// Issue #340 (§16.5): `kubic tui --session <id>` seeds the prompt editor's
+// `kubic tui --session <id>` seeds the prompt editor's
 // history from the resumed session's committed user prompts, so Up recalls
 // what the previous process sent. Faux provider; the real boot path.
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
@@ -34,7 +34,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('resumed prompt history (issue #340)', () => {
+describe('resumed prompt history', () => {
   it('Up recalls the last prompt from the previous process', {
     timeout: 20000,
   }, async () => {

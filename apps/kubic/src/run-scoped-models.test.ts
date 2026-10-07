@@ -1,8 +1,7 @@
-// A role's allowed set binds selection on `kubic run` (issue #255;
-// §38.2): the request resolves against the role's `models` and a model
-// outside the set refuses by name before any provider call. Drives the
-// real `runHeadlessPrompt` with faux providers: zero network, zero paid
-// tokens.
+// A role's allowed set binds selection on `kubic run`: the request resolves
+// against the role's `models` and a model outside the set refuses by name
+// before any provider call. Drives the real `runHeadlessPrompt` with faux
+// providers: zero network, zero paid tokens.
 import {
   mkdirSync,
   mkdtempSync,
@@ -64,7 +63,7 @@ function trajectoryThinking(root: string, id: string): unknown {
   return parsed.model?.thinking ?? null;
 }
 
-describe('run scoped models (issue #255)', () => {
+describe('run scoped models', () => {
   it("refuses --model outside the role's set by name", async () => {
     const root = tmpRoot();
     const rolesCwd = tmpRoot();

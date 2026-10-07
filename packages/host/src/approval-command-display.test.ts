@@ -49,7 +49,7 @@ function triggerContext(): TriggerContext {
   };
 }
 
-describe('summaries never truncate silently (issue #316)', () => {
+describe('summaries never truncate silently', () => {
   it('marks a truncated command summary with the hidden length', () => {
     const summary = summarizeRequest('bash', 'destructive-shell', {
       command: PADDED,
@@ -82,7 +82,7 @@ describe('summaries never truncate silently (issue #316)', () => {
   });
 });
 
-describe('the request carries the full command (issue #316)', () => {
+describe('the request carries the full command', () => {
   it('the approval key and the displayed command come from the same args', async () => {
     const seen: ApprovalRequest[] = [];
     const store = new FileApprovalStore(tmp());
@@ -104,13 +104,13 @@ describe('the request carries the full command (issue #316)', () => {
   });
 });
 
-// Issue #316 (re-audit): the dialog exists so the operator sees what will
+// The dialog exists so the operator sees what will
 // run, so redaction may hide a secret VALUE but never a word that is only
 // named like one — `find / -name secret -delete` must keep `-delete`, and
 // `echo bearer rm -rf ~/work` must keep `rm` — and never anything the shell
 // would EXECUTE (a `$(...)`, backtick or `${...}` inside a value) or any
 // word on the other side of whitespace/newlines from a name.
-describe('the displayed command never hides a non-secret word (issue #316)', () => {
+describe('the displayed command never hides a non-secret word', () => {
   it.each([
     'find / -name secret -delete',
     'echo bearer rm -rf ~/work',
@@ -333,12 +333,12 @@ describe('the displayed command never hides a non-secret word (issue #316)', () 
   });
 });
 
-// Issue #316 (re-audit): what the summary line and the persisted/logged text
+// What the summary line and the persisted/logged text
 // show keeps the OLD broad redaction (`redactSecrets`, like block reasons —
 // approvals.ts says so): only the dialog's own `command` field uses the
 // narrower display redactor. Broad over-redaction is the safe direction for
 // text that leaves the screen.
-describe('summaries keep the broad redaction (issue #316)', () => {
+describe('summaries keep the broad redaction', () => {
   it.each([
     [
       'npm config set //registry.npmjs.org/:_authToken npm_abcdef1234567890',
@@ -377,8 +377,8 @@ describe('summaries keep the broad redaction (issue #316)', () => {
   });
 });
 
-// Issue #316 (re-audit): what the operator reads must be unambiguous.
-describe('the displayed command cannot be forged or hidden (issue #316)', () => {
+// What the operator reads must be unambiguous.
+describe('the displayed command cannot be forged or hidden', () => {
   it('a literal [REDACTED] in the command is shown escaped, never as a marker', () => {
     expect(approvalCommandText('curl -d @[REDACTED] x')).toBe(
       'curl -d @\\x5bREDACTED] x',

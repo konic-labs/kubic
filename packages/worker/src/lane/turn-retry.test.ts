@@ -1,4 +1,4 @@
-// Solo context-overflow recovery (issue #209): compact, then retry once.
+// Solo context-overflow recovery: compact, then retry once.
 // Faux provider only, MemoryStorage, zero network. The overflow itself is a
 // fabricated failed outcome (faux turns never overflow); the compaction and
 // the retry turn run for real on the faux lane.
@@ -28,7 +28,7 @@ async function open(
   return lane;
 }
 
-describe('solo overflow recovery (issue #209)', () => {
+describe('solo overflow recovery', () => {
   it('a completed turn passes through with no retry and no decision', async () => {
     const lane = await open();
     const result = await runTurnWithOverflowRecovery(lane.solo, 'hi', {

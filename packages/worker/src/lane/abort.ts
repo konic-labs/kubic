@@ -1,10 +1,9 @@
-// Lane abort with kill tree (issue #11 slice C; ported to pi-durable in
-// #395). `conversation.abort(context)` is the durable stop: it withdraws
-// queued inputs, marks every live task of the conversation's ordinary scope,
-// signals them, and resolves once the scope is idle (README "Abort and
-// Subagents"). Kubic's bash children run in detached process groups, so the
-// harness's own cancellation cannot reach them: every such child is tracked
-// in the lane's OperationKillRegistry under its conversation id (D1) and is
+// Lane abort with kill tree. `conversation.abort(context)` is the durable stop:
+// it withdraws queued inputs, marks every live task of the conversation's
+// ordinary scope, signals them, and resolves once the scope is idle (README
+// "Abort and Subagents"). Kubic's bash children run in detached process groups,
+// so the harness's own cancellation cannot reach them: every such child is
+// tracked in the lane's OperationKillRegistry under its conversation id and is
 // killed here.
 //
 // Order matters: the durable abort is started FIRST (against a context that
@@ -21,11 +20,11 @@ export class OperationKillRegistry {
   private readonly kills = new Map<string, KillFn[]>();
 
   /**
-   * Register a kill for `operationId` and return its unregister fn (issue
-   * #142). The caller that owns the handle calls it when the handle settles:
-   * a lane reuses one registry for the whole session, so a finished call
-   * that stayed tracked kept its handle (and its output) alive for the life
-   * of the run. Idempotent, and a no-op after a drain.
+   * Register a kill for `operationId` and return its unregister fn. The caller
+   * that owns the handle calls it when the handle settles: a lane reuses one
+   * registry for the whole session, so a finished call that stayed tracked kept
+   * its handle (and its output) alive for the life of the run. Idempotent, and
+   * a no-op after a drain.
    */
   track(operationId: string, kill: KillFn): () => void {
     const existing = this.kills.get(operationId) ?? [];

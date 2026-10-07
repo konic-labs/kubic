@@ -1,4 +1,4 @@
-// The one style engine for Kubic's terminal surfaces (EPIC N, issue #444).
+// The one style engine for Kubic's terminal surfaces.
 // A `UiTheme` binds a palette (tokens.ts) to a colour depth (color.ts) and
 // hands out `Style` functions for semantic roles. At depth `none` every style
 // is the identity, so pure render functions stay byte-stable for snapshots,
@@ -231,7 +231,7 @@ export function stripStyles(text: string): string {
   return text.replace(SGR_SEQUENCE, '');
 }
 
-// Issue #468: what a rendered line leaves set at its end — each SGR
+// What a rendered line leaves set at its end — each SGR
 // attribute still on (`intensity`, `italic`, `underline`, `inverse`,
 // `strike`, `fg`, `bg`) and an OSC 8 hyperlink still open. Empty means the
 // line closes everything it opens, so nothing bleeds into the next one.

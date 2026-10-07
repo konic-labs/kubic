@@ -1,7 +1,6 @@
-// Run-span emission (issue #98; §49.3, §50, §61): RED first — run-spans.ts
-// lands after this file. The recorder is the §29 SpanRecorder; this module
-// only maps live lane/tool events onto it and serializes the result.
-// Faux-only: injected clock, no I/O, no network.
+// Run-span emission: The recorder is the SpanRecorder; this module only maps
+// live lane/tool events onto it and serializes the result. Faux-only: injected
+// clock, no I/O, no network.
 import { describe, expect, it, vi } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
@@ -30,7 +29,7 @@ function ticks(values: number[]): () => number {
   return () => queue.shift() ?? values[values.length - 1] ?? 0;
 }
 
-describe('RunSpans lane/tool trace (issue #98)', () => {
+describe('RunSpans lane/tool trace', () => {
   it('nests run → accept → drive → tool in the recorded order', () => {
     const spans = new RunSpans(ticks([0, 1, 2, 3, 4, 5, 6, 7]));
     const run = spans.startRun();
@@ -108,7 +107,7 @@ describe('RunSpans lane/tool trace (issue #98)', () => {
   });
 });
 
-describe('RunSpans §50 debug lines (issue #98)', () => {
+describe('RunSpans debug lines', () => {
   it('emits in/out lines with the tool name and duration only', () => {
     const spans = new RunSpans(ticks([0, 0, 7, 9]));
     const run = spans.startRun();
@@ -131,7 +130,7 @@ describe('RunSpans §50 debug lines (issue #98)', () => {
     );
   });
 
-  it('never emits a debug class outside the §50 nine', () => {
+  it('never emits a debug class outside the nine', () => {
     const spans = new RunSpans(ticks([0, 0, 1, 2, 3, 4, 5, 6]));
     const run = spans.startRun();
     const drive = spans.startLane('drive');
@@ -151,7 +150,7 @@ describe('RunSpans §50 debug lines (issue #98)', () => {
   });
 });
 
-describe('span artifact serialization (issue #98)', () => {
+describe('span artifact serialization', () => {
   it('writes one JSON object per span, tagged with the run id', () => {
     const spans = new RunSpans(ticks([0, 1, 2, 3, 4, 5]));
     const run = spans.startRun();
@@ -177,7 +176,7 @@ describe('span artifact serialization (issue #98)', () => {
   });
 });
 
-describe('runSpanHooks (issue #98, #397)', () => {
+describe('runSpanHooks', () => {
   it('records one before/after pair per tool call on a real harness', async () => {
     const spans = new RunSpans();
     const run = spans.startRun();
@@ -333,7 +332,7 @@ describe('runSpanHooks (issue #98, #397)', () => {
   });
 });
 
-describe('RunSpans per-span cost (issue #243)', () => {
+describe('RunSpans per-span cost', () => {
   it('opens and closes 1,000 tool spans without copying the trace', () => {
     const spans = new RunSpans(() => 0);
     const run = spans.startRun();
@@ -356,7 +355,7 @@ describe('RunSpans per-span cost (issue #243)', () => {
   });
 });
 
-describe('TurnSpans per-turn attribution (issue #290)', () => {
+describe('TurnSpans per-turn attribution', () => {
   it('records one run span and one tool span per tool call of the turn', () => {
     const turns = new TurnSpans('sess-t1', () => 0);
     turns.startRun('u1');

@@ -1,4 +1,4 @@
-// Slice A: approval policy + durable service (issue #16).
+// Approval policy + durable service.
 import {
   mkdirSync,
   mkdtempSync,
@@ -60,7 +60,7 @@ function triggerContext(
   };
 }
 
-describe('approval service (issue #16, slice A)', () => {
+describe('approval service', () => {
   it('denies by route without asking', async () => {
     const service = new ApprovalService({
       policy: validatePolicy({ route: 'deny' }),
@@ -88,10 +88,10 @@ describe('approval service (issue #16, slice A)', () => {
     expect(service.pendingRequests()).toEqual([]);
   });
 
-  // Issue #110: a timeout is an unanswered question, not a decision. The
+  // A timeout is an unanswered question, not a decision. The
   // call denies (bounded, named) but nothing persists — a missed dialog
   // must not latch a denial that no later surface can overturn.
-  it('keeps timeout verdicts transient: no store entry, and a re-ask waits again (issue #110)', async () => {
+  it('keeps timeout verdicts transient: no store entry, and a re-ask waits again', async () => {
     const store = new MemoryApprovalStore();
     const service = new ApprovalService({
       policy: validatePolicy({ maxPendingMs: 20 }),
@@ -117,7 +117,7 @@ describe('approval service (issue #16, slice A)', () => {
     expect(waited).toBeGreaterThanOrEqual(15);
   });
 
-  it('persists a real answer that arrives on a re-ask after a timeout (issue #110)', async () => {
+  it('persists a real answer that arrives on a re-ask after a timeout', async () => {
     let calls = 0;
     const service = new ApprovalService({
       policy: validatePolicy({ maxPendingMs: 20 }),
@@ -223,7 +223,7 @@ describe('approval service (issue #16, slice A)', () => {
     expect(() => validatePolicy({ maxPendingMs: -1 })).toThrow();
   });
 
-  it('detects every §41.1 trigger class with a detector', () => {
+  it('detects every trigger class with a detector', () => {
     const ctx = triggerContext();
     expect(detectTriggers('bash', { command: 'rm -rf /tmp/x' }, ctx)).toEqual([
       'destructive-shell',
@@ -251,7 +251,7 @@ describe('approval service (issue #16, slice A)', () => {
         triggerContext({ network: 'full' }),
       ),
     ).toEqual([]);
-    // Issue #166: an allowlist with no domains allows nothing — never the
+    // An allowlist with no domains allows nothing — never the
     // silent unrestricted network it used to be.
     expect(
       detectTriggers(
@@ -317,7 +317,7 @@ describe('approval service (issue #16, slice A)', () => {
   });
 });
 
-describe('approval adapter, file store, posture (issue #16, slice D)', () => {
+describe('approval adapter, file store, posture', () => {
   it('passes non-triggered calls without touching the service', async () => {
     const service = new ApprovalService({
       policy: validatePolicy({ maxPendingMs: 10 }),
@@ -357,8 +357,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
       // The seat presents the dialog and waits; the answer arrives below
       // via submit() exactly as a surface delivers it (the waiter path).
       // (Previously this seat resolved undefined immediately and the ask
-      // was answered through the timeout-denial's latch — the backdoor
-      // issue #110 closed.)
+      // was answered through the timeout-denial's latch — the backdoor closed.)
       awaitAnswer: () => new Promise<ApprovalVerdict | undefined>(() => {}),
     });
     const askApproved = createApprovalAsk(approved, triggerContext(), store);
@@ -418,12 +417,12 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     expect(store.loadPosture()).toEqual({ fullAccess: false });
   });
 
-  // Issue #233: a state file that PARSES but is the wrong shape used to be
+  // A state file that PARSES but is the wrong shape used to be
   // cast and then crash the boot (`Object.entries(null)` in the service
   // constructor, `.fullAccess` on null in installedPolicyPosture). Load is
   // corrupt-tolerant by contract — the fallback is the documented safe
   // default, and malformed individual entries are dropped, not the file.
-  it('tolerates well-formed JSON of the wrong shape (issue #233)', () => {
+  it('tolerates well-formed JSON of the wrong shape', () => {
     const dir = mkTmp('approvals-');
     const store = new FileApprovalStore(dir);
     for (const text of ['null', '[]', '"x"', '3', 'true']) {
@@ -443,7 +442,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     expect(store.loadPosture()).toEqual({ fullAccess: true, enabledBy: 'cli' });
   });
 
-  it('drops malformed verdict entries and keeps the valid ones (issue #233)', () => {
+  it('drops malformed verdict entries and keeps the valid ones', () => {
     const dir = mkTmp('approvals-');
     writeFileSync(
       join(dir, 'approvals.json'),
@@ -464,7 +463,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     });
   });
 
-  it('boots a policy and a service over wrong-shaped state files (issue #233)', () => {
+  it('boots a policy and a service over wrong-shaped state files', () => {
     const workspace = mkTmp('approvals-ws-');
     const sessionDir = mkTmp('approvals-session-');
     writeFileSync(join(sessionDir, 'approvals.json'), 'null');
@@ -483,7 +482,7 @@ describe('approval adapter, file store, posture (issue #16, slice D)', () => {
     ).not.toThrow();
   });
 
-  it('cleans its tmp file when a posture rename fails, and rethrows (issue #132)', () => {
+  it('cleans its tmp file when a posture rename fails, and rethrows', () => {
     const dir = mkTmp('approvals-');
     // A rename failure reachable without mocks: the destination exists as
     // a DIRECTORY, so the tmp write succeeds and rename(tmp, posture.json)

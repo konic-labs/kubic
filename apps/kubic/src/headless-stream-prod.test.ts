@@ -1,4 +1,4 @@
-// §37.4 request options on the headless lane (issue #257): the merged
+// Request options on the headless lane: the merged
 // `[model]` tuning — with the run's role layered over it — becomes the
 // lane's `settings.stream`, observed at the faux provider's own request
 // options. Full headless runs on injected faux models; temp sessions root
@@ -62,7 +62,7 @@ function writeRoleDoc(ws: string, name: string): void {
   );
 }
 
-describe('headless §37.4 stream tuning (issue #257)', () => {
+describe('headless stream tuning', () => {
   it('hands the [model] tuning to the lane as settings.stream', async () => {
     const ws = tmp('stream-model-ws-');
     const result = await runHeadlessPrompt(

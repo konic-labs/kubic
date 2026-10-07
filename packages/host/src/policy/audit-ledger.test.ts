@@ -1,4 +1,4 @@
-// §60 audit ledger (one record format, one file): approval decisions are
+// Audit ledger (one record format, one file): approval decisions are
 // emitted through emitAudit as OrgAuditRecords and read back by the same
 // reader `kubic audit` uses.
 import { execFileSync } from 'node:child_process';
@@ -49,7 +49,7 @@ afterEach(() => {
   }
 });
 
-// The test's git driver (issue #420): plain, never injected — production
+// The test's git driver: plain, never injected — production
 // reaches git only through the injected spawn seam below.
 function git(cwd: string, args: string[]): string {
   driver ??= createGitSandbox();
@@ -62,7 +62,7 @@ function repo(): string {
   return root;
 }
 
-describe('§60 audit ledger', () => {
+describe('audit ledger', () => {
   it('solo decisions share the ledger and the format', () => {
     const root = repo();
     const dir = auditLedgerDir(root);
@@ -107,7 +107,7 @@ describe('§60 audit ledger', () => {
     expect(JSON.stringify(stored)).not.toContain('sk-live-abcdef1234567890');
   });
 
-  // Issue #359: the live-value refusal is a substring match, so a short or
+  // The live-value refusal is a substring match, so a short or
   // dummy key (`gw`, `solo`, `1`, or `ollama` for provider `ollama`) matched
   // the record's own provider name and the credential-use row was silently
   // dropped. Below the minimum length nothing is matched and the row lands.
@@ -183,10 +183,10 @@ describe('§60 audit ledger', () => {
     expect(errors).toHaveLength(1);
   });
 
-  // Issue #282: the ledger must answer which worker (pid, generation) on
+  // The ledger must answer which worker (pid, generation) on
   // which base ran X, and at which thinking level — no hard-coded 0/unknown
   // for a field the run knows.
-  describe('audit provenance fields (issue #282)', () => {
+  describe('audit provenance fields', () => {
     it('records thinking and base on solo rows', () => {
       const input = soloDecisionAudit({
         sessionId: 's',
@@ -223,7 +223,7 @@ describe('§60 audit ledger', () => {
       ).resolves.toBe('none');
     });
 
-    it('probes git in the workspace dir, not the spawn cwd (issue #282 review gap)', async () => {
+    it('probes git in the workspace dir, not the spawn cwd', async () => {
       // A scratch repo (the workspace) and a bare non-repo dir (the spawn
       // cwd): the probe must report the workspace's HEAD even though the
       // spawning shell sits elsewhere.
@@ -303,9 +303,9 @@ describe('§60 audit ledger', () => {
     expect(readAuditLedger(dir)).toEqual([]);
   });
 
-  // Issue #278 (§19): the run's start names the §19 mode, so the audit
+  // The run's start names the mode, so the audit
   // trail carries the autonomous combination the session records.
-  describe('run-start audit row (issue #278)', () => {
+  describe('run-start audit row', () => {
     it('records the mode, the command and the explicit flag in the reason', () => {
       const record = runStartAudit({
         sessionId: 'sess-1',
@@ -326,7 +326,7 @@ describe('§60 audit ledger', () => {
     });
   });
 
-  describe('privileged-action audit rows (issue #284)', () => {
+  describe('privileged-action audit rows', () => {
     it('defines the closed privileged-action set', () => {
       expect(PRIVILEGED_ACTION_KINDS).toEqual([
         'full-access-grant',
@@ -393,10 +393,10 @@ describe('§60 audit ledger', () => {
   });
 });
 
-// Configured sink fan-out (issue #286; §58): appendToLedger fans out to the
+// Configured sink fan-out: appendToLedger fans out to the
 // configured [[audit]] sinks plus the mandatory repo ledger. Faux-only: a
 // fake transport captures syslog lines, never a socket.
-describe('configured sink fan-out (issue #286)', () => {
+describe('configured sink fan-out', () => {
   afterEach(() => {
     setAuditSinks([]);
   });
@@ -424,7 +424,7 @@ describe('configured sink fan-out (issue #286)', () => {
       'tool:bash',
       'run:start',
       'posture:full-access',
-      // Review finding (issue #286): the revoke half of a privileged
+      // Review finding: the revoke half of a privileged
       // posture change reaches privileged sinks too.
       'posture:approvals',
       'undo-restore',
@@ -575,10 +575,10 @@ describe('configured sink fan-out (issue #286)', () => {
   });
 });
 
-// Audit-sink doctor checks (issue #286; §58): `kubic doctor` lists the
+// Audit-sink doctor checks: `kubic doctor` lists the
 // configured [[audit]] sinks with a reachability probe per sink, plus one
 // failing check per sink that recorded a runtime failure.
-describe('audit sink doctor checks (issue #286)', () => {
+describe('audit sink doctor checks', () => {
   const probes = {
     socketExists: (path: string): boolean => path === '/dev/log',
     udpAvailable: (): boolean => true,

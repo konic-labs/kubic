@@ -1,9 +1,8 @@
-// `kubic run --role` from a subdirectory (issue #229, acceptance
-// criterion 2): the role resolves at the project root, so the run boots
-// the root's `<root>/.kubic/roles/*.md` instead of failing unknown-role.
-// Live headless run with the faux provider (zero network, zero paid
-// tokens) over real temp dirs — the prod path resolves through the real
-// FileBridge, so a fake bridge would not prove it.
+// `kubic run --role` from a subdirectory: the role resolves at the project
+// root, so the run boots the root's `<root>/.kubic/roles/*.md` instead of
+// failing unknown-role. Live headless run with the faux provider (zero network,
+// zero paid tokens) over real temp dirs — the prod path resolves through the
+// real FileBridge, so a fake bridge would not prove it.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +33,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('run --role resolves at the project root (issue #229)', () => {
+describe('run --role resolves at the project root', () => {
   it('boots a root role document from a nested cwd', async () => {
     const home = tmpRoot('roles-subdir-home-');
     const root = tmpRoot('roles-subdir-repo-');

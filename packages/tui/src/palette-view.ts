@@ -1,4 +1,4 @@
-// The ^P palette's overlay (EPIC N, issue #460; docs/ui/03-palette.html).
+// The ^P palette's overlay.
 // Pi's Input owns the query (typing, paste, the kill ring, the IME cursor);
 // ui/palette.ts owns everything else. The app routes keys here while the
 // palette is open: `↑↓` move (wrapping across the groups), `tab`/`shift+tab`

@@ -1,4 +1,4 @@
-// File references as links (EPIC N, issue #458).
+// File references as links.
 import { describe, expect, it } from 'vitest';
 import { fileUrl, linkFileReferences } from './file-links.js';
 
@@ -8,7 +8,7 @@ const resolve = (path: string): string | undefined => {
   return files.has(clean) ? fileUrl('/work/pg', clean) : undefined;
 };
 
-describe('file links (issue #458)', () => {
+describe('file links', () => {
   it('links project paths in prose and inline code, with their line numbers', () => {
     expect(
       linkFileReferences('Fixed src/cart.js:10 and see `README.md`.', resolve),

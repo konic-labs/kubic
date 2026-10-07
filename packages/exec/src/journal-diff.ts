@@ -1,4 +1,4 @@
-// Journal diff core (issue #18, slice A; §42.2).
+// Journal diff core.
 // Pure over journal entries: one FileChange per path (earliest before,
 // latest after, latest attribution), plus unified-hunk rendering shared
 // by the CLI and the future TUI views ("TUI consumes same data").
@@ -11,7 +11,7 @@ import {
 } from './journal.js';
 
 /**
- * Issue #378: the file ops — every `JournalOp` except the sweep's HEAD-move
+ * The file ops — every `JournalOp` except the sweep's HEAD-move
  * `marker`. `diffEntries` skips markers, so a `FileChange` can never carry
  * one; the narrower type keeps the TUI's file-op views (`DiffOp`) assignable
  * without teaching them about journal bookkeeping.
@@ -29,25 +29,25 @@ export interface FileChange {
   reversible: boolean;
   before: string | null;
   after: string | null;
-  // Issue #111: before/after content is unexpectedly missing while its hash
+  // Before/after content is unexpectedly missing while its hash
   // is recorded (corrupt or torn blob, or a delta that cannot be
   // reconstructed) — surfaced so the operator can tell "content is what I
   // think it is" from "the journal lost it". Designed absences (unattributed
   // entries' hash-only pre-images, deletes' null after-side, and the sweep's
-  // hash-only after-sides, issue #120) are not corrupt.
+  // hash-only after-sides) are not corrupt.
   corrupt: boolean;
-  // Issue #120: the after-side was deliberately not captured — the sweep
+  // The after-side was deliberately not captured — the sweep
   // found a changed file above MAX_SWEEP_CONTENT_BYTES, or whose utf-8
   // decode was lossy (binary content). A designed absence, never corruption;
   // `afterBytes` carries the observed size for the size-only render.
   afterOmitted: boolean;
   afterBytes?: number;
-  // Issue #126: set on the `diff --json` projection when `before`/`after`
+  // Set on the `diff --json` projection when `before`/`after`
   // were clipped to the `--max-content-bytes` bound (the clipped text ends
   // with a marker line naming the bound). Absent — never true — on the full
   // core read, which `undo` and `renderDiff` rely on.
   contentTruncated?: boolean;
-  // Issue #335: the intercepting tool's name and the interactive turn, from
+  // The intercepting tool's name and the interactive turn, from
   // the group's latest entry. Absent on pre-schema entries, reconciliation
   // finds (no tool ran) and tool entries journaled before turns were
   // threaded — `--stat` and `--json` render them when present.
@@ -66,7 +66,7 @@ export function diffEntries(
 ): FileChange[] {
   const byPath = new Map<string, JournalEntry[]>();
   for (const e of store.entries()) {
-    // Issue #378: markers are journal bookkeeping, not file changes —
+    // Markers are journal bookkeeping, not file changes —
     // never a diff hunk (status/log surface them instead).
     if (e.op === 'marker') continue;
     if (filter.path !== undefined && e.path !== filter.path) continue;
@@ -101,7 +101,7 @@ function buildChange(
 ): FileChange | null {
   const before = readBeforeOfFirst(first);
   const after = readAfterOfLast(last);
-  // "Unexpectedly null while hashes exist" (issue #111): unattributed
+  // "Unexpectedly null while hashes exist": unattributed
   // entries legitimately carry a hash-only pre-image (no before-blob by
   // design), so that absence is not corruption; everything else missing
   // under a recorded hash is.
@@ -110,7 +110,7 @@ function buildChange(
     before === null &&
     first.unattributed !== true &&
     first.beforeOmitted !== true;
-  // A hash-only sweep after-side (issue #120) is a designed absence: the
+  // A hash-only sweep after-side is a designed absence: the
   // entry records the walk hash but deliberately no content.
   const afterLost =
     last.afterHash !== null && after === null && last.afterOmitted !== true;
@@ -139,7 +139,7 @@ function buildChange(
 
 // Minimal unified hunks: changed region plus context lines, with real
 // @@ -a,b +c,d @@ headers. Display only — never parsed back.
-// The header counts accumulate while emitting (issue #126): they describe
+// The header counts accumulate while emitting: they describe
 // exactly the lines the hunk prints for each side, so a consumer (the TUI
 // view, a future patch applier) can trust them.
 export function unifiedHunks(
@@ -190,7 +190,7 @@ export function unifiedHunks(
   return [`@@ -${from + 1},${aCount} +${from + 1},${bCount} @@`, ...body];
 }
 
-// `kubic diff --json` content bound (issue #126): one change's before/after
+// `kubic diff --json` content bound: one change's before/after
 // can be a whole file, so the JSON surface clips each side at this many
 // bytes by default — the envelope stays readable, and the clipped text
 // names the bound. `--max-content-bytes 0` opts out (unlimited).
@@ -247,10 +247,10 @@ export function renderDiff(changes: FileChange[]): string {
     out.push(`--- a/${c.path}`);
     out.push(`+++ b/${c.path}`);
     out.push(`# ${who}${flags.length > 0 ? ` [${flags.join(', ')}]` : ''}`);
-    // Corruption is named, never silent (issue #111): the marker tells the
+    // Corruption is named, never silent: the marker tells the
     // operator the hunk below may be incomplete rather than faithful.
     if (c.corrupt) out.push('# [corrupt journal content]');
-    // A designed absence is named too (issue #120): the sweep recorded the
+    // A designed absence is named too: the sweep recorded the
     // walk hash and the size but declined to capture content (above the
     // bound, or a lossy decode). Say so instead of rendering the change as
     // if the file became empty.
@@ -266,7 +266,7 @@ export function renderDiff(changes: FileChange[]): string {
   return out.join('\n');
 }
 
-// Issue #335 (§84 flow): the per-file summary — path, added/removed line
+// The per-file summary — path, added/removed line
 // counts, the intercepting tool and the turn. The counts come from the
 // same `unifiedHunks` the full render prints, so `--stat` can never
 // disagree with the hunks; a missing side counts as empty (a create reads

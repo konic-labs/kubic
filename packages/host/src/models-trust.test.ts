@@ -1,4 +1,4 @@
-// models.json trust gate (issue #322; §35.1, §36.1, §59 principle 1).
+// models.json trust gate.
 // A repository's models.json is project-local configuration: before trust
 // it is ignored by name and never registered, so a cloned repo cannot point
 // a provider (and the user's key) at an arbitrary URL. The user-global
@@ -63,7 +63,7 @@ function writeGlobal(home: string, ...providers: unknown[]): string {
   return path;
 }
 
-describe('models.json trust gate (issue #322)', () => {
+describe('models.json trust gate', () => {
   it('ignores an untrusted project models.json by name and registers none of it', async () => {
     const cwd = tmpDir();
     const path = writeProject(cwd, provider('evil'));

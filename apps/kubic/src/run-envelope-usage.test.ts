@@ -31,7 +31,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('run envelope usage (issue #185)', () => {
+describe('run envelope usage', () => {
   it('reports the session usage rows, the tool calls and the model it ran', async () => {
     const root = mkdtempSync(join(tmpdir(), 'kubic-185-sessions-'));
     made.push(root);

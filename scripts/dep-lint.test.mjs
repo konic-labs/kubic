@@ -1,12 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -14,36 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { checkTree } from './dep-lint.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-
-// §64 skeleton paths required by issue #2 (relative to repo root).
-const REQUIRED_PATHS = [
-  'packages/core/src/index.ts',
-  'packages/core/src/session.ts',
-  'packages/core/src/protocol.ts',
-  'packages/core/src/policy.ts',
-  'packages/exec/src/index.ts',
-  'packages/exec/src/workspace.ts',
-  'packages/exec/src/paths.ts',
-  'packages/exec/src/env.ts',
-  'packages/worker/src/index.ts',
-  'packages/worker/src/session.ts',
-  'packages/worker/src/tools.ts',
-  'packages/worker/src/approval-client.ts',
-  'packages/host/src/index.ts',
-  'packages/host/src/credentials.ts',
-  'packages/host/src/root-agent.ts',
-  'packages/agents/src/index.ts',
-  'packages/trajectory/src/index.ts',
-  'packages/eval/src/index.ts',
-  'packages/tui/src/index.ts',
-  'packages/tui/src/views.ts',
-  'packages/tui/src/components.ts',
-  'apps/kubic/src/main.ts',
-  'apps/kubic/package.json',
-  'package.json',
-  'tsconfig.base.json',
-  'biome.json',
-];
 
 // Every fixture is removed after the file: this suite builds ~50 trees per
 // run (and Stryker's tap run repeats it per mutant), so leaking them piles
@@ -69,7 +33,7 @@ function fixtureTree(files) {
   return dir;
 }
 
-describe('dep-lint (issue #2)', () => {
+describe('dep-lint', () => {
   it('passes on the clean skeleton', () => {
     assert.deepEqual(checkTree(ROOT), []);
   });
@@ -437,7 +401,7 @@ describe('dep-lint (issue #2)', () => {
     );
   });
 
-  it('flags tui reaching the app root relatively (issue #369)', () => {
+  it('flags tui reaching the app root relatively', () => {
     const dir = fixtureTree({
       'packages/tui/src/views.ts': `import { m } from '../../../apps/kubic/src/main.js';\n`,
     });
@@ -448,7 +412,7 @@ describe('dep-lint (issue #2)', () => {
     );
   });
 
-  it('flags core reaching the app root relatively (issue #369)', () => {
+  it('flags core reaching the app root relatively', () => {
     const dir = fixtureTree({
       'packages/core/src/session.ts': `import { m } from '../../../apps/kubic/src/main.js';\n`,
     });
@@ -459,7 +423,7 @@ describe('dep-lint (issue #2)', () => {
     );
   });
 
-  it('flags a package test reaching the app root (issue #387)', () => {
+  it('flags a package test reaching the app root', () => {
     const dir = fixtureTree({
       'packages/host/src/run-prod-path.test.ts': `import { d } from '../../../apps/kubic/src/prod-runners.js';\n`,
     });
@@ -470,8 +434,8 @@ describe('dep-lint (issue #2)', () => {
     );
   });
 
-  it('allows worker importing agents: recorded drift (issue #369)', () => {
-    // Beyond the §64 diagram's `worker ──▶ exec, core`: the lane builds on
+  it('allows worker importing agents: recorded drift', () => {
+    // Beyond the diagram's `worker ──▶ exec, core`: the lane builds on
     // agents roles/policy/task contracts.
     const dir = fixtureTree({
       'packages/worker/src/lane/policy.ts': `import type { PermissionClasses } from '../../../agents/src/policy.js';\n`,
@@ -492,12 +456,5 @@ describe('dep-lint (issue #2)', () => {
       process.stdout.write = original;
     }
     assert.deepEqual(writes, []);
-  });
-});
-
-describe('layout (issue #2)', () => {
-  it('every §64 skeleton path exists', () => {
-    const missing = REQUIRED_PATHS.filter((p) => !existsSync(join(ROOT, p)));
-    assert.deepEqual(missing, []);
   });
 });

@@ -1,4 +1,4 @@
-// The keybinding registry (issue #303; §16.6, §16.9): defaults, overrides
+// The keybinding registry: defaults, overrides
 // from ~/.kubic/keybindings.json, conflict reporting, canonical key ids.
 import { describe, expect, it } from 'vitest';
 import {
@@ -10,12 +10,12 @@ import {
   parseKeybindingsJson,
 } from './keybindings.js';
 
-describe('keybinding registry defaults (issue #303)', () => {
+describe('keybinding registry defaults', () => {
   it('binds every shipped global key to its action', () => {
     const keys = DEFAULT_KEY_REGISTRY;
     expect(keys.actionFor('global', 'ctrl+o')).toBe('panel.diff');
     expect(keys.actionFor('global', 'ctrl+r')).toBe('panel.journal');
-    // Issue #454: Esc is the cancel key; quitting has no default key.
+    // Esc is the cancel key; quitting has no default key.
     expect(keys.actionFor('global', 'escape')).toBe('app.cancel');
     expect(keys.keysFor('app.exit')).toEqual([]);
     expect(keys.label('app.exit')).toBe('');
@@ -57,7 +57,7 @@ describe('keybinding registry defaults (issue #303)', () => {
   });
 });
 
-describe('keybinding overrides (issue #303)', () => {
+describe('keybinding overrides', () => {
   it('an override replaces the defaults and the old key falls through', () => {
     const keys = createKeyRegistry({
       'panel.diff': ['ctrl+g'],
@@ -103,7 +103,7 @@ describe('keybinding overrides (issue #303)', () => {
     expect(keys.actionFor('global', 'escape')).toBe('app.cancel');
   });
 
-  it('still lets the operator bind a quit key (issue #454)', () => {
+  it('still lets the operator bind a quit key', () => {
     const keys = createKeyRegistry({ 'app.exit': ['ctrl+q'] });
     expect(keys.notices).toEqual([]);
     expect(keys.actionFor('global', 'ctrl+q')).toBe('app.exit');
@@ -111,7 +111,7 @@ describe('keybinding overrides (issue #303)', () => {
   });
 });
 
-describe('parseKeybindingsJson (issue #303)', () => {
+describe('parseKeybindingsJson', () => {
   it('accepts a key or a list per action, canonicalised', () => {
     expect(
       parseKeybindingsJson(

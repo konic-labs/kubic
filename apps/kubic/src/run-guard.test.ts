@@ -118,7 +118,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('run guard flags (issue #84)', () => {
+describe('run guard flags', () => {
   // The value rules commander applies to --timeout/--max-turns
   // (apps/kubic/src/commands/solo.ts wires them; a refusal exits 2 there —
   // pinned in solo.test.ts). A missing value is commander's own error.
@@ -203,7 +203,7 @@ describe('run guard flags (issue #84)', () => {
   });
 });
 
-describe('run guard mapping (issue #84)', () => {
+describe('run guard mapping', () => {
   it('pins the default wall-clock bound at 5 minutes', () => {
     expect(DEFAULT_RUN_TIMEOUT_MS).toBe(300_000);
   });
@@ -232,7 +232,7 @@ describe('run guard mapping (issue #84)', () => {
     expect(result.error?.message).toMatch(/timed out after 60ms/);
   });
 
-  it('a `kubic run --timeout` that never settles reports status timeout and exits 1 (issue #280)', {
+  it('a `kubic run --timeout` that never settles reports status timeout and exits 1', {
     timeout: 10_000,
   }, async () => {
     // The acceptance shape: the real headless runner behind the command's

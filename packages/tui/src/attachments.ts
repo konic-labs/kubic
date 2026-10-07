@@ -1,4 +1,4 @@
-// Prompt image attachments (issue #338; §16.5 Image, §16.8 Images).
+// Prompt image attachments (Image, Images).
 // Pure: validation over bytes the caller already read, the placeholder text,
 // and the two render paths. The composition root owns the file read and the
 // capability refusal; nothing here touches the filesystem or the network.
@@ -24,7 +24,7 @@ export interface AttachmentImage extends LaneImagePart {
   readonly data: string;
 }
 
-// The MIME types Kubic accepts (§16.8: png/jpeg/webp/gif). Anything else is
+// The MIME types Kubic accepts (png/jpeg/webp/gif). Anything else is
 // refused before it can reach a provider.
 export const IMAGE_MIME_TYPES = [
   'image/png',
@@ -121,9 +121,9 @@ export function attachmentPlaceholder(image: {
   mimeType: string;
   bytes?: number;
 }): string {
-  // The name when the attachment was just made; the MIME type for a part
-  // read back from the lane (the committed entry stores no name — #338
-  // review), so the row is never a bare size.
+  // The name when the attachment was just made; the MIME type for a part read
+  // back from the lane (the committed entry stores no name review), so the row
+  // is never a bare size.
   const label =
     image.filename !== undefined && image.filename !== ''
       ? image.filename
@@ -267,14 +267,14 @@ export type InlineImageChunk =
 // arrives in chunks (the pty splits it, and pi-tui's StdinBuffer flushes a
 // partial OSC after 50 ms), so an unterminated sequence is held for the next
 // call instead of being typed into the draft as raw escape + base64 — the
-// defect this function exists to prevent (issue #338 review). `buffer` is the
+// defect this function exists to prevent. `buffer` is the
 // previous call's pending tail; a chunk with no sequence at all (ordinary
 // typing, a key press) is left to the normal input path.
 //
 // The tail of a chunk may end inside the 12-character prefix itself (a pty
 // split there is as likely as any other byte), so a trailing partial prefix
 // is held too: without that, the rest of the sequence has no prefix to match
-// and the whole thing would be typed (issue #338 review, cycle 2).
+// and the whole thing would be typed.
 export function scanInlineImageChunk(
   buffer: string,
   chunk: string,
@@ -325,8 +325,7 @@ function trailingPrefixLength(text: string): number {
 // first BEL (`\u0007`) or ST (`\u001b\\`) terminator, or `undefined` when the
 // payload is still arriving. Used while DISCARDING a sequence that was over
 // the cap: the remaining chunks hold pure payload, so they are consumed
-// until the terminator instead of being typed into the draft (issue #338
-// review, cycle 2).
+// until the terminator instead of being typed into the draft.
 export function inlineImageTerminatorEnd(text: string): number | undefined {
   const bel = text.indexOf('\u0007');
   const st = text.indexOf('\u001b\\');

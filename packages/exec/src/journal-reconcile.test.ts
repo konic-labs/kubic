@@ -1,5 +1,4 @@
-// Slice C: baseline capture + end-of-run reconciliation (issue #17; §42.1/42.5).
-// RED: captureBaseline/reconcile do not exist yet.
+// Baseline capture + end-of-run reconciliation.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,7 +39,7 @@ function workspace(): string {
   return root;
 }
 
-describe('journal baseline + reconciliation (issue #17, slice C)', () => {
+describe('journal baseline + reconciliation', () => {
   it('captures hashes and excludes gitignored, out-of-scope, and .kubic paths', () => {
     const root = workspace();
     mkdirSync(join(root, '.kubic'));
@@ -145,7 +144,7 @@ describe('journal baseline + reconciliation (issue #17, slice C)', () => {
   });
 });
 
-describe('git pre-images for sweep entries (issue #371)', () => {
+describe('git pre-images for sweep entries', () => {
   const OID = 'a'.repeat(40);
   const CTX = { sessionId: 's1', agentId: 'root', timestamp: 2 };
 
@@ -232,7 +231,7 @@ describe('git pre-images for sweep entries (issue #371)', () => {
     const { root, journal } = trackedRoot();
     const baseline = captureBaseline(root);
     // The run started before the tool wrote: its entry scopes the sweep's
-    // expected state (issue #341).
+    // expected state.
     const runStart = { count: 0, last: null as null };
     journal.append({
       path: 'tracked.ts',
@@ -262,7 +261,7 @@ describe('git pre-images for sweep entries (issue #371)', () => {
     const sweep = journal.entries()[1];
     if (sweep === undefined) throw new Error('missing sweep entry');
     // The chain is v-final → v-mid (the tool entry) → v-before: the sweep's
-    // before-side is the tool's after-content, exactly as issue #341 pins.
+    // before-side is the tool's after-content.
     expect(journal.readBefore(sweep)).toBe('mid\n');
     expect(blobReads).toEqual([]);
   });
@@ -325,7 +324,7 @@ describe('git pre-images for sweep entries (issue #371)', () => {
     expect(created.bytesDelta).toBe(Buffer.byteLength('born\n', 'utf8'));
   });
 
-  // Issue #427: `gitBaseline: null` is the failed-capture shape (non-repo,
+  // `gitBaseline: null` is the failed-capture shape (non-repo,
   // failed git call, malformed porcelain) — no OID, no blob reads, and the
   // entry is unattributed hash-only, never a guessed pre-image.
   it('marks the entry unrecorded when the capture failed to null', () => {
@@ -345,7 +344,7 @@ describe('git pre-images for sweep entries (issue #371)', () => {
   });
 });
 
-describe('HEAD-move markers (issue #378)', () => {
+describe('HEAD-move markers', () => {
   const CTX = { sessionId: 's1', agentId: 'root', timestamp: 3 };
   const SHA_A = 'a'.repeat(40);
   const SHA_B = 'b'.repeat(40);

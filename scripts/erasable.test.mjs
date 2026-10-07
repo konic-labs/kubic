@@ -53,7 +53,7 @@ function negativeFixture(name, source) {
   return dir;
 }
 
-describe('erasable-syntax config (issue #3)', () => {
+describe('erasable-syntax config', () => {
   it('base enables erasableSyntaxOnly + verbatimModuleSyntax', () => {
     const base = JSON.parse(
       readFileSync(join(ROOT, 'tsconfig.base.json'), 'utf8'),

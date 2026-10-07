@@ -1,4 +1,4 @@
-// Journal durability, slice 1 (issue #117): the journal is the product's
+// Journal durability, slice 1: the journal is the product's
 // reversibility promise, so its own writes are the least forgiving place to
 // cut corners.
 //
@@ -7,10 +7,8 @@
 //     itself declared safe. The bridge grows an opt-in `appendDurably`;
 //     production takes it, test doubles without it keep the old seam.
 //   - Blob writes are tmp+rename: content-addressed blobs are never exposed
-//     half-written under their real name (readBlob would serve the torn
-//     bytes as content before #111's hash check rejects them).
-//
-// RED: `appendDurably` does not exist yet and putBlob writes in place.
+//     half-written under their real name (readBlob would serve the torn bytes
+//     as content hash check rejects them).
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -110,13 +108,13 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   };
 }
 
-describe('journal durability (issue #117, slice 1)', () => {
+describe('journal durability', () => {
   it('fsyncs the index on every append, through the durable bridge seam', () => {
     const store = new FileJournalStore(tmpRoot());
     hooks.fsyncs = 0;
     hooks.durableAppends = [];
     store.append(entry({ path: 'a.txt', after: 'hello\n' }));
-    // The blob the entry references is flushed too (issue #344): one flush
+    // The blob the entry references is flushed too: one flush
     // for the blob's bytes, one for its directory entry, then the index
     // line — the record is always last.
     expect(hooks.fsyncs).toBe(3);
@@ -147,7 +145,7 @@ describe('journal durability (issue #117, slice 1)', () => {
       store.append(entry({ path: 'a.txt', after: 'hello\n' }));
       expect(store.entries()).toHaveLength(1);
       // The index line falls back to the plain append (no fsync), but the
-      // blob it references is still flushed (issue #344): two fsyncs, none
+      // blob it references is still flushed: two fsyncs, none
       // of them the index.
       expect(hooks.fsyncs).toBe(2);
       expect(

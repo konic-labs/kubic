@@ -40,7 +40,7 @@ const AWAIT_GO =
   "const t=setInterval(()=>{if(require('node:fs').existsSync('go')){clearInterval(t);";
 const AWAIT_GO_END = '}},5)';
 
-describe('execution env (issue #12, slice A)', () => {
+describe('execution env', () => {
   it('pins the root provenance identity exactly', () => {
     // Every field is asserted: '' → 'Stryker was here!' and 'root'/0/'init'
     // mutants must fail (mutation: StringLiteral).
@@ -140,7 +140,7 @@ describe('execution env (issue #12, slice A)', () => {
   });
 });
 
-describe('FakeExecutionEnv calls log + strict mode (issue #212)', () => {
+describe('FakeExecutionEnv calls log + strict mode', () => {
   it('logs every spawn with cmd, args and provenance', async () => {
     const env = new FakeExecutionEnv(
       {
@@ -205,7 +205,7 @@ describe('FakeExecutionEnv calls log + strict mode (issue #212)', () => {
   });
 });
 
-describe('FakeExecutionEnv argv keys + strict default + byte fs (issue #356)', () => {
+describe('FakeExecutionEnv argv keys + strict default + byte fs', () => {
   it('argvKey distinguishes a single message element from a split one', () => {
     expect(argvKey('git', 'commit', '-m', 'work in progress')).not.toBe(
       argvKey('git', 'commit', '-m', 'work', 'in', 'progress'),
@@ -293,7 +293,7 @@ describe('FakeExecutionEnv argv keys + strict default + byte fs (issue #356)', (
   });
 });
 
-describe('streaming + checkpoints + kill tree (issue #12, slice B)', () => {
+describe('streaming + checkpoints + kill tree', () => {
   it('node shell streams updates while running', async () => {
     const { env } = makeNodeEnv();
     const seen: ProcessSnapshot[] = [];
@@ -514,7 +514,7 @@ describe('a settled process handle', () => {
   );
 
   it.runIf(process.platform !== 'win32')(
-    'kill() does not schedule a group SIGKILL once the leader has exited (issue #142)',
+    'kill() does not schedule a group SIGKILL once the leader has exited',
     async () => {
       const { env } = makeNodeEnv();
       // The leader exits at once but leaves a background member holding the
@@ -600,12 +600,12 @@ describe('a settled process handle', () => {
   );
 });
 
-describe('execution env spawn failures (issue #85)', () => {
+describe('execution env spawn failures', () => {
   it('settles wait() with a named error instead of crashing on a missing binary', async () => {
     // A spawn that cannot start the child emits 'error' (ENOENT) and never
     // 'close'. Without a handler Node re-throws it as an uncaught
     // exception, so the caller dies raw: no
-    // exit code, no §78 code line. wait() must settle with exit 127 and
+    // exit code, no exit code line. wait() must settle with exit 127 and
     // the reason on stderr instead.
     const { env } = makeNodeEnv();
     const handle = env.shell.spawn('kubic-no-such-binary-xyz', [], {
@@ -632,11 +632,11 @@ describe('execution env spawn failures (issue #85)', () => {
   });
 });
 
-// Issue #121: child output is capped per stream at the shell seam. A
+// Child output is capped per stream at the shell seam. A
 // chatty child (`yes`, a verbose build, a giant cat) must not OOM the
 // run: accumulation keeps the TAIL (endings carry the error) and names
 // the dropped leading bytes in a header on the final result.
-describe('child output caps (issue #121)', () => {
+describe('child output caps', () => {
   it('caps stdout at the default bound, keeps the tail, and names the drop', async () => {
     const { env } = makeNodeEnv();
     const total = MAX_CHILD_OUTPUT_BYTES + 2 * 1024 * 1024;
@@ -706,7 +706,7 @@ describe('child output caps (issue #121)', () => {
     }
   });
 
-  // Issue #464: past the cap a snapshot keeps its length while its head
+  // Past the cap a snapshot keeps its length while its head
   // moves; the dropped count says where it starts, so a reader following
   // the stream (the worker fact scanner) never misses or repeats output.
   it('says how much of each stream a live snapshot dropped', async () => {
@@ -757,7 +757,7 @@ describe('child output caps (issue #121)', () => {
   });
 });
 
-// Issue #354: the cap is documented in BYTES, but the accumulator compared
+// The cap is documented in BYTES, but the accumulator compared
 // UTF-16 code units — so CJK/emoji output admitted up to ~3x the intended
 // memory (a 3-byte character cost 1 unit), the header misstated the dropped
 // size, and slice(-cap) could start the kept tail with half a surrogate
@@ -781,7 +781,7 @@ function cappedTail(stdout: string): {
   };
 }
 
-describe('child output caps count bytes (issue #354)', () => {
+describe('child output caps count bytes', () => {
   it('keeps at most maxOutputBytes of UTF-8, not of UTF-16 units', async () => {
     const { env } = makeNodeEnv();
     // 100 three-byte characters: 300 UTF-8 bytes, 100 UTF-16 units.
@@ -843,13 +843,13 @@ describe('child output caps count bytes (issue #354)', () => {
   });
 });
 
-// Issue #112: pipe chunks are arbitrary byte slices. Decoding each chunk
+// Pipe chunks are arbitrary byte slices. Decoding each chunk
 // with Buffer.toString() independently corrupts any multi-byte UTF-8
 // codepoint split across a chunk boundary (U+FFFD on both sides of the
 // split). The seam must decode through one StringDecoder per stream — the
 // decoder carries split codepoints across writes — and flush a trailing
 // incomplete sequence via decoder.end() on settle.
-describe('multi-byte UTF-8 chunk boundaries (issue #112)', () => {
+describe('multi-byte UTF-8 chunk boundaries', () => {
   // One emoji as two explicit Buffer halves. The child writes the second
   // half only after the parent has seen the first as its own `data` event
   // (the `go` handshake) — back-to-back writes can coalesce into a single
@@ -913,9 +913,9 @@ describe('multi-byte UTF-8 chunk boundaries (issue #112)', () => {
   });
 });
 
-// §3.8: tool processes never inherit ambient authority. A provider key in
+// Tool processes never inherit ambient authority. A provider key in
 // kubic's own environment must not reach a spawned child.
-describe('tool child env allowlist (§3.8)', () => {
+describe('tool child env allowlist', () => {
   const planted = [
     'FAKE_PROVIDER_API_KEY',
     'ANTHROPIC_API_KEY',
@@ -983,13 +983,13 @@ describe('toolSpawnEnv allowlist coverage', () => {
   });
 });
 
-// Issue #366: a proxy URL's userinfo (`http://user:password@proxy:3128`) is a
-// credential in the §3.8 sense, but the NAME looks benign, so `looksSecret`
+// A proxy URL's userinfo (`http://user:password@proxy:3128`) is a
+// credential in the sense, but the NAME looks benign, so `looksSecret`
 // never sees it and it reached every tool child — where the model can read it
-// with `echo $HTTPS_PROXY` (§36.1 rule 2). The value keeps its scheme, host
+// with `echo $HTTPS_PROXY`. The value keeps its scheme, host
 // and port and loses the userinfo; a proxy that REQUIRES that auth is not
 // usable from a tool child (Kubic does not broker proxy auth).
-describe('proxy credentials in the tool env (issue #366)', () => {
+describe('proxy credentials in the tool env', () => {
   it('strips the userinfo, keeping scheme, host and port', () => {
     const out = toolSpawnEnv({
       HTTPS_PROXY: 'http://user:sekret-pass@proxy.corp:3128',

@@ -1,6 +1,4 @@
-// The approval surface (issue #96, acceptance criteria 1 and 2).
-// RED: nothing in the interactive TUI can answer an approval — the host's
-// installed policy has no answer seat, and approval-view.ts is runtime-dead.
+// The approval surface.
 //
 // Criterion 1's key map is pinned here as pure render/settle tests: there is
 // no VirtualTerminal in the pinned pi-tui, so the card is rendered at a fixed
@@ -26,7 +24,7 @@ const REQUEST: ApprovalViewRequest = {
   justification: 'clean scratch dir',
 };
 
-// The card the app shows for the surface's current ask (issue #459).
+// The card the app shows for the surface's current ask.
 function card(surface: ApprovalSurface, width: number): string {
   const request = surface.pending();
   if (request === undefined) return '';
@@ -48,7 +46,7 @@ function card(surface: ApprovalSurface, width: number): string {
   ).join('\n');
 }
 
-describe('approval surface: decisions (issue #96, criterion 1)', () => {
+describe('approval surface: decisions', () => {
   it('resolves allow-once, allow-session and deny by key', async () => {
     for (const [key, expected] of [
       ['a', { approved: true, by: 'allow-once' }],
@@ -123,7 +121,7 @@ describe('approval surface: decisions (issue #96, criterion 1)', () => {
   });
 });
 
-describe('approval surface: boot key check (issue #96, criterion 1)', () => {
+describe('approval surface: boot key check', () => {
   it('passes the shipped defaults with zero conflicts', () => {
     const surface = createApprovalSurface({ armingMs: 0 });
     expect(surface.checkKeys()).toBe(true);
@@ -150,7 +148,7 @@ describe('approval surface: boot key check (issue #96, criterion 1)', () => {
   });
 });
 
-describe('approval surface: untrusted content (issue #96, criterion 1)', () => {
+describe('approval surface: untrusted content', () => {
   it('sanitizes the request before it reaches a render function', async () => {
     const ESC = '\u001b';
     const BEL = '\u0007';
@@ -175,12 +173,12 @@ describe('approval surface: untrusted content (issue #96, criterion 1)', () => {
   });
 });
 
-// Issue #232: the asker's own bound can expire while its question is on
+// The asker's own bound can expire while its question is on
 // screen (the host service aborts the seat on maxPendingMs). The surface must
 // withdraw exactly that ask — not the queue around it — or the obsolete
 // question keeps the screen (and blocks the next real ask) while a decision
 // pressed later would settle a question nobody is waiting for.
-describe('approval surface: an aborted ask is withdrawn (issue #232)', () => {
+describe('approval surface: an aborted ask is withdrawn', () => {
   const second: ApprovalViewRequest = { ...REQUEST, key: 'k-2' };
 
   it('withdraws the shown ask, resolves it as cancelled, and shows the next', async () => {

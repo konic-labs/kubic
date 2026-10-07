@@ -1,4 +1,4 @@
-// The ONE secret-key classifier (issue #359): the worker spawn env, its debug
+// The ONE secret-key classifier: the worker spawn env, its debug
 // redaction and the trajectory exporter all ask this function, so a key the
 // spawn path treats as secret can never be exported in the clear.
 import { describe, expect, it } from 'vitest';
@@ -17,7 +17,7 @@ describe('isSecretEnvKey', () => {
     'GCP_CREDENTIALS',
     'TOKEN',
     'KEY',
-    // Anthropic workload identity federation (issue #402; pi-ai 0.99.2):
+    // Anthropic workload identity federation (pi-ai 0.99.2):
     // the identity config reads none of the suffix rules — the token FILE
     // ends in _FILE, the ids end in _ID — so each is named explicitly.
     'ANTHROPIC_IDENTITY_TOKEN_FILE',
@@ -43,7 +43,7 @@ describe('isSecretEnvKey', () => {
     expect(REDACTED_ENV_VALUE).toBe('<redacted>');
   });
 
-  it('redacts the Anthropic federation block whole (issue #402)', () => {
+  it('redacts the Anthropic federation block whole', () => {
     expect(
       redactSecretEnv({
         PATH: '/bin',

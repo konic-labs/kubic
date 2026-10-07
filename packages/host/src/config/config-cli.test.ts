@@ -1,4 +1,4 @@
-// `kubic config` (issue #90; §50/§78) — RED first.
+// `kubic config`.
 // Presentation only over an injected load: the command must never re-derive
 // paths, trust, or env overrides of its own, and must fail closed with the
 // named reason instead of printing a default.
@@ -72,7 +72,7 @@ function collect(): { lines: string[]; out: (line: string) => void } {
   return { lines, out: (line: string) => lines.push(line) };
 }
 
-describe('kubic config (issue #90)', () => {
+describe('kubic config', () => {
   it('renders the effective values with their layers, exit 0', () => {
     const { lines, out } = collect();
     const code = runConfigCommand({}, { load: runtime, out });
@@ -83,7 +83,7 @@ describe('kubic config (issue #90)', () => {
     expect(text).toContain('journal retention: 30 day(s)');
   });
 
-  it("renders a role's allowed set with its layer (issue #255)", () => {
+  it("renders a role's allowed set with its layer", () => {
     const { lines, out } = collect();
     const base = runtime();
     base.config.roles = {

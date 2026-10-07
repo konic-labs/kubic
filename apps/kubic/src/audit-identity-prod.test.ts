@@ -74,7 +74,7 @@ function catalog(steps: FauxMessage[]): MutableModels {
 }
 
 // The seams of a headless run that default to process.cwd() — the tool env
-// (and so the §60 ledger's workspace), skills discovery, role documents and
+// (and so the ledger's workspace), skills discovery, role documents and
 // models.json — pinned to a temp workspace, so a run never reads or writes the
 // real cwd (a Stryker sandbox is a directory inside the checkout: the ledger
 // resolver would climb out of it into the real repo).
@@ -120,7 +120,7 @@ async function sessionOnSmall(root: string): Promise<string> {
   return id;
 }
 
-describe('kubic run: the audit row and the trajectory name the model the lane runs (issue #148)', () => {
+describe('kubic run: the audit row and the trajectory name the model the lane runs', () => {
   it('an unpinned resume of a faux/small session records faux/small, not the selected default faux/big', async () => {
     const root = tmpRoot('audit-id-root-');
     const workspace = tmpRoot('audit-id-ws-');
@@ -134,14 +134,14 @@ describe('kubic run: the audit row and the trajectory name the model the lane ru
         ...hermetic(workspace),
       },
     );
-    // The lane ran on the session's own model (issue #148) ...
+    // The lane ran on the session's own model ...
     expect(result.model).toBe('faux/small');
     expect(result.terminus).toBe('approval_denied');
-    // ... so the §60 row of the refused ask names it ...
+    // ... so the audit row of the refused ask names it ...
     const records = readAuditLedger(auditLedgerDir(workspace));
     const record = records.find((r) => r.what === 'tool:bash');
     expect(record?.model).toMatchObject({ provider: 'faux', id: 'small' });
-    // ... and so does the §46 trajectory (model and provenance).
+    // ... and so does the trajectory (model and provenance).
     const exported = parseTrajectoryExportJSON(
       readFileSync(result.trajectoryRef ?? '', 'utf8'),
     );
@@ -192,7 +192,7 @@ function type(fake: ReturnType<typeof fakeTerminal>, text: string): void {
   fake.feed('\r');
 }
 
-describe('kubic tui: the audit row names the model the lane runs (issues #148, #227, #295)', () => {
+describe('kubic tui: the audit row names the model the lane runs', () => {
   it('after `/model alt/m1` the refused ask is recorded on alt/m1, not the boot model', async () => {
     const workspace = tmpRoot('audit-id-tui-ws-');
     const sessionsRoot = tmpRoot('audit-id-tui-root-');
@@ -304,7 +304,7 @@ describe('a run records its own identity', () => {
   });
 });
 
-describe('installSoloPolicy audit model (issues #148, #227)', () => {
+describe('installSoloPolicy audit model', () => {
   const call = (id: string) => ({
     toolName: 'bash',
     args: { command: 'rm -rf build' },

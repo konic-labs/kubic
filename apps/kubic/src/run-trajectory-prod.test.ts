@@ -1,4 +1,4 @@
-// Prod `kubic run -p` writes a §46 trajectory (issue #383): the settled run
+// Prod `kubic run -p` writes a trajectory: the settled run
 // persists <sessions-root>/<id>/trajectory.json, the exporter's fail-closed
 // rules hold on the live path, and the printed ref names that file. Faux
 // provider only (KUBIC_PROVIDER=faux, the shipped testing provider): zero
@@ -65,7 +65,7 @@ function readTrajectory(path: string): TrajectoryExport {
   return parseTrajectoryExportJSON(readFileSync(path, 'utf8'));
 }
 
-describe('kubic run writes a §46 trajectory (issue #383)', () => {
+describe('kubic run writes a trajectory', () => {
   it('a completed faux run writes <root>/<id>/trajectory.json and the ref names it', async () => {
     const {
       root,

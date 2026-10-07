@@ -1,4 +1,4 @@
-// The `/scoped-models` report (issue #255; §38.2): the role's resolved
+// The `/scoped-models` report: the role's resolved
 // allowed set as one transcript line. Pure (no lane, no app) so the
 // wording is pinned next to the code; the loop case only appends it.
 import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';

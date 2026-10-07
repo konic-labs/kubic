@@ -1,4 +1,4 @@
-// Exact-pin check (issue #4, design §65; extended to the CLI stack).
+// Exact-pin check (extended to the CLI stack).
 // Every dependency spec in every workspace package.json must be an exact
 // version — no ^, ~, or ranges — so Pi upgrades AND third-party upgrades
 // (commander, consola, @clack/prompts, dev tooling) are
@@ -15,12 +15,12 @@ function packageJsonFiles(root) {
   const files = [join(root, 'package.json')];
   for (const area of ['packages', 'apps']) {
     // Stryker disable next-line ArrayDeclaration: a junk seed entry fails
-    // statSync and is skipped, so the file list is identical (tracking: #66).
+    // statSync and is skipped, so the file list is identical.
     let entries = [];
     try {
       entries = readdirSync(join(root, area));
       // Stryker disable next-line BlockStatement: without `continue`,
-      // `entries` is still [] and the loop below is a no-op (tracking: #66).
+      // `entries` is still [] and the loop below is a no-op.
     } catch {
       continue;
     }
@@ -29,7 +29,7 @@ function packageJsonFiles(root) {
       try {
         // Stryker disable next-line ConditionalExpression: pushing a
         // non-file is unobservable — readFileSync/parse throw and the
-        // entry is skipped just the same (tracking: #66).
+        // entry is skipped just the same.
         if (statSync(f).isFile()) files.push(f);
       } catch {
         // no manifest — nothing to check
@@ -45,7 +45,7 @@ export function checkPinned(root) {
     let manifest;
     try {
       // Stryker disable next-line StringLiteral: "" encoding returns a
-      // Buffer and JSON.parse coerces it identically (tracking: #66).
+      // Buffer and JSON.parse coerces it identically.
       manifest = JSON.parse(readFileSync(file, 'utf8'));
     } catch {
       continue;
@@ -59,7 +59,7 @@ export function checkPinned(root) {
       for (const [dep, spec] of Object.entries(manifest[section] ?? {})) {
         // Stryker disable next-line ConditionalExpression: dropping the
         // typeof guard is unobservable — no non-string JSON value
-        // stringifies to an exact-version match (tracking: #66).
+        // stringifies to an exact-version match.
         if (typeof spec !== 'string' || !EXACT_RE.test(spec)) {
           violations.push({
             file: relative(root, file),

@@ -1,9 +1,9 @@
-// Trajectory exporter (issue #51; design §46).
+// Trajectory exporter.
 // Fail-closed: provenance + the ACTUAL used ExecutionEnv snapshot are
 // mandatory — a missing/incomplete provenance or env throws
 // TrajectoryExportError (machine-readable code + non-zero exitCode),
 // never a silently dropped section. The env recorded is the USED spawn
-// env (post-allowlist §3.8 + role grant), never the intended config:
+// env (post-allowlist + role grant), never the intended config:
 // callers must pass capturedFrom: 'used' or the build is refused.
 
 import { redactSecretEnv } from '../../core/src/secret-keys.js';
@@ -147,7 +147,7 @@ function checkProvenance(input: BuildTrajectoryInput): TrajectoryProvenance {
   return provenance;
 }
 
-// §46r2/§3.8: record the env the run ACTUALLY used. The discriminator
+// 2/: record the env the run ACTUALLY used. The discriminator
 // forces the caller to assert this — an intended/configured snapshot is
 // refused, so a trajectory can never claim unrun config.
 //
@@ -167,7 +167,7 @@ function checkEnvironment(input: BuildTrajectoryInput): TrajectoryEnvironment {
   if (e.capturedFrom !== 'used') {
     throw new TrajectoryExportError(
       'untrusted-environment',
-      `trajectory export blocked: environment.capturedFrom must be 'used' (got ${JSON.stringify(e.capturedFrom)}) — record the USED spawn env, never the intended config (§46r2/§3.8)`,
+      `trajectory export blocked: environment.capturedFrom must be 'used' (got ${JSON.stringify(e.capturedFrom)}) — record the USED spawn env, never the intended config`,
     );
   }
   if (!nonEmpty(e.cwd) || !isRecord(e.env)) {
@@ -261,7 +261,7 @@ function checkUsage(input: BuildTrajectoryInput): TrajectoryUsage {
       }
     }
   }
-  // Issue #331: the declared contract requires usage.byModel (a record of
+  // The declared contract requires usage.byModel (a record of
   // per-model rows). A caller that omits it gets the empty record, never
   // an export the parser (and every consumer) would refuse.
   return {
@@ -270,7 +270,7 @@ function checkUsage(input: BuildTrajectoryInput): TrajectoryUsage {
   };
 }
 
-// §52 on failures: every non-completed result carries its failure
+// On failures: every non-completed result carries its failure
 // category; a completed result carrying an error is contradictory.
 function checkResult(input: BuildTrajectoryInput): TrajectoryResult {
   const result = input.result;
@@ -317,7 +317,7 @@ function checkResult(input: BuildTrajectoryInput): TrajectoryResult {
   ) {
     throw new TrajectoryExportError(
       'missing-failure-category',
-      `trajectory export blocked: result.status ${JSON.stringify(status)} requires a §52 failureCategory`,
+      `trajectory export blocked: result.status ${JSON.stringify(status)} requires a failureCategory`,
     );
   }
   if (error !== null && error !== undefined) {
@@ -332,7 +332,7 @@ function checkResult(input: BuildTrajectoryInput): TrajectoryResult {
   return result as TrajectoryResult;
 }
 
-// 1.1 (issue #329): every escalation must name the model it moved to —
+// 1.1: every escalation must name the model it moved to —
 // an escalation without a target cannot be attributed to a model in RL
 // pairing or cost analysis. Fail-closed, never a silently target-less
 // record.
@@ -404,7 +404,7 @@ export function buildTrajectoryExport(
     task: input.task,
     identity: {
       ...input.identity,
-      // 1.1 (issue #329): ancestry + agent role. An absent parent is an
+      // 1.1: ancestry + agent role. An absent parent is an
       // explicit null and an absent role falls back to the task's own —
       // a 1.1 write never omits the fields.
       parentSessionId: input.identity.parentSessionId ?? null,

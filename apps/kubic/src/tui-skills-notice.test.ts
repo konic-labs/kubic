@@ -1,4 +1,4 @@
-// The TUI's one-time skill warning notice (issue #238): loader lines the
+// The TUI's one-time skill warning notice: loader lines the
 // TUI used to drop (a skipped skill) ride the boot notices once — stderr
 // `warning: …` before the alt-screen opens — instead of vanishing. A clean
 // boot stays silent. Real `bootTuiLane` over tmp dirs, faux models only:
@@ -49,7 +49,7 @@ async function bootNotices(cwd: string, home: string): Promise<string[]> {
   }
 }
 
-describe('TUI skill warning notice (issue #238)', () => {
+describe('TUI skill warning notice', () => {
   it('names a skipped skill once instead of dropping it', async () => {
     const cwd = tmpRoot('kubic-238-tui-cwd-');
     const dir = join(cwd, '.pi', 'skills', 'gem');

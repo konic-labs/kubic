@@ -1,4 +1,4 @@
-// The TUI theme's pure functions (issue #319): colour-level detection for
+// The TUI theme's pure functions: colour-level detection for
 // every documented environment branch, the elapsed-time formatter at its
 // boundaries, and the spinner's wrap. Pure: no env is read or changed.
 import { describe, expect, it } from 'vitest';
@@ -12,7 +12,7 @@ import {
   tuiTheme,
 } from './theme.js';
 
-describe('detectColorLevel (issue #319)', () => {
+describe('detectColorLevel', () => {
   it.each([
     ['0', 'none'],
     ['false', 'none'],
@@ -65,7 +65,7 @@ describe('detectColorLevel (issue #319)', () => {
   });
 });
 
-describe('formatElapsed and spinnerFrame (issue #319)', () => {
+describe('formatElapsed and spinnerFrame', () => {
   it('formats seconds below a minute and minutes from 60 s', () => {
     expect(formatElapsed(0)).toBe('0s');
     expect(formatElapsed(59_999)).toBe('59s');
@@ -84,7 +84,7 @@ describe('formatElapsed and spinnerFrame (issue #319)', () => {
   });
 });
 
-describe('the active theme (issue #319)', () => {
+describe('the active theme', () => {
   it('is none unless a test sets it — and the shared afterEach resets it', () => {
     expect(tuiTheme().level).toBe('none');
     setTuiTheme(createTuiTheme('truecolor'));

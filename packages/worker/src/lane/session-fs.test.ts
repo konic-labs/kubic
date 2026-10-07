@@ -1,4 +1,4 @@
-// Pi FileSystem over the exec file bridge (issue #71, Pi 1.0 surface #392).
+// Pi FileSystem over the exec file bridge (Pi 1.0 surface).
 //
 // 1.0 `FileSystem` adds `id`, `truncateFile` and `flushFile`; the adapter must
 // implement the whole interface over the exec bridge, and the portable JSONL
@@ -43,7 +43,7 @@ function setup(files: Record<string, string>): {
   return { fs: bridgeToPiFileSystem(bridge) };
 }
 
-describe('bridgeToPiFileSystem 1.0 surface (issue #392)', () => {
+describe('bridgeToPiFileSystem 1.0 surface', () => {
   it('reports the local node file namespace', () => {
     const root = scratch('session-fs-');
     expect(bridgeToPiFileSystem(createNodeFileBridge(root)).id).toBe(
@@ -94,7 +94,7 @@ describe('bridgeToPiFileSystem 1.0 surface (issue #392)', () => {
   });
 });
 
-describe('bridgeToPiFileSystem.openTextLineReader (issue #71)', () => {
+describe('bridgeToPiFileSystem.openTextLineReader', () => {
   it('reads terminated lines with terminated=true', async () => {
     const { fs } = setup({ 'a.txt': 'one\ntwo\n' });
     const opened = await fs.openTextLineReader('a.txt', BACKGROUND_CONTEXT);
@@ -149,7 +149,7 @@ describe('bridgeToPiFileSystem.openTextLineReader (issue #71)', () => {
 // The adapter is what the session storage writes through, so pi-durable's own
 // storage contract has to hold over the exec bridge: the whole portable JSONL
 // suite runs against a real temp directory and the node bridge.
-describe('JSONL storage over the exec bridge (issue #392)', () => {
+describe('JSONL storage over the exec bridge', () => {
   registerStorageConformance(
     { describe, expect, it },
     'bridgeToPiFileSystem + JsonlStorage',

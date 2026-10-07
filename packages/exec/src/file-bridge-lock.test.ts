@@ -1,4 +1,4 @@
-// updateFileLocked + createTempFile/readFileRange durability (issue #360):
+// updateFileLocked + createTempFile/readFileRange durability:
 // the stale-lock break, the contention timeout, release when update()
 // throws, tmp cleanup when rename fails, cross-process serialization, the
 // EEXIST temp retry and short reads past EOF. Real temp dirs, zero network,
@@ -61,7 +61,7 @@ function runChild(script: string): Promise<void> {
   });
 }
 
-describe('updateFileLocked failure paths (issue #360)', () => {
+describe('updateFileLocked failure paths', () => {
   it('breaks a stale lock and applies the update', () => {
     const dir = scratch();
     const file = join(dir, 'state.json');
@@ -158,7 +158,7 @@ describe('updateFileLocked failure paths (issue #360)', () => {
   });
 });
 
-describe('temp + range primitives (issue #360)', () => {
+describe('temp + range primitives', () => {
   it('createTempFile retries on EEXIST and returns attempt 1', () => {
     const { bridge } = (() => {
       const cwd = scratch();

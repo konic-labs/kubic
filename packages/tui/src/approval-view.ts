@@ -1,9 +1,9 @@
-// The approval contract the TUI shares (issue #26; §41, §16.6, §16.9): the
+// The approval contract the TUI shares: the
 // request and decision shapes, the decision keys (defaults, overrides,
-// conflict and hygiene checks, the arming timings of #315), the overlay
-// options the question and confirm dialogs use (§16.4), and the memoOnce /
+// conflict and hygiene checks, the arming timings of), the overlay
+// options the question and confirm dialogs use, and the memoOnce /
 // timeout→deny helpers. The approval itself renders as the inline card
-// (approval-card.ts, issue #459).
+// (approval-card.ts).
 // Presentation only: mirrors the host decider semantics
 // (packages/host/src/approvals.ts) structurally without importing it —
 // dep-lint forbids tui → host. Pi is touched ONLY through
@@ -13,7 +13,7 @@ import type { CellDisplay } from './transcript.js';
 import type { Component } from './tui-boundary.js';
 import { matchesKey } from './tui-boundary.js';
 
-// Issue #467: `comment` denies with the operator's words, `edit` rewrites a
+// `comment` denies with the operator's words, `edit` rewrites a
 // command before allowing it, `allow-edits` approves the turn's edits.
 export type ApprovalAction =
   | 'allow-once'
@@ -33,10 +33,10 @@ export interface ApprovalViewRequest {
   readonly paths?: ReadonlyArray<string>;
   readonly justification?: string;
   readonly summary?: string;
-  // Issue #459: an edit or write ask's change, as the inline diff the card
+  // An edit or write ask's change, as the inline diff the card
   // shows (the host computes it against the file on disk).
   readonly preview?: CellDisplay;
-  // Issue #467: the host's word on which steering answers this ask takes.
+  // The host's word on which steering answers this ask takes.
   readonly editable?: boolean;
   readonly batchable?: boolean;
 }
@@ -45,12 +45,12 @@ export type ApprovalDecision =
   | { approved: true; by: string; edited?: { command: string } }
   | { approved: false; reason: string };
 
-// Overlay geometry (§16.4): centered 70% width / 60% height, visible at
-// 80+ columns. Approvals are an inline card now (issue #459); the question
+// Overlay geometry: centered 70% width / 60% height, visible at
+// 80+ columns. Approvals are an inline card now; the question
 // and confirm dialogs still use this overlay.
 export const APPROVAL_MIN_WIDTH = 80;
 
-// Structural overlay options mirroring Pi's OverlayOptions (§16.4) without
+// Structural overlay options mirroring Pi's OverlayOptions without
 // importing Pi past the seam: OverlayOptions is not a boundary export and
 // the boundary is frozen for this issue. Field-for-field compatible with
 // Pi's OverlayOptions (width/maxHeight accept numbers or "N%" strings).
@@ -71,7 +71,7 @@ export interface ApprovalOverlayOptions {
   readonly nonCapturing?: boolean;
 }
 
-// The overlay's size caps, as percentages of the terminal (§16.4).
+// The overlay's size caps, as percentages of the terminal.
 const APPROVAL_OVERLAY_WIDTH_PERCENT = 70;
 const APPROVAL_OVERLAY_HEIGHT_PERCENT = 60;
 
@@ -113,11 +113,11 @@ export function approvalOverlayBounds(
   };
 }
 
-// Issue #316: the key that pages a long command (or opens an edit's whole
+// The key that pages a long command (or opens an edit's whole
 // diff) on the approval card. It never decides.
 export const APPROVAL_PAGE_KEY = 'v';
 
-// Keybinding registry (§16.6/§16.9). Defaults live here (not in Pi's
+// Keybinding registry. Defaults live here (not in Pi's
 // global KeybindingsManager — the tui seam exposes no registry writer),
 // matched exclusively through matchesKey: no hardcoded key strings on
 // the input path.
@@ -127,7 +127,7 @@ export const APPROVAL_DEFAULT_KEYS: Record<
   ApprovalAction,
   readonly ApprovalKeyId[]
 > = {
-  // Issue #315: an approval is consent to run code with the operator's
+  // An approval is consent to run code with the operator's
   // authority, so type-ahead meant for the editor must never produce one.
   // allow-once and deny keep a letter but act only after the arming delay
   // below; allow-session (consent for the whole session) is Ctrl-S, which
@@ -135,26 +135,26 @@ export const APPROVAL_DEFAULT_KEYS: Record<
   'allow-once': ['a'],
   'allow-session': ['ctrl+s'],
   deny: ['d', 'escape'],
-  // Issue #467: plain letters like allow-once — each acts only after the
+  // Plain letters like allow-once — each acts only after the
   // arming delay, and `c`/`e` only open an input the operator must send.
   comment: ['c'],
   edit: ['e'],
   'allow-edits': ['shift+a'],
 };
 
-// Issue #315: decision keys are ignored for this long after a request
+// Decision keys are ignored for this long after a request
 // appears (and again for each queued request), so a keystroke typed into the
 // editor a moment before the ask arrived cannot answer it.
 export const APPROVAL_ARMING_MS = 400;
 
-// Issue #315: after ANY key the modal swallows the unlock needs this much
+// After ANY key the modal swallows the unlock needs this much
 // quiet, not just the first arming delay. A thinking pause in the middle of
 // prose is ~0.5 s, so 400 ms after the last typed key would let the next bare
 // `a` answer a request the operator never looked at; 1.5 s is a pause long
 // enough to be a decision to stop typing.
 export const APPROVAL_QUIET_MS = 1500;
 
-// Issue #315: a decision key that arrives within this long of the SAME key is
+// A decision key that arrives within this long of the SAME key is
 // a terminal auto-repeat, not a press. Terminals that do not report key events
 // (Terminal.app, VTE, tmux) send a held `a` as plain repeated bytes after an
 // OS repeat delay of up to ~0.6 s, with nothing to tell it from typing.
@@ -216,13 +216,13 @@ export function resolveApprovalKey(
   return undefined;
 }
 
-// Issue #315: a key ordinary typing can produce — a bare character, space,
+// A key ordinary typing can produce — a bare character, space,
 // or a shifted character (an upper-case letter or a symbol).
 export function isProseKey(key: string): boolean {
   return key.length === 1 || key === 'space' || /^shift\+.$/.test(key);
 }
 
-// Issue #315 (§16.9): registry hygiene beyond action overlaps. allow-session
+// Registry hygiene beyond action overlaps. allow-session
 // may never be a prose key, and no approval key may shadow one of the loop's
 // own global keys (`reserved`, supplied by the app; Esc is exempt — its deny
 // is intentional). One message per problem.
@@ -274,7 +274,7 @@ export function approvalKeyConflicts(
   return conflicts;
 }
 
-// Focus capture + explicit unfocus (§16.4). The handle types mirror Pi's
+// Focus capture + explicit unfocus. The handle types mirror Pi's
 // OverlayHandle structurally so tests inject a fake TUI without touching
 // Pi internals through the seam.
 export interface ApprovalOverlayHandle {
@@ -287,24 +287,24 @@ export interface ApprovalOverlayTui {
     component: Component,
     options?: ApprovalOverlayOptions,
   ): ApprovalOverlayHandle;
-  // Issue #96: a lane-arrived ask is not caused by an input event, so the
+  // A lane-arrived ask is not caused by an input event, so the
   // app must be able to request a frame itself. Optional because the overlay
   // tests drive a fake host that only implements showOverlay; the live
   // TuiAltScreen always provides it.
   requestRender?: (force?: boolean) => void;
-  // Issue #316: the terminal the overlay is composited on (Pi's TUI exposes
+  // The terminal the overlay is composited on (Pi's TUI exposes
   // it). Optional — a host without it keeps the fixed command page size.
   readonly terminal?: {
     readonly rows: number;
     readonly columns: number;
   };
-  // Issue #460: a filter over the base frame before the overlays are
+  // A filter over the base frame before the overlays are
   // composited (the dimmed background behind the palette); the live screen
   // honours it, a fake host simply keeps it.
   baseFilter?: ((lines: string[]) => string[]) | undefined;
 }
 
-// memoOnce decisions (§41): first answer wins, persisted through the
+// memoOnce decisions: first answer wins, persisted through the
 // injected store so a restart/rerender never re-asks. The store is
 // memory by default — file backing (like the host's approvals.json) is
 // composed by the caller, never by this module (I/O confinement).
@@ -355,7 +355,7 @@ export interface ApprovalWaitOptions {
   readonly awaitAnswer?: (key: string) => Promise<ApprovalDecision | undefined>;
 }
 
-// Timeout→deny (§41): every wait is bounded by maxPendingMs, so headless
+// Timeout→deny: every wait is bounded by maxPendingMs, so headless
 // (-p) runs settle without a user. Late answers lose to the memo latch.
 // A rejected awaitAnswer resolves deny (never propagates); the timer is
 // always cleared via .finally.

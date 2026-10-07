@@ -1,5 +1,4 @@
-// The framed editor and the working line (EPIC N, issue #454; docs/ui
-// 01-K and the mid-turn frame).
+// The framed editor and the working line (and the mid-turn frame).
 //
 // Pi's Editor draws a rule above and below its lines and nothing at the
 // sides. The frame closes the box: ` ┌─…─┐ `, ` │ › <text>   @ file  / cmd │ `,

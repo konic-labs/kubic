@@ -1,5 +1,5 @@
-// Fuzzy match positions for highlighting (EPIC N, issue #452; the palette's
-// accent letters in docs/ui 03-B). Ranking stays with Pi's fuzzyFilter where
+// Fuzzy match positions for highlighting (the palette's
+// accent letters). Ranking stays with Pi's fuzzyFilter where
 // a list is ordered; this module only answers *which letters* matched.
 //
 // Case-insensitive subsequence match. A contiguous run is preferred (the

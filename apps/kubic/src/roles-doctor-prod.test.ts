@@ -1,9 +1,9 @@
-// §40.3 role posture on the PRODUCTION doctor path (issue #99's named gap).
+// Role posture on the PRODUCTION doctor path (the named gap).
 //
-// The child implementing #99 built `rolesDoctorProbe` and its seam but could
+// The child implementing built `rolesDoctorProbe` and its seam but could
 // not inject it: the only injection site was apps/kubic/src/main.ts, which
 // was fenced to a sibling. So the probe was complete and the binary's
-// `kubic doctor` had no role section. This pins the wire — since #135 the
+// `kubic doctor` had no role section. This pins the wire — the
 // production wiring lives in apps/kubic/src/prod-runners.ts.
 //
 // Driven through the real doctor command with the real probe, over a real
@@ -92,10 +92,10 @@ async function report(
   return JSON.parse(lines.join('\n')) as Report;
 }
 
-describe('doctor reports the §40.3 role posture on the production path (#99)', () => {
+describe('doctor reports the role posture on the production path', () => {
   it('a contradictory role document fails the run with a named reason', async () => {
     // `tools: [read, write]` with `filesystem: read` — the document declares a
-    // write tool under a read-only filesystem class. That is the §40.3
+    // write tool under a read-only filesystem class. That is the
     // contradiction the resolver refuses; doctor must show it, not discovery.
     const cwd = roleDir(
       'liar',
@@ -131,7 +131,7 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
     ).toBe(true);
   });
 
-  // §58 enterprise tool policy (issue #288): `kubic run --role` refuses a
+  // Enterprise tool policy: `kubic run --role` refuses a
   // role that declares a denied tool, so doctor must show it red instead of
   // green — through the real doctor command, over a real `.kubic/roles/`.
   it('a role declaring an enterprise-denied tool is red; an innocuous one stays green', async () => {
@@ -150,7 +150,7 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
     const failing = gated.checks.filter((c) => c.status === 'fail');
     // The repo's implementer (bash) and the embedded presets that run a shell
     // are refused by name; the repo's own planner declares no bash and stays
-    // green (issue #203 adds the presets to the tree).
+    // green.
     expect(failing.map((c) => c.id)).toEqual([
       'role:debugger',
       'role:implementer',
@@ -191,7 +191,7 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
       ),
     ).toBe(true);
     // The layer covers only the implementer: the roles it does not touch
-    // still declare bash and are still refused (issue #203).
+    // still declare bash and are still refused.
     expect(
       layered.checks.filter((c) => c.status === 'fail').map((c) => c.id),
     ).toEqual([
@@ -213,7 +213,7 @@ describe('doctor reports the §40.3 role posture on the production path (#99)', 
     ]);
   });
 
-  it('an absent role directory reports the embedded presets, not a failure (issue #203)', async () => {
+  it('an absent role directory reports the embedded presets, not a failure', async () => {
     // Most workspaces have no `.kubic/roles/`; doctor must stay green there,
     // and it must name what the run would actually assign — the five presets
     // that ship with the binary, each marked `builtin`.

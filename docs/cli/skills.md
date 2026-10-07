@@ -5,7 +5,6 @@
 > `packages/host/src/skills-boot.ts` (lane boot + listing summary),
 > `packages/host/src/skills-cli.ts` (`kubic skills`),
 > `apps/kubic/src/prod-runners.ts` (prod wiring).
-> Issue [#238](https://github.com/konic-labs/kubic/issues/238).
 
 Skills are markdown documents (`SKILL.md`) the agent can read: reusable
 instructions that land on the system prompt as `<skill>` blocks. Discovery

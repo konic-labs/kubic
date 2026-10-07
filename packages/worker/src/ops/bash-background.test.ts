@@ -1,4 +1,4 @@
-// Issue #339: the bash tool must never stall a turn on a stdin reader or a
+// The bash tool must never stall a turn on a stdin reader or a
 // backgrounded job, must not leak the detached process group, and must
 // report signal exits as 128+signal. Real NodeExecutionEnv + real bash.
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -73,7 +73,7 @@ function alive(pid: number): boolean {
 
 const posix = process.platform !== 'win32';
 
-describe.runIf(posix)('bash stdin and background jobs (issue #339)', () => {
+describe.runIf(posix)('bash stdin and background jobs', () => {
   it('a stdin reader (cat) with no timeout settles promptly with exit 0', async () => {
     const started = Date.now();
     const result = await run({ command: 'cat' });
@@ -151,7 +151,7 @@ describe.runIf(posix)('bash stdin and background jobs (issue #339)', () => {
   });
 });
 
-describe.runIf(posix)('bash default and maximum timeout (issue #339)', () => {
+describe.runIf(posix)('bash default and maximum timeout', () => {
   it('applies the default timeout when the model supplies none', async () => {
     const started = Date.now();
     const result = await run(
@@ -186,7 +186,7 @@ describe.runIf(posix)('bash default and maximum timeout (issue #339)', () => {
   });
 });
 
-describe.runIf(posix)('bash policy from the environment (issue #339)', () => {
+describe.runIf(posix)('bash policy from the environment', () => {
   it('applies KUBIC_BASH_TIMEOUT when the context carries no policy', async () => {
     vi.stubEnv('KUBIC_BASH_TIMEOUT', '0.3');
     const started = Date.now();
@@ -210,7 +210,7 @@ describe.runIf(posix)('bash policy from the environment (issue #339)', () => {
   });
 });
 
-describe('resolveBashPolicy (issue #339)', () => {
+describe('resolveBashPolicy', () => {
   it('defaults when nothing is set', () => {
     expect(resolveBashPolicy({})).toEqual({
       defaultTimeoutSec: BASH_DEFAULT_TIMEOUT_SEC,

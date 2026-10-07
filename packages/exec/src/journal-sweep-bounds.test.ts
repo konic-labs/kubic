@@ -1,13 +1,12 @@
-// Sweep content bound + lossy-decode guard (issue #120).
+// Sweep content bound + lossy-decode guard.
 //
-// #107 bounded the walk's HASHING; the sweep's after-content READ stayed
-// whole-file, so a changed multi-hundred-MB artifact still cost its size in
-// memory on the run's exit path, and binary files were stored as mangled
-// text. This file pins the sweep bound: at or under MAX_SWEEP_CONTENT_BYTES
-// a changed file is read whole and its after-content stored; above it — or
-// when the utf-8 round-trip is lossy — the entry is hash-only (`after: null`,
-// the walk hash intact) and `diff` renders a size-only change.
-// RED: the sweep reads changed files whole and stores lossy text for binaries.
+// Bounded the walk's HASHING; the sweep's after-content READ stayed whole-file,
+// so a changed multi-hundred-MB artifact still cost its size in memory on the
+// run's exit path, and binary files were stored as mangled text. This file pins
+// the sweep bound: at or under MAX_SWEEP_CONTENT_BYTES a changed file is read
+// whole and its after-content stored; above it — or when the utf-8 round-trip
+// is lossy — the entry is hash-only (`after: null`, the walk hash intact) and
+// `diff` renders a size-only change.
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -51,7 +50,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-// Read-size-observing double (the #107 technique): counts every read the
+// Read-size-observing double: counts every read the
 // sweep asks the bridge for, so "never reads above the bound" is observed,
 // not assumed. Wraps the real node bridge, so the read still happens.
 function spyReads(): {
@@ -87,7 +86,7 @@ function spyReads(): {
   return { bridge, state };
 }
 
-// Acceptance invariant (#120): for every entry with retrievable after-content,
+// Acceptance invariant: for every entry with retrievable after-content,
 // its hash is exactly what the entry claims.
 function expectAfterHashConsistent(store: FileJournalStore): void {
   for (const e of store.entries()) {
@@ -96,7 +95,7 @@ function expectAfterHashConsistent(store: FileJournalStore): void {
   }
 }
 
-describe('sweep content bound (issue #120)', () => {
+describe('sweep content bound', () => {
   it('never reads a changed file above the bound; records it hash-only with the walk hash', () => {
     const size = MAX_SWEEP_CONTENT_BYTES + 1024 * 1024;
     const root = tmpRoot();
@@ -258,7 +257,7 @@ describe('sweep content bound (issue #120)', () => {
   });
 });
 
-describe('git baseline cost (issue #371)', () => {
+describe('git baseline cost', () => {
   it('stays a metadata walk: two git calls and no blob reads, however many files the repo holds', () => {
     const root = tmpRoot();
     const fileCount = 50;

@@ -1,6 +1,6 @@
-// Reading sessions without running them (issues #250, #251): the lock-free
+// Reading sessions without running them: the lock-free
 // read-only open and the project test `kubic cost` and the TUI's `/resume`
-// summaries (session-summaries.ts, #461) share. Nothing here creates or
+// summaries (session-summaries.ts) share. Nothing here creates or
 // removes `lock.json` or writes a byte, so the session dir mtime (the prune
 // age signal) stays untouched.
 
@@ -14,7 +14,7 @@ import {
   type Storage,
 } from '../../worker/src/pi-boundary.js';
 
-// Issue #251: lock-free read-only open of one session's storage. The
+// Lock-free read-only open of one session's storage. The
 // caller classified the session via `listSessions` and probed no live
 // holder via `sessionLockIsLive`, so this never creates or removes
 // `lock.json` and a concurrent attach is never blocked. A missing storage
@@ -28,8 +28,8 @@ export async function openReadOnlySessionStorage(
     throw new SessionAttachError(sessionId);
   }
   // The portable core over the exec bridge, never the `/node` entry point:
-  // session bytes keep crossing the I/O seam, where the #359 secret
-  // scrubbing and the #361 file modes live (see session-fs.ts). fsync stays
+  // session bytes keep crossing the I/O seam, where the secret
+  // scrubbing and the file modes live (see session-fs.ts). fsync stays
   // off — a reader never commits, so there is nothing to flush.
   return JsonlStorage.open(
     join(sessionsRoot, sessionId),
@@ -39,7 +39,7 @@ export async function openReadOnlySessionStorage(
   );
 }
 
-// Issue #250 (§39): the invoking workspace, canonically. Symlinks are
+// The invoking workspace, canonically. Symlinks are
 // resolved (macOS /var → /private/var); a path that no longer exists keeps
 // its lexical form, matching journal-cli's rule, so it can then only match
 // itself.
@@ -51,7 +51,7 @@ function canonicalWorkspace(path: string): string {
   }
 }
 
-// Issue #250: whether a session belongs to the invoking project. The
+// Whether a session belongs to the invoking project. The
 // recorded workspace (`meta.workspace ?? meta.cwd`) matches when it nests
 // with the invocation either way — a run started at the repo root covers a
 // reader in a subdirectory, and a subdir run still belongs to a reader at

@@ -1,5 +1,5 @@
-// The §58 enterprise policy and the model-pin semantics on the PRODUCTION
-// runners (issues #288, #294, #295, #227). Every case builds its deps through
+// The enterprise policy and the model-pin semantics on the PRODUCTION
+// runners. Every case builds its deps through
 // `createProdRunners` / `prodRunDeps` — the functions the binary calls — over
 // a real `loadRuntimeConfig`, never a hand-spread dep: the audit found that
 // tests which spread the deps themselves stay green when the production
@@ -65,7 +65,7 @@ const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
 
 const PROJECT = '/nonexistent-cwd/.kubic/config.toml';
 
-// Issue #430: the tests below load workspace role documents, so they run
+// The tests below load workspace role documents, so they run
 // under the trusted report — the `KUBIC_TRUST_PROJECT=1` equivalent. Trust
 // behavior itself stays pinned by the trust-store and skills suites.
 const TRUSTED = {
@@ -79,7 +79,7 @@ function cliConfig(
   options: {
     env?: Record<string, string>;
     cliModel?: { provider: string; id: string };
-    // Issue #430: role documents resolve under project trust — tests that
+    // Role documents resolve under project trust — tests that
     // load workspace role docs opt into the trusted report.
     trust?: CliConfigResult['trust'];
   } = {},
@@ -140,7 +140,7 @@ function providers(
   return models;
 }
 
-describe('prodRunDeps hands the headless runner every config seam (issues #230, #288, #295)', () => {
+describe('prodRunDeps hands the headless runner every config seam', () => {
   it('forwards the enterprise policy, the model pin, the approvals and the run projections', () => {
     const cfg = cliConfig({
       [ENTERPRISE]:
@@ -180,7 +180,7 @@ describe('prodRunDeps hands the headless runner every config seam (issues #230, 
   });
 });
 
-describe('`kubic run` through the prod runner enforces the config (issues #230, #288)', () => {
+describe('`kubic run` through the prod runner enforces the config', () => {
   beforeEach(() => {
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
   });
@@ -224,11 +224,11 @@ describe('`kubic run` through the prod runner enforces the config (issues #230, 
   });
 });
 
-// Issue #183 (§29.4): a disableModelInvocation skill is reachable only
+// A disableModelInvocation skill is reachable only
 // through explicit invocation — `--invoke-skill` expands the skill content
 // against the booted (gated-visible, hidden included) skills and runs it
 // as the turn prompt; an unknown name fails the run closed.
-describe('explicit skill invocation reaches hidden skills (issue #183)', () => {
+describe('explicit skill invocation reaches hidden skills', () => {
   beforeEach(() => {
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
   });
@@ -236,7 +236,7 @@ describe('explicit skill invocation reaches hidden skills (issue #183)', () => {
   function hiddenSkillWorkspace(): { workspace: string; marker: string } {
     const workspace = tmpRoot('kubic-prod-183-');
     const marker = join(workspace, 'invoked');
-    // Project skills load inside a repository (issue #189: the walk stops
+    // Project skills load inside a repository (the walk stops
     // at the git top level), so mark the workspace root.
     mkdirSync(join(workspace, '.git'), { recursive: true });
     mkdirSync(join(workspace, '.agents', 'skills', 'secret'), {
@@ -289,10 +289,10 @@ describe('explicit skill invocation reaches hidden skills (issue #183)', () => {
     expect(existsSync(marker)).toBe(false);
   });
 });
-// Issue #196 (§40.2/§41.1): the lane installs the most restrictive merge
+// The lane installs the most restrictive merge
 // of the config classes and the role's, and the role's approval obligations
 // challenge on the installed triggers.
-describe('role classes and approval requires reach the installed policy (issue #196)', () => {
+describe('role classes and approval requires reach the installed policy', () => {
   beforeEach(() => {
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
   });
@@ -402,7 +402,7 @@ describe('role classes and approval requires reach the installed policy (issue #
   });
 });
 
-describe('a frozen enterprise model pin announces the flag or env pin it overrides (issue #295)', () => {
+describe('a frozen enterprise model pin announces the flag or env pin it overrides', () => {
   const FROZEN = '[model]\nprovider = "corp"\nid = "approved"\n';
   const NOTE_CLI =
     'note: --model evil/other ignored: model pinned by enterprise policy (corp/approved)';
@@ -503,7 +503,7 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
   });
 });
 
-describe('a model refusal names the real source of the pin (issues #227, #295)', () => {
+describe('a model refusal names the real source of the pin', () => {
   // A catalog whose `anthropic` provider exists but lacks the pinned id, so
   // the refusal is the "unknown model" one — no network, no key.
   const catalog = (): MutableModels =>
@@ -604,7 +604,7 @@ describe('a model refusal names the real source of the pin (issues #227, #295)',
   });
 });
 
-describe('`kubic replay --tier live` re-executes under the enterprise policy (issue #288)', () => {
+describe('`kubic replay --tier live` re-executes under the enterprise policy', () => {
   function replayFixture(objective = 'say hi'): {
     trajectory: string;
     lockfile: string;
@@ -705,7 +705,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
     const { trajectory } = replayFixture();
     const roleConfig = join(tmpRoot('kubic-replay-role-'), 'role.json');
     writeFileSync(roleConfig, '{"role":"writer"}\n');
-    // Issue #272: the role config names the role; the document it pins
+    // The role config names the role; the document it pins
     // must exist in the re-execution's worktree (the mocked workspace).
     const workspace = tmpRoot();
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
@@ -729,7 +729,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
     expect(code).toBe(6);
   });
 
-  it('applies the pinned role: a tool outside its allowlist is not registered (issue #272)', async () => {
+  it('applies the pinned role: a tool outside its allowlist is not registered', async () => {
     // The re-execution prompt asks for bash. Under a role whose tools are
     // [read] the bash tool is never registered, so the marker cannot be
     // created; under a role that allows bash it is. That is the difference
@@ -765,7 +765,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
     }
   });
 
-  it('runs the re-execution in the pinned worktree (issue #272)', async () => {
+  it('runs the re-execution in the pinned worktree', async () => {
     // The lane's cwd is the pin: a bash write lands in the worktree the
     // request names, not in the process working directory. The role
     // document is loaded from that same tree.
@@ -808,7 +808,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy (is
   });
 });
 
-describe('`kubic tui` through the prod runner enforces the enterprise model gate (issue #288)', () => {
+describe('`kubic tui` through the prod runner enforces the enterprise model gate', () => {
   it('refuses a model outside allowed_models with the named refusal, before any terminal opens (exit 6)', async () => {
     // The audit's finding: the gate was inert on the interactive runner
     // because the policy never reached the boot. `r.tui` builds its deps with
@@ -861,7 +861,7 @@ describe('role documents under the enterprise tool policy on the doctor runner',
     };
     const roles = report.checks.filter((c) => /(^|:)role:/.test(c.id));
     // Every role declaring `bash` is refused by name — the repo's implementer
-    // override and the four embedded presets that run a shell (issue #203).
+    // override and the four embedded presets that run a shell.
     // The repo's own planner declares no bash, so it stays green.
     const failed = roles
       .filter((c) => c.status === 'fail')
@@ -908,7 +908,7 @@ describe('role documents under the enterprise tool policy on the doctor runner',
     const roles = report.checks.filter((c) => /role:/.test(c.id));
     // The layer narrows the implementer below the deny, so that role is green
     // — while the roles the layer does NOT cover still declare bash and are
-    // still refused (the presets, issue #203).
+    // still refused.
     expect(roles.find((c) => c.id.endsWith('role:implementer'))?.status).toBe(
       'pass',
     );
@@ -918,7 +918,7 @@ describe('role documents under the enterprise tool policy on the doctor runner',
     expect(failed).toEqual(['role:debugger', 'role:reviewer', 'role:tester']);
   });
 
-  // Issue #235: the doctor runner judges roles AFTER the config
+  // The doctor runner judges roles AFTER the config
   // `[roles.<name>]` layers `kubic run --role` merges — a layer that
   // contradicts the document fails the role here with the run's refusal,
   // and with no `[roles]` section the document alone decides.

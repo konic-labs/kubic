@@ -1,4 +1,4 @@
-// Real-git test hermeticity gate (issues #365, #420).
+// Real-git test hermeticity gate.
 //
 // Every real-git test must drive git through the shared helper
 // (`packages/exec/src/test-support/git-sandbox.ts`), never through a bare
@@ -13,8 +13,8 @@
 //   packages/host/src or apps/kubic/src that spawns `git` directly
 //   (execFileSync/spawnSync/execSync/execFile/spawn with a 'git' command,
 //   quoted or backtick) is an offender — importing the sandbox helper does
-//   NOT exempt a file (issue #420: flag the bare spawn per line even in
-//   files that import the helper, so a half-migrated file stays red).
+//   NOT exempt a file (flag the bare spawn per line even in files that import
+//   the helper, so a half-migrated file stays red).
 //   Tests that need git call `sandbox.git(...)` / `sandbox.gitResult(...)`
 //   (scrubbed env) or activate the sandbox into process.env for
 //   production code that spawns git on the inherited environment.
@@ -50,7 +50,7 @@ const SCOPED_DIRS = [
 // string elsewhere (a matcher vocabulary, a FakeExecutionEnv script) is not
 // a spawn and must not match — and neither is a `.shell.spawn('git', …)`
 // method call: that goes through the ExecutionEnv seam, not
-// `child_process` directly (issue #212: the fake's own unit tests drive
+// `child_process` directly (the fake's own unit tests drive
 // the seam with git argv and stay hermetic). The lookbehind keeps longer
 // identifiers (`myspawnSync(`) out as well.
 const DIRECT_GIT_SPAWN_RE =
@@ -74,7 +74,7 @@ function testFiles(root = ROOT) {
 
 // `file:line: text` for every test file with a direct git spawn. Importing
 // the sandbox helper does not exempt a file: each bare spawn is flagged
-// per line (issue #420) so half-migrated files stay red.
+// per line so half-migrated files stay red.
 function gitOffenders(root = ROOT, files = testFiles(root)) {
   const offenders = [];
   for (const file of files) {
@@ -92,10 +92,10 @@ function gitOffenders(root = ROOT, files = testFiles(root)) {
 // One walk of the real tree, shared by the gate and its coverage floor.
 const SCOPED_TESTS = testFiles();
 
-describe('real-git tests use the shared helper (issues #365, #420)', () => {
+describe('real-git tests use the shared helper', () => {
   it('no worker, exec, host or apps test spawns git directly', () => {
     // Source-text scan: the Stryker sandbox copy rewrites sources, so the
-    // check is meaningless there (mutation work is deferred, #407).
+    // check is meaningless there (mutation work is deferred).
     if (process.env.STRYKER_MUTATOR_WORKER !== undefined) return;
     const offenders = gitOffenders(ROOT, SCOPED_TESTS);
     assert.deepEqual(
@@ -134,7 +134,7 @@ describe('real-git tests use the shared helper (issues #365, #420)', () => {
         "import { createGitSandbox } from './test-support/git-sandbox.js';\nsandbox.git(['x']);\n",
       );
       // A file that imports the helper but still spawns directly: every
-      // bare spawn is flagged anyway (issue #420).
+      // bare spawn is flagged anyway.
       write(
         'packages/host/src/half.test.ts',
         "import { createGitSandbox } from '../../exec/src/test-support/git-sandbox.js';\nexecFileSync('git', ['init']);\n",

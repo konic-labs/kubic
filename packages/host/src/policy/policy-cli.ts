@@ -1,4 +1,4 @@
-// `kubic policy --tool <name> [--json]` (issue #79; §58).
+// `kubic policy --tool <name> [--json]`.
 // A routing offer only: the command reports the enterprise allow/deny for
 // one tool and enforces nothing, mutates nothing. The effective policy
 // arrives injected (faux in tests); deny-by-default holds — a tool with no
@@ -35,7 +35,7 @@ export interface PolicyCommandDeps {
   // Colour of the stderr diagnostics, from stderr's own TTY state (never
   // stdout's); absent means plain.
   errTheme?: CliTheme;
-  // §40.2 (issue #166): the installed classes' levels the tool set cannot
+  // The installed classes' levels the tool set cannot
   // express. Each is named — a `warn:` line on stderr, or the `unsupported`
   // array in `--json` — so the decision never reads as a restriction the
   // lane does not enforce. Absent means none.
@@ -61,8 +61,8 @@ export function policyFromInstalledAllowlist(
   ]).policy;
 }
 
-// The policy a run from THIS workspace actually installs (issue #288): the
-// §58 enterprise/product/… policy INTERSECTED with the installed class
+// The policy a run from THIS workspace actually installs: the
+// Enterprise/product/… policy INTERSECTED with the installed class
 // allowlist. Denies and provenance survive; a tool the enterprise allows but
 // the classes withhold is refused (and vice versa) — `kubic policy` never
 // reports a tool the lane would not register.

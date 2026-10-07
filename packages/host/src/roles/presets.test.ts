@@ -1,13 +1,13 @@
-// The five shipped role presets, pinned to the §12/§12.1 table (issue #157).
+// The five shipped role presets, pinned to the table.
 //
 // `.kubic/roles/*.md` is the reviewable source of the presets, so this test
 // loads the REAL documents through the REAL resolver and compares each one's
 // resolved tool set and permission classes to the table below — a literal
 // fixture, so a preset drifting from the design fails here instead of in a
-// lane at runtime. Deviations from §12.1 are deliberate (the git levels are
+// lane at runtime. Deviations from are deliberate (the git levels are
 // `false`, `workspace`, `full`; the read-only shell level is the shipped
-// spelling of §12.1's reviewer/planner `shell: true` — the issue that moved
-// them there is #157, and the level itself is #161's closed allowlist).
+// spelling of reviewer/planner `shell: true` — the issue that moved
+// them there is, and the level itself is the closed allowlist).
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,12 +67,12 @@ interface Preset {
   classes: PermissionClasses;
 }
 
-// §12/§12.1, as shipped (issue #157). Tools are the resolver's own sorted,
+// As shipped. Tools are the resolver's own sorted,
 // deduped set.
 const TABLE: Record<string, Preset> = {
-  // §12: read, grep, find, ls; §12.1: filesystem read, shell
+  // Read, grep, find, ls; filesystem read, shell
   // read-only-allowlist, git false. The read-only shell is what makes the
-  // "read-only inspection commands" capability safe (issue #161's closed
+  // "read-only inspection commands" capability safe (the closed
   // allowlist), and it is how the planner reads git state.
   planner: {
     tools: ['bash', 'find', 'grep', 'ls', 'read'],
@@ -84,7 +84,7 @@ const TABLE: Record<string, Preset> = {
       credentials: 'none',
     },
   },
-  // §12: full coding set; §12.1: workspace-write, shell true, git
+  // Full coding set; workspace-write, shell true, git
   // `workspace`.
   implementer: {
     tools: [
@@ -112,7 +112,7 @@ const TABLE: Record<string, Preset> = {
       credentials: 'none',
     },
   },
-  // §12.1: workspace-write, shell true, git false — so the tester runs tests
+  // Workspace-write, shell true, git false — so the tester runs tests
   // and fixes them, and holds no git tool (read-only or writer): git state
   // changes are the implementer's, never a test run's.
   tester: {
@@ -125,9 +125,8 @@ const TABLE: Record<string, Preset> = {
       credentials: 'none',
     },
   },
-  // §12 gives the debugger the full coding set; §12.1 has no debugger row,
-  // so it follows the implementer's classes (drift: named here, not in the
-  // table).
+  // The debugger gets the full coding set and has no class row of its own,
+  // so it follows the implementer's classes.
   debugger: {
     tools: [
       'bash',
@@ -153,7 +152,7 @@ const TABLE: Record<string, Preset> = {
       credentials: 'none',
     },
   },
-  // §12: read, grep, find, ls, bash (read-only checks); §12.1: filesystem
+  // Read, grep, find, ls, bash (read-only checks); filesystem
   // read, git false. The reviewer runs its targeted checks through the
   // read-only shell — including `git status/diff/log/show`, which the
   // allowlist admits — and holds no writer tool.
@@ -169,7 +168,7 @@ const TABLE: Record<string, Preset> = {
   },
 };
 
-describe('shipped role presets match §12/§12.1 (issue #157)', () => {
+describe('shipped role presets match /', () => {
   const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
 
   it('ships exactly the five presets the table names', () => {
@@ -188,12 +187,12 @@ describe('shipped role presets match §12/§12.1 (issue #157)', () => {
     },
   );
 
-  // The SAME pin for the copy that ships inside the binary (issue #203):
+  // The SAME pin for the copy that ships inside the binary:
   // `.kubic/roles/*.md` is the reviewable source, but a workspace with no
   // roles directory runs `builtin-presets.ts`, so that text must match the
   // table too — and match the documents byte for byte, or the two copies
   // drift with every gate green.
-  describe('the copy embedded in the binary (issue #203)', () => {
+  describe('the copy embedded in the binary', () => {
     it('is byte-identical to .kubic/roles/*.md', () => {
       for (const doc of docs) {
         expect(
@@ -216,9 +215,9 @@ describe('shipped role presets match §12/§12.1 (issue #157)', () => {
   });
 
   it('keeps the read-only roles on a shell level that can actually read', () => {
-    // §12's reviewer runs "targeted checks" and the planner "read-only
+    // 's reviewer runs "targeted checks" and the planner "read-only
     // inspection commands": both need bash, and both must be blocked from
-    // writing through it (issue #161's allowlist is what enforces that).
+    // writing through it (the allowlist is what enforces that).
     for (const name of ['planner', 'reviewer']) {
       const resolved = resolveRole(docNamed(docs, name), []);
       expect(resolved.classes.shell).toBe('read-only-allowlist');

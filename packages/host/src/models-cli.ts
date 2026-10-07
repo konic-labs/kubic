@@ -1,6 +1,6 @@
-// `kubic models` (issue #20, slice C; §17).
+// `kubic models`.
 // Catalog readout over an assembled models instance: Pi's generated
-// built-in catalogue (issue #221) plus models.json customs. Presentation
+// built-in catalogue plus models.json customs. Presentation
 // only — nothing here dials a provider.
 
 import { homedir } from 'node:os';
@@ -45,9 +45,9 @@ export interface ProviderInfo {
   readonly authSource?: string;
 }
 
-// One models.json location the assembly looked at (issue #322): the
+// One models.json location the assembly looked at: the
 // user-global file is always trusted; the project file only after the
-// project-trust decision (§35.1).
+// project-trust decision.
 export interface ModelsSource {
   readonly path: string;
   readonly scope: 'global' | 'project';
@@ -70,15 +70,14 @@ export interface AssembledModels {
   readonly fallbackProviders: readonly string[];
 }
 
-// Assembly options are also the provider-registration options (issue #359,
-// §36.1): a run passes its request-time key resolver here and it reaches
-// every registerCustomProviders call, so each models.json key use is
-// resolved per request and audited.
+// Assembly options are also the provider-registration options: a run passes its
+// request-time key resolver here and it reaches every registerCustomProviders
+// call, so each models.json key use is resolved per request and audited.
 export interface AssembleOptions extends RegisterCustomProvidersOptions {
   // The home holding ~/.kubic/models/models.json; also what the auth
   // context expands `~` against (tests pass a temp dir).
   readonly home?: string;
-  // Issue #228 review: the per-path trust check for the project layer. The
+  // The per-path trust check for the project layer. The
   // project root is resolved by walking ancestors (findModelsProjectRoot),
   // so the decision is checked for THAT root — a grant for /repo covers
   // /repo/models.json when a run starts in /repo/pkg, and a grant for
@@ -87,12 +86,12 @@ export interface AssembleOptions extends RegisterCustomProvidersOptions {
   readonly projectTrust?: (path: string) => boolean;
 }
 
-// The user-global models.json (§35 global tree: ~/.kubic/models/).
+// The user-global models.json (global tree: ~/.kubic/models/).
 export function globalModelsPath(home: string): string {
   return join(home, '.kubic', 'models', 'models.json');
 }
 
-// The project root the project models.json lives at (issue #222): the
+// The project root the project models.json lives at: the
 // nearest ancestor of `cwd` (itself included) holding a `.git` entry (a
 // repository or worktree top level) or a `.kubic` directory — never the home
 // directory, whose `.kubic` is the GLOBAL tree. No marker: `cwd` itself.
@@ -138,7 +137,7 @@ export interface ModelsCommandDeps extends CliIo {
   // Origin + auth state per provider (from assembleModels). Without it every
   // registered provider is listed as-is.
   providers?: ReadonlyMap<string, ProviderInfo>;
-  // Issue #449: the configured model pin (`provider/id`), marked as the
+  // The configured model pin (`provider/id`), marked as the
   // default in the terminal view. Absent: the selection chain's own pick.
   defaultModel?: string;
 }
@@ -148,9 +147,9 @@ export interface ModelsCommandDeps extends CliIo {
 export interface ModelsCommandOptions {
   readonly json?: boolean;
   readonly resolve?: string;
-  // Issue #449: list one provider in full (`kubic models <provider>`).
+  // List one provider in full (`kubic models <provider>`).
   readonly provider?: string;
-  // Issue #449: include the providers without a configured key.
+  // Include the providers without a configured key.
   readonly all?: boolean;
 }
 
@@ -177,7 +176,7 @@ function errorText(error: unknown): string {
 // Composition helper: Pi's built-in providers, then models.json customs —
 // the user-global ~/.kubic/models/models.json (trusted), then the project
 // file, which is project-local configuration and loads only after project
-// trust (issue #322; §35.1): before trust it is never read, only named.
+// trust: before trust it is never read, only named.
 // A project provider overrides a global one with the same id. File access
 // goes through the exec bridge (I/O confinement) — absent or invalid
 // models.json is reported, never thrown past the CLI. A custom provider may
@@ -231,7 +230,7 @@ export async function assembleModels(
         JSON.parse(bridge.readTextFile(path)) as unknown,
       );
       refuseBuiltinCollisions(specs, builtinIds);
-      // A run passes its request-time key resolver (issue #359) so every
+      // A run passes its request-time key resolver so every
       // provider-key use is resolved and audited per request.
       const names = registerCustomProviders(models, specs, options);
       for (const name of names) {
@@ -302,7 +301,7 @@ export async function assembleModels(
   };
 }
 
-// Doctor's models.json line (issue #322): each file found, its scope and
+// Doctor's models.json line: each file found, its scope and
 // trust state. An invalid file fails the check by name (a refused config is
 // never silently ignored); an untrusted one is reported, not failed.
 export function modelsSourcesProbe(assembled: AssembledModels): DepProbe {
@@ -328,7 +327,7 @@ export function modelsSourcesProbe(assembled: AssembledModels): DepProbe {
   };
 }
 
-// Doctor's provider lines (issue #221): only the providers a run could use
+// Doctor's provider lines: only the providers a run could use
 // — customs, the testing provider, built-ins with configured auth — each
 // naming where it came from. Keyless built-ins are not listed (they are not
 // available), so a machine with no key still reports no provider.
@@ -439,7 +438,7 @@ export async function runModelsCommand(
     return 0;
   }
   if (deps.fancy === true) {
-    // Issue #449: the catalogue view on an interactive colour terminal.
+    // The catalogue view on an interactive colour terminal.
     for (const line of renderModelsCatalog(catalog, themeOf(deps), {
       ...(options.provider === undefined ? {} : { only: options.provider }),
       ...(options.all === true ? { all: true } : {}),

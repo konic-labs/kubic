@@ -1,4 +1,4 @@
-// `--session <id>` resolves to a run's §46 trajectory (issue #383): export
+// `--session <id>` resolves to a run's trajectory: export
 // and replay read <sessions-root>/<id>/trajectory.json, so the printed ref
 // and the session id are both ways back to the record. Faux provider only;
 // temp sessions root and workspace.
@@ -35,7 +35,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('persistRunTrajectory (issue #383)', () => {
+describe('persistRunTrajectory', () => {
   function persist(
     processEnv: NodeJS.ProcessEnv,
     extra: Partial<Parameters<typeof persistRunTrajectory>[0]> = {},
@@ -88,7 +88,7 @@ describe('persistRunTrajectory (issue #383)', () => {
     expect(exported.approvals).toEqual([]);
   });
 
-  it('carries the lane escalation record into model.escalations (issue #210)', () => {
+  it('carries the lane escalation record into model.escalations', () => {
     const { exported } = persist(
       {},
       {
@@ -123,7 +123,7 @@ describe('persistRunTrajectory (issue #383)', () => {
   });
 });
 
-describe('resolveSessionTrajectory (issue #383)', () => {
+describe('resolveSessionTrajectory', () => {
   it('passes options through untouched without --session', () => {
     expect(resolveSessionTrajectory({ trajectory: 't.json' }, '/root')).toEqual(
       {

@@ -72,7 +72,7 @@ function completeInput(
   };
 }
 
-describe('trajectory export fail-closed (issue #51)', () => {
+describe('trajectory export fail-closed', () => {
   it('blocks export when provenance is missing (non-zero, machine-readable)', () => {
     const input = completeInput();
     const { provenance: _dropped, ...rest } = input;
@@ -129,8 +129,8 @@ describe('trajectory export fail-closed (issue #51)', () => {
   });
 });
 
-describe('trajectory golden fixture (issue #51, §46)', () => {
-  it('emits every §46 field with the recorded values', () => {
+describe('trajectory golden fixture', () => {
+  it('emits every trajectory field with the recorded values', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         transfer: {
@@ -169,7 +169,7 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
       parentSessionId: null,
       role: 'writer',
     });
-    // 1.1 (issue #329): every new field is present on a write, with
+    // 1.1: every new field is present on a write, with
     // explicit null/[] meaning "not recorded" — never an invented value.
     expect(exported.state.operations).toEqual([]);
     expect(exported.state.memos).toEqual([]);
@@ -208,7 +208,7 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
     expect(exported.result.status).toBe('completed');
     expect(exported.eval).toEqual({ suite: null, caseId: null, labels: {} });
     // Golden output re-parses with no shim — this is the record
-    // replay --diff-against (#52) and eval (#53) consume directly.
+    // replay --diff-against and eval consume directly.
     const revived = parseTrajectoryExport(
       JSON.parse(JSON.stringify(exported)) as unknown,
     );
@@ -219,8 +219,8 @@ describe('trajectory golden fixture (issue #51, §46)', () => {
   });
 });
 
-describe('trajectory schema 1.1 (issue #329)', () => {
-  it('carries the additive §46 fields and round-trips through the parser', () => {
+describe('trajectory schema 1.1', () => {
+  it('carries the additive trajectory fields and round-trips through the parser', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         identity: {
@@ -319,7 +319,7 @@ describe('trajectory schema 1.1 (issue #329)', () => {
   });
 });
 
-describe('trajectory observations + failures + eval slot (issue #51)', () => {
+describe('trajectory observations + failures + eval slot', () => {
   it('truncates long observations but keeps the byte count', () => {
     const big = 'x'.repeat(MAX_OBSERVATION_BYTES + 100);
     const exported = buildTrajectoryExport(
@@ -338,7 +338,7 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     expect(observation?.output).toBe(big.slice(0, MAX_OBSERVATION_BYTES));
   });
 
-  it('keeps the §52 failure taxonomy in sync with the worker owner', () => {
+  it('keeps the failure taxonomy in sync with the worker owner', () => {
     expect([...TRAJECTORY_FAILURE_CODES].sort()).toEqual(
       [
         'approval_denied',
@@ -361,7 +361,7 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     );
   });
 
-  it('requires a §52 category on every non-completed result', () => {
+  it('requires a failure category on every non-completed result', () => {
     try {
       buildTrajectoryExport(
         completeInput({
@@ -384,7 +384,7 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     );
   });
 
-  it('records the §52 category on failures for replay/debug', () => {
+  it('records the failure category on failures for replay/debug', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         result: {
@@ -417,7 +417,7 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
     throw new Error('contradictory result exported — expected block');
   });
 
-  it('carries the eval slot through for issue #53 with no shim', () => {
+  it('carries the eval slot through with no shim', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         eval: { suite: 'bench-1', caseId: 'case-7', labels: { lang: 'ts' } },
@@ -434,7 +434,7 @@ describe('trajectory observations + failures + eval slot (issue #51)', () => {
   });
 });
 
-describe('trajectory review fixes (round 2)', () => {
+describe('trajectory export regressions', () => {
   it('truncates multi-byte output on a character boundary — byte cap holds exactly, no U+FFFD', () => {
     const cjk = 'あ'.repeat(5000);
     expect(Buffer.byteLength(cjk, 'utf8')).toBe(15_000);
@@ -527,7 +527,7 @@ describe('trajectory review fixes (round 2)', () => {
     });
   });
 
-  it('defaults usage.byModel to an empty record when the caller omits it (issue #331)', () => {
+  it('defaults usage.byModel to an empty record when the caller omits it', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         // A runtime caller that never built the per-model rollup: the
@@ -558,7 +558,7 @@ describe('trajectory review fixes (round 2)', () => {
       PATH: '/usr/bin',
       HOME: '/home/agent',
       SECRET_TOKEN: 's3cret-that-must-not-leak',
-      // Issue #402: the Anthropic federation block (pi-ai 0.99.2) is secret
+      // The Anthropic federation block (pi-ai 0.99.2) is secret
       // even though its names match no suffix rule.
       ANTHROPIC_FEDERATION_RULE_ID: 'fdrl_123',
       ANTHROPIC_IDENTITY_TOKEN_FILE: '/run/secrets/identity-token',

@@ -1,11 +1,11 @@
-// Reference verifier tests (issue #54, RED first).
+// Reference verifier tests.
 // The reference verifier answers tests-pass using the eval runner's own
 // signal derivation (computeSignals/gatesPass) — never a re-guess.
 import { describe, expect, it } from 'vitest';
 import { makeExport } from './fixtures.js';
 import { referenceVerifier } from './verifier.js';
 
-describe('referenceVerifier (issue #54)', () => {
+describe('referenceVerifier', () => {
   it('passes when the eval labels carry signal:tests=pass', () => {
     const verdict = referenceVerifier(
       makeExport({ evalLabels: { 'signal:tests': 'pass' } }),

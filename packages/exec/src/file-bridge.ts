@@ -1,4 +1,4 @@
-// Node file bridge (issue #14, slice A): exec-owned durable file access.
+// Node file bridge: exec-owned durable file access.
 // All node:fs touching stays in this package (I/O confinement); Pi types
 // never cross here. The worker adapts this bridge to Pi's FileSystem for
 // JsonlSessionRepo — sync core wrapped async at the seam.
@@ -35,15 +35,14 @@ export interface BridgeFileInfo {
   /**
    * True only for regular files. False for FIFOs, sockets and device nodes,
    * which must never be read: a synchronous read of a named pipe blocks until
-   * a writer opens it (issue #87 follow-up — a FIFO in the workspace wedged
-   * baseline capture at boot, and no test timeout can fire on a sync block).
+   * a writer opens it.
    * Optional so existing fake bridges stay valid; `undefined` means "assume a
    * regular file", which is what a synthetic entry intends.
    */
   isFile?: boolean;
   /**
    * Permission bits of the path itself (lstat: never the link target's),
-   * setuid/setgid/sticky included (issue #117 review). Optional so existing
+   * setuid/setgid/sticky included. Optional so existing
    * fake bridges stay valid; `undefined` means "mode unknown", and the
    * restore falls back to its restrictive creation mode rather than
    * guessing.
@@ -65,7 +64,7 @@ export interface FileBridge {
   readTextFile(path: string): string;
   readBinaryFile(path: string): Uint8Array;
   /**
-   * Read `[start, end)` bytes (issue #107). Optional so existing bridges stay
+   * Read `[start, end)` bytes. Optional so existing bridges stay
    * valid; when absent the journal falls back to whole-file reads, which is
    * correct-but-unbounded. The node bridge implements it, so every production
    * walk is bounded.
@@ -79,9 +78,9 @@ export interface FileBridge {
     options?: { mode?: number },
   ): void;
   /**
-   * Append, creating the file with `mode` when it does not exist (issue
-   * #361: the journal index and the session JSONL are private state, and
-   * `mode` is applied only at creation — an existing file keeps its own).
+   * Append, creating the file with `mode` when it does not exist (the journal
+   * index and the session JSONL are private state, and `mode` is applied only
+   * at creation — an existing file keeps its own).
    */
   appendFile(
     path: string,
@@ -89,7 +88,7 @@ export interface FileBridge {
     options?: { mode?: number },
   ): void;
   /**
-   * Append with fsync (issue #117): the change journal's crash-safety seam.
+   * Append with fsync: the change journal's crash-safety seam.
    * The content is on platter before the call returns — an index append a
    * crash can lose or truncate is exactly the failure the journal exists to
    * prevent. Optional so existing test doubles stay valid; the journal falls
@@ -102,7 +101,7 @@ export interface FileBridge {
     options?: { mode?: number },
   ): void;
   /**
-   * Truncate (or extend) a file to exactly `size` bytes (issue #392): the
+   * Truncate (or extend) a file to exactly `size` bytes: the
    * pi-durable JSONL storage core drops a torn trailing record with this on
    * recovery, so a crash mid-append is recovered instead of poisoning the
    * session. Optional so existing test doubles stay valid; a bridge without
@@ -110,15 +109,14 @@ export interface FileBridge {
    */
   truncateFile?(path: string, size: number): void;
   /**
-   * Flush a file's contents and the metadata needed to read them back
-   * (issue #392): the session storage's fsync seam. Kubic opens its sessions
-   * without it (the journal is the fsync'd store — see
-   * docs/packages/worker.md), so this exists for a caller that asks for
-   * durability explicitly. Optional like the rest.
+   * Flush a file's contents and the metadata needed to read them back: the
+   * session storage's fsync seam. Kubic opens its sessions without it (the
+   * journal is the fsync'd store — see docs/packages/worker.md), so this exists
+   * for a caller that asks for durability explicitly. Optional like the rest.
    */
   flushFile?(path: string): void;
   /**
-   * fsync a directory (issue #344): a rename is atomic, but its directory
+   * fsync a directory: a rename is atomic, but its directory
    * entry is durable only once the directory itself is flushed. The journal
    * flushes the blob directory after renaming a blob into place, and the
    * journal directory after renaming a rewritten index over the old one, so
@@ -128,7 +126,7 @@ export interface FileBridge {
   flushDir?(path: string): void;
   renameFile(source: string, destination: string): void;
   /**
-   * Set a path's permission bits (issue #117 review): the seam that lets a
+   * Set a path's permission bits: the seam that lets a
    * tmp+rename restore keep the target's own mode (a 0600 secret stays 0600,
    * a 755 script keeps its exec bit) instead of inheriting the tmp's.
    * Optional so existing test doubles stay valid; a bridge without it leaves
@@ -139,7 +137,7 @@ export interface FileBridge {
   listDir(path: string): BridgeFileInfo[];
   exists(path: string): boolean;
   /**
-   * Canonical absolute path (symlinks resolved; issue #362 compares a
+   * Canonical absolute path (symlinks resolved; compares a
    * session's recorded cwd with the invocation cwd). Optional so test
    * doubles stay valid; throws when the path does not exist.
    */
@@ -159,7 +157,7 @@ function infoOf(abs: string): BridgeFileInfo {
     isDirectory: stat.isDirectory(),
     isSymbolicLink: stat.isSymbolicLink(),
     isFile: stat.isFile(),
-    // Permission bits only (issue #117 review): the file-type bits are not
+    // Permission bits only: the file-type bits are not
     // a mode, and a symlink's own bits (0777 on every platform) must stay
     // distinguishable from a real file's.
     mode: stat.mode & 0o7777,
@@ -182,7 +180,7 @@ function sanitizePrefix(prefix: string): string {
 export function createNodeFileBridge(cwd: string): FileBridge {
   const absolutePath = (path: string): string => resolve(cwd, path);
   const ensureParent = (abs: string, mode?: number): void => {
-    // Issue #361: `mode` is for state directories (0700) and applies only to
+    // `mode` is for state directories (0700) and applies only to
     // directories this call creates; a workspace write keeps the umask
     // default, because a user's new directory is not Kubic's to make private.
     if (mode === undefined) {
@@ -199,7 +197,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       readFileSync(absolutePath(path), 'utf8'),
     readBinaryFile: (path: string): Uint8Array =>
       readFileSync(absolutePath(path)),
-    // Range read (issue #107): the journal hashes large files in chunks so a
+    // Range read: the journal hashes large files in chunks so a
     // 256MB artifact costs one chunk of memory, not 256MB.
     readFileRange: (path: string, start: number, end: number): Uint8Array => {
       const handle = openSync(absolutePath(path), 'r');
@@ -232,7 +230,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
     ): void => {
       const abs = absolutePath(path);
       ensureParent(abs, options?.mode);
-      // Creation mode (issue #117 review): `writeFileSync`'s mode only
+      // Creation mode: `writeFileSync`'s mode only
       // applies when the file is created, which is exactly what the restore
       // tmp needs (0600 so crash residue is never world-readable). Omitted
       // entirely when no mode is asked for, so every pre-existing caller
@@ -256,7 +254,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       }
       appendFileSync(abs, content, { mode: options.mode });
     },
-    // Durable append (issue #117): one fd, one write, one fsync — the line
+    // Durable append: one fd, one write, one fsync — the line
     // is on platter before the call returns. `writeSync` may write short on
     // some platforms, so the loop keeps writing until every byte is out;
     // fsync then covers the whole append. Directory-entry durability of the
@@ -302,7 +300,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
         closeSync(fd);
       }
     },
-    // Directory fsync (issue #344): the rename's own durability. macOS and
+    // Directory fsync: the rename's own durability. macOS and
     // Linux both allow opening a directory read-only and flushing it. A
     // platform that refuses either step surfaces the error, and the journal
     // treats an unsupported flush as a degraded write (rename atomicity
@@ -327,7 +325,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
         try {
           out.push(infoOf(join(abs, name)));
         } catch (error) {
-          // Issue #351: one entry vanishing between the listing and its lstat
+          // One entry vanishing between the listing and its lstat
           // must not fail the whole listing — the caller would drop the
           // entire subtree from the walk and read every file in it as
           // deleted. Only ENOENT is tolerated (the entry is simply gone); a
@@ -351,7 +349,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       }
     },
     createDir: (path: string, recursive = true, mode?: number): void => {
-      // Issue #361: `mode` (0700 for state dirs) applies only to directories
+      // `mode` (0700 for state dirs) applies only to directories
       // this call creates; existing ones keep their own.
       if (mode === undefined) {
         mkdirSync(absolutePath(path), { recursive });
@@ -388,7 +386,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
   };
 }
 
-// Run `run` while holding an O_EXCL lockfile (issue #337): the seam for a
+// Run `run` while holding an O_EXCL lockfile: the seam for a
 // mutation that must not interleave with another process's — the journal's
 // append, retention rewrite and blob sweep all run under it. The lock file
 // carries this process's pid, so a read-only observer can tell a live holder
@@ -446,11 +444,11 @@ export function withFileLocked<T>(
   }
 }
 
-// The pid recorded in a lockfile when that process is still alive (issue
-// #337): the read-only view a destructive command uses to skip work instead
-// of racing a live writer. undefined for a missing, unreadable, torn or
-// stale file — and for a pid that is gone, which is exactly what makes a
-// crashed holder's residue harmless.
+// The pid recorded in a lockfile when that process is still alive: the
+// read-only view a destructive command uses to skip work instead of racing a
+// live writer. undefined for a missing, unreadable, torn or stale file — and
+// for a pid that is gone, which is exactly what makes a crashed holder's
+// residue harmless.
 export function liveLockHolder(lockPath: string): number | undefined {
   let raw: string;
   try {

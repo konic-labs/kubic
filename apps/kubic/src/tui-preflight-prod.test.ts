@@ -1,4 +1,4 @@
-// The first screen on the real `kubic tui` path (issue #462; docs/ui 05):
+// The first screen on the real `kubic tui` path:
 // the preflight from the boot's facts, the recent sessions read after the
 // screen opens, and the no-key block printed before exit 6.
 import { describe, expect, it } from 'vitest';
@@ -14,7 +14,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('the first screen on kubic tui (issue #462)', () => {
+describe('the first screen on kubic tui', () => {
   it('opens on the preflight with the version, trust and recent sessions', async () => {
     const fake = terminalRig(140, 40);
     const pending = runTuiCommand(

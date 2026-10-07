@@ -1,11 +1,11 @@
-// Enterprise policy engine (issue #57; §58 TOML surface, precedence).
-// Enterprise is the highest non-overridable layer: a lower layer can never
-// unset or narrow an enterprise denial, and anything not explicitly allowed
-// is denied (deny-by-default is the implicit 8th level below agent).
-// Read-only wrt agents/policy (#15), roles resolver (#43), ScopedToken
-// (#38), doctor (#29): no logic is duplicated from them and none is
-// modified here — this module owns only the enterprise overlay and its
-// evaluation. Faux-only, zero network; no node:fs (FileBridge owns I/O).
+// Enterprise policy engine (TOML surface, precedence). Enterprise is the
+// highest non-overridable layer: a lower layer can never unset or narrow an
+// enterprise denial, and anything not explicitly allowed is denied
+// (deny-by-default is the implicit 8th level below agent). Read-only wrt
+// agents/policy, roles resolver, ScopedToken, doctor: no logic is duplicated
+// from them and none is modified here — this module owns only the enterprise
+// overlay and its evaluation. Faux-only, zero network; no node:fs (FileBridge
+// owns I/O).
 
 import type { KubicConfig } from '../config/config.js';
 
@@ -52,7 +52,7 @@ export interface ModelsPolicy {
   ids?: string[];
   thinking?: string;
   /**
-   * §58 `allowed_models` (issue #288): provider-qualified patterns
+   * `allowed_models`: provider-qualified patterns
    * (`provider/id`, `*` wildcard) or bare model ids. Kept beside the exact
    * `providers`/`ids` lists so both vocabularies meet in one policy.
    */
@@ -69,7 +69,7 @@ export interface FilesystemPolicy {
 export interface DataPolicy {
   retentionDays?: number;
   redactSecrets?: boolean;
-  /** §58 `data_policy` (issue #288): carried, reported, not enforced yet. */
+  /** `data_policy`: carried, reported, not enforced yet. */
   policy?: string;
 }
 
@@ -78,7 +78,7 @@ export type LoggingLevel = 'error' | 'warn' | 'info' | 'debug';
 export interface LoggingPolicy {
   level?: LoggingLevel;
   destinations?: string[];
-  /** §58 `logging_policy` (issue #288): carried, reported, not enforced yet. */
+  /** `logging_policy`: carried, reported, not enforced yet. */
   policy?: string;
 }
 
@@ -220,7 +220,7 @@ const LOGGING_LEVELS: readonly string[] = ['error', 'warn', 'info', 'debug'];
 
 const SINK_KINDS: readonly string[] = ['syslog', 'file', 'memory'];
 
-// §58 `allowed_models` patterns (issue #288): `provider/id`, `provider/*`,
+// `allowed_models` patterns: `provider/id`, `provider/*`,
 // a bare id, or `*` globs. Each segment is non-empty and there is at most
 // one slash, so a pattern can never be a typo that matches nothing while
 // looking like an allow.
@@ -777,7 +777,7 @@ export function resolveEffectivePolicy(
   return { policy: effective, overriddenAttempts };
 }
 
-// §58 → engine vocabulary (issue #288): the `[policy]` section's flat keys
+// → engine vocabulary: the `[policy]` section's flat keys
 // become the LayerPolicy leaves `resolveEffectivePolicy` merges. The two
 // spellings that differ are reconciled here, in one place:
 //   network_policy = "proxy"           → network.mode = 'allowlist'
@@ -868,7 +868,7 @@ export function isToolAllowed(policy: EffectivePolicy, tool: string): boolean {
   );
 }
 
-// The LANE's enterprise gate (issue #288): the effective policy can only
+// The LANE's enterprise gate: the effective policy can only
 // narrow what the lane's classes/roles already allow. It denies a named
 // denied tool always, and — when the enterprise layer configured an allow
 // list — anything outside it; with NO allow list configured the enterprise
@@ -893,7 +893,7 @@ export function isToolAllowedByEnterprise(
 
 // A denied tool is not re-enableable by project, role, or model: any grant
 // path funnels through this gate and the enterprise denial holds. The
-// predicate is the LANE's (`isToolAllowedByEnterprise`, issue #288): a deny
+// predicate is the LANE's: a deny
 // list narrows and an absent allow list says nothing about a tool — the
 // engine's deny-by-default reading (`isToolAllowed`) would refuse every role
 // under a deny-only policy while the lane gate still admits its tools.
@@ -927,7 +927,7 @@ export function isNetworkAllowed(
   return policy.network.domains?.includes(host) ?? false;
 }
 
-// §58 `allowed_models` matching (issue #288): `*` globs inside an id segment
+// `allowed_models` matching: `*` globs inside an id segment
 // (or a whole segment), `provider/id`, or a bare id that matches across
 // providers. A pattern with a provider segment only matches that provider —
 // so `faux/*` can never widen to `other/*`.
@@ -974,8 +974,8 @@ export function hasModelPolicy(policy: EffectivePolicy): boolean {
 }
 
 // Deny-by-default for models: an unlisted provider is never allowed; an
-// unlisted model id is allowed only when no id allowlist is set. §58
-// `allowed` patterns (issue #288) add provider-qualified matches; every
+// unlisted model id is allowed only when no id allowlist is set.
+// `allowed` patterns add provider-qualified matches; every
 // configured list applies (intersection), never widens.
 export function isProviderAllowed(
   policy: EffectivePolicy,
@@ -1021,7 +1021,7 @@ export interface EnterpriseDoctorEnv {
   syslogAvailable: boolean;
 }
 
-// Unenforceable policy is never silent (§50): every check below is always
+// Unenforceable policy is never silent: every check below is always
 // emitted — enforceable leaves report pass, unenforceable ones report fail
 // with the reason. Check ids are enterprise-scoped so they never collide
 // with the host doctor or honest-limits checks (read-only, unmodified).

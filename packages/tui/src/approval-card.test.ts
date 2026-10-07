@@ -1,4 +1,4 @@
-// The inline approval card (EPIC N, issue #459; docs/ui 02-A … 02-E). Pure
+// The inline approval card. Pure
 // renders at depth none read like the design.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../core/src/ui/style.js';
@@ -36,7 +36,7 @@ const shell = {
   justification: 'the build output is stale',
 };
 
-describe('approval card (issue #459; 02-A … 02-D)', () => {
+describe('approval card', () => {
   it('frames a shell ask with its command, reason, cwd and keys', () => {
     const lines = renderApprovalCard(plain, shell, 100, base);
     expect(lines[0]?.startsWith(' ┏━ [APPROVAL] ━ bash ━')).toBe(true);
@@ -47,7 +47,7 @@ describe('approval card (issue #459; 02-A … 02-D)', () => {
     );
     expect(lines).toContain(' ┃   ○ cwd           ~/Desktop/kubic-playground');
     const keys = lines.find((line) => line.includes('allow once')) ?? '';
-    // Issue #467: `c` joins the keys; at 100 columns `esc = deny` takes its
+    // `c` joins the keys; at 100 columns `esc = deny` takes its
     // own row.
     expect(keys).toMatch(
       /a {2}allow once {4}\^S {2}allow for session {4}d {2}deny {4}c {2}deny \+ comment {4}\? {2}explain$/,

@@ -1,4 +1,4 @@
-// `kubic tui` host-side regression (issue #75).
+// `kubic tui` host-side regression.
 // The tui entry lives in apps/kubic (the composition root: the only
 // owner allowed to wire host + tui together), so the cross-cutting
 // proof lives here next to run-prod-path.test.ts. This file never
@@ -60,7 +60,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('tui entry regression (issue #75)', () => {
+describe('tui entry regression', () => {
   it('routes input and restores the main screen on quit', async () => {
     const lines: string[] = [];
     const fake = fakeTerminal(100);
@@ -111,8 +111,8 @@ describe('tui entry regression (issue #75)', () => {
     expect(lines.join('\n')).not.toContain('?1049h');
   });
 
-  it('headless `kubic run` exit codes and transcript are unchanged by the loop (issue #88)', async () => {
-    // Criterion 6: the prompt loop must not alter the headless path. A real
+  it('headless `kubic run` exit codes and transcript are unchanged by the loop', async () => {
+    // The prompt loop must not alter the headless path. A real
     // lane run through the same composition root (apps/kubic) with faux
     // models, driving the same `runHeadlessPrompt` the loop shares the lane
     // boot with. NOTE: run-cli's `onScreenMount` hook is never invoked
@@ -141,14 +141,14 @@ describe('tui entry regression (issue #75)', () => {
     expect(doc).toContain('result: headless answer');
     expect(doc).toContain('usage: usage:');
     expect(doc).toContain('journal: journal:');
-    // Issue #383: the ref is the written §46 file's path.
+    // The ref is the written trajectory file's path.
     expect(doc).toMatch(/trajectory: \S+\/trajectory\.json/);
     // No alt-screen escape sequences ever reach the headless output.
     expect(doc).not.toContain('?1049h');
     expect(doc).not.toContain('?1049l');
   });
 
-  it('headless run keeps each terminus on its §78 exit code (issue #88)', async () => {
+  it('headless run keeps each terminus on its exit code', async () => {
     const cases: Array<[string, number]> = [
       ['completed', 0],
       ['failed', 1],

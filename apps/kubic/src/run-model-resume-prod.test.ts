@@ -1,4 +1,4 @@
-// `--session` resume model identity, prod paths (issue #148; §21, §26.1).
+// `--session` resume model identity, prod paths.
 // The rule, identical in `run` and `tui`: an explicit model pin switches a
 // resumed session whose stored model differs (with a notice); without a pin
 // the session keeps its own model. Either way the result/envelope, the
@@ -103,7 +103,7 @@ async function lastAssistantModel(root: string, id: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
   const session = await attachSession(store, id, BACKGROUND_CONTEXT);
   try {
-    // The durable reader (#400): the session storage directly, no harness.
+    // The durable reader: the session storage directly, no harness.
     const items = entriesToTranscript(
       await readSessionEntries(session.storage, BACKGROUND_CONTEXT),
     );
@@ -116,7 +116,7 @@ async function lastAssistantModel(root: string, id: string): Promise<string> {
   }
 }
 
-describe('kubic run --session model identity (issue #148)', () => {
+describe('kubic run --session model identity', () => {
   it('an explicit pin switches the resumed session, says so, and reports the live model', async () => {
     const root = tmpRoot();
     const id = await sessionOnSmall(root);
@@ -183,7 +183,7 @@ describe('kubic run --session model identity (issue #148)', () => {
     expect(result.error?.message).toBe(
       "session model 'faux/small' is unavailable: provider 'faux' is not registered (pin a model to switch this session)",
     );
-    // Issue #155 review: the probe is a setup failure — the envelope's §52
+    // The probe is a setup failure — the envelope's
     // code must never tell a retry chooser to retry it unchanged.
     expect(buildRunEnvelope(result, 6).failure).toMatchObject({
       code: 'provider_auth',
@@ -202,7 +202,7 @@ describe('kubic run --session model identity (issue #148)', () => {
   });
 });
 
-describe('kubic tui --session model identity (issue #148)', () => {
+describe('kubic tui --session model identity', () => {
   it('boots on the session model and reports it to the status bar', async () => {
     const root = tmpRoot();
     const id = await sessionOnSmall(root);

@@ -1,4 +1,4 @@
-// Git pre-images for the reconcile sweep (issue #371; §42.2/§42.5).
+// Git pre-images for the reconcile sweep.
 //
 // The baseline walk holds sha256 hashes, not content, so a bash `rm` or
 // `sed -i` on a tracked file could never be undone even though its pre-image
@@ -102,7 +102,7 @@ function parseLsFiles(
  * Parse `status --porcelain=v1 --untracked-files=no --no-renames -z` into
  * the dirty path set, or null when a record is not git-shaped. `--no-renames`
  * keeps one path per record (never `orig -> new`), so every record's tail
- * is a dirty path. A malformed record fails the whole parse (issue #427):
+ * is a dirty path. A malformed record fails the whole parse:
  * an empty set would read as "nothing dirty" and bless possibly-dirty
  * OIDs on the strength of the downstream hash verify alone — fail closed
  * instead, the same as a failed git call.
@@ -147,7 +147,7 @@ export function captureGitBaseline(
     // could never be a sweep candidate), only merged index rows (stage 0),
     // never a submodule (mode 160000 names a commit, not a blob) and never
     // a symlink (mode 120000 names its target, not content a restore could
-    // use — skipped explicitly, issue #427, not via the walk's exclusion).
+    // use — skipped explicitly, not via the walk's exclusion).
     if (baseline[path] === undefined) continue;
     if (info.stage !== '0') continue;
     if (info.mode === '160000' || info.mode === '120000') continue;
@@ -183,7 +183,7 @@ export function readGitBlob(
 }
 
 /**
- * Issue #378: where a run's HEAD was at baseline — the commit, the branch
+ * Where a run's HEAD was at baseline — the commit, the branch
  * (or `(detached)`), and how many stashes existed. Compared at sweep: any
  * difference means the agent moved HEAD (`checkout`, `reset`, `stash`), and
  * the sweep appends a marker entry instead of letting hundreds of

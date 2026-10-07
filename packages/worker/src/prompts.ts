@@ -1,4 +1,4 @@
-// Cache-preserving prompt assembly + model affinity (issue #33; §26).
+// Cache-preserving prompt assembly + model affinity.
 //
 // Prompt caches key on leading bytes: any instability in the prefix
 // (system text, tool order, metadata order) or any mid-prefix edit
@@ -17,8 +17,8 @@ export class PromptCacheError extends Error {
   }
 }
 
-// NOTE (issue #215): the PROMPT_CACHE_RULES list was deleted — it named
-// no production reader (the rules live in §26 and are pinned by the
+// NOTE: the PROMPT_CACHE_RULES list was deleted — it named
+// no production reader (the rules live in and are pinned by the
 // assembly, lifecycle and two-turn tests, not by a constant).
 export interface SystemPromptInput {
   role: string;
@@ -50,16 +50,10 @@ export function assembleSystemPrompt(input: SystemPromptInput): string {
   return sections.join('\n');
 }
 
-// Rule 4 lives structurally in assembleSystemPrompt above (extra sections
-// append last; nothing shifts prefix bytes) and is pinned at lane level by
-// the no-new-pi.system-entry two-turn test — there is no per-turn prompt
-// extension in the pi-durable design, so the standalone append/assert
-// helpers were deleted (issue #215).
-// Rule 5 (issue #82) deleted in the #210 review round: LaneRegistry (and
-// its LaneBinding shape) had no production consumer repo-wide — only test
-// constructions plus the optional boot field — so the class, the interface,
-// the boot spawn/continuation branch and the lane's binding surface went
-// with it. The per-task model pin (rule 6) below is the live mechanism.
+// Extra prompt sections append last in assembleSystemPrompt above, so nothing
+// shifts the prefix bytes; the lane-level two-turn test pins that no new
+// pi.system entry is committed. The per-task model pin below keeps the model
+// stable across turns.
 
 export interface AffinityEscalation {
   from: string;
@@ -68,7 +62,7 @@ export interface AffinityEscalation {
   at: number;
 }
 
-// Rule 6: the model is pinned once per task. Turns read the pin; there is
+// The model is pinned once per task. Turns read the pin; there is
 // no reselect hook, so N turns always resolve to 1 model id.
 export interface TaskAffinity {
   taskId: string;
@@ -142,7 +136,7 @@ export interface CompactionRoute {
   cacheWriteEnabled: boolean;
 }
 
-// Rule 7: compaction/summary must not poison the cache under the live
+// Compaction/summary must not poison the cache under the live
 // routing id, and must not write cache entries of its own.
 export function buildCompactionRoute(
   currentSessionId: string,

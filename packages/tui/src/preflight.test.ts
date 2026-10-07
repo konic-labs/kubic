@@ -1,4 +1,4 @@
-// The first screen (EPIC N, issue #462; docs/ui/05-welcome.html 05-A … F):
+// The first screen:
 // the wordmark, a five-line preflight, the start keys and the recent
 // sessions — and the no-key block printed before exit 6.
 import { describe, expect, it } from 'vitest';
@@ -30,7 +30,7 @@ const BASE: PreflightInfo = {
 const trimmed = (lines: readonly string[]): string[] =>
   lines.map((line) => line.trimEnd());
 
-describe('preflight (issue #462; 05-A … E)', () => {
+describe('preflight', () => {
   it('reads like the design', () => {
     expect(trimmed(renderPreflight(plain, BASE, 110))).toEqual([
       '',
@@ -146,7 +146,7 @@ describe('preflight (issue #462; 05-A … E)', () => {
   });
 });
 
-describe('no key (issue #462; 05-F)', () => {
+describe('no key', () => {
   it('prints the fix as plain terminal text', () => {
     expect(
       trimmed(

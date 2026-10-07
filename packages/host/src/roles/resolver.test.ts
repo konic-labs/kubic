@@ -1,6 +1,6 @@
-// Role resolver tests (issue #43): per-role tool filtering + policy
+// Role resolver tests: per-role tool filtering + policy
 // validation. Fixture role documents are inline strings — never real
-// filesystem roles (role contents land in issue #44).
+// filesystem roles (role contents land).
 import { describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import {
@@ -46,7 +46,7 @@ describe('parseRoleDocument', () => {
     });
   });
 
-  // Issue #181 (§29.4): a role document may declare the skills it sees.
+  // A role document may declare the skills it sees.
   it("parses the role document's skills list", () => {
     const doc = parseRoleDocument(
       `---\nrole: reviewer\nskills: [diff-skill, lint-skill]\n---\n# Reviewer\n`,
@@ -55,7 +55,7 @@ describe('parseRoleDocument', () => {
     expect(doc.skills).toEqual(['diff-skill', 'lint-skill']);
   });
 
-  // Issue #236: Windows line endings and a leading BOM are normalized
+  // Windows line endings and a leading BOM are normalized
   // before fence detection — a CRLF doc parses like its LF twin.
   it('parses CRLF and BOM-prefixed documents like their LF twin', () => {
     const lf = `---\nrole: reviewer\ntools: [read]\n---\n\n# Reviewer\n`;
@@ -137,7 +137,7 @@ describe('mergeRoleLayers', () => {
     );
   });
 
-  it('model pins merge first-wins; attempts are reported (issue #133)', () => {
+  it('model pins merge first-wins; attempts are reported', () => {
     const doc = parseRoleDocument(PLANNER_MD);
     const merged = mergeRoleLayers(doc, [
       { layer: 'agent', roles: { planner: { model: 'local/llama3' } } },
@@ -149,7 +149,7 @@ describe('mergeRoleLayers', () => {
     expect(mergeRoleLayers(doc, []).model).toBeUndefined();
   });
 
-  it('thinking defaults merge first-wins; attempts are reported (issue #225)', () => {
+  it('thinking defaults merge first-wins; attempts are reported', () => {
     const doc = parseRoleDocument(PLANNER_MD);
     const merged = mergeRoleLayers(doc, [
       { layer: 'agent', roles: { planner: { thinking: 'low' } } },
@@ -165,7 +165,7 @@ describe('mergeRoleLayers', () => {
     ).toBe('medium');
   });
 
-  it('models merge first-wins whole-list; attempts are reported (issue #255)', () => {
+  it('models merge first-wins whole-list; attempts are reported', () => {
     const doc = parseRoleDocument(PLANNER_MD);
     const merged = mergeRoleLayers(doc, [
       {
@@ -197,7 +197,7 @@ describe('mergeRoleLayers', () => {
     expect(resolveRole(doc, []).models).toBeUndefined();
   });
 
-  it('escalate merges first-wins whole-list; attempts reported (issue #210)', () => {
+  it('escalate merges first-wins whole-list; attempts reported', () => {
     const doc = parseRoleDocument(PLANNER_MD);
     const merged = mergeRoleLayers(doc, [
       {
@@ -225,7 +225,7 @@ describe('mergeRoleLayers', () => {
     expect(resolveRole(doc, []).escalate).toBeUndefined();
   });
 
-  it('roleModelAllowed matches exact and provider/*, boundary-safe (issue #255)', () => {
+  it('roleModelAllowed matches exact and provider/*, boundary-safe', () => {
     const set = [{ id: 'local/*' }, { id: 'acme/big' }];
     expect(roleModelAllowed(undefined, 'acme', 'x')).toBe(true);
     expect(roleModelAllowed([], 'acme', 'x')).toBe(true);
@@ -273,7 +273,7 @@ describe('resolveRole', () => {
     );
   });
 
-  // Issue #198 (§12): the document model resolves when no layer sets
+  // The document model resolves when no layer sets
   // one; a layer pin outranks it (spawn/CLI > config > document).
   it('a document model resolves, and a layer pin outranks it', () => {
     const doc = parseRoleDocument(
@@ -288,7 +288,7 @@ describe('resolveRole', () => {
   });
 });
 
-describe('enterprise policy on role grants (issue #288)', () => {
+describe('enterprise policy on role grants', () => {
   const IMPLEMENTER_MD = `---
 role: implementer
 tools: [read, write, edit, bash]
@@ -502,7 +502,7 @@ describe('createRoleToolGuard', () => {
   });
 });
 
-describe('effectiveRoleClasses (issue #196)', () => {
+describe('effectiveRoleClasses', () => {
   const FULL = {
     filesystem: 'full',
     shell: true,
@@ -559,7 +559,7 @@ describe('effectiveRoleClasses (issue #196)', () => {
   });
 });
 
-describe('role approval requires (issue #196)', () => {
+describe('role approval requires', () => {
   it('parses the requires list from the role document', () => {
     const doc = parseRoleDocument(
       '---\nrole: reviewer\nrequires: [write, bash]\n---\n# Reviewer\n',
@@ -585,7 +585,7 @@ describe('role approval requires (issue #196)', () => {
     expect(resolveRole(parseRoleDocument(PLANNER_MD), []).requires).toEqual([]);
   });
 });
-describe('roleDoctorChecks effective classes (issue #196)', () => {
+describe('roleDoctorChecks effective classes', () => {
   it('names the most-restrictive merge and the requires when config classes are given', () => {
     const resolved = resolveRole(parseRoleDocument(PLANNER_MD), []);
     const [check] = roleDoctorChecks([resolved], {}, SOLO_DEFAULTS);
@@ -669,7 +669,7 @@ describe('roleDoctorChecks', () => {
     expect(checks[1]?.detail).toMatch(/filesystem.*read.*write/i);
   });
 
-  // Issue #198 (§12): the document description is shown by doctor.
+  // The document description is shown by doctor.
   it('shows the document description in the role detail', () => {
     const doc = parseRoleDocument(
       `---\nrole: planner\ndescription: Plans only\ntools: [read]\n---\n# P\n`,

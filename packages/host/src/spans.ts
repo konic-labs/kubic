@@ -21,7 +21,7 @@ export interface SpanRecord {
 
 export class SpanRecorder {
   private spans: SpanRecord[] = [];
-  // Issue #243: O(1) lookup by id. The array keeps insertion order for
+  // O(1) lookup by id. The array keeps insertion order for
   // `trace()`; the map serves the per-span hot path (`end`, `get`) so a
   // run with N spans costs O(N), not O(N^2).
   private readonly byId = new Map<string, SpanRecord>();
@@ -54,7 +54,7 @@ export class SpanRecorder {
     if (error !== undefined) span.error = error;
   }
 
-  // Issue #243: read one span without copying the trace. The copy keeps
+  // Read one span without copying the trace. The copy keeps
   // the ledger tamper-proof: a reader mutating the return never rewrites
   // a stored record (pinned by test).
   get(id: string): SpanRecord | undefined {
@@ -82,7 +82,7 @@ export class SpanRecorder {
 // [policy]/[session]/[tool]/[model]/[agent] + [exit] + handler_error. Tool lines carry the in/out/cached phase;
 // model lines carry in/out/cached token counts. Constructed with a sink
 // (stderr in prod, an array in tests) so TUI code never touches io here.
-// Issue #246: the `[handles]` class is dropped — nothing ever measured a
+// The `[handles]` class is dropped — nothing ever measured a
 // leak count, so the vocabulary carries no leak line.
 export const DEBUG_CLASSES = [
   '[policy]',
@@ -98,7 +98,7 @@ export type DebugSink = (line: string) => void;
 
 export type ToolPhase = 'in' | 'out' | 'cached';
 
-// Issue #246: the two line shapes other paths reuse without owning a
+// The two line shapes other paths reuse without owning a
 // DebugLog — the methods below delegate to these, so the headless lane
 // sink and the TUI runner emit byte-identical lines.
 export function hookErrorLine(hook: string, error: unknown): string {
@@ -163,7 +163,7 @@ export function createTranscriptSink(): TranscriptSink {
   return { sink: (line: string) => lines.push(line), lines };
 }
 
-// ANSI path via PI_TUI_WRITE_LOG (§50): when the TUI log path is set,
+// ANSI path via PI_TUI_WRITE_LOG: when the TUI log path is set,
 // debug lines are appended there (raw, one per line) alongside stderr.
 // Returns null when unset. File access stays behind the injected
 // append callback so host code never touches node:fs directly.

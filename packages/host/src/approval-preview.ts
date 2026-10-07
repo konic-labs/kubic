@@ -1,9 +1,9 @@
-// The change an edit or write ask would make (EPIC N, issue #459; docs/ui
-// 02-E): computed against the file on disk, in the same display form as the
-// edit tool's own result (packages/worker/src/ops/display-diff.ts), so the
-// TUI's approval card shows the diff instead of a path. Best effort: a file
-// that cannot be read, is too big or no longer matches gives no preview —
-// the card then shows what it always did.
+// The change an edit or write ask would make: computed against the file on
+// disk, in the same display form as the edit tool's own result
+// (packages/worker/src/ops/display-diff.ts), so the TUI's approval card shows
+// the diff instead of a path. Best effort: a file that cannot be read, is too
+// big or no longer matches gives no preview — the card then shows what it
+// always did.
 
 import type { FileBridge } from '../../exec/src/file-bridge.js';
 import {

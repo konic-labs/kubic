@@ -1,6 +1,6 @@
 import { createSocket } from 'node:dgram';
 
-// Production wiring for the command dispatch (issue #135): one runner per
+// Production wiring for the command dispatch: one runner per
 // command in the if-chain, built from the same objects `main()` built
 // inline before the extraction. This module is the composition root's prod
 // half — it is the only place here that reads process.cwd()/process.env or
@@ -154,7 +154,7 @@ import {
 export interface ProdRunnerIo {
   readonly out: (line: string) => void;
   readonly debug: (line: string) => void;
-  // Issue #462: the version the TUI's first screen names.
+  // The version the TUI's first screen names.
   readonly version?: () => string;
 }
 
@@ -208,7 +208,7 @@ function stderrTheme(): CliTheme {
 
 const PLAIN = createCliTheme('none');
 
-// §58 audit-sink reachability probes (issue #286): the real platform — a
+// Audit-sink reachability probes: the real platform — a
 // unix syslog socket must exist; UDP needs a creatable dgram socket
 // (connectionless, so delivery stays best-effort past this point).
 const auditProbes = {
@@ -248,15 +248,15 @@ function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
 // projection the solo lane consumes, from the ONE config load. Exported so
 // the wiring is tested through the same builder the runner calls — a test
 // that hand-spreads these keys stays green when the production spread is
-// dropped (the defect class of issues #288/#294).
+// dropped (the defect class of).
 export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
   const enterprisePolicy = runtimePolicy(cliConfig);
-  // Issue #239: the session compaction keys, threaded to the lane boot
+  // The session compaction keys, threaded to the lane boot
   // below.
   const compaction = runtimeCompactionDeps(cliConfig);
-  // Issue #240: the system prompt file section, read at load.
+  // The system prompt file section, read at load.
   const systemPromptSection = runtimeSystemPromptSection(cliConfig);
-  // §37.4 (issue #257): the `[model]` / `[roles.<name>]` request tuning
+  // The `[model]` / `[roles.<name>]` request tuning
   // the headless boot resolves against the run's role. Undefined when
   // nothing is tuned — the lane then omits `settings.stream`.
   const streamTuning = runtimeStreamTuning(cliConfig);
@@ -265,22 +265,22 @@ export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
     ...(compaction === undefined ? {} : { compaction }),
     ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
     ...(streamTuning === undefined ? {} : { streamTuning }),
-    // §58 enterprise policy (issue #288): the model gate, the role grant
+    // Enterprise policy: the model gate, the role grant
     // check and the lane tool intersection all read this one resolved
     // object.
     ...(enterprisePolicy === undefined
       ? {}
       : { modelPolicy: enterprisePolicy }),
     ...runtimeRunDeps(cliConfig),
-    // Issue #228 review: one per-path check gates the project models.json
+    // One per-path check gates the project models.json
     // and each ancestor skill root on the tree the files live in — never a
     // cwd boolean applied to ancestors.
     trustProject: projectTrustFor(cliConfig),
-    // Issue #133: the shared lane projections — the configured agent id
+    // The shared lane projections — the configured agent id
     // (journal attribution, `kubic diff --agent`) and the config-sourced
     // role layers `--role` merges under the document.
     ...runtimeLaneDeps(cliConfig),
-    // Issue #237 (§29.2): the config `skills` projection — resolved at
+    // The config `skills` projection — resolved at
     // load, loaded with source 'settings'. The lane falls back to the
     // prod home/cwd/trust around it (only this key is set).
     skills: { ...runtimeSkillsDeps(cliConfig) },
@@ -296,71 +296,71 @@ export function prodTuiDeps(
   cliConfig: CliConfigResult,
 ): TuiDepsInput {
   const enterprisePolicy = runtimePolicy(cliConfig);
-  // Issue #239: the session compaction projection, like `kubic run`.
+  // The session compaction projection, like `kubic run`.
   const compaction = runtimeCompactionDeps(cliConfig);
-  // Issue #240: the system prompt file section, like `kubic run`.
+  // The system prompt file section, like `kubic run`.
   const systemPromptSection = runtimeSystemPromptSection(cliConfig);
-  // §37.4 (issue #257): the same request tuning `kubic run` threads — the
+  // The same request tuning `kubic run` threads — the
   // interactive boot resolves it against `--role` identically.
   const streamTuning = runtimeStreamTuning(cliConfig);
   return {
     out: io.out,
     // `error:` lines (unknown session, no models) are diagnostics.
     err: io.debug,
-    // Same policy install as `kubic run` (issue #86; #90 classes): the TUI
+    // Same policy install as `kubic run`: the TUI
     // drives the same solo lane, so a config that names classes must reach
     // it here too.
     ...installedPolicyClasses(cliConfig),
     policySource: installedPolicyDeps(cliConfig).source,
-    // Issue #230: the config `[approvals]` policy, same as `kubic run`.
+    // The config `[approvals]` policy, same as `kubic run`.
     approvals: runtimeApprovalDeps(cliConfig),
-    // Issue #113 (§42.4): the same journal retention projection `kubic run`
+    // The same journal retention projection `kubic run`
     // threads — a TUI session's journal age-prunes under config.
     journalRetention: runtimeRunDeps(cliConfig).journalRetention,
-    // Issue #115 (§35/§42.5): the same out-of-scope projection — the
+    // The same out-of-scope projection — the
     // interactive lane's baseline and sweep exclude what `kubic run`
     // excludes.
     reconcileOutOfScope: runtimeRunDeps(cliConfig).reconcileOutOfScope,
-    // Issue #239: the same session compaction projection `kubic run`
+    // The same session compaction projection `kubic run`
     // threads — the interactive lane compacts under the configured
     // policy, not the lane defaults.
     ...(compaction === undefined ? {} : { compaction }),
-    // Issue #240: the same system prompt file section — the interactive
+    // The same system prompt file section — the interactive
     // lane assembles the same prompt.
     ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
-    // Issue #295 with #227 (§38.1): the SAME model projection `kubic run`
+    // With: the SAME model projection `kubic run`
     // consumes — the cli `--model` (above `KUBIC_MODEL`/`[model]`) included.
     // Without it the TUI ignored those pins and ran the first registered
     // provider.
     model: runtimeModelPin(cliConfig),
-    // §37.4 (issue #257): spread beside the model pin so the tuning can
+    // Spread beside the model pin so the tuning can
     // never drift from the projection `kubic run` boots with.
     ...(streamTuning === undefined ? {} : { streamTuning }),
-    // §58 enterprise policy (issue #288): the interactive lane gates role
+    // Enterprise policy: the interactive lane gates role
     // grants, model selection and its tool set identically.
     ...(enterprisePolicy === undefined
       ? {}
       : { modelPolicy: enterprisePolicy }),
-    // §35.1 (issue #295): a frozen enterprise `[model]` also binds `/model`.
+    // A frozen enterprise `[model]` also binds `/model`.
     ...(runtimeModelFrozen(cliConfig) ? { modelPinFrozen: true } : {}),
-    // Issue #304 (§16.9): the `[ui] theme` reference — a built-in name or a
+    // The `[ui] theme` reference — a built-in name or a
     // JSON theme path, resolved and validated before the alt-screen opens.
     ...(cliConfig.runtime?.config.ui?.theme === undefined
       ? {}
       : { theme: cliConfig.runtime.config.ui.theme }),
-    // Issue #228 review: the same per-path check gates the project models.json
+    // The same per-path check gates the project models.json
     // and each ancestor skill root on the interactive lane.
     trustProject: projectTrustFor(cliConfig),
-    // Issue #462: the first screen's version and trust row (the trust row
+    // The first screen's version and trust row (the trust row
     // is omitted when the project has no layer).
     ...(io.version === undefined ? {} : { version: io.version() }),
     ...(cliConfig.trust?.present === true
       ? { projectTrust: cliConfig.trust.trusted ? 'loaded' : 'untrusted' }
       : {}),
-    // Issue #133: the SAME lane projections `kubic run` consumes — the
+    // The SAME lane projections `kubic run` consumes — the
     // interactive lane names itself and layers `--role` identically.
     ...runtimeLaneDeps(cliConfig),
-    // Issue #237 (§29.2): the same settings-skills projection `kubic run`
+    // The same settings-skills projection `kubic run`
     // threads — the interactive lane loads the config skills too.
     skills: { ...runtimeSkillsDeps(cliConfig) },
   };
@@ -387,7 +387,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       }).fancy,
     };
   };
-  // §35.1 (issue #295): a frozen enterprise `[model]` drops a cli/env pin; the
+  // A frozen enterprise `[model]` drops a cli/env pin; the
   // boot of every agent-running command says so once, on stderr — never on
   // stdout, so a `--json` envelope stays exactly one document.
   const noteOverriddenModelPins = (cliConfig: CliConfigResult): void => {
@@ -395,7 +395,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
   };
   return {
     sessions: (invocation, cliConfig) => {
-      // Issue #119: `sessions prune`'s default keep-window comes from config
+      // `sessions prune`'s default keep-window comes from config
       // when it sets one; with none, prune demands an explicit --keep-days
       // rather than inventing a window.
       const retentionDays = sessionRetentionDays(cliConfig);
@@ -428,7 +428,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...reportStyle(request.json === true),
       }),
     journal: (request, cliConfig) => {
-      // Issue #119: the same `session.retentionDays` projection `sessions
+      // The same `session.retentionDays` projection `sessions
       // prune` reads — `log` self-heals aged entries of a session journal at
       // read time under it. Unset (or a refused config) leaves the read path
       // without a window: it then writes nothing.
@@ -443,7 +443,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
     },
     models: async (options, cliConfig) => {
       const view = presentation(out, debug, options.json === true);
-      // Issue #228 (§35.1): the store's decision gates the project
+      // The store's decision gates the project
       // models.json exactly as the env opt-in does — the composition root
       // passes the one report the config load already consumed.
       const assembled = await assembleModels(process.cwd(), process.env, {
@@ -457,13 +457,13 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...view,
         models: assembled.models,
         providers: assembled.providers,
-        // Issue #449: the configured pin is the default the view marks.
+        // The configured pin is the default the view marks.
         ...(pin === undefined
           ? {}
           : { defaultModel: `${pin.provider}/${pin.id}` }),
       });
     },
-    // Issue #451: the interactive setup (provider, model, thinking, trust).
+    // The interactive setup (provider, model, thinking, trust).
     setup: async (options, cliConfig) =>
       runSetupCommand(
         options,
@@ -475,7 +475,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         }),
       ),
     skills: (options, cliConfig) => {
-      // Issue #238: the listing over the same discovery the lane boots.
+      // The listing over the same discovery the lane boots.
       // The trust inputs mirror `kubic run`'s (the env opt-in plus the
       // per-path project check), the classes are the installed ones the
       // doctor judges, and `--role` resolves through the same `selectRole`
@@ -525,7 +525,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       });
     },
     trust: (options, cliConfig) => {
-      // Issue #229: grants are recorded at the project root — the same
+      // Grants are recorded at the project root — the same
       // root the config load keys its trust report to — so `kubic trust`
       // from a subdirectory records a grant the loader honours. An
       // explicit path resolves to its own root; the bare form reuses the
@@ -556,7 +556,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...presentation(out, debug, options.json === true),
         run: (prompt, options) =>
           runHeadlessPrompt(prompt, options, prodRunDeps(cliConfig)),
-        // Issue #447: live progress only when the whole run is on an
+        // Live progress only when the whole run is on an
         // interactive colour terminal (stdout AND stderr) and not --json;
         // a redirected stdout keeps the plain lines scripts read.
         ...(options.json !== true &&
@@ -580,7 +580,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       );
     },
     doctor: async (options, cliConfig) => {
-      // Issue #310: `doctor --session <id>` checks one session — its
+      // `doctor --session <id>` checks one session — its
       // installed posture reads that session's posture.json. A value that
       // cannot name a session directory is refused before any path join.
       const doctorSession = options.session;
@@ -599,7 +599,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           ? undefined
           : join(sessionsRoot, doctorSession);
       const enterprisePolicy = runtimePolicy(cliConfig);
-      // §58 (issue #289): the enterprise checks run only when a `[policy]`
+      // The enterprise checks run only when a `[policy]`
       // section is actually configured — the resolved policy is always
       // present (empty without one), and running the checks over an empty
       // policy would fail the default matrix for a config that never asked
@@ -622,12 +622,12 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       const [major = 0, minor = 0] = process.versions.node
         .split('.')
         .map((part) => Number(part));
-      // Repo-level session overlap (issue #118; §42.5): the local session
+      // Repo-level session overlap: the local session
       // store's view of the sessions recorded against this cwd. Best-effort:
       // an unlistable store makes NO claim (the probe stays un-injected)
       // rather than crashing doctor — the note is informational, so an
       // unreadable store must not turn into a failure of its own.
-      // Issue #361: the sessions root's mode, when it is group- or
+      // The sessions root's mode, when it is group- or
       // world-accessible. Best-effort like the overlap probe: an unreadable
       // root makes no claim.
       const statePermissionProbe = () => {
@@ -650,7 +650,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       } catch {
         sessionOverlapProbe = undefined;
       }
-      // §41.4 full-access sessions (issue #310): the workspace's live
+      // Full-access sessions: the workspace's live
       // sessions running with approvals off — enumerated eagerly like the
       // overlap probe, so the check cannot disagree with the store doctor
       // just listed. With --session exactly one session is checked (the
@@ -673,7 +673,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       }
       return runDoctorCommand(options, {
         ...view,
-        // Issue #448: the grouped summary packs into the terminal's width.
+        // The grouped summary packs into the terminal's width.
         ...(process.stdout.columns === undefined
           ? {}
           : { columns: process.stdout.columns }),
@@ -684,19 +684,19 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
             ok: major > 22 || (major === 22 && minor >= 19),
             detail: `node ${process.versions.node} (need >=22.19)`,
           },
-          // Issue #90: the config load is reported here — a refused config
+          // The config load is reported here — a refused config
           // (unknown/unsupported key, distrusted project layer, secret ref)
           // and an incomplete runtime ignore split both fail
           // closed with the named reason instead of being silently ignored.
           doctorConfigProbe(cliConfig),
-          // Issue #322: which models.json files were found, their scope and
+          // Which models.json files were found, their scope and
           // trust state; an invalid file fails by name.
           modelsSourcesProbe(assembled),
         ],
-        // Config-sourced approval policy (issue #90): the route/autoApprove
+        // Config-sourced approval policy: the route/autoApprove
         // come from the loaded layers, not a hardcoded default.
         loadPolicy: doctorPolicyLoader(cliConfig),
-        // Installed policy (issue #86; §40.3): the classes, guards and source
+        // Installed policy: the classes, guards and source
         // a run from THIS cwd actually installs — the same derivation
         // (host/approvals.installedPolicyPosture) `kubic run` boots the lane
         // with, over the same config projection it uses. Doctor reports the
@@ -705,7 +705,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         installedPolicy: () =>
           installedPolicyPosture({
             workspace: process.cwd(),
-            // Issue #310: with --session the installed posture reads that
+            // With --session the installed posture reads that
             // session's posture.json, so a full-access session reports
             // FULL ACCESS instead of the workspace-level false.
             ...(doctorSessionDir === undefined
@@ -713,9 +713,9 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
               : { sessionDir: doctorSessionDir }),
             ...installedPolicyDeps(cliConfig),
           }),
-        // §58 enterprise policy (issue #289): the SAME effective resolution
+        // Enterprise policy: the SAME effective resolution
         // `kubic policy` reports, checked for enforceability. `syslogAvailable`
-        // is probed for real now (issue #286): every enterprise syslog target
+        // is probed for real now: every enterprise syslog target
         // must be reachable, or the check fails closed instead of claiming
         // an audit trail that does not exist. The probe is wired only for a
         // configured `[policy]`, so the default matrix is unchanged.
@@ -731,7 +731,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
                   ),
                 }),
             }),
-        // §58 configured `[[audit]]` sinks (issue #286): the SAME tables
+        // Configured `[[audit]]` sinks: the SAME tables
         // dispatch built this process's sinks from, probed for reachability
         // plus the runtime failures recorded so far. Wired only when tables
         // exist, so the default matrix is unchanged.
@@ -749,7 +749,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
                   probes: auditProbes,
                 }),
             }),
-        // §40.3 role-document posture (issue #99): the SAME probe `kubic run
+        // Role-document posture: the SAME probe `kubic run
         // --role <name>` uses to select and validate a role, run over this
         // cwd's `.kubic/roles/*.md`. A contradictory document (declared
         // classes vs tool set) or a parse refusal is reported here with the
@@ -760,10 +760,10 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           rolesDoctorProbe({
             cwd: process.cwd(),
             bridge: createNodeFileBridge(process.cwd()),
-            // Issue #229: judge the roles the run would resolve — the
+            // Judge the roles the run would resolve — the
             // project root's documents, not the subdir's (absent) ones.
             projectRoot: cliConfig.projectRoot,
-            // §58 (issue #288): a role declaring an enterprise-denied tool is
+            // A role declaring an enterprise-denied tool is
             // refused by `kubic run --role`, so it is red here too.
             ...(enterprisePolicy === undefined
               ? {}
@@ -771,19 +771,19 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
             // The config `[roles.<name>]` layers `kubic run --role` merges
             // under each document: a role is judged as it would run.
             ...(roleLayers === undefined ? {} : { layers: roleLayers }),
-            // Issue #196 (§40.2): judge the effective classes the lane
+            // Judge the effective classes the lane
             // would install — the most restrictive merge with each role.
             ...installedPolicyClasses(cliConfig),
-            // Issue #430 (§33, L-D27): judge the trust the run would see —
+            // Judge the trust the run would see —
             // an untrusted root's withheld roles warn here, never green.
             trustProject: projectTrustFor(cliConfig),
-            // Issue #241 (§35): judge the global roles the run would see —
+            // Judge the global roles the run would see —
             // absent (tests and embeddings with no home) means no source.
             ...(cliConfig.trust.home === ''
               ? {}
               : { home: cliConfig.trust.home }),
           }),
-        // Skills gate (issue #181, §29.4): the same boot the lane runs,
+        // Skills gate: the same boot the lane runs,
         // judged with the lane's classes and no role — a skill the lane
         // would not offer warns with the gate's reason, never green. The
         // trust inputs mirror `kubic run`'s (env opt-in + the per-path
@@ -800,25 +800,25 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
             ...runtimeSkillsDeps(cliConfig),
             ...installedPolicyClasses(cliConfig),
           }),
-        // Repo-level session overlap (issue #118): warning only — the check
+        // Repo-level session overlap: warning only — the check
         // reports warn (never exit-flipping) when 2+ sessions are recorded
         // against this cwd, stating the end-of-run sweep's blind spot.
         ...(sessionOverlapProbe === undefined
           ? {}
           : { probeSessionOverlap: sessionOverlapProbe }),
-        // §41.4 full-access sessions (issue #310): one warning per live
+        // Full-access sessions: one warning per live
         // session running with approvals off (named grant + way back when
         // recorded). With --session exactly the named session is checked.
         ...(fullAccessProbe === undefined
           ? {}
           : { probeFullAccessSessions: fullAccessProbe }),
-        // Issue #361: always injected — the check itself is a pass when the
+        // Always injected — the check itself is a pass when the
         // state directories are private.
         probeStatePermissions: statePermissionProbe,
       });
     },
     cost: (options) =>
-      // Per-agent cost over real session usage (issue #79; #250: scoped
+      // Per-agent cost over real session usage (scoped
       // to the invoking project unless --all, grouped by --by); the task
       // total is Σ(rows) by construction.
       runCostCommand(options, {
@@ -828,15 +828,15 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...report(),
       }),
     policy: (options, cliConfig) => {
-      // A refused config is never answered around (issue #90 posture): the
+      // A refused config is never answered around: the
       // offer and the run must agree, so `kubic policy` reports the refusal
       // instead of printing a decision a run would never enforce.
       if (cliConfig.runtime === undefined && cliConfig.error !== undefined) {
         debug(`error: ${cliConfig.error}`);
         return EXIT_FAILED;
       }
-      // The tool policy a run from THIS cwd actually installs (issue #288):
-      // the §58 enterprise policy merged with the same installed class
+      // The tool policy a run from THIS cwd actually installs:
+      // the enterprise policy merged with the same installed class
       // allowlist `kubic run` boots with and `kubic doctor` reports — so the
       // three surfaces cannot disagree. Deny-by-default still holds once the
       // installed allowlist is supplied; the deciding layer is named.
@@ -852,16 +852,16 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
               // allowlist is the whole policy, exactly as before.
               policyFromInstalledAllowlist(posture.allowlist)
             : policyWithInstalledAllowlist(enterprisePolicy, posture.allowlist),
-        // Issue #166 (§40.2): the same posture's inexpressible levels, so
+        // The same posture's inexpressible levels, so
         // `kubic policy` and `kubic doctor` name the same unsupported set.
         unsupported: () => posture.unsupported,
         ...report(),
       });
     },
     config: (options, cliConfig) =>
-      // Effective configuration with the layer each value came from (issue
-      // #90): human lines, or --json for machines. Fails closed on a broken
-      // config instead of printing defaults.
+      // Effective configuration with the layer each value came from: human
+      // lines, or --json for machines. Fails closed on a broken config instead
+      // of printing defaults.
       runConfigCommand(options, {
         ...presentation(out, debug, options.json === true),
         load: kubicConfigLoader(cliConfig),
@@ -878,16 +878,16 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...report(),
       }),
     eval: (options, cliConfig) =>
-      // Analysis surfaces (issue #78): the eval/benchmark presentation
-      // layer is library-owned (packages/eval/src/cli.ts, read-only); the
-      // root only supplies prod deps. Worktree cleanliness is a real git
-      // probe (packages/exec); the suite runner is the live one (issue
-      // #262) — each built-in suite's fixture runs through the solo lane
-      // and is scored from the trajectory it writes.
+      // Analysis surfaces: the eval/benchmark presentation layer is
+      // library-owned (packages/eval/src/cli.ts, read-only); the root only
+      // supplies prod deps. Worktree cleanliness is a real git probe
+      // (packages/exec); the suite runner is the live one — each built-in
+      // suite's fixture runs through the solo lane and is scored from the
+      // trajectory it writes.
       runEvalCommand(options, {
         runSuite: createProdRunSuite(options, cliConfig),
         ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
-        // §48 (issue #258): --trajectory takes a file path (or `-` for
+        // --trajectory takes a file path (or `-` for
         // stdin) like export/replay; relative to the user's cwd.
         readFile: (path: string) =>
           createNodeFileBridge(process.cwd()).readTextFile(path),
@@ -902,18 +902,18 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       }),
     replay: (options, cliConfig) => {
       const enterprisePolicy = runtimePolicy(cliConfig);
-      // Issue #239: the live re-execution tiers boot the real solo lane,
+      // The live re-execution tiers boot the real solo lane,
       // so they compact under the configured policy like `kubic run`.
       const compaction = runtimeCompactionDeps(cliConfig);
-      // Issue #240: the same prompt augmentation on the re-executed tiers.
+      // The same prompt augmentation on the re-executed tiers.
       const systemPromptSection = runtimeSystemPromptSection(cliConfig);
-      // `--session <id>` (issue #383): the session's own trajectory file.
+      // `--session <id>`: the session's own trajectory file.
       const resolved = resolveSessionTrajectory(options, defaultSessionsRoot());
       if ('error' in resolved) return usageError(resolved.error);
-      // Replay at a declared tier (issue #78): recorded/compare are
+      // Replay at a declared tier: recorded/compare are
       // log-only; deterministic/live re-execute the recorded objective
       // through the real solo lane at the declared model pin.
-      // Issues #239/#240 (review follow-up): the runtime object is built
+      // The runtime object is built
       // against the named type, so a dropped or mistyped projection fails
       // compile — the spreads below used to ride unchecked.
       const runtime: ReplayRuntimeDeps = {
@@ -922,7 +922,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...(enterprisePolicy === undefined
           ? {}
           : { modelPolicy: enterprisePolicy }),
-        // Issue #272: the shared lane projections `kubic run` threads
+        // The shared lane projections `kubic run` threads
         // (agent id + config-sourced role layers + the out-of-scope
         // paths) — the pinned role merges under them identically.
         ...runtimeLaneDeps(cliConfig),
@@ -935,11 +935,11 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           ...report(),
           run: (request, runtime) => runProdReplay(request, runtime),
         },
-        // Issue #114: the re-execution tiers consume the effective config
+        // The re-execution tiers consume the effective config
         // like `kubic run` — same runtime projections, same lane policy.
-        // Issue #228 review: and the same per-path trust check, so the
+        // And the same per-path trust check, so the
         // assembled catalog gates the project models.json on its own root.
-        // §58 enterprise policy (issue #288): and the same model/tool/role
+        // Enterprise policy: and the same model/tool/role
         // gates — a live re-execution is not an ungated lane.
         runtime,
       );
@@ -947,14 +947,14 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
     export: (options) => {
       const resolved = resolveSessionTrajectory(options, defaultSessionsRoot());
       if ('error' in resolved) return usageError(resolved.error);
-      // Trajectory inspection + RL dataset export (issue #78): reads
+      // Trajectory inspection + RL dataset export: reads
       // trajectory export file(s) through the exec FileBridge.
       return runTrajectoryExportCommand(resolved.options, {
         // Relative to the user's working directory (a '/'-rooted bridge
         // turned `--trajectory t.json` into `/t.json`).
         readFile: (path: string) =>
           createNodeFileBridge(process.cwd()).readTextFile(path),
-        // Issue #270: the batch mode's filesystem seam — listing resolves
+        // The batch mode's filesystem seam — listing resolves
         // the --dataset directory/glob, the JSONL streams one line at a
         // time, and the manifest lands beside it.
         listDir: (path: string) =>

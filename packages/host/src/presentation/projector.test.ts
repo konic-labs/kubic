@@ -1,4 +1,4 @@
-// §66's host-side projector (issue #333): folds the replicated event stream
+// 's host-side projector: folds the replicated event stream
 // into a KubicPresentationState. Pure — no I/O, no harness.
 import { describe, expect, it } from 'vitest';
 import type { KubicLaneEvent } from '../../../worker/src/lane/events.js';
@@ -27,7 +27,7 @@ function usageRow(input: number, output: number, total: number) {
   };
 }
 
-describe('presentation projector (issue #333; §66)', () => {
+describe('presentation projector', () => {
   it('starts from the seed with one idle root lane', () => {
     const state = new PresentationProjector(SEED).state();
     expect(state.session).toEqual({
@@ -179,7 +179,7 @@ describe('presentation projector (issue #333; §66)', () => {
   });
 });
 
-describe('presentation projector regressions (issue #333 review)', () => {
+describe('presentation projector regressions', () => {
   it('clears the previous turn calls at a turn boundary', () => {
     // The lane's `tools` list is a running list across turns; only a snapshot
     // replaces it. The tree renders it as the CURRENT turn, so the projector
@@ -283,7 +283,7 @@ describe('presentation projector regressions (issue #333 review)', () => {
   });
 });
 
-describe('the snapshot usage ledger (issue #333 review)', () => {
+describe('the snapshot usage ledger', () => {
   const snapshotWith = (usage: unknown): never =>
     ({
       type: 'snapshot',

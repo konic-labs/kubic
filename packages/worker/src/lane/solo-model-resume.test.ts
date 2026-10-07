@@ -1,11 +1,10 @@
-// Resumed-session model identity on the durable harness (issue #148; §21
-// persisted conversation agent, §26 items 1 and 4, §26.1; ported in #394).
-// The root conversation's `pi.agent` document restores the stored model; the
-// boot selection only seeds a NEW conversation. The documented rule: an
-// explicit selection (`modelPolicy: 'selected'`) switches a differing stored
-// model (configure + notice); otherwise the session keeps its own model and
-// every surface reports it. A stored model that is no longer available fails
-// closed with a named error.
+// Resumed-session model identity on the durable harness (persisted conversation
+// agent, items 1 and 4, ported). The root conversation's `pi.agent` document
+// restores the stored model; the boot selection only seeds a NEW conversation.
+// The documented rule: an explicit selection (`modelPolicy: 'selected'`)
+// switches a differing stored model (configure + notice); otherwise the session
+// keeps its own model and every surface reports it. A stored model that is no
+// longer available fails closed with a named error.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -92,7 +91,7 @@ function handle(storage: Storage, id = 'sess-1'): TestSession {
     dir: `/tmp/kubic-solo-resume/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
-    // #395/D8.1: the boot adopts the storage, so the handle must expose it.
+    // The boot adopts the storage, so the handle must expose it.
     adopt: () => storage,
     release: vi.fn(async () => undefined),
   };
@@ -172,7 +171,7 @@ function liveModel(solo: SoloLane): Promise<string | undefined> {
     );
 }
 
-describe('resumed session model identity (issue #148)', () => {
+describe('resumed session model identity', () => {
   it('an explicit selection switches the stored model and says so', async () => {
     const storage = await sessionOnBig();
     const { faux, models, small } = catalog();
@@ -298,7 +297,7 @@ describe('resumed session model identity (issue #148)', () => {
   });
 });
 
-describe('a resumed session never keeps a model the enterprise gate refuses (issue #288)', () => {
+describe('a resumed session never keeps a model the enterprise gate refuses', () => {
   it('drops a refused stored model for the (already gated) selection and says so', async () => {
     const storage = await sessionOnBig();
     const { faux, models, small } = catalog();

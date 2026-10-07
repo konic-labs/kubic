@@ -1,11 +1,9 @@
-// `kubic audit [--posture p] [--result r] [--session id] [--json]`
-// (issue #79; §60). Query entry over org audit records: exact match on
-// each supplied dimension; a table of the scanned fields for humans, the
-// full records under --json. Records arrive
-// injected (faux in tests — no audit persistence is wired yet); every
-// printed record is redacted first, so query output never carries
-// secret-shaped values or listed-secret inventory values — credentials
-// stay sentinel-only.
+// `kubic audit [--posture p] [--result r] [--session id] [--json]`. Query entry
+// over org audit records: exact match on each supplied dimension; a table of
+// the scanned fields for humans, the full records under --json. Records arrive
+// injected (faux in tests — no audit persistence is wired yet); every printed
+// record is redacted first, so query output never carries secret-shaped values
+// or listed-secret inventory values — credentials stay sentinel-only.
 
 import {
   EXIT_FAILED,
@@ -49,7 +47,7 @@ export interface AuditCommandDeps {
 
 const PLAIN = createCliTheme('none');
 
-// Prod listed-secret inventory (issue #79). Audit persistence is not wired
+// Prod listed-secret inventory. Audit persistence is not wired
 // yet, so this returns no values today; when persistence lands, return the
 // inventory here — runAuditCommand already consults loadSecrets, so the
 // prod path cannot forget it.
@@ -140,7 +138,7 @@ export async function runAuditCommand(
   }
   // A session filter is an id, never an empty value: `--session ''` (or a
   // whitespace-only one) would silently read as "no filter" or match nothing,
-  // so it is refused like the other value-bearing filters (issue #159).
+  // so it is refused like the other value-bearing filters.
   const session = options.session;
   if (session !== undefined && session.trim() === '') {
     log.error(
@@ -150,7 +148,7 @@ export async function runAuditCommand(
     );
     return EXIT_USAGE;
   }
-  // An unreadable ledger (issue #279) is a failure naming the file, never
+  // An unreadable ledger is a failure naming the file, never
   // an empty trail: "no audit records" would be a false all-clear.
   let records: OrgAuditRecord[];
   try {

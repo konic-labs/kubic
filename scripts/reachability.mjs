@@ -1,28 +1,25 @@
-// Dead-surface reachability gate (issue #102).
+// Dead-surface reachability gate.
 //
 // Recomputes which non-test source files are unreachable from the binary's
 // entry (apps/kubic/src/main.ts — the only module bin/kubic.js can reach) by
 // walking VALUE imports (import type is erased, so it never makes a file
-// reachable). Compares the result with the disposition ledger
-// (docs/dead-surface.md, one row per file) and fails when:
-//   - a file is runtime-dead but has no ledger row (a new dead file landed);
-//   - a ledger row names a file that no longer exists or is now reachable
-//     (the ledger went stale — dispositions must be executed, not forgotten).
-//
-// Mirrors the method the issue documents (BFS over `import ... from`), so the
-// numbers in the ledger can be re-derived by anyone.
+// reachable). Compares the result with DEAD_FILES in dead-surface.mjs and
+// fails when:
+//   - a file is runtime-dead but not listed (a new dead file landed);
+//   - a listed file no longer exists or is now reachable (the list went
+//     stale).
 //
 // Usage:
-//   node scripts/reachability.mjs            # check against the ledger
+//   node scripts/reachability.mjs            # check against the list
 //   node scripts/reachability.mjs --report   # print dead files + LOC, no gate
 //   node scripts/reachability.mjs --json     # machine-readable report
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEAD_FILES } from './dead-surface.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ENTRY = 'apps/kubic/src/main.ts';
-const LEDGER = 'docs/dead-surface.md';
 
 // Directories that never participate: fixtures, upstream reference, build
 // output, and the tool's own caches.
@@ -147,33 +144,13 @@ export function deadFiles(root = ROOT) {
     .sort();
 }
 
-// The ledger is a markdown table with either three columns
-// (`| LOC | `path` | disposition |`) or four (`| LOC | `path` | owner | disposition |`).
-// Owner and disposition are joined so the gate only depends on the file path.
-export function parseLedger(root = ROOT, ledger = LEDGER) {
-  const text = readFileSync(join(root, ledger), 'utf8');
-  const rows = new Map();
-  for (const line of text.split('\n')) {
-    const cells = line
-      .trim()
-      .replace(/^\|/, '')
-      .replace(/\|$/, '')
-      .split('|')
-      .map((c) => c.trim());
-    if (cells.length < 3) continue;
-    const loc = Number(cells[0]);
-    const path = cells[1].replace(/^`|`$/g, '');
-    if (!Number.isInteger(loc) || !path) continue;
-    const disposition = cells.slice(2).filter(Boolean).join(' ');
-    if (disposition === '') continue;
-    rows.set(path, { loc, disposition });
-  }
-  return rows;
+function lineCount(root, file) {
+  return readFileSync(join(root, file), 'utf8').split('\n').length;
 }
 
-export function checkSurface(root = ROOT, ledger = LEDGER) {
+export function checkSurface(root = ROOT, known = DEAD_FILES) {
   const dead = deadFiles(root);
-  const rows = parseLedger(root, ledger);
+  const rows = new Map(Object.entries(known));
   const uncovered = dead.filter((f) => !rows.has(f));
   const stale = [...rows.keys()].filter(
     (f) =>
@@ -197,70 +174,53 @@ function main() {
   const json = argv.includes('--json');
   const report = argv.includes('--report');
   if (report || json) {
-    // Report mode recomputes without requiring the ledger to exist yet:
-    // the ledger is the artifact this script is meant to keep honest.
     const dead = deadFiles(ROOT);
     const sources = allSources(ROOT).map((x) => relative(ROOT, x));
-    let rows = new Map();
-    try {
-      rows = parseLedger(ROOT);
-    } catch {
-      rows = new Map();
-    }
-    const uncovered = dead.filter((f) => !rows.has(f));
-    // Report the same number the gate would: LOC of currently-dead files only,
-    // so a row whose file went reachable never inflates the report.
     const payload = {
       deadFiles: dead.length,
-      deadLoc: dead
-        .filter((f) => rows.has(f))
-        .reduce((sum, f) => sum + rows.get(f).loc, 0),
+      deadLoc: dead.reduce((sum, f) => sum + lineCount(ROOT, f), 0),
       productionFiles: sources.length,
-      uncovered: rows.size === 0 ? [] : uncovered,
-      ledgerRows: rows.size,
+      unlisted: dead.filter((f) => !Object.hasOwn(DEAD_FILES, f)),
     };
     if (json) console.log(JSON.stringify(payload, null, 2));
     else {
       console.log(
-        `production files: ${payload.productionFiles} · dead: ${payload.deadFiles} (${payload.deadLoc} LOC by ledger)`,
+        `production files: ${payload.productionFiles} · dead: ${payload.deadFiles} (${payload.deadLoc} LOC)`,
       );
       for (const f of dead) console.log(`  ${f}`);
     }
     return 0;
   }
   const result = checkSurface();
-  const deadLoc = result.dead.reduce(
-    (sum, f) => sum + (result.rows.get(f)?.loc ?? 0),
-    0,
-  );
+  const deadLoc = result.dead.reduce((sum, f) => sum + lineCount(ROOT, f), 0);
   let failed = false;
   if (result.uncovered.length > 0) {
     failed = true;
     console.error(
-      `dead surface: ${result.uncovered.length} file(s) runtime-dead with no ledger row:`,
+      `dead surface: ${result.uncovered.length} file(s) runtime-dead and not listed:`,
     );
     for (const f of result.uncovered) console.error(`  ${f}`);
     console.error(
-      'Add a row to docs/dead-surface.md (#<issue>, delete, or keep: <reason>).',
+      'Wire or delete the file, or list it in scripts/dead-surface.mjs with its reason.',
     );
   }
   if (result.stale.length > 0) {
     failed = true;
     console.error(
-      `dead surface: ${result.stale.length} ledger row(s) name a deleted file:`,
+      `dead surface: ${result.stale.length} listed file(s) no longer exist:`,
     );
     for (const f of result.stale) console.error(`  ${f}`);
   }
   if (result.wired.length > 0) {
     failed = true;
     console.error(
-      `dead surface: ${result.wired.length} ledger row(s) are now reachable — remove them:`,
+      `dead surface: ${result.wired.length} listed file(s) are now reachable — remove them from the list:`,
     );
     for (const f of result.wired) console.error(`  ${f}`);
   }
   if (failed) return 1;
   console.log(
-    `dead surface OK: ${result.dead.length} dead file(s) (${deadLoc} LOC), every one ledgered`,
+    `dead surface OK: ${result.dead.length} dead file(s) (${deadLoc} LOC), every one listed`,
   );
   return 0;
 }

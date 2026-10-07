@@ -1,4 +1,4 @@
-// `kubic doctor` (issue #29; §41.4, §50): health readout over providers,
+// `kubic doctor`: health readout over providers,
 // deps, and approval-policy mismatches, with a skip flag. Presentation
 // only — every probe is injected (faux-only, zero network): the command
 // never dials a provider, it reports what the injected probers say.
@@ -11,7 +11,7 @@ import {
   effectiveCredentialLevel,
   effectiveNetworkLevel,
 } from '../../agents/src/policy.js';
-// License identity (issue #59; §75.1): constants only, no file access —
+// License identity: constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
 import {
@@ -30,8 +30,8 @@ import {
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import type { FullAccessSession } from './doctor-full-access.js';
 import { renderDoctorGrouped } from './doctor-render.js';
-// Issue #58 honest limits (§59.1, §78): registration import only — no
-// existing check builder in this file was modified for #58. Exit codes
+// Honest limits: registration import only — no
+// existing check builder in this file was modified. Exit codes
 // route through the limits mapper so provider-down exits 6.
 import {
   depsLimitCheck,
@@ -44,11 +44,11 @@ import {
 export const DOCTOR_EXIT_OK = EXIT_OK;
 export const DOCTOR_EXIT_FAIL = EXIT_FAILED;
 export const DOCTOR_EXIT_USAGE = EXIT_USAGE;
-// §78 provider-failure code, mirroring kubic run: a doctor matrix with a
+// Provider-failure code, mirroring kubic run: a doctor matrix with a
 // provider-down failure exits 6 (see limitsDoctorExit).
 export const DOCTOR_EXIT_PROVIDER = EXIT_PROVIDER;
 
-// warn is informational only (issue #58 static §59.1 notices): it is
+// warn is informational only: it is
 // rendered, counted, and never exit-flipping — only fail flips the exit.
 export type DoctorStatus = 'pass' | 'warn' | 'fail' | 'skip';
 
@@ -79,7 +79,7 @@ export interface DoctorReport {
 
 // Provider probe input mirrors CustomProviderSpec (models-config.ts)
 // plus reachability — set by an injected faux prober, never by dialing.
-// `dialled` (issue #86) is the honesty switch: absent/false means the
+// `dialled` is the honesty switch: absent/false means the
 // provider was only LISTED (registered in the catalog, never contacted),
 // and the printed line says so. A probe that really contacted the provider
 // sets it true, and only then may the line claim a dial.
@@ -98,50 +98,50 @@ export interface DepProbe {
 }
 
 export interface DoctorDeps extends CliIo {
-  // Issue #448: the terminal width the grouped summary packs into.
+  // The terminal width the grouped summary packs into.
   readonly columns?: number;
   probeProviders: () => ProviderProbe[];
   checkDeps: () => DepProbe[];
   loadPolicy: () => unknown;
-  // The INSTALLED policy (issue #86; §40.3, §41.4) — the same posture object
+  // The INSTALLED policy — the same posture object
   // the lane booted with, so the line cannot print a posture the run does
   // not enforce. Absent (legacy callers/tests): no installed-policy check,
   // the existing matrix is unchanged.
   installedPolicy?: () => InstalledPolicyPosture;
-  // Role documents (issue #99; §41.4, §40.3): the loaded `.kubic/roles/*.md`
+  // Role documents: the loaded `.kubic/roles/*.md`
   // set projected onto DoctorChecks — a contradictory role reports
   // fail/policy-mismatch with the resolver's named reason, and a refused
   // run can never print green. Absent: no role checks (legacy matrices are
   // unchanged).
   probeRoles?: () => DoctorCheck[];
-  // Issue #181 (§29.4): the skills gate probe — absent means no skills
+  // The skills gate probe — absent means no skills
   // checks. Same contract as probeRoles: a throwing probe becomes one
   // failing check, returned checks pass through verbatim.
   probeSkills?: () => DoctorCheck[];
-  // §58 enterprise policy (issue #289): the checks `enterpriseDoctorChecks`
+  // Enterprise policy: the checks `enterpriseDoctorChecks`
   // derives from the resolved `[policy]` section, built by the composition
   // root (host never imports the app). Absent — including when no `[policy]`
   // is configured at all — means no enterprise checks and an unchanged
   // default matrix. A throwing probe becomes one named failing check.
   enterpriseChecks?: () => DoctorCheck[];
-  // §58 configured audit sinks (issue #286): the checks
+  // Configured audit sinks: the checks
   // `auditSinksDoctorChecks` derives from the loaded `[[audit]]` tables,
   // built by the composition root with real reachability probes. Absent
   // means no sink checks and an unchanged default matrix. A throwing
   // probe becomes one named failing check, never a crash.
   probeAuditSinks?: () => DoctorCheck[];
-  // Repo-level session overlap (issue #118; §42.5): the local session
+  // Repo-level session overlap: the local session
   // store's view of sessions recorded against one workspace — two or more
   // reports a warn note (concurrent different-session runs are legal; the
   // note states the sweep blind spot). Absent: no overlap check.
   probeSessionOverlap?: () => SessionOverlapProbe;
-  // §41.4 full-access sessions (issue #310): the composition root's
+  // Full-access sessions: the composition root's
   // enumeration of the workspace's live sessions whose posture.json
   // records fullAccess (host/doctor-full-access). Absent: no per-session
   // checks (legacy matrices are unchanged). A throwing probe becomes one
   // warn check, never a crash: an unlistable store must not flip the exit.
   probeFullAccessSessions?: () => FullAccessSession[];
-  // Issue #361: a state directory that other local users can read (session
+  // A state directory that other local users can read (session
   // transcripts, journaled file content). undefined means private or absent.
   probeStatePermissions?: () => StatePermissionProbe | undefined;
 }
@@ -167,7 +167,7 @@ export interface InstalledPolicyPosture {
   autoApprove?: string[];
   requireJustification?: boolean;
   fullAccess: boolean;
-  // Issue #166 (§40.2): declared levels the tool set cannot express.
+  // Declared levels the tool set cannot express.
   unsupported?: readonly {
     class: string;
     level: string;
@@ -177,7 +177,7 @@ export interface InstalledPolicyPosture {
 }
 
 // The config-sourced approval policy as policy:approvals validated it — the
-// half the installed posture must agree with (issue #230, §40.3).
+// half the installed posture must agree with.
 interface ConfiguredApprovals {
   route: string;
   maxPendingMs: number;
@@ -197,7 +197,7 @@ function installedPolicyCheck(
   configured?: ConfiguredApprovals,
 ): DoctorCheck {
   const base = { id: 'policy:installed', label: 'policy installed' };
-  // Issue #230 (§40.3): the route and bound the lane installs must be the
+  // The route and bound the lane installs must be the
   // ones config declares — two contradictory green lines are the false
   // confidence doctor exists to prevent.
   if (
@@ -212,7 +212,7 @@ function installedPolicyCheck(
       detail: `installed approval policy (route=${posture.route}, maxPendingMs=${posture.maxPendingMs}) differs from config (route=${configured.route}, maxPendingMs=${configured.maxPendingMs})`,
     };
   }
-  // §40.3: what doctor prints must be what the lane enforces. The posture
+  // What doctor prints must be what the lane enforces. The posture
   // carries both halves, so a contradiction is detectable from the object
   // itself — an empty allowlist is a real posture (filesystem none), a
   // missing guard list is not.
@@ -247,7 +247,7 @@ function installedPolicyCheck(
     };
   }
   const unsupported = posture.unsupported ?? [];
-  // §40.2/§40.3: a level the lane cannot express is never printed green —
+  // A level the lane cannot express is never printed green —
   // the check warns and names each one with the level actually enforced.
   const unsupportedTail =
     unsupported.length === 0
@@ -274,11 +274,11 @@ function installedPolicyCheck(
   };
 }
 
-// §58/§59.1 (issue #289): an installed class whose restriction is LEXICAL
+// An installed class whose restriction is LEXICAL
 // DETECTION, not enforcement. `policy:installed` prints the classes as facts;
 // this check names the ones a run cannot actually hold, so the line is never
 // read as a sandbox. Warn only — it discloses a limit, it does not flip the
-// exit (the same contract as the static §59.1 notices). Omitted entirely when
+// exit (the same contract as the static notices). Omitted entirely when
 // every installed class is structurally enforced (or unrestricted), so a
 // matrix that has nothing to disclose gains no line.
 function detectionOnlyCheck(
@@ -310,7 +310,7 @@ function detectionOnlyCheck(
   };
 }
 
-// Repo-level session overlap input (issue #118; §42.5): the workspace and
+// Repo-level session overlap input: the workspace and
 // the ids of every session recorded against it in the local session store.
 // The store lists sessions — it cannot prove one is RUNNING — so the check
 // warns about a possible overlap, never about a verified one.
@@ -340,7 +340,7 @@ function fullAccessSessionCheck(session: FullAccessSession): DoctorCheck {
 
 function sessionOverlapCheck(probe: SessionOverlapProbe): DoctorCheck {
   const base = { id: 'session:overlap', label: 'session overlap' };
-  // Warn, never fail (issue #118): concurrent different-session runs in one
+  // Warn, never fail: concurrent different-session runs in one
   // repo are LEGAL — warn is informational and never exit-flipping. The
   // note states the sweep's blind spot: each run's end-of-run sweep
   // compares against its own boot baseline, so a sibling's in-flight
@@ -366,7 +366,7 @@ function sessionOverlapCheck(probe: SessionOverlapProbe): DoctorCheck {
   };
 }
 
-// Issue #361: a group- or world-accessible state directory. The probe
+// A group- or world-accessible state directory. The probe
 // reports it (and the next open tightens it); doctor warns, never fails —
 // a loose directory is a real exposure but not a broken installation.
 export interface StatePermissionProbe {
@@ -401,7 +401,7 @@ function statePermissionCheck(
 function providerChecks(probes: ProviderProbe[]): DoctorCheck[] {
   return probes.map((probe) => {
     const count = probe.models?.length ?? 0;
-    // Honesty (issue #86; §59.1): a provider that was never dialled must not
+    // Honesty: a provider that was never dialled must not
     // be reported as reachable. The default line states listed-vs-dialled
     // plainly; a probe that supplies its own detail keeps it (that is where
     // a real dial's outcome, or a real failure, is named).
@@ -435,7 +435,7 @@ function depChecks(probes: DepProbe[]): DoctorCheck[] {
   }));
 }
 
-// Policy mismatches (§41): unknown autoApprove capabilities (anything
+// Policy mismatches: unknown autoApprove capabilities (anything
 // outside CAPABILITIES and the dynamic `requires:<tool>` triggers),
 // autoApprove entries that can never apply under route=deny, and any
 // policy that fails host validation outright. An always-ask capability
@@ -483,7 +483,7 @@ function policyCheck(raw: unknown): DoctorCheck {
       detail: 'route=deny ignores autoApprove — entries can never apply',
     };
   }
-  // An always-ask capability in autoApprove (issue #324) can never apply:
+  // An always-ask capability in autoApprove can never apply:
   // named as a warning (informational, exit-neutral) and left out of the
   // count, so the line never claims an approval the lane will not grant.
   const ignored = [...new Set(alwaysAskAutoApprove(policy.autoApprove))];
@@ -511,7 +511,7 @@ function probeMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// License identity (issue #59; §75.1): Kubic is MIT-licensed. The check
+// License identity: Kubic is MIT-licensed. The check
 // always passes — it surfaces the license at runtime and can never flip
 // the doctor exit code. The static correspondence (LICENSE text and the
 // package.json license fields matching these constants) is guarded by
@@ -531,7 +531,7 @@ export function collectDoctorChecks(
   skip: string[],
 ): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
-  // Issue #291: each probe runs ONCE here and the results are captured —
+  // Each probe runs ONCE here and the results are captured —
   // the limit aggregates at the end reuse these results and never re-call
   // the probes (a second call would double-bill expensive probes and let
   // a flaky probe answer differently twice).
@@ -584,7 +584,7 @@ export function collectDoctorChecks(
       detail: probeMessage(error),
     });
   }
-  // Installed policy (issue #86): opt-in via the injected probe — absent
+  // Installed policy: opt-in via the injected probe — absent
   // means no check, so legacy matrices are unchanged. A throwing probe
   // becomes a failing check, never a crash: an unenforceable install must
   // fail the matrix with policy-mismatch, never pass quietly.
@@ -592,7 +592,7 @@ export function collectDoctorChecks(
     try {
       const posture = deps.installedPolicy();
       checks.push(installedPolicyCheck(posture, configured));
-      // Issue #289: the same posture names its lexical classes, so the
+      // The same posture names its lexical classes, so the
       // installed line is never read as enforcement.
       const detection = detectionOnlyCheck(posture);
       if (detection !== undefined) checks.push(detection);
@@ -606,10 +606,10 @@ export function collectDoctorChecks(
       });
     }
   }
-  // Role documents (issue #99): opt-in via the injected probe — absent
+  // Role documents: opt-in via the injected probe — absent
   // means no role checks. A throwing probe becomes one failing check, and
   // every check the probe returns is passed through verbatim (the probe
-  // owns the §40.3 reason text; doctor does not rewrite it).
+  // owns the reason text; doctor does not rewrite it).
   if (deps.probeRoles !== undefined) {
     try {
       checks.push(...deps.probeRoles());
@@ -623,7 +623,7 @@ export function collectDoctorChecks(
       });
     }
   }
-  // Skills gate (issue #181, §29.4): opt-in via the injected probe —
+  // Skills gate: opt-in via the injected probe —
   // absent means no skills checks, same fail-closed probe contract.
   if (deps.probeSkills !== undefined) {
     try {
@@ -638,7 +638,7 @@ export function collectDoctorChecks(
       });
     }
   }
-  // §58 enterprise policy (issue #289): opt-in via the injected probe — the
+  // Enterprise policy: opt-in via the injected probe — the
   // composition root builds it from the SAME effective `[policy]` resolution
   // `kubic policy` reports (enterpriseDoctorChecks), and only when a
   // `[policy]` section is actually configured. Absent means no enterprise
@@ -657,7 +657,7 @@ export function collectDoctorChecks(
       });
     }
   }
-  // §58 configured audit sinks (issue #286): opt-in via the injected
+  // Configured audit sinks: opt-in via the injected
   // probe — absent means no sink checks, so legacy matrices are unchanged.
   // A throwing probe becomes one named failing check, never a crash.
   if (deps.probeAuditSinks !== undefined) {
@@ -673,12 +673,12 @@ export function collectDoctorChecks(
       });
     }
   }
-  // Repo-level session overlap (issue #118): opt-in via the injected probe —
+  // Repo-level session overlap: opt-in via the injected probe —
   // absent means no check (legacy matrices are unchanged). A throwing probe
   // reports warn with the named reason, never fail: the note is
   // informational by design (overlap is legal), so a store hiccup must not
   // flip doctor's exit code.
-  // Issue #361: always present — a clean posture is a pass, so the matrix
+  // Always present — a clean posture is a pass, so the matrix
   // shape stays stable and a loose directory is named rather than silent.
   try {
     checks.push(
@@ -710,7 +710,7 @@ export function collectDoctorChecks(
       });
     }
   }
-  // §41.4 full-access sessions (issue #310): one warning per live session
+  // Full-access sessions: one warning per live session
   // running with approvals off (see fullAccessSessionCheck). A throwing
   // probe becomes one warn check, never a crash.
   if (deps.probeFullAccessSessions !== undefined) {
@@ -728,10 +728,10 @@ export function collectDoctorChecks(
       });
     }
   }
-  // License identity (issue #59): reported on every run, never skipped
+  // License identity: reported on every run, never skipped
   // implicitly — --skip license:kubic remains available like any check.
   checks.push(licenseCheck());
-  // Issue #58 honest limits (§59.1) plus issue #291: the limit aggregates
+  // Honest limits plus: the limit aggregates
   // derive from the probes captured above — never a second probe call —
   // and from the POST-skip items, so skipping a failing item clears the
   // aggregate it would otherwise fail. A direct --skip of a limit id is
@@ -754,7 +754,7 @@ export function collectDoctorChecks(
   return applySkip(checks, skip);
 }
 
-// Issue #291: limit aggregates from captured probe results. Probes whose
+// Limit aggregates from captured probe results. Probes whose
 // per-item check was skipped are excluded, so a skipped refusal no longer
 // fails the aggregate; when skipping empties a section entirely the
 // aggregate reports skip (it has nothing to assess), never a failure.
@@ -872,11 +872,11 @@ function summarize(checks: DoctorCheck[]): string {
 export interface DoctorCommandOptions {
   readonly skip?: readonly string[];
   readonly json?: boolean;
-  // Issue #448: the full per-check report on an interactive terminal
+  // The full per-check report on an interactive terminal
   // (the grouped summary is the default there). Piped output is always the
   // full report.
   readonly verbose?: boolean;
-  // Issue #310: check one session — its installed posture reads that
+  // Check one session — its installed posture reads that
   // session's posture.json, and the full-access enumeration covers
   // exactly it (workspace filter bypassed).
   readonly session?: string;

@@ -1,7 +1,6 @@
-// The TUI chrome (EPIC N, issue #453; docs/ui/01-session.html 01-A and
-// 01-M): the one-row header and the context-aware key-hint row. The status
-// line is status-bar.ts. Pure renders over a UiTheme — plain text at colour
-// depth none, so snapshots read like the design.
+// The TUI chrome: the one-row header and the context-aware key-hint row. The
+// status line is status-bar.ts. Pure renders over a UiTheme — plain text at
+// colour depth none, so snapshots read like the design.
 //
 // Header: `■ KUBIC │ <project> ⎇ <branch> ●<dirty>` on the left, `session
 // <title> │ approvals on │ HH:MM` on the right, on bg1. As the width shrinks
@@ -30,7 +29,7 @@ export interface HeaderInfo {
   readonly session?: string;
   /** Local `HH:MM`. */
   readonly clock?: string;
-  /** Approvals waiting for the operator (#459: the amber badge). */
+  /** Approvals waiting for the operator (the amber badge). */
   readonly waiting?: number;
 }
 
@@ -75,7 +74,7 @@ export function renderHeader(
     info.clock === undefined || info.clock === ''
       ? ''
       : ui.fg('fg2')(info.clock);
-  // Issue #459: what waits for the operator outranks the session name.
+  // What waits for the operator outranks the session name.
   const waiting =
     info.waiting !== undefined && info.waiting > 0
       ? badge(ui, `${info.waiting} WAITING`, 'waiting')
@@ -169,7 +168,7 @@ export type HintContext =
   | 'idle'
   | 'working'
   | 'approval'
-  // Issue #467: the approval card's comment or command input is open.
+  // The approval card's comment or command input is open.
   | 'approvalInput'
   | 'overlay'
   | 'palette'
@@ -201,7 +200,7 @@ export function keyHintSet(
     const cap = keyCap(keys.label(action));
     return cap === '' ? [] : [[cap, label]];
   };
-  // Issue #454: quitting is a double press of the interrupt key.
+  // Quitting is a double press of the interrupt key.
   const quitHint = (): { right?: KeyHint } => {
     const cap = keyCap(keys.label('app.interrupt'));
     return cap === '' ? {} : { right: [`${cap} ${cap}`, 'quit'] };
@@ -228,7 +227,7 @@ export function keyHintSet(
       right: ['esc', 'back to the card'],
     };
   }
-  // Issue #460: the palette names its own keys (03-A).
+  // The palette names its own keys.
   if (context === 'palette') {
     return {
       hints: [
@@ -240,7 +239,7 @@ export function keyHintSet(
       right: ['esc', 'close'],
     };
   }
-  // Issue #463: block mode (01-D, 01-M).
+  // Block mode.
   if (context === 'blocks') {
     return {
       hints: [
@@ -253,7 +252,7 @@ export function keyHintSet(
       right: ['esc', 'back'],
     };
   }
-  // Issue #461: the model picker (03-D).
+  // The model picker.
   if (context === 'model') {
     return {
       hints: [

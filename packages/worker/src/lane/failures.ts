@@ -1,8 +1,8 @@
-// §52 failure taxonomy + §53 retry chooser (issue #14, slice C).
+// Failure taxonomy + retry chooser.
 // Dotted codes preserve the distinctions retries depend on: collapsing
 // run_limit into model_failed (or denied into timed_out) produces
 // retries that cannot succeed. The chooser maps a classified failure to
-// one of the six §53 strategies, escalation, or abandon — never a blind
+// one of the six retry strategies, escalation, or abandon — never a blind
 // repeat. Retries are bounded by RetryBudget.
 
 import type { ResultErrorKind } from './settle.js';
@@ -27,9 +27,9 @@ export const FAILURE_CODES = [
 ] as const;
 
 // Agent-lifecycle codes (agent_looping, agent_crashed,
-// agent_completed_with_failure) belong to the worker lifecycle owner
-// (issue #42), which is the only layer that can tell a crash from a
-// completed-with-failure. This taxonomy covers lane-execution failures.
+// agent_completed_with_failure) belong to the worker lifecycle owner, which is
+// the only layer that can tell a crash from a completed-with-failure. This
+// taxonomy covers lane-execution failures.
 
 export type FailureCode = (typeof FAILURE_CODES)[number];
 
@@ -42,12 +42,11 @@ export const RETRY_STRATEGIES = [
   'retry_with_wider_capability',
 ] as const;
 
-// Full §53 strategy vocabulary. Emitted today: retry_same (executed by the
-// harness's durable generation retry, #395), retry_with_different_tool, and
-// retry_with_new_context (solo compact-then-retry, issue #209). Stronger
-// model and new agent are DECIDED here and executed by their owners
-// (#210 escalates, #184 relaunches with a handoff); wider capability only
-// ever arises through an explicit approval (#16), never from this chooser.
+// Full retry strategy vocabulary. Emitted today: retry_same (executed by the
+// harness's durable generation retry), retry_with_different_tool, and
+// retry_with_new_context (solo compact-then-retry). Stronger model and new
+// agent are DECIDED here and executed by their owners; wider capability only
+// ever arises through an explicit approval, never from this chooser.
 
 export type RetryStrategy = (typeof RETRY_STRATEGIES)[number];
 
@@ -67,9 +66,9 @@ export function classifyFailure(
   const haystack = `${code} ${message}`.toLowerCase();
   switch (kind) {
     case 'model': {
-      // Issue #155: the durable `model_error` reason is generic — it names
+      // The durable `model_error` reason is generic — it names
       // the generation task, not the failure's domain. When the detail
-      // names a provider capacity/rate-limit refusal or a tool fault, §52
+      // names a provider capacity/rate-limit refusal or a tool fault,
       // keeps that distinction instead of collapsing it into model_failed.
       if (
         /rate ?limit|too many requests|\b429\b|overloaded|at capacity|capacity exhausted|quota/i.test(
@@ -109,7 +108,7 @@ export function classifyFailure(
     case 'provider': {
       // No provider/model configured is a setup failure, not a transient
       // one: retrying unchanged can never succeed. It rides the existing
-      // non-retryable provider code (the §52 list is pinned equal in the
+      // non-retryable provider code (the list is pinned equal in the
       // trajectory/eval schemas) with a remedy that names the real fix.
       if (
         /no models? available|register a provider|no providers? (?:configured|registered)|provider not configured|no model configured/.test(
@@ -204,8 +203,8 @@ export function classifyFailure(
           strategy: 'escalate',
         };
       }
-      // Issue #209: overflow compacts first, then retries on the fresh
-      // context (executed by the solo recovery, #399's compactSoloLane).
+      // Overflow compacts first, then retries on the fresh
+      // context (executed by the solo recovery, the compactSoloLane).
       // A polluted context still escalates: only the operator picks the
       // fresh agent after seeing the record.
       return {

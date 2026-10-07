@@ -1,4 +1,4 @@
-// Kubic glyphs (EPIC N, issue #444; docs/ui/README.md "Glyphs"). One glyph
+// Kubic glyphs (/README.md "Glyphs"). One glyph
 // per meaning, used the same way in the TUI and the CLI.
 
 /** Brand mark. */

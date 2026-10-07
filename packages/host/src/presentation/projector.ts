@@ -1,9 +1,9 @@
-// §66's host-side projector (issue #333): folds the replicated event stream
+// 's host-side projector: folds the replicated event stream
 // into a `KubicPresentationState`, so the presentation renders state instead
-// of folding raw events (§15.2: "The presentation does not fold raw events").
+// of folding raw events ("The presentation does not fold raw events").
 //
 // Pure: no I/O, no authority, no harness access. The lane source is the
-// `subscribeLaneEvents` stream (#398, itself pi-durable's `watchEvents`);
+// `subscribeLaneEvents` stream (itself pi-durable's `watchEvents`);
 // approvals are narrow typed events the host feeds in (`applyApproval`).
 //
 // The root lane's id IS the session id: the TUI has exactly one lane.
@@ -61,16 +61,16 @@ export class PresentationProjector {
   // Tool-call start times, so the state carries the duration the tree shows.
   private readonly toolStartedAt = new Map<string, number>();
   private current: KubicPresentationState;
-  // The inbox carries submission ids, not content (#334); the loop owns the
+  // The inbox carries submission ids, not content; the loop owns the
   // prompt text of the submissions it queued, so it hands the map in and the
   // projector resolves the rows.
   private queuedText: ReadonlyMap<string, string> = new Map();
-  // The inbox's ids as of the last `inbox` event (#334); the text comes from
+  // The inbox's ids as of the last `inbox` event; the text comes from
   // `queuedText` when the state is handed out.
   private queuedItems: ReadonlyArray<{ readonly id: string | number }> = [];
-  // The projector's monotonic fold counter (issue #333): a consumer can tell
+  // The projector's monotonic fold counter: a consumer can tell
   // a fresh state from the one it last rendered without diffing. Deliberately
-  // NOT a §66 state field — the contract's seven keys stay exact.
+  // NOT a presentation state field — the contract's seven keys stay exact.
   private fold = 0;
 
   constructor(seed: PresentationSeed, now: () => number = Date.now) {
@@ -121,10 +121,10 @@ export class PresentationProjector {
   }
 
   state(): KubicPresentationState {
-    // §66's closed-world check at runtime, not just in types: the projector
+    // 's closed-world check at runtime, not just in types: the projector
     // can never hand the presentation a state missing one of the replicated
     // fields (and this value use is what makes the contract reachable from
-    // the binary, issue #333's acceptance).
+    // the binary, the acceptance).
     for (const field of Object.keys(PRESENTATION_STATE_FIELDS)) {
       if (!(field in this.current)) {
         throw new Error(`presentation state lost '${field}'`);
@@ -134,9 +134,9 @@ export class PresentationProjector {
     return this.current;
   }
 
-  // Resolve the inbox ids to prompt text against the loop's live map (issue
-  // #333 review). The state is the ONE writer of the queued rows, so this
-  // runs on every hand-out instead of only on an `inbox` event.
+  // Resolve the inbox ids to prompt text against the loop's live map. The state
+  // is the ONE writer of the queued rows, so this runs on every hand-out
+  // instead of only on an `inbox` event.
   private syncQueued(): void {
     const lane = this.rootLane();
     const queued = this.queuedItems
@@ -187,9 +187,9 @@ export class PresentationProjector {
               }),
         });
         // The snapshot's `usage` is the session's cumulative `pi.usage`
-        // ledger (the same value #346 seeds the bar from) and every other
+        // ledger (the same value seeds the bar from) and every other
         // field of this branch is REPLACE — adding it would double the
-        // totals on the watch's overflow rebase (issue #333 review).
+        // totals on the watch's overflow rebase.
         this.current = {
           ...this.current,
           usage: usageTotalsOf(event.usage),
@@ -198,7 +198,7 @@ export class PresentationProjector {
         return;
       }
       case 'run-start': {
-        // The turn boundary is the projector's (issue #333 review): the
+        // The turn boundary is the projector's: the
         // lane's `tools` list is a running list across turns, and only a
         // snapshot replaces it, so without this the previous turn's calls
         // render as live rows again and the tree's rollup counts them twice.
@@ -250,7 +250,7 @@ export class PresentationProjector {
         return;
       }
       case 'inbox': {
-        // The inbox is a snapshot per commit (#334): admission, placement and
+        // The inbox is a snapshot per commit: admission, placement and
         // withdrawal all emit it. Only the IDS are remembered here — the
         // prompt text is resolved in `state()`, because the loop's in-place
         // map drops an id the moment the harness PLACES it (a `run-start`),
@@ -308,7 +308,7 @@ export class PresentationProjector {
     this.fold += 1;
   }
 
-  /** §66 queues: the prompt text of the submissions the loop queued. */
+  /** Queues: the prompt text of the submissions the loop queued. */
   setQueuedText(text: ReadonlyMap<string, string>): void {
     this.queuedText = text;
   }

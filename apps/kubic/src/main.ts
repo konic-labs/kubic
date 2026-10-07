@@ -25,14 +25,14 @@ import {
   trustQuestionLines,
 } from './trust-question.js';
 
-// License identity (issue #59): version comes from this app's own
+// License identity: version comes from this app's own
 // package.json; the license half of the line is owned by core/license.ts.
 // Walk up from this module: the src layout finds apps/kubic/package.json
-// at once, while the dist layout (dist/apps/kubic/src/main.js, issue #74)
+// at once, while the dist layout (dist/apps/kubic/src/main.js)
 // has no sibling manifest, so the walk continues to the repo-root
 // package.json — both declare the same 0.0.0 version.
 function cliVersion(): string {
-  // File access goes through the exec FileBridge (I/O confinement, §9):
+  // File access goes through the exec FileBridge (I/O confinement):
   // the composition root never imports node:fs directly.
   try {
     let dir = dirname(fileURLToPath(import.meta.url));
@@ -71,19 +71,19 @@ try {
     ensureRuntimeExclude: (entries) =>
       ensureRuntimeExcludeRules({ cwd: process.cwd(), entries }),
     isInteractive: interactive,
-    // Issue #446: the root and subcommand help are coloured on a TTY.
+    // The root and subcommand help are coloured on a TTY.
     helpTheme: () => themeFor(process.stdout),
-    // Issue #450: usage errors are an error block on a colour stderr.
+    // Usage errors are an error block on a colour stderr.
     errorTheme: () => themeFor(process.stderr),
-    // Issue #451: a bare `kubic` on a terminal with no global config runs
+    // A bare `kubic` on a terminal with no global config runs
     // `kubic setup` first (KUBIC_SKIP_SETUP=1 skips it).
     firstRunSetup: () =>
       prodFirstRunSetup({ out, err, errTheme: themeFor(process.stderr) }),
-    // Issue #228 (§35.1): the interactive trust question for `kubic tui` /
+    // The interactive trust question for `kubic tui` /
     // bare `kubic`. The resolver persists the answer under `~/.kubic/` and
     // hands it back to this invocation's config load; a non-TTY caller keeps
     // the refusal with both remedies named.
-    // Issue #462: asked as one row of the first screen (05-C): one key
+    // Asked as one row of the first screen: one key
     // answers — y yes, n not now, v view the file first.
     resolveProjectTrust: () =>
       resolveInteractiveProjectTrust({
@@ -114,7 +114,7 @@ try {
   exitProcessAfterFlush(code);
 } catch (error) {
   // An unexpected failure is one `error: <message>` line, exit 1, with the
-  // full stack behind the KUBIC_DEBUG=1 opt-in (issue #128). Pinned end to
+  // full stack behind the KUBIC_DEBUG=1 opt-in. Pinned end to
   // end by scripts/binary-contract.mjs (the `__crash-probe` seam in
   // ./dispatch.js).
   const message = error instanceof Error ? error.message : String(error);

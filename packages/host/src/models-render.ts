@@ -1,7 +1,7 @@
-// `kubic models` on an interactive terminal (issue #449; docs/ui/06-cli.html
-// 06-D): a catalogue you can choose from — the default model marked, every
-// usable provider grouped, large providers folded behind the command that
-// expands them, and the providers without a key summarised on one line.
+// `kubic models` on an interactive terminal: a catalogue you can choose from —
+// the default model marked, every usable provider grouped, large providers
+// folded behind the command that expands them, and the providers without a key
+// summarised on one line.
 
 import { renderTable } from '../../core/src/cli/table.js';
 import type { CliTheme } from '../../core/src/cli/theme.js';

@@ -45,7 +45,7 @@ function deps(overrides: Partial<SecretResolverDeps> = {}): {
   };
 }
 
-describe('models.json secret refs (issue #38)', () => {
+describe('models.json secret refs', () => {
   it('resolves $ENV_VAR from the injected env', async () => {
     const { deps: d, audit } = deps();
     const value = await resolveSecretRef(parseSecretRef('$KUBIC_TEST_KEY'), d, {
@@ -99,7 +99,7 @@ describe('models.json secret refs (issue #38)', () => {
   });
 });
 
-describe('redaction + audit (issue #38)', () => {
+describe('redaction + audit', () => {
   it('redacts secret values out of config/trajectory/log payloads', () => {
     const payload = {
       provider: 'local',
@@ -131,7 +131,7 @@ describe('redaction + audit (issue #38)', () => {
   });
 });
 
-describe('secret ref hardening (issue #69)', () => {
+describe('secret ref hardening', () => {
   it('rejects empty !command refs', () => {
     expect(() => parseSecretRef('!')).toThrow(/empty !command/);
     expect(() => parseSecretRef('!   ')).toThrow(/empty !command/);
@@ -199,7 +199,7 @@ describe('secret ref hardening (issue #69)', () => {
   });
 });
 
-describe('redaction hardening (issue #69)', () => {
+describe('redaction hardening', () => {
   it('leaves payloads untouched with no live secrets', () => {
     expect(redactSecretValues({ a: FIXTURE_KEY_A }, [])).toEqual({
       a: FIXTURE_KEY_A,
@@ -223,11 +223,11 @@ describe('redaction hardening (issue #69)', () => {
 });
 
 // A live value is matched as a SUBSTRING by the debug/persistence redaction
-// and by the §60 ledger refusal. A short or dummy key (`gw`, `solo`, `1`, a
+// and by the ledger refusal. A short or dummy key (`gw`, `solo`, `1`, a
 // key named like its provider) would redact every word it appears in and —
 // on the ledger — refuse the very credential-use row that names the
 // provider; below the minimum length the value is not matched at all.
-describe('short live values are not substring-matched (issue #359)', () => {
+describe('short live values are not substring-matched', () => {
   const AT_MIN = 'abcd1234';
   const BELOW_MIN = 'abcd123';
 
@@ -268,7 +268,7 @@ describe('short live values are not substring-matched (issue #359)', () => {
   });
 });
 
-describe('redactingSink (issue #359: the debug channel)', () => {
+describe('redactingSink (the debug channel)', () => {
   it('scrubs a secret-bearing line before the sink sees it, reading the inventory per line', () => {
     const seen: string[] = [];
     let live: string[] = [];
@@ -288,7 +288,7 @@ describe('redactingSink (issue #359: the debug channel)', () => {
   });
 });
 
-describe('redactBridgeWrites (issue #359: session persistence)', () => {
+describe('redactBridgeWrites (session persistence)', () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const dir of dirs.splice(0))
@@ -368,7 +368,7 @@ describe('redactBridgeWrites (issue #359: session persistence)', () => {
   });
 });
 
-// Identity words are not secrets (issue #359): a dummy key that IS its
+// Identity words are not secrets: a dummy key that IS its
 // provider's name (`lm-studio`) or sits inside a provider/model id must not
 // be scrubbed or refuse a ledger row, or the run's own identity is rewritten.
 describe('withoutIdentity', () => {

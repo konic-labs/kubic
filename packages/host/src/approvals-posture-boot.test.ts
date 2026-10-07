@@ -1,8 +1,8 @@
-// The full-access posture is resolved ONCE, at session boot (issue #325;
-// §41.4, §41.2, §59). Before this issue installSoloPolicy re-read
-// <session>/posture.json on every ask, so one model-issued bash redirect
-// (`echo '{"fullAccess":true}' > …/posture.json`) switched approvals off for
-// the rest of the session — and the ledger recorded it as if the user had.
+// The full-access posture is resolved ONCE, at session boot. Before this issue
+// installSoloPolicy re-read <session>/posture.json on every ask, so one
+// model-issued bash redirect (`echo '{"fullAccess":true}' > …/posture.json`)
+// switched approvals off for the rest of the session — and the ledger recorded
+// it as if the user had.
 //
 // Hermetic: temp session/workspace dirs removed in afterEach, no model.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -46,7 +46,7 @@ function forgePosture(sessionDir: string): void {
   writeFileSync(join(sessionDir, 'posture.json'), '{"fullAccess":true}');
 }
 
-describe('posture is decided at boot (issue #325)', () => {
+describe('posture is decided at boot', () => {
   it('a posture.json written after install does not approve a destructive call', async () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
@@ -139,11 +139,11 @@ describe('posture is decided at boot (issue #325)', () => {
   });
 });
 
-// Issue #309 (§41.4, §80): the in-session toggle. It flips the LIVE posture
+// The in-session toggle. It flips the LIVE posture
 // the ask reads (so the very next challenged call follows it), writes
 // posture.json through the same host helpers the CLI uses, and re-bases the
-// #325 guard so the operator's own change is not restored underneath them.
-describe('the in-session full-access toggle (issue #309)', () => {
+// Guard so the operator's own change is not restored underneath them.
+describe('the in-session full-access toggle', () => {
   it('flips the live posture, the file and the indicator, and the next call follows', async () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
@@ -163,7 +163,7 @@ describe('the in-session full-access toggle (issue #309)', () => {
     expect((await installed.ask(DESTRUCTIVE)).approved).toBe(true);
     expect(asks).toBe(1);
 
-    // Enable: the live posture, the predicate, the file and the §60 row all
+    // Enable: the live posture, the predicate, the file and the audit row all
     // move (the row names the action, in order).
     installed.setFullAccess?.(true, 'kubic tui /approvals on');
     expect(installed.posture.fullAccess).toBe(true);
@@ -182,7 +182,7 @@ describe('the in-session full-access toggle (issue #309)', () => {
       challenged: true,
     });
     expect(asks).toBe(1);
-    // The #325 guard accepts the operator's own change: settle() does NOT
+    // The guard accepts the operator's own change: settle() does NOT
     // restore the boot posture underneath them.
     installed.settle?.();
     expect(installed.posture.fullAccess).toBe(true);
@@ -213,7 +213,7 @@ describe('the in-session full-access toggle (issue #309)', () => {
     expect(asks).toBe(2);
   });
 
-  it('writes two audit rows in order — enabled then revoked (issue #309)', () => {
+  it('writes two audit rows in order — enabled then revoked', () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
     enableSessionFullAccess({
@@ -250,7 +250,7 @@ describe('the in-session full-access toggle (issue #309)', () => {
     expect(JSON.stringify(rows[1])).toContain('kubic tui /approvals off');
   });
 
-  it('re-bases the guard on the record the posture file holds (issue #309 review)', () => {
+  it('re-bases the guard on the record the posture file holds', () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
     // Every clock read returns a DIFFERENT millisecond: two reads would put
@@ -280,7 +280,7 @@ describe('the in-session full-access toggle (issue #309)', () => {
     });
   });
 
-  it('the in-session toggle writes the row the CLI path writes (issue #309 review)', () => {
+  it('the in-session toggle writes the row the CLI path writes', () => {
     const workspace = tmpRoot('ws-');
     const clock = () => 1_700_000_000_000;
     const toggleDir = tmpRoot('session-toggle-');
@@ -335,7 +335,7 @@ describe('the in-session full-access toggle (issue #309)', () => {
     expect(shape(rows[0])).toEqual(shape(rows[2]));
   });
 
-  it('a disabled posture is what a later resume boots with (issue #309)', () => {
+  it('a disabled posture is what a later resume boots with', () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
     enableSessionFullAccess({

@@ -1,9 +1,9 @@
-// A steady-state frame rebuilds no cached row (issue #298, after #455 and
-// #468). A committed prompt's block is drawn once per text, stamp, width and
-// theme, like prose, and the rows of both are closed (#468) once, when they
-// are cached. Redrawing every prompt and re-scanning every row each frame
-// made a coloured 400-turn frame about six times slower. Counted, not
-// timed: the helpers are wrapped so the test reads how often they ran.
+// A steady-state frame rebuilds no cached row. A committed prompt's block is
+// drawn once per text, stamp, width and theme, like prose, and the rows of both
+// are closed once, when they are cached. Redrawing every prompt and re-scanning
+// every row each frame made a coloured 400-turn frame about six times slower.
+// Counted, not timed: the helpers are wrapped so the test reads how often they
+// ran.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const calls = vi.hoisted(() => ({ close: 0, fill: 0 }));
@@ -62,7 +62,7 @@ function session(turns: number) {
   return view;
 }
 
-describe('a steady-state transcript frame (issue #298)', () => {
+describe('a steady-state transcript frame', () => {
   it('draws no prompt block and closes no row it already cached', () => {
     setTuiTheme(createTuiTheme('truecolor'));
     const view = session(20);

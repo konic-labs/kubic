@@ -1,4 +1,4 @@
-// `kubic tui` writes a §46 trajectory per settled turn (issue #383): the
+// `kubic tui` writes a trajectory per settled turn: the
 // same record `kubic run` writes, at <sessions-root>/<id>/trajectory.json,
 // holding the session's latest settled turn. Real booted TUI lane, faux
 // models only: zero network; temp sessions root and workspace.
@@ -31,7 +31,7 @@ function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
-  // One response per request, stamped when the request runs: the §46 reader
+  // One response per request, stamped when the request runs: the reader
   // filters a run's evidence by its messages' timestamps, so a fixture built
   // at boot would look older than the run it answers (real providers stamp
   // at generation time).
@@ -61,7 +61,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('kubic tui writes a §46 trajectory per settled turn (issue #383)', () => {
+describe('kubic tui writes a trajectory per settled turn', () => {
   it('each settled turn writes <root>/<id>/trajectory.json for that turn', async () => {
     const root = tmp('tui-traj-root-');
     const ws = tmp('tui-traj-ws-');

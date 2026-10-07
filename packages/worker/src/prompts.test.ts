@@ -1,9 +1,8 @@
-// Cache-preserving prompts + model affinity (issue #33).
-// RED: prompts.ts does not exist yet — every test below must fail first.
+// Cache-preserving prompts + model affinity.
 import { describe, expect, it, vi } from 'vitest';
 import type { EscalationLadder } from './model-select.js';
 
-describe('prompt assembly byte-stability (issue #33, rule 1-3)', () => {
+describe('prompt assembly byte-stability', () => {
   it('identical turns assemble byte-identical prompts despite shuffled inputs', async () => {
     const { assembleSystemPrompt } = await import('./prompts.js');
     const a = assembleSystemPrompt({
@@ -36,7 +35,7 @@ describe('prompt assembly byte-stability (issue #33, rule 1-3)', () => {
   });
 });
 
-describe('model affinity (issue #33, rule 6)', () => {
+describe('model affinity', () => {
   it('N turns resolve to 1 pinned model id; mixed ids are rejected', async () => {
     const { assertSingleModelId, pinModelForTask, taskModelForTurn } =
       await import('./prompts.js');
@@ -83,7 +82,7 @@ describe('model affinity (issue #33, rule 6)', () => {
   });
 });
 
-describe('compaction routing (issue #33, rule 7)', () => {
+describe('compaction routing', () => {
   it('compaction carries fresh ids with cache writes disabled', async () => {
     const { buildCompactionRoute } = await import('./prompts.js');
     const route = buildCompactionRoute('session-1', 'session-9');
@@ -96,7 +95,7 @@ describe('compaction routing (issue #33, rule 7)', () => {
   });
 });
 
-describe('cache hit/miss observability (issue #33)', () => {
+describe('cache hit/miss observability', () => {
   it('hit-rate is visible per session', async () => {
     const { SessionCacheStats } = await import('./prompts.js');
     const stats = new SessionCacheStats();

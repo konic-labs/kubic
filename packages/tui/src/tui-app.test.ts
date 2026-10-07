@@ -1,4 +1,4 @@
-// Interactive TUI controller over the solo lane (issue #75, #88).
+// Interactive TUI controller over the solo lane.
 //
 // Headless snapshots only (no VirtualTerminal in Pi 0.85.1): the root
 // VStack renders pure, like renderLayout in layout.test.ts. Faux-only,
@@ -19,7 +19,7 @@ import { createTuiApp, QUIT_ARM_MS, seedFromPresentation } from './tui-app.js';
 const SESSION = 'sess-1';
 const MODEL = 'test-model';
 
-// Issue #333: the app renders replicated state, so a test builds the state a
+// The app renders replicated state, so a test builds the state a
 // projector would produce (the projector itself lives in host).
 function presentation(
   over: Partial<LaneSnapshot> = {},
@@ -47,8 +47,8 @@ function presentation(
   };
 }
 
-describe('tui app root (issue #75)', () => {
-  it('orders header / transcript / status / hints top to bottom (#453)', () => {
+describe('tui app root', () => {
+  it('orders header / transcript / status / hints top to bottom', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -99,9 +99,9 @@ describe('tui app root (issue #75)', () => {
         ],
       }),
     );
-    // Issue #453: the solo tree row starts hidden.
+    // The solo tree row starts hidden.
     expect(app.render(100).join('\n')).not.toContain('● read');
-    // Issue #88: Ctrl-T toggles the tree. Sent in BOTH encodings, because
+    // Ctrl-T toggles the tree. Sent in BOTH encodings, because
     // the classification goes through parseKey — the legacy byte here and
     // the Kitty CSI-u form ('\x1b[116;5u') below.
     expect(app.handleInput('\x14')).toEqual({
@@ -117,19 +117,19 @@ describe('tui app root (issue #75)', () => {
     });
     expect(app.render(100).join('\n')).not.toContain('● read');
     app.handleInput('\x14');
-    // Issue #88: the editor owns plain characters — T/t are prompt text,
+    // The editor owns plain characters — T/t are prompt text,
     // never toggles (a coding-agent prompt must be able to spell "test").
     for (const ch of 'Tt') app.handleInput(ch);
     expect(app.editor.getText()).toBe('Tt');
     expect(app.render(100).join('\n')).toContain('● read');
   });
 
-  // Issue #454: the key model — Esc never quits, Ctrl-C clears a draft and
+  // The key model — Esc never quits, Ctrl-C clears a draft and
   // then quits on a double press within QUIT_ARM_MS, Ctrl-D quits on an
   // empty editor.
   const CONSUMED = { quit: false, consumed: true, cancel: false };
 
-  it('arms on an idle Ctrl-C and quits on the second press (issue #454)', () => {
+  it('arms on an idle Ctrl-C and quits on the second press', () => {
     vi.useFakeTimers();
     try {
       const app = createTuiApp({
@@ -150,7 +150,7 @@ describe('tui app root (issue #75)', () => {
     }
   });
 
-  it('disarms after the window and clears the notice (issue #454)', () => {
+  it('disarms after the window and clears the notice', () => {
     vi.useFakeTimers();
     try {
       const app = createTuiApp({
@@ -186,7 +186,7 @@ describe('tui app root (issue #75)', () => {
     });
   });
 
-  it('keeps a composed draft on Esc (issue #302, #454)', () => {
+  it('keeps a composed draft on Esc', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -198,7 +198,7 @@ describe('tui app root (issue #75)', () => {
     expect(app.editor.getText()).toBe('hello');
   });
 
-  it('clears a composed draft on idle Ctrl-C before arming (issue #302)', () => {
+  it('clears a composed draft on idle Ctrl-C before arming', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -217,7 +217,7 @@ describe('tui app root (issue #75)', () => {
     });
   });
 
-  it('interrupts a running turn on Esc without quitting (issue #454)', () => {
+  it('interrupts a running turn on Esc without quitting', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -242,7 +242,7 @@ describe('tui app root (issue #75)', () => {
     });
   });
 
-  it('closes the editor dropdown on Esc before anything else (issue #454)', () => {
+  it('closes the editor dropdown on Esc before anything else', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -323,7 +323,7 @@ describe('tui app root (issue #75)', () => {
     expect(app.render(100).join('\n')).toContain('$0.020');
   });
 
-  it('renders the context gauge from the seed and follows setContextLimits (#347)', () => {
+  it('renders the context gauge from the seed and follows setContextLimits', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -381,7 +381,7 @@ describe('tui app root (issue #75)', () => {
     ]);
     const doc = app.finalDocument(100).join('\n');
     expect(doc).toContain('final words');
-    // Issue #453: the header above the transcript, the status line below.
+    // The header above the transcript, the status line below.
     expect(doc.indexOf(`session ${SESSION}`)).toBeLessThan(
       doc.indexOf('final words'),
     );
@@ -390,7 +390,7 @@ describe('tui app root (issue #75)', () => {
   });
 });
 
-describe('presentation seed (issue #75; §66 contracts only)', () => {
+describe('presentation seed (contracts only)', () => {
   it('maps the core presentation snapshot to a tui seed', () => {
     const seed = seedFromPresentation(
       {
@@ -415,7 +415,7 @@ describe('presentation seed (issue #75; §66 contracts only)', () => {
   });
 });
 
-describe('prompt loop routing (issue #88)', () => {
+describe('prompt loop routing', () => {
   it('submits a typed prompt from the editor through Enter', () => {
     const app = createTuiApp({
       sessionId: SESSION,
@@ -525,7 +525,7 @@ describe('prompt loop routing (issue #88)', () => {
   });
 });
 
-describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
+describe('queued follow-ups and steers while a turn runs', () => {
   const app = () =>
     createTuiApp({
       sessionId: SESSION,
@@ -577,7 +577,7 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
       '▌ dropped',
     );
     expect(doc).toContain('error: a run is in flight');
-    // Issue #334 (review): a refused prompt never eats the draft — Pi's
+    // A refused prompt never eats the draft — Pi's
     // editor cleared it before onSubmit fired, so it is put back.
     expect(refused.editor.getText()).toBe('dropped');
     expect(refused.render(100).join('\n')).toContain('dropped');
@@ -588,7 +588,7 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
     expect(refused.editor.getText()).toBe('');
   });
 
-  it('hands a draft back through restoreDraft (#334 review)', () => {
+  it('hands a draft back through restoreDraft', () => {
     const ui = app();
     ui.onSubmit(() => 'accepted');
     for (const ch of 'keep me') ui.handleInput(ch);
@@ -632,7 +632,7 @@ describe('queued follow-ups and steers while a turn runs (issue #334)', () => {
   });
 });
 
-describe('lane snapshot feed (issue #88)', () => {
+describe('lane snapshot feed', () => {
   it('lands committed lane entries in the transcript view', () => {
     const app = createTuiApp({
       sessionId: SESSION,
@@ -682,7 +682,7 @@ describe('lane snapshot feed (issue #88)', () => {
     expect(occurrences).toBe(2);
   });
 
-  // Issue #227: a `/model` switch lands on every surface that names the
+  // A `/model` switch lands on every surface that names the
   // model — header, welcome block and status bar — through one call, so the
   // three cannot drift apart.
   it('updates header, welcome and status bar on a model switch', () => {
@@ -721,7 +721,7 @@ describe('lane snapshot feed (issue #88)', () => {
   });
 });
 
-describe('model picker and thinking cycle (issue #328)', () => {
+describe('model picker and thinking cycle', () => {
   const app = () =>
     createTuiApp({
       sessionId: SESSION,
@@ -795,7 +795,7 @@ describe('model picker and thinking cycle (issue #328)', () => {
     ).toBe(true);
     expect(ui.isModelPickerOpen()).toBe(true);
     const frame = seat.shown[0]?.render(80).join('\n') ?? '';
-    // Issue #461: one group per provider, the live model marked, a
+    // One group per provider, the live model marked, a
     // provider's origin in its header.
     expect(frame).toContain('┌─ Model');
     expect(frame).toContain('● big  current');
@@ -833,7 +833,7 @@ describe('model picker and thinking cycle (issue #328)', () => {
     expect(seat.hidden).toBe(1);
   });
 
-  it('refuses the picker on a terminal below the overlay minimum (#328 review)', () => {
+  it('refuses the picker on a terminal below the overlay minimum', () => {
     const ui = app();
     const shown: unknown[] = [];
     // A 50-column host: Pi's own visible() gate would refuse to composite
@@ -858,7 +858,7 @@ describe('model picker and thinking cycle (issue #328)', () => {
     expect(ui.editor.getText()).toBe('hi');
   });
 
-  it('closes the picker when the terminal shrinks below the minimum (#328 review)', () => {
+  it('closes the picker when the terminal shrinks below the minimum', () => {
     const ui = app();
     let columns = 120;
     const seat = {
@@ -903,7 +903,7 @@ describe('model picker and thinking cycle (issue #328)', () => {
   });
 });
 
-describe('slash commands in the app (issue #305)', () => {
+describe('slash commands in the app', () => {
   const app = () =>
     createTuiApp({
       sessionId: SESSION,
@@ -936,7 +936,7 @@ describe('slash commands in the app (issue #305)', () => {
     expect(doc).toContain('/help — the commands');
     expect(doc).toContain('/session — id, tokens, cost');
     // A lane snapshot is the session's own transcript: the notice goes, and
-    // the NEXT notice starts from an empty list (review fix: a stale list
+    // the NEXT notice starts from an empty list (a stale list
     // must not be re-applied under the new report).
     ui.applyLaneEntries([]);
     expect(ui.render(100).join('\n')).not.toContain('/help — the commands');
@@ -1054,7 +1054,7 @@ describe('slash commands in the app (issue #305)', () => {
   });
 });
 
-describe('app-level wiring that no test executed (issue #320)', () => {
+describe('app-level wiring that no test executed', () => {
   const REQUEST: ApprovalViewRequest = {
     key: 'k-320',
     capability: 'destructive-shell',
@@ -1096,7 +1096,7 @@ describe('app-level wiring that no test executed (issue #320)', () => {
     const before = seatState.renders;
     const pending = ui.requestApproval(REQUEST);
     // The ask itself asks for a frame: an async lane turn must not wait for
-    // the next keypress to show its card (issue #459: in the editor slot,
+    // the next keypress to show its card (in the editor slot,
     // no overlay).
     expect(seatState.renders).toBeGreaterThan(before);
     expect(seatState.shown).toHaveLength(0);
@@ -1136,7 +1136,7 @@ describe('app-level wiring that no test executed (issue #320)', () => {
     ui.setBusy(true);
     for (const ch of 'zzz echo me') ui.handleInput(ch);
     ui.handleInput('\r');
-    // The prompt is echoed while the lane works (#88).
+    // The prompt is echoed while the lane works.
     expect(ui.render(100).join('\n')).toContain('▌ zzz echo me');
     // The turn ends without committing the entry (an abort, or a settle with
     // no commit): the echo must not outlive the turn it belongs to.
@@ -1146,7 +1146,7 @@ describe('app-level wiring that no test executed (issue #320)', () => {
     expect(doc).not.toContain('zzz echo me');
   });
 
-  it('has no uncalled setNotice on the app surface (issue #320)', () => {
+  it('has no uncalled setNotice on the app surface', () => {
     const ui = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -1156,10 +1156,10 @@ describe('app-level wiring that no test executed (issue #320)', () => {
   });
 });
 
-// Issue #303 (§16.6/§16.9): the app dispatches through the keybinding
+// The app dispatches through the keybinding
 // registry, so an override rebinds the action everywhere — the dispatch,
 // the global-key claim ahead of the editor and the hints.
-describe('keybinding overrides in the app (issue #303)', () => {
+describe('keybinding overrides in the app', () => {
   const rebound = () =>
     createTuiApp({
       sessionId: SESSION,
@@ -1189,10 +1189,10 @@ describe('keybinding overrides in the app (issue #303)', () => {
   });
 });
 
-// Issue #150 (§20.6, §27.1): a retry backoff or a compaction can take tens
+// A retry backoff or a compaction can take tens
 // of seconds; the footer names it instead of looking like a hang, and clears
 // it the moment the state does.
-describe('lane activity on the footer (issue #150)', () => {
+describe('lane activity on the footer', () => {
   const app = () =>
     createTuiApp({
       sessionId: SESSION,

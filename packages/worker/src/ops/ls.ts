@@ -1,4 +1,4 @@
-// Ls operation (issue #13, slice A; §9.1).
+// Ls operation.
 // Thin over ExecutionEnv.fs. replay:"safe" — listing has no side effects.
 
 import type { OpContext, Operation, ToolInvocation } from './types.js';
@@ -18,13 +18,13 @@ export interface LsEntry {
 export interface LsResult {
   path: string;
   entries: LsEntry[];
-  /** The entry cap stopped the listing (issue #187; §27.5). */
+  /** The entry cap stopped the listing. */
   truncated: boolean;
-  /** Names the total when `truncated` (issue #187). */
+  /** Names the total when `truncated`. */
   notice?: string;
 }
 
-// §27.5 bounded tool output (issue #187): at most this many entries per
+// Bounded tool output: at most this many entries per
 // listing — a 2000-file directory must not flood the worker's context.
 // The cap applies to the sorted names BEFORE statting, so the entries past
 // it cost no stat calls either.

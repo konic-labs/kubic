@@ -1,4 +1,4 @@
-// Replay re-execution runs under the effective config (issue #114): the
+// Replay re-execution runs under the effective config: the
 // runtime projections `kubic run` threads into its lane (policyClasses,
 // policySource, journalRetention — runtimeRunDeps) must reach the replay
 // lane too, through the same seams: `runReplayCommand`'s run seam gains the
@@ -138,7 +138,7 @@ const RUNTIME: ReplayRuntimeDeps = {
   journalRetention: { maxAgeMs: 60_000 },
 };
 
-// The shape the composition root hands the projection (issue #86): the
+// The shape the composition root hands the projection: the
 // load's own result wrapped as the CLI's config result.
 function cliResult(runtime: unknown): CliConfigResult {
   return {
@@ -164,7 +164,7 @@ function configured(text: string) {
   };
 }
 
-describe('replay re-execution consumes the effective config (issue #114)', () => {
+describe('replay re-execution consumes the effective config', () => {
   it('threads the runtime projections through the run seam', async () => {
     const root = tmpRoot('replay-deps-');
     const trajPath = join(root, 't.json');
@@ -210,7 +210,7 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     expect(captured?.journalRetention).toEqual({ maxAgeMs: 60_000 });
   });
 
-  it('threads the compaction policy and prompt section to the re-execution seam (issues #239, #240)', async () => {
+  it('threads the compaction policy and prompt section to the re-execution seam', async () => {
     // The review caught these riding an untyped spread: the live tiers
     // compacted and augmented correctly at runtime, but no type named
     // the fields and no test pinned them. The composition root builds
@@ -235,12 +235,12 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
   });
 
   it('a config-sourced policy class blocks a network-shaped command on replay re-execution', async () => {
-    // The effective config (issue #90): an explicit [permissions] layer
+    // The effective config: an explicit [permissions] layer
     // makes the classes config-sourced. `shell = "read-only-allowlist"` is
     // the class that blocks network-shaped bash commands at the guard —
     // and `network = "full"` keeps the approval trigger out of the way
     // (detectTriggers fires `network` at 'none' and at the domain-less
-    // 'allowlist' it enforces as 'none', issue #166). Under the documented
+    // 'allowlist' it enforces as 'none'). Under the documented
     // DEFAULTS the same call instead dies on the approval challenge
     // ('approval refused: network'), so the guard-shaped block is the proof
     // the CONFIG classes are installed on the re-execution.
@@ -260,7 +260,7 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     const models: MutableModels = createModels();
     models.setProvider(faux.provider);
     faux.setResponses([
-      // D8.2: a tool round must say `toolUse`, or the tool never runs.
+      // A tool round must say `toolUse`, or the tool never runs.
       fauxToolUse([
         fauxToolCall('bash', { command: 'curl https://example.com' }),
       ]),
@@ -291,7 +291,7 @@ describe('replay re-execution consumes the effective config (issue #114)', () =>
     const store = openSessionStore(root, createNodeFileBridge(root));
     const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
     try {
-      // The durable transcript through the shared adapter (issue #400): the
+      // The durable transcript through the shared adapter: the
       // stored tool-result text is what the assertion reads.
       const transcript = JSON.stringify(
         entriesToTranscript(

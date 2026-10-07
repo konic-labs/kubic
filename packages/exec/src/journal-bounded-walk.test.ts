@@ -1,4 +1,4 @@
-// Bounded baseline hashing (issue #107).
+// Bounded baseline hashing.
 //
 // Baseline capture and the end-of-run sweep hash every in-scope regular file.
 // Reading whole files made a 256MB artifact cost a 256MB boot spike, measured
@@ -43,7 +43,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-/** The pre-#107 digest: whole-file read, utf8 round-trip, hashed as a string. */
+/** The pre digest: whole-file read, utf8 round-trip, hashed as a string. */
 function legacyHash(bridge: FileBridge, path: string): string {
   return createHash('sha256')
     .update(bridge.readTextFile(path), 'utf8')
@@ -88,7 +88,7 @@ function spyReads(): {
   } as { bridge: FileBridge; maxRead: number; totalRead: number };
 }
 
-describe('bounded baseline hashing (#107)', () => {
+describe('bounded baseline hashing', () => {
   it('never reads more than one chunk of a file larger than the chunk', () => {
     const size = HASH_CHUNK_BYTES * 2 + 1;
     const root = tmpFile('big.txt', 'a'.repeat(size));
@@ -307,7 +307,7 @@ describe('bounded baseline hashing (#107)', () => {
     expect(reads.some((path) => path.endsWith('changed.txt'))).toBe(true);
   });
 
-  it('appends nothing when sweeping over a journal hashed by the pre-#107 code', () => {
+  it('appends nothing when sweeping over a journal hashed by the pre code', () => {
     // The acceptance criterion: prove against a journal written BEFORE the
     // change. The legacy digest is computed the old way and planted as the
     // baseline; if the new walk disagreed by one byte, the sweep would report

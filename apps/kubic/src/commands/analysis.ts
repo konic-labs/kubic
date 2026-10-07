@@ -43,7 +43,7 @@ export interface AnalysisRunners {
   readonly export: AnalysisRunner<ExportCommandOptions & SessionOption>;
 }
 
-// `--session <id>` (issue #383): read the session's own §46 trajectory
+// `--session <id>`: read the session's own trajectory
 // (<sessions-root>/<id>/trajectory.json) instead of naming the file. The
 // prod runner resolves it (./run-trajectory.ts resolveSessionTrajectory).
 export interface SessionOption {
@@ -56,17 +56,17 @@ const SESSION_TRAJECTORY_HELP =
 const JSON_HELP = 'print one JSON document on stdout';
 const ENVELOPE_HELP =
   'print one JSON envelope on stdout (runtime failures included; a usage error stays on stderr)';
-// eval and benchmark share the §48 provenance flags.
+// eval and benchmark share the provenance flags.
 const MODEL_HELP = 'provider/id of the run';
 const WORKTREE_HELP = 'where the run executed (provenance)';
 const GENERATION_HELP = 'worker generation that ran (provenance, integer)';
 const SIZE_HELP =
-  'record size: smoke|standard|extended (the §47.1 determinism tier is derived)';
+  'record size: smoke|standard|extended (the determinism tier is derived)';
 const WORKSPACE_HELP =
   'inline|worktree (default inline; worktree needs a clean --worktree)';
 const THINKING_HELP = 'thinking level, recorded verbatim';
 // eval --trajectory reads model/thinking/worktree/generation from the
-// export (#256): the flag only cross-checks it.
+// export: the flag only cross-checks it.
 const FROM_EXPORT = '; --trajectory reads it from the export';
 
 function examples(lines: readonly string[]): string {

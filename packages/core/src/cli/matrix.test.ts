@@ -1,4 +1,4 @@
-// The CLI render matrix (EPIC N, issue #468): the kit's own surfaces — the
+// The CLI render matrix: the kit's own surfaces — the
 // brand heading, labels, hints, aligned rows, the run receipt, next steps,
 // the error block and the tables — for every palette (dark, light,
 // terminal) × colour level (truecolor, 256, 16, none). Each line must carry
@@ -131,7 +131,7 @@ const SURFACES: ReadonlyArray<
   ],
 ];
 
-describe('the CLI render matrix (issue #468)', () => {
+describe('the CLI render matrix', () => {
   it('every kit surface closes its styles, and carries none at depth none, in every palette and level', () => {
     const failures: string[] = [];
     for (const [paletteName, palette] of PALETTES) {
@@ -168,7 +168,7 @@ describe('the CLI render matrix (issue #468)', () => {
   });
 });
 
-describe('wrapVisible (issue #468)', () => {
+describe('wrapVisible', () => {
   it('breaks at spaces, cuts a word wider than a row, and drops nothing', () => {
     expect(wrapVisible('one two three four', 9)).toEqual([
       'one two',

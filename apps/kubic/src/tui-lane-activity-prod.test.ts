@@ -1,4 +1,4 @@
-// Issue #150 (§20.6, §27.1): a transient model error is retried by the
+// A transient model error is retried by the
 // harness after a backoff, and that wait is named — on the TUI footer while
 // it lasts (cleared once the retry settles) and as a `[lane]` line on
 // `kubic run --debug` — instead of looking like a hang. Faux provider only:
@@ -53,7 +53,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('retry activity on the kubic tui footer (issue #150)', () => {
+describe('retry activity on the kubic tui footer', () => {
   it('names the retry while it waits, then clears it', {
     timeout: 20000,
   }, async () => {
@@ -95,7 +95,7 @@ describe('retry activity on the kubic tui footer (issue #150)', () => {
   });
 });
 
-describe('retry activity on kubic run --debug (issue #150)', () => {
+describe('retry activity on kubic run --debug', () => {
   it('writes a [lane] retry line to the debug sink', {
     timeout: 20000,
   }, async () => {

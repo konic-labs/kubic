@@ -1,5 +1,5 @@
 // Patch @stryker-mutator/vitest-runner 10.0.0 for vitest 5 name matching
-// (issue #72, docs/contributing.md "vitest-runner × vitest 5").
+// (docs/contributing.md "vitest-runner × vitest 5").
 //
 // The runner names tests by space-joining suite + test names, then filters
 // each mutant run with that name as `testNamePattern`. Vitest 5 matches the
@@ -33,7 +33,7 @@ export function patchSource(source, patch) {
   if (at === -1 || source.indexOf(patch.old, at + 1) !== -1) {
     throw new Error(
       `patch-vitest-runner: expected exactly one "${patch.old}" in ${patch.file}; ` +
-        'the runner changed shape — re-verify issue #72 before upgrading',
+        'the runner changed shape — re-verify before upgrading',
     );
   }
   // Function replacer: the new text contains "$`", which a string

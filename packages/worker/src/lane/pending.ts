@@ -1,4 +1,4 @@
-// Pending work on re-attach (issue #147, EPIC K #396; §21, §20.7).
+// Pending work on re-attach.
 //
 // A process that dies mid-turn (SIGKILL, OOM, power loss, orphan reaping)
 // leaves its durable work unfinished: the reopened Harness restores every
@@ -10,14 +10,14 @@
 //   the caller's bound — for the placed input submissions, and for the
 //   conversation to go idle. An `unsafe` tool interrupted mid-call is not
 //   re-executed: pi-durable settles it with an `interrupted` error result
-//   carrying its committed output (K3 #393 never-replay semantics). The
+//   carrying its committed output (never-replay semantics). The
 //   durable settlement is reported (`settled` + `reason`), so a run that
 //   ended `unanswered` is never named a clean resume.
 // - work a dead process had already marked aborted is aborted, never
-//   started: the mark is durable, and #147 honours the operator's cancel.
+//   started: the mark is durable, and honours the operator's cancel.
 // - `abort` durably stops the work (`conversation.abort(context)`), drains
-//   the lane's kill registry (D1: the bash group is keyed by the
-//   conversation id) and confirms the conversation is idle.
+//   the lane's kill registry (the bash group is keyed by the conversation id)
+//   and confirms the conversation is idle.
 //
 // A resume that cannot settle — the guard was already exhausted, the wait
 // failed — falls back to the abort on a FRESH context (`abortContext`,
@@ -27,7 +27,7 @@
 // always free for the next prompt afterwards.
 //
 // The decisions are driven by the pi-durable Harness only; the parameter is
-// the structural subset of #394's SoloLane (built in parallel), so this
+// the structural subset of the SoloLane (built in parallel), so this
 // module lands and compiles before that issue does.
 
 import {
@@ -277,7 +277,7 @@ export function describePendingSettlement(
   return `${head} aborted after an interrupted run (resume could not settle${cause})`;
 }
 
-// #147's "the pending run carries this very prompt: resume it as this run,
+// 's "the pending run carries this very prompt: resume it as this run,
 // never re-prompt" decision needs the text the dead process admitted. The
 // placed input submission's own entry is that text; undefined when nothing
 // is placed (nothing to resume-as-this-run).

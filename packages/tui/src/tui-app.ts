@@ -1,22 +1,21 @@
-// Interactive TUI controller over the solo lane (issue #75; §16).
+// Interactive TUI controller over the solo lane.
 // Presentation only: the controller replicates the core
-// KubicPresentationState (§66 — contracts only, no authority) into the
-// tested views (tree #24, transcript #23, status #27) arranged by the
-// layout root (#22). The composition root (apps/kubic) owns the lane
+// KubicPresentationState (contracts only, no authority) into the
+// tested views (tree, transcript, status) arranged by the
+// layout root. The composition root (apps/kubic) owns the lane
 // boot, the alt-screen lifecycle, and shutdown.
 //
-// Issue #88 turns the viewer shell into a prompt loop:
+// Turns the viewer shell into a prompt loop:
 // - the editor slot is a real PromptEditor (Enter submits, Ctrl-J /
 //   Shift+Enter / backslash-Enter add a line);
 // - `applyLaneEntries` feeds committed lane entries into the transcript as
-//   coarse cells (§15.2 — Pi keeps token deltas, Kubic renders the
-//   committed entries);
+//   coarse cells (Pi keeps token deltas, Kubic renders the committed entries);
 // - `setUsage` carries the lane's usage rows into the status bar;
 // - `handleInput` classifies the global keys and leaves every other key to
 //   the draft, reporting `cancel` separately from `quit` so the root can
 //   abort an in-flight turn before it exits.
 //
-// Issue #96 adds the §17 always-inspectable pair as a panel row between the
+// Adds the always-inspectable pair as a panel row between the
 // transcript and the status bar: `Ctrl-O` opens the current run's diff (the
 // selected tool call's effects) and `Ctrl-R` opens the session journal; the
 // same key closes its panel again. Journal rows arrive through
@@ -31,14 +30,13 @@
 //   Ctrl-R           toggle the journal panel (the whole session)
 //   Ctrl-X           expand / collapse every tool output block
 //   Ctrl-C           interrupt the in-flight turn; idle: clear the draft,
-//                    then press twice within 2 s to quit (issue #454)
-//   Alt+Enter        steer the running turn with the draft (submits it when
-//                    idle; issue #334)
+//                    then press twice within 2 s to quit
+//   Alt+Enter steer the running turn with the draft (submits it when idle)
 //   Esc              close the dropdown or overlay, else interrupt the
-//                    running turn — never quits (issue #454)
+//                    running turn — never quits
 //   Ctrl-D           quit on an empty draft (delete-forward while typing)
 //
-// Issue #453 (EPIC N; docs/ui 01-A/L/M) cut the chrome to three one-row
+// Cut the chrome to three one-row
 // surfaces: the header (project, branch, session, posture, clock), the
 // status line (model, context, cost, journal, state word) and the
 // context-aware key-hint row. Command replies, turn outcomes and the working
@@ -157,23 +155,23 @@ import type { PickerGroup } from './ui/picker.js';
 // The editor footer wraps to at most this many rows.
 export const FOOTER_MAX_ROWS = 2;
 
-// Issue #454: an idle, empty Ctrl-C arms the quit for this long; a second
+// An idle, empty Ctrl-C arms the quit for this long; a second
 // press inside the window quits.
 export const QUIT_ARM_MS = 2000;
 
-// Issue #459: the rows an approval card leaves for the rest of the screen —
+// The rows an approval card leaves for the rest of the screen —
 // the header, status and hint rows and three rows of transcript.
 export const CARD_CHROME_ROWS = 6;
 
-// Issue #454: the queue box's prompt mid-turn.
+// The queue box's prompt mid-turn.
 export const QUEUE_PLACEHOLDER = 'type to queue — sent when this turn ends';
 
-// Issue #457: a thinking cell's generation time is measured only for entries
+// A thinking cell's generation time is measured only for entries
 // this app saw arrive live, and only when the gap is plausible (a resumed
 // session's old entries would otherwise read as hours of thought).
 export const THINKING_MEASURE_MAX_MS = 10 * 60_000;
 
-// Issue #457: lines added and removed across a turn's journal rows — a
+// Lines added and removed across a turn's journal rows — a
 // multiset count (exact for the usual in-place edit), nothing when the
 // content is unknown on both sides.
 export function journalLineCounts(
@@ -217,7 +215,7 @@ export type { JournalChangeLike, LaneEntryLike, PanelMode, Viewport };
 // here so the composition root and the app agree on one type.
 export type TuiApprovalRequest = ApprovalViewRequest;
 
-// Issue #453: the header's workspace facts, read by the composition root
+// The header's workspace facts, read by the composition root
 // (the TUI package runs no git of its own).
 export interface TuiWorkspace {
   /** Basename of the project root. */
@@ -228,8 +226,8 @@ export interface TuiWorkspace {
   readonly dirty?: number;
 }
 
-// Issue #462: the facts only the composition root has for the preflight
-// (docs/ui 05-B); the app supplies the model, workspace and keys.
+// The facts only the composition root has for the preflight; the app supplies
+// the model, workspace and keys.
 export interface TuiPreflightSeed {
   readonly version?: string;
   /** Where a provider's key comes from (`ANTHROPIC_API_KEY`). */
@@ -242,7 +240,7 @@ export interface TuiPreflightSeed {
   readonly isolation?: () => string;
 }
 
-// Issue #462: one recent session on the first screen.
+// One recent session on the first screen.
 export interface TuiRecentSession {
   readonly title: string;
   readonly age: string;
@@ -254,57 +252,57 @@ export interface TuiAppSeed {
   readonly model: string;
   readonly thinking?: string;
   readonly label?: string;
-  // Issue #96: the approval surface to collect verdicts with. The composition
+  // The approval surface to collect verdicts with. The composition
   // root creates it BEFORE the lane boots (the boot installs the policy that
   // consults it as the seat) and passes the same object here, so the surface
   // the operator sees IS the surface the lane asks. Absent means a private
   // one — the viewer shell (`kubic tui` with an injected boot) still renders
   // an ask inline instead of hanging.
   readonly approvalSurface?: ApprovalSurface;
-  // Issue #307 (§17, §18): the always-visible posture indicator. REQUIRED —
+  // The always-visible posture indicator. REQUIRED —
   // seeded from the posture the composition root actually installed — so no
   // call site can silently default a full-access session to 'approvals:on'.
   readonly approvalsSkipped: boolean;
-  // Issue #347 (§18): the boot model's context window and the token level at
+  // The boot model's context window and the token level at
   // which the solo lane compacts. Absent when the catalog does not know the
   // window — the context gauge then stays off.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
-  // Issue #303 (§16.6/§16.9): the keybinding registry — defaults plus the
+  // The keybinding registry — defaults plus the
   // user's ~/.kubic/keybindings.json overrides, resolved by the composition
   // root. Every key the app claims ahead of the editor is looked up here.
   readonly keys?: KeyRegistry;
-  // Issue #336: the workspace files `@` mentions complete from — the
+  // The workspace files `@` mentions complete from — the
   // composition root's gitignore-aware walk. Absent: slash commands only.
   readonly listFiles?: () => readonly string[];
-  // Issue #183 (§29.4): the booted (gated-visible, hidden included) skill
+  // The booted (gated-visible, hidden included) skill
   // names — the composition root threads them so `/skill:<prefix>`
   // completes to `/skill:<name>`. Absent means no per-skill rows.
   readonly skillNames?: readonly string[];
-  // Issue #453: the header's project / branch / dirty count (setWorkspace
+  // The header's project / branch / dirty count (setWorkspace
   // refreshes it after a settled turn).
   readonly workspace?: TuiWorkspace;
-  // Issue #453: the header clock (`HH:MM`); absent leaves it off.
+  // The header clock (`HH:MM`); absent leaves it off.
   readonly clock?: () => string;
-  // Issue #453: the honest lane notice, shown in the welcome block ('' when
+  // The honest lane notice, shown in the welcome block ('' when
   // suppressed). The composition root owns the text.
   readonly laneNotice?: () => string;
-  // Issue #462: what the first screen's preflight needs from the boot.
+  // What the first screen's preflight needs from the boot.
   readonly preflight?: TuiPreflightSeed;
-  // Issue #463: copy text to the system clipboard (OSC 52, written by the
+  // Copy text to the system clipboard (OSC 52, written by the
   // composition root). False when this terminal does not take it.
   readonly clipboard?: (text: string) => boolean;
-  // Issue #467: whether an `allow all edits this turn` answer applies now
+  // Whether an `allow all edits this turn` answer applies now
   // (the solo policy's own state), for the status line.
   readonly editsApprovedThisTurn?: () => boolean;
-  // Issue #458: the project's absolute root; with `listFiles`, file
+  // The project's absolute root; with `listFiles`, file
   // references in answers link to `file://<root>/<path>`.
   readonly fileRoot?: string;
-  // Issue #459: the workspace as the approval card shows it (`~/proj`).
+  // The workspace as the approval card shows it (`~/proj`).
   readonly cwdLabel?: string;
 }
 
-// §66 replication: the TUI holds no authority — it reads the replicated
+// Replication: the TUI holds no authority — it reads the replicated
 // snapshot only. The model id is runtime (not presentation state), so it
 // arrives alongside.
 export function seedFromPresentation(
@@ -322,41 +320,41 @@ export function seedFromPresentation(
 export interface TuiInputResult {
   readonly quit: boolean;
   readonly consumed: boolean;
-  // Issue #88: Ctrl-C during a turn aborts the operation instead of
+  // Ctrl-C during a turn aborts the operation instead of
   // exiting. The root owns the busy/idle decision; the app only
   // classifies the key, so the count and the exit stay in one place.
   readonly cancel: boolean;
-  // Issue #334: Alt+Enter handed the app a non-empty draft as a steer. The
+  // Alt+Enter handed the app a non-empty draft as a steer. The
   // app has already cleared the editor; the loop decides what the text
   // becomes (steer the running turn, or submit it when idle), because only
   // the loop knows a lane and its busy state.
   readonly steer?: string;
-  // Issue #328: Alt+M opens the model picker (the loop supplies the rows).
+  // Alt+M opens the model picker (the loop supplies the rows).
   readonly pickModel?: boolean;
-  // Issue #328: Alt+T cycles the thinking level over what the live model
+  // Alt+T cycles the thinking level over what the live model
   // supports (the loop owns the ladder and the commit).
   readonly cycleThinking?: boolean;
-  // Issue #305: Ctrl-P opens the command palette (the loop supplies the
+  // Ctrl-P opens the command palette (the loop supplies the
   // registry rows and dispatches the chosen command).
   readonly palette?: boolean;
-  // Issue #309: Alt+A toggles full access for this session (the loop owns
+  // Alt+A toggles full access for this session (the loop owns
   // the confirmation, the posture write and the indicator).
   readonly fullAccess?: boolean;
-  // Issue #454: Esc during a turn — interrupt it, and never quit (a second
+  // Esc during a turn — interrupt it, and never quit (a second
   // Esc while the interrupt drains is a no-op, unlike Ctrl-C).
   readonly interrupt?: boolean;
 }
 
-// Issue #334: what the loop did with a submitted prompt. `queued` means the
-// follow-up went into the conversation's inbox (pi-durable `whenBusy:
-// 'followUp'`) — the app must NOT echo it as a pending turn; the queued row
-// does that. `refused` means no lane could take it at all (the session has
-// no lane); the loop has put the reason on the footer. Issue #338 adds `command`: the draft was a TUI command
-// (`/image`), which ran — nothing is echoed and nothing is restored.
+// What the loop did with a submitted prompt. `queued` means the follow-up went
+// into the conversation's inbox (pi-durable `whenBusy: 'followUp'`) — the app
+// must NOT echo it as a pending turn; the queued row does that. `refused` means
+// no lane could take it at all (the session has no lane); the loop has put the
+// reason on the footer. adds `command`: the draft was a TUI command (`/image`),
+// which ran — nothing is echoed and nothing is restored.
 export type TuiSubmitOutcome = 'accepted' | 'queued' | 'refused' | 'command';
 
 // The global keys are classified by pi-tui's own `parseKey`, never by
-// comparing raw bytes (issue #88, reviewer finding): a Kitty-class terminal
+// comparing raw bytes (reviewer finding): a Kitty-class terminal
 // negotiates the keyboard protocol and sends CSI-u sequences — Esc arrives
 // as '\x1b[27u', Ctrl-D as '\x1b[100;5u', Ctrl-C as '\x1b[27;5;99~' — so a
 // `data === '\x1b'` test silently misses them and the key becomes a no-op
@@ -376,10 +374,10 @@ function keyIdOf(data: string): string | undefined {
 }
 
 // The keys handleInput claims before the editor live in the keybinding
-// registry (issue #303, keybindings.ts): each default there carries the probe
+// registry (keybindings.ts): each default there carries the probe
 // that shows Pi's editor and alt-screen leave it free.
 
-// Issue #328: one row of the `/model` picker overlay. `label` is the
+// One row of the `/model` picker overlay. `label` is the
 // `provider/id` the operator sees and the value the loop resolves.
 export interface TuiModelPickerRow {
   readonly provider: string;
@@ -389,14 +387,14 @@ export interface TuiModelPickerRow {
   readonly current?: boolean;
   /** A short note (provider origin). */
   readonly note?: string;
-  /** Issue #461: the row's `200k ctx · thinking`. */
+  /** The row's `200k ctx · thinking`. */
   readonly contextWindow?: number;
   readonly reasoning?: boolean;
   /** The thinking levels the model supports (the picker's thinking row). */
   readonly thinking?: readonly string[];
 }
 
-// Issue #461: a provider's header in the model picker. A provider without
+// A provider's header in the model picker. A provider without
 // a key is listed with what to set, its models never offered.
 export interface TuiModelPickerProvider {
   readonly id: string;
@@ -407,7 +405,7 @@ export interface TuiModelPickerProvider {
   readonly keyVar?: string;
 }
 
-// Issue #305: the generic picker (the model picker, the command palette and
+// The generic picker (the model picker, the command palette and
 // the session list all render through it).
 export interface TuiPickerRow {
   readonly value: string;
@@ -431,7 +429,7 @@ export interface TuiPickerOptions {
   readonly onMove?: (value: string | undefined) => void;
 }
 
-// Issue #460: the ^P palette's sources. The app owns the command rows (the
+// The ^P palette's sources. The app owns the command rows (the
 // registry), the file rows (`listFiles`) and what they do in the editor;
 // the composition root supplies the rows only it can read and the actions
 // only it can take. Models and sessions load after the palette opens.
@@ -445,7 +443,7 @@ export interface TuiPaletteModel {
 
 export interface TuiPaletteSession {
   readonly id: string;
-  /** Its first prompt (issue #461); the id when absent. */
+  /** Its first prompt; the id when absent. */
   readonly title?: string;
   /** When the session was created (ISO), shown as its age. */
   readonly createdAt?: string;
@@ -462,13 +460,13 @@ export interface TuiPaletteSources {
   readonly onCancel?: () => void;
 }
 
-// Issue #460: the palette is 80 cells wide, or 70% of a narrower terminal,
+// The palette is 80 cells wide, or 70% of a narrower terminal,
 // and takes at most 70% of the rows.
 export const PALETTE_WIDTH = 80;
 export const PALETTE_WIDTH_PERCENT = 70;
 export const PALETTE_HEIGHT_PERCENT = 70;
 
-// Issue #309: the confirmation dialog (the full-access toggle's "are you
+// The confirmation dialog (the full-access toggle's "are you
 // sure?"). The accept key is explicit and deliberate — never a bare
 // printable letter — and every other key is swallowed while it shows, so
 // text typed ahead in the editor can never accept it.
@@ -485,7 +483,7 @@ export interface TuiConfirmOptions {
 
 export interface TuiModelPickerOptions {
   readonly rows: readonly TuiModelPickerRow[];
-  /** Issue #461: every provider, keyless ones included (headers only). */
+  /** Every provider, keyless ones included (headers only). */
   readonly providers?: readonly TuiModelPickerProvider[];
   /** The live thinking level: where the thinking row starts. */
   readonly thinking?: string;
@@ -498,7 +496,7 @@ export interface TuiModelPickerOptions {
 // so the picker stays closed and the loop reports it on the footer.
 export const MODEL_PICKER_MIN_WIDTH = 60;
 
-// Issue #462: the `?` overlay's groups, by action prefix.
+// The `?` overlay's groups, by action prefix.
 const KEY_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['editor', ['app.', 'prompt.', 'help.']],
   ['session', ['session.', 'model.', 'approvals.']],
@@ -507,7 +505,7 @@ const KEY_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['approvals', ['approval.']],
 ];
 
-// Issue #461: the thinking levels in order, for the picker's thinking row
+// The thinking levels in order, for the picker's thinking row
 // (a requested level the model lacks is clamped down to one it has).
 const THINKING_ORDER = [
   'off',
@@ -540,7 +538,7 @@ export interface TuiApp {
   render(width: number): string[];
   handleInput(data: string): TuiInputResult;
   finalDocument(width: number): string[];
-  // Issue #333 (§66): the app renders from replicated presentation state —
+  // The app renders from replicated presentation state —
   // the projector folds the lane events, the app never sees them.
   applyPresentation(state: KubicPresentationState): void;
   // The seed the host-side projector starts from (the app owns the live
@@ -552,11 +550,11 @@ export interface TuiApp {
   };
   applyLaneEntries(entries: ReadonlyArray<LaneEntryLike>): void;
   setUsage(rows: ReadonlyArray<StatusUsageRow>): void;
-  // Issue #227: the live model label the header, welcome block and status
+  // The live model label the header, welcome block and status
   // bar show. Called after a `/model` switch lands; presentation only — the
   // lane switch itself happens through the lane's own setModel.
   setModel(model: string, thinking?: string): void;
-  // Issue #347: the context gauge follows a `/model` switch. The limits are
+  // The context gauge follows a `/model` switch. The limits are
   // the NEW model's window and compaction threshold; a model whose window is
   // unknown clears them, so the gauge disappears rather than showing the old
   // model's percentage.
@@ -567,54 +565,54 @@ export interface TuiApp {
   onSubmit(handler: (prompt: string) => TuiSubmitOutcome | undefined): void;
   setBusy(busy: boolean): void;
   isBusy(): boolean;
-  // Issue #453: the transient notice row above the editor (the name is the
-  // pre-#453 one: the row used to sit under the editor). Empty clears it.
+  // The transient notice row above the editor (the name is the
+  // pre one: the row used to sit under the editor). Empty clears it.
   setEditorFooter(text: string): void;
-  // Issue #453: the status line's state word. A cancel the loop asked for
+  // The status line's state word. A cancel the loop asked for
   // reads `cancelling…` until the turn settles; a failed turn reads `error`
   // until the next one starts.
   setCancelling(cancelling: boolean): void;
-  // Issue #457: the settled turn's start (submission) and failure text feed
+  // The settled turn's start (submission) and failure text feed
   // its receipt; a solo turn ends with one.
   setTurnOutcome(
     outcome: 'completed' | 'cancelled' | 'failed',
     info?: { readonly startedAt?: number; readonly detail?: string },
   ): void;
-  // Issue #453: the header's project / branch / dirty count.
+  // The header's project / branch / dirty count.
   setWorkspace(workspace: TuiWorkspace): void;
-  // Issue #334: the echo row for a prompt whose turn has STARTED but whose
+  // The echo row for a prompt whose turn has STARTED but whose
   // user entry is not committed yet — a queued follow-up the inbox placed.
   // A later committed prompt cell clears it, exactly like a direct submit.
   setPendingEcho(prompt: string | undefined): void;
-  // Issue #305: the editor's autocomplete (the registry's `/` commands).
+  // The editor's autocomplete (the registry's `/` commands).
   setAutocomplete(provider: AutocompleteProvider): void;
-  // Issue #328: the model picker (§66 model.select). The loop supplies the
+  // The model picker (model.select). The loop supplies the
   // catalog rows and handles the choice; the app owns the overlay, the
   // modal input and the cancel. Returns false when this boot has no overlay
   // seat (the loop then reports it on the footer instead of failing silent).
   openModelPicker(options: TuiModelPickerOptions): boolean;
   /** Whether the picker overlay is showing (the loop refuses nested keys). */
   isModelPickerOpen(): boolean;
-  // Issue #305: the same overlay for the command palette and the session
+  // The same overlay for the command palette and the session
   // list; `openModelPicker` is this with the model rows mapped.
   openPicker(options: TuiPickerOptions): boolean;
-  // Issue #460: ^P's grouped palette (03-A … C). False when this boot has
+  // ^P's grouped palette. False when this boot has
   // no overlay seat or the terminal is too narrow (the loop says so).
   openPalette(sources: TuiPaletteSources): boolean;
   isPaletteOpen(): boolean;
-  // Issue #462: this project's recent sessions on the first screen.
+  // This project's recent sessions on the first screen.
   setRecentSessions(sessions: readonly TuiRecentSession[]): void;
-  // Issue #462: `?` — every key binding, grouped (also reachable here).
+  // `?` — every key binding, grouped (also reachable here).
   openKeysOverlay(): boolean;
-  // Issue #305: a command's own output (the `/help` list, `/session`,
+  // A command's own output (the `/help` list, `/session`,
   // `/undo`'s verdict) as transcript text. A later lane snapshot replaces
   // it.
   appendNotice(lines: ReadonlyArray<string>): void;
-  // Issue #305: `/session` — id, workspace, model, thinking level, tokens and
+  // `/session` — id, workspace, model, thinking level, tokens and
   // cost from the rows the status bar already carries (one source of truth).
   // `cwd` comes from the boot (the app never guesses a workspace).
   sessionReport(cwd?: string): string;
-  // Issue #305: `/new` and `/resume` — clear every session-scoped surface
+  // `/new` and `/resume` — clear every session-scoped surface
   // (transcript, tree, usage, panels, echoes) and take the next session's
   // identity, without recreating the app.
   resetSession(options: {
@@ -623,20 +621,20 @@ export interface TuiApp {
     readonly thinking?: string;
     readonly usage?: ReadonlyArray<StatusUsageRow>;
   }): void;
-  // Issue #309: the confirmation dialog (the full-access toggle). Returns
+  // The confirmation dialog (the full-access toggle). Returns
   // false when this boot has no overlay seat.
   openConfirm(options: TuiConfirmOptions): boolean;
   /** Whether a confirmation is showing (a public accessor for embedders). */
   isConfirmOpen(): boolean;
-  // Issue #338 (§16.8): the images the next echoed prompt carries, set by
+  // The images the next echoed prompt carries, set by
   // the loop together with the submit it accepted.
   setPendingImages(images: readonly LaneImagePart[]): void;
-  // Issue #338 (review, cycle 2): how many attachments are armed but NOT yet
+  // How many attachments are armed but NOT yet
   // submitted — the signal `allowEmptySubmit` reads. `setPendingImages` is
   // the echo's copy and outlives the submit; this one is cleared by the
   // submit itself.
   setPendingAttachments(count: number): void;
-  // Issue #334 (review): put a refused draft back in the editor, so a
+  // Put a refused draft back in the editor, so a
   // `/model` typed mid-turn never eats the text the operator typed.
   restoreDraft(prompt: string): void;
   // Ms since the in-flight turn started (undefined when idle); the root's
@@ -644,21 +642,21 @@ export interface TuiApp {
   busyElapsedMs(now?: number): number | undefined;
   // Ctrl-X: expand / collapse tool output blocks.
   toggleToolOutput(): boolean;
-  // Issue #307: a posture change (the policy's own predicate) reaches the
+  // A posture change (the policy's own predicate) reaches the
   // indicator on the very next frame.
   setApprovalsSkipped(skipped: boolean): void;
-  // Issue #96: the §17 inspectable pair.
-  // Issue #296: the streamed draft of the in-flight assistant message; the
+  // The inspectable pair.
+  // The streamed draft of the in-flight assistant message; the
   // committed entry replaces it (undefined clears it).
   setStream(text: string | undefined): void;
   setJournalChanges(rows: ReadonlyArray<JournalChangeLike>): void;
   setJournalFilter(filter: JournalFilterLike): void;
   setDiffToolCall(toolCallId: string | null): void;
   panelMode(): PanelMode;
-  // Issue #340: seed the editor's Up history (prompts oldest first).
+  // Seed the editor's Up history (prompts oldest first).
   seedPromptHistory(prompts: readonly string[]): void;
   openPanel(mode: PanelMode): void;
-  // Issue #301: the panel's own scroll surface. The panel row is a
+  // The panel's own scroll surface. The panel row is a
   // ScrollView (the wheel and alt+up / alt+down move it), and these expose
   // the same API to the composition root and to tests.
   panelScrollBy(lines: number): void;
@@ -667,7 +665,7 @@ export interface TuiApp {
   // Cycle the diff panel's files (wrapping); false when there is nothing to
   // cycle (panel closed, journal panel, no rows).
   panelJumpFile(delta: number): boolean;
-  // Issue #96: the approval surface. The composition root hands the app the
+  // The approval surface. The composition root hands the app the
   // live alt-screen's overlay seat at boot (before that, or on a terminal with
   // no overlay seat, the inline body is the surface).
   attachApprovalOverlay(host: ApprovalOverlayTui): void;
@@ -683,9 +681,9 @@ export interface JournalFilterLike {
   readonly agent?: string;
 }
 
-// Issue #150 (§20.6, §27.1): the footer line for a lane's transient
+// The footer line for a lane's transient
 // activity, or undefined when there is none. The 1.0 harness reports the
-// attempt and the error (no maxAttempts, no notBefore — #398's contract), so
+// attempt and the error (no maxAttempts, no notBefore — the contract), so
 // that is what the line names; a retry outranks a compaction.
 export function laneActivityLine(lane: {
   readonly retrying?: { readonly attempt: number; readonly error?: string };
@@ -698,16 +696,16 @@ export function laneActivityLine(lane: {
   return lane.compacting ? '⟳ compacting context…' : undefined;
 }
 
-// Issue #453: the transient notice row above the editor. It shows, in
+// The transient notice row above the editor. It shows, in
 // order of precedence: the lane's activity (a retry, a compaction), an
 // explicit footer (a turn outcome, a command's reply, an error), the working
 // line while a turn runs — else nothing, and the row takes no space.
 class NoticeRow implements Component {
-  // Issue #454: the working line's facts — the keys that act, this turn's
+  // The working line's facts — the keys that act, this turn's
   // tokens and tool calls.
   private readonly working: () => Omit<WorkingInfo, 'elapsedMs'>;
   private footer = '';
-  // Issue #150: the lane's transient activity (a retry backoff, a
+  // The lane's transient activity (a retry backoff, a
   // compaction). It outranks every other notice while it lasts — it is the
   // reason the turn looks idle — and clears the moment the state does.
   private activity = '';
@@ -776,7 +774,7 @@ function lineComponent(render: (width: number) => string): Component {
 
 export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const keys = seed.keys ?? DEFAULT_KEY_REGISTRY;
-  // Issue #458: project paths that exist get a `file://` link. The lister
+  // Project paths that exist get a `file://` link. The lister
   // is the @-mention one (cached by the composition root); the set is
   // rebuilt only when it hands back a new list.
   const listFiles = seed.listFiles;
@@ -797,7 +795,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
             return known.has(clean) ? fileUrl(fileRoot, clean) : undefined;
           };
         })();
-  // Issue #453: the tree row starts hidden (collapsed); Ctrl-T opens it.
+  // The tree row starts hidden (collapsed); Ctrl-T opens it.
   const tree = new AgentTreeView(undefined, {
     label: seed.label ?? 'solo',
     collapsed: true,
@@ -805,22 +803,22 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // The transcript row must stay the ScrollView itself so the layout engine
   // sizes it (follow-end only works when the ScrollView is the row).
   const transcript = createTranscriptView({
-    // Issue #455: the cards' duration, running clock and waiting state,
+    // The cards' duration, running clock and waiting state,
     // and the expand key's real cap.
     toolState: (toolCallId: string) => toolStateOf(toolCallId),
     expandKey: () => keyCap(keys.label('transcript.expand')),
     ...(projectFileUrl === undefined ? {} : { fileUrl: projectFileUrl }),
   });
-  // Issue #227: the live model label (seed = the boot's model, replaced by
+  // The live model label (seed = the boot's model, replaced by
   // `/model`). The header, welcome block and status bar all read it, so one
   // call keeps the three surfaces from drifting apart.
   let modelLabel = seed.model;
   let thinkingLabel = seed.thinking ?? 'off';
-  // Issue #305: `/new` and `/resume` keep the app but change the session it
+  // `/new` and `/resume` keep the app but change the session it
   // shows, so the id every lane apply, report cell and the welcome block are
   // keyed by is state (declared before the first welcome render).
   let sessionId = seed.sessionId;
-  // Issue #462: the first screen is the preflight (05-A … E), drawn from
+  // The first screen is the preflight, drawn from
   // live state each frame — the model, the workspace the header reads, the
   // keys and the recent sessions — and gone after the first prompt (a
   // resumed session with history never shows it). The honest isolation
@@ -895,17 +893,17 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       ? {}
       : { compactionThreshold: seed.compactionThreshold }),
   };
-  // Issue #453: the state word reads the app's live turn facts per frame.
+  // The state word reads the app's live turn facts per frame.
   const status = new StatusBar(barState, {
     live: () => ({
       turn: turnState(),
       busySince: noticeRow.busySince,
-      // Issue #467: the policy's own word on a turn's edit batch.
+      // The policy's own word on a turn's edit batch.
       ...(seed.editsApprovedThisTurn?.() === true ? { turnEdits: true } : {}),
     }),
   });
   // The live model label the header, welcome block and status bar show; one
-  // path for the boot, a `/model` switch and a session reset (#305).
+  // path for the boot, a `/model` switch and a session reset.
   const applyModel = (next: string, thinking?: string): void => {
     modelLabel = sanitizeLaneText(next);
     if (thinking !== undefined) thinkingLabel = thinking;
@@ -917,12 +915,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     refreshWelcome();
   };
   const editor = new PromptEditor();
-  // Issue #305: the editor completes the registry's `/`-commands as they are
+  // The editor completes the registry's `/`-commands as they are
   // typed (Pi's editor owns the popup and the completion keys); the submit
   // path still parses and dispatches.
-  // Issue #305 + #336: one provider for the editor's single slot — the
+  // One provider for the editor's single slot — the
   // slash commands, then the @-file mentions when a file source exists.
-  // Issue #183: the boot's skill names ride the same command provider as
+  // The boot's skill names ride the same command provider as
   // per-skill `/skill:<name>` rows, so `/skill:<prefix>` completes.
   const skillSpecs = skillCommandSpecs(seed.skillNames ?? []);
   const commandProvider = new SlashCommandAutocomplete([
@@ -937,7 +935,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           new FileMentionAutocomplete(seed.listFiles),
         ]),
   );
-  // Issue #454: this turn's facts for the working line — the usage rows and
+  // This turn's facts for the working line — the usage rows and
   // tool cells that arrived since the turn started.
   let turnRowsBase = 0;
   let toolCells = 0;
@@ -956,7 +954,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       interruptKey: keyCap(keys.label('app.cancel')),
     };
   });
-  // Issue #459: the card's state, read from the surface per frame.
+  // The card's state, read from the surface per frame.
   const cardOptions = (
     allowable = approvalSurface.isAllowable(),
   ): ApprovalCardOptions => {
@@ -973,15 +971,15 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       ...(seed.cwdLabel === undefined ? {} : { cwd: seed.cwdLabel }),
       pageKey: keyCap(keys.label('approval.page')),
       explainKey: keyCap(keys.label('approval.explain')),
-      // Issue #467: the card's open comment or command input.
+      // The card's open comment or command input.
       ...((): { input?: { kind: 'comment' | 'edit'; text: string } } => {
         const open = approvalSurface.inputMode();
         return open === undefined ? {} : { input: open };
       })(),
     };
   };
-  // Issue #454: Pi's editor inside the kit's box (editor-frame.ts).
-  // Issue #459: an approval takes the slot as a blocking card.
+  // Pi's editor inside the kit's box (editor-frame.ts).
+  // An approval takes the slot as a blocking card.
   const editorSlot: Component = {
     render: (width: number): string[] => {
       const request = approvalSurface.pending();
@@ -1005,13 +1003,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       editor.invalidate();
     },
   };
-  // Issue #96 — the panel row. Both panels stay mounted and keep their rows;
+  // The panel row. Both panels stay mounted and keep their rows;
   // the layout hides the row entirely while the mode is 'closed', so a
   // keypress never leaves blank space behind.
   const diffPanel = new DiffPanel();
   const journalPanel = new JournalPanel();
   let mode: PanelMode = 'closed';
-  // Issue #301: the panel body is a ScrollView over whichever panel is open,
+  // The panel body is a ScrollView over whichever panel is open,
   // so a multi-file or long change is reachable (the wheel and the panel's
   // own keys move it). The row component must BE the ScrollView — the layout
   // engine sizes a scroll node itself, exactly as the transcript row does.
@@ -1029,7 +1027,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     follow: 'none',
     scrollbar: 'auto',
   });
-  // Issue #301: the file the diff panel is showing. `file k/N` lives on each
+  // The file the diff panel is showing. `file k/N` lives on each
   // file's own header line, and alt+up / alt+down cycle the files, so the
   // header always names the file the viewport was last moved to.
   let panelFile = 0;
@@ -1051,13 +1049,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   };
   // The one place the panel mode is written (the Ctrl-O/Ctrl-R toggles and
   // the `openPanel` API both go through it), so the reset below cannot be
-  // skipped on the operator's real open path (#301 review).
+  // skipped on the operator's real open path.
   const setPanel = (next: PanelMode): void => {
     mode = next;
     panelFile = 0;
     panelScroll.scrollTo(0);
   };
-  // Issue #453: the header's session title — the first committed prompt
+  // The header's session title — the first committed prompt
   // (fresh or resumed alike), else the short id; cleared with the session.
   let title: string | undefined;
   // Sanitized at ingress like lane text: a directory name is local data, but
@@ -1108,12 +1106,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     }),
   });
   let busy = false;
-  // Issue #453: the status line's state word inputs — a cancel the loop
+  // The status line's state word inputs — a cancel the loop
   // asked for, and whether the last settled turn failed.
   let cancelling = false;
   let failed = false;
   let revision = 0;
-  // Issue #305: a command's own output (`/help`, `/session`, `/undo`) lands
+  // A command's own output (`/help`, `/session`, `/undo`) lands
   // as transcript text through its own lane/revision pair, so a later lane
   // snapshot replaces it.
   let noticeRevision = 0;
@@ -1122,21 +1120,20 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     | ((prompt: string) => TuiSubmitOutcome | undefined)
     | undefined;
   let pendingPrompt: string | undefined;
-  // Issue #338: the images the next echoed prompt carries. The loop sets
+  // The images the next echoed prompt carries. The loop sets
   // them on the same keystroke as the submit it accepted, the echo renders
   // them, and clearing the echo clears them.
   let pendingImages: readonly LaneImagePart[] = [];
-  // Issue #338 (review): Enter with an attachment and no text IS a submit —
+  // Enter with an attachment and no text IS a submit —
   // the image is the prompt. The editor asks this before dropping a blank
   // draft (attach + Enter was a silent no-op otherwise). The count is the
   // loop's UNSUBMITTED attachments, not the echo images: after a submit the
-  // echo still holds them, and a blank Enter there must stay a no-op
-  // (issue #338 review, cycle 2).
+  // echo still holds them, and a blank Enter there must stay a no-op.
   let pendingAttachments = 0;
   editor.allowEmptySubmit = (): boolean => pendingAttachments > 0;
   let promptCells = 0;
   let promptCellsAtSubmit = 0;
-  // Issue #460: the commands this session ran, most recent first — what
+  // The commands this session ran, most recent first — what
   // the palette offers before anything is typed.
   const recentCommands: string[] = [];
   const noteRecentCommand = (prompt: string): void => {
@@ -1149,19 +1146,19 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   };
   editor.onSubmit = (prompt: string): void => {
     if (submitHandler === undefined) return;
-    // Issue #334: the loop decides which submit outcome this is. A queued
+    // The loop decides which submit outcome this is. A queued
     // follow-up must not render as a pending turn (the queued row is its
     // feedback), and a refused prompt must not either — the loop's footer
     // says why. Both still pin the transcript: the operator asked to see
     // the tail.
     const outcome = submitHandler(prompt) ?? 'accepted';
     if (outcome !== 'refused') noteRecentCommand(prompt);
-    // Issue #462: the first prompt (not a command) clears the first screen.
+    // The first prompt (not a command) clears the first screen.
     if (outcome === 'accepted' && parseSlashCommand(prompt) === undefined) {
       hideWelcome();
     }
     if (outcome === 'refused') {
-      // Issue #334 (review): a refused prompt never eats the draft. Pi's
+      // A refused prompt never eats the draft. Pi's
       // editor clears the draft BEFORE onSubmit fires, so the text has to go
       // back — the footer says why it was refused, and the operator can fix
       // the draft instead of retyping it.
@@ -1171,14 +1168,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     if (outcome === 'accepted') echoPendingPrompt(prompt);
     transcript.rePin();
   };
-  // The prompt echo before the lane commits it (issue #88), also reused for
-  // a queued follow-up whose turn has started (#334).
+  // The prompt echo before the lane commits it, also reused for
+  // a queued follow-up whose turn has started.
   const echoPendingPrompt = (prompt: string): void => {
     pendingPrompt = sanitizeLaneText(prompt);
     promptCellsAtSubmit = promptCells;
     transcript.setPendingPrompt(pendingPrompt, pendingImages);
   };
-  // Issue #334 (review): put a draft the loop refused back in the editor.
+  // Put a draft the loop refused back in the editor.
   const restoreDraft = (prompt: string): void => {
     editor.setText(prompt);
     transcript.rePin();
@@ -1188,13 +1185,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     consumed: true,
     cancel: false,
   });
-  // ── Issue #96: the approval surface ───────────────────────────────────────
+  // ──: the approval surface ───────────────────────────────────────
   // The surface collects the verdict; the app shows it as the inline card in
-  // the editor's slot (issue #459), at every width.
+  // the editor's slot, at every width.
   const approvalSurface =
     seed.approvalSurface ??
     createApprovalSurface({ keyOverrides: keys.approvalOverrides() });
-  // Issue #96: the surface is created by the composition root (it must exist
+  // The surface is created by the composition root (it must exist
   // before the lane boots — the boot installs the policy that consults the
   // seat), so the app cannot pass its own onChange at construction. It
   // attaches one here instead: every change re-syncs the overlay and asks the
@@ -1205,16 +1202,16 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     syncOverlay();
   };
   approvalSurface.onChange = onSurfaceChange;
-  // Boot-time key check (§16.9, criterion 1): a conflicting map is refused by
+  // Boot-time key check: a conflicting map is refused by
   // name here rather than binding one action to two keys silently.
-  // Issue #315: an approval key may not shadow a loop key either.
+  // An approval key may not shadow a loop key either.
   approvalSurface.checkKeys([...keys.globalKeys()]);
   let overlayHost: ApprovalOverlayTui | undefined;
-  // Issue #328: the model picker overlay (at most one at a time).
+  // The model picker overlay (at most one at a time).
   let modelPicker:
     | {
         readonly view: PickerView;
-        /** The model picker has its own hint row (03-D). */
+        /** The model picker has its own hint row. */
         readonly kind: 'model' | 'list';
         readonly handle: ApprovalOverlayHandle;
         readonly onCancel?: (() => void) | undefined;
@@ -1222,7 +1219,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     | undefined;
   // The palette and the session list reuse the picker seat; `closePicker`
   // is the one teardown (the model picker's name is kept for its callers).
-  // Issue #328 review: Pi neither composites nor focuses the overlay below
+  // Pi neither composites nor focuses the overlay below
   // its minimum width, so the picker must not become a modal that swallows
   // keys with nothing on screen. `undefined` terminal (a fake host in the
   // overlay tests) keeps the picker usable.
@@ -1230,7 +1227,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     const columns = overlayHost?.terminal?.columns;
     return columns === undefined || columns >= MODEL_PICKER_MIN_WIDTH;
   };
-  // Issue #309: the confirmation dialog's body. Presentation only — the app
+  // The confirmation dialog's body. Presentation only — the app
   // owns the keys, the loop owns what the verdict does.
   const renderConfirm = (
     options: TuiConfirmOptions,
@@ -1265,7 +1262,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     if (verdict === 'confirm') open.options.onConfirm();
     else open.options.onCancel?.();
   };
-  // Issue #461: every "choose one" is a PickerView in the palette's box.
+  // Every "choose one" is a PickerView in the palette's box.
   const pickerMaxRows = (): number =>
     Math.max(
       6,
@@ -1322,7 +1319,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     });
     return showPicker(view, 'list', options.onCancel);
   };
-  // Issue #461: the model picker (03-D, 03-E) — one group per provider
+  // The model picker — one group per provider
   // with where its key comes from, keyless providers greyed with what to
   // set, large providers folded, and the thinking row: ←→ steps the levels
   // the selected model supports, ⏎ takes model and level together.
@@ -1438,7 +1435,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     });
     return showPicker(view, 'model', options.onCancel);
   };
-  // Issue #462: `?` — every binding of the registry, grouped, with the key
+  // `?` — every binding of the registry, grouped, with the key
   // it has now (a rebound key shows its own; an unbound one says so), and
   // the alt-screen's own transcript keys.
   const openKeysOverlay = (): boolean => {
@@ -1495,7 +1492,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     }
     if (notifyCancel) open.onCancel?.();
   };
-  // Issue #460: the ^P palette. The app builds the command and file rows
+  // The ^P palette. The app builds the command and file rows
   // and owns what they do in the editor; models and sessions come from the
   // composition root after the palette is up.
   let palette:
@@ -1682,7 +1679,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     host.requestRender?.();
     return true;
   };
-  // Issue #463: block mode — Esc on an idle, empty editor walks the
+  // Block mode — Esc on an idle, empty editor walks the
   // transcript by blocks (prompt, answer, thinking, tool card, receipt):
   // `↑↓`/`k j` move, `g`/`G` the ends, `y` copies the block, `Y` its
   // command, `⏎` opens it whole in the viewer, `x` expands just it; `i`,
@@ -1761,7 +1758,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       () => copyBlock(false),
     );
   };
-  // One whole text in the framed viewer: a transcript block (#463).
+  // One whole text in the framed viewer: a transcript block.
   const openViewer = (
     viewTitle: string,
     lines: (width: number) => string[],
@@ -1789,8 +1786,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     host.requestRender?.();
     return true;
   };
-  // Issue #459: an approval is a card in the editor slot, not an overlay —
-  // a change only needs a frame. Issue #460: a palette open over it would
+  // An approval is a card in the editor slot, not an overlay —
+  // a change only needs a frame. A palette open over it would
   // dim the card and hide it from the keys' owner, so it closes.
   const syncOverlay = (): void => {
     if (cardVisible() && palette !== undefined) {
@@ -1801,7 +1798,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const settleApproval = (): void => {
     syncOverlay();
   };
-  // Issue #455: what the presentation state says about each call — when the
+  // What the presentation state says about each call — when the
   // app first saw it, whether it still runs, and its duration once done.
   // Kept across turns (the lane snapshot folds completed turns away).
   const toolTimes = new Map<
@@ -1833,7 +1830,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       ...(waitingToolCallId() === toolCallId ? { waiting: true } : {}),
     };
   };
-  // Issue #457: thinking times (null: seen in loaded history, unmeasured),
+  // Thinking times (null: seen in loaded history, unmeasured),
   // the receipts of turns settled in this process, and what they count from.
   const thinkingTimes = new Map<string, number | null>();
   let historyPending = true;
@@ -1871,7 +1868,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     }
     return out;
   };
-  // Issue #454: the idle double-press quit. The notice row says so for the
+  // The idle double-press quit. The notice row says so for the
   // window and clears itself when it lapses (a render is requested — no key
   // arrives to cause one).
   let quitArmedUntil = 0;
@@ -1897,7 +1894,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     }, QUIT_ARM_MS);
     quitArmTimer.unref?.();
   };
-  // Issue #453: what the status line's state word and the key-hint row
+  // What the status line's state word and the key-hint row
   // follow. An approval outranks everything: it is what the turn waits on.
   const turnState = (): StatusTurnState => {
     if (approvalSurface.isShowing()) return 'approval';
@@ -1929,7 +1926,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     handleInput: (data: string): TuiInputResult => {
       // Classified by pi-tui's parseKey so both encodings are honoured:
       // legacy bytes ('\x03') AND Kitty CSI-u sequences ('\x1b[27;5;99~').
-      // Issue #306: a Kitty-class terminal reports key releases (and
+      // A Kitty-class terminal reports key releases (and
       // repeats) as their own events, and this listener runs before pi-tui's
       // focused-path release filter. A release is never an action: dropping
       // it here — before approval decide, the global keys and the editor —
@@ -1938,22 +1935,22 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       if (isKeyRelease(data))
         return { quit: false, consumed: true, cancel: false };
       const keyId = keyIdOf(data);
-      // Decision (issue #306): a held key's repeats reach the draft (held
+      // Decision: a held key's repeats reach the draft (held
       // backspace keeps deleting) but never the approval decision keys or a
       // global key — a held Ctrl-O must not strobe the panel, and a held
       // allow key must not answer the NEXT request too.
       if (isKeyRepeat(data) && (cardVisible() || keys.isGlobalKey(keyId))) {
-        // Issue #315: a dropped repeat is still typing — it never reaches
+        // A dropped repeat is still typing — it never reaches
         // decide(), so the surface is told to restart its arming window.
         approvalSurface.noteDroppedKey();
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #96: a shown approval owns the decision keys FIRST — above every
+      // A shown approval owns the decision keys FIRST — above every
       // global binding. Answering with Esc must deny the request, not quit the
       // session; the operator can still quit after the request settles. A key
       // the surface does not claim falls through to the normal loop (so the
       // draft, Ctrl-T, Ctrl-O/R and the rest keep working).
-      // Issue #467: the card's open input takes the keys first — text never
+      // The card's open input takes the keys first — text never
       // reaches a decision key, Esc goes back to the card, Enter sends.
       if (cardVisible()) {
         const typed = approvalSurface.typeInto(data);
@@ -1970,11 +1967,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         settleApproval();
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #315: the approval is a capturing modal. While it shows, every
+      // The approval is a capturing modal. While it shows, every
       // key it did not take — prose typed ahead for the next prompt, and a
       // decision key pressed inside the arming window — is dropped rather
       // than reaching the draft. Only the loop's global keys still act.
-      // Issue #316: `v` pages a long command in the dialog (never decides).
+      // `v` pages a long command in the dialog (never decides).
       if (
         cardVisible() &&
         keys.actionFor('approval', keyId) === 'approval.page' &&
@@ -1982,7 +1979,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       ) {
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #459: `?` opens (and closes) the card's explanation row.
+      // `?` opens (and closes) the card's explanation row.
       if (
         cardVisible() &&
         keys.actionFor('approval', keyId) === 'approval.explain' &&
@@ -1993,14 +1990,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       if (cardVisible() && !keys.isGlobalKey(keyId)) {
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #301: the open panel's navigation. alt+up / alt+down cycle the
+      // The open panel's navigation. alt+up / alt+down cycle the
       // diff panel's files (and page the journal panel); neither key is
       // claimed by pi-tui's editor or alt-screen bindings, so the draft keeps
       // its own keys. A closed panel does not claim them at all.
-      // Issue #303: every action below is looked up in the registry, so a
+      // Every action below is looked up in the registry, so a
       // rebound key acts and the old key falls through to the editor.
       const action = keys.actionFor('global', keyId);
-      // Issue #460: the palette is modal like the picker: Esc/Ctrl-C close
+      // The palette is modal like the picker: Esc/Ctrl-C close
       // it, every other key is its own (a stray global key never acts
       // behind it). A terminal resized below its minimum closes it.
       if (palette !== undefined && !pickerFits()) closePalette(true);
@@ -2017,14 +2014,14 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         overlayHost?.requestRender?.();
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #463: the block viewer owns the keys while it shows.
+      // The block viewer owns the keys while it shows.
       if (blockViewer !== undefined) {
         if (action === 'app.interrupt') closeBlockViewer();
         else blockViewer.view.handleInput(data);
         overlayHost?.requestRender?.();
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #463: block mode. Any key it does not take returns to typing
+      // Block mode. Any key it does not take returns to typing
       // and is handled as usual (a printable key lands in the editor).
       if (blockMode !== undefined) {
         const blocks = transcript.blocks();
@@ -2076,7 +2073,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         panelStep(action === 'panel.next' ? 1 : -1);
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #309: a shown confirmation owns every key. Only its explicit
+      // A shown confirmation owns every key. Only its explicit
       // accept key confirms; Esc/Ctrl-C cancel; anything else — a bare
       // printable letter typed ahead, a global toggle — is swallowed.
       if (confirmOverlay !== undefined) {
@@ -2091,7 +2088,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         }
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #328: the picker is modal while it shows — arrows move, typing
+      // The picker is modal while it shows — arrows move, typing
       // filters, Enter selects, Esc/Ctrl-C cancel (Pi's own list bindings).
       // Global keys other than the cancel pair stay swallowed so a stray
       // Ctrl-T cannot toggle a tree behind the overlay. A terminal resized
@@ -2126,10 +2123,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         approvalSurface.cancelPending();
         settleApproval();
       };
-      // Issue #454: Esc never quits. It closes the editor's dropdown (the
+      // Esc never quits. It closes the editor's dropdown (the
       // overlays above close themselves), interrupts a running turn — the
       // root makes the same cancel as a first Ctrl-C — and does nothing on
-      // an idle editor (block mode, #463, lives there).
+      // an idle editor (block mode, lives there).
       if (action === 'app.cancel') {
         denyPending();
         if (editor.isShowingAutocomplete()) {
@@ -2139,11 +2136,11 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         if (busy) {
           return { quit: false, consumed: true, cancel: true, interrupt: true };
         }
-        // Issue #463: idle with an empty editor, Esc walks the blocks.
+        // Idle with an empty editor, Esc walks the blocks.
         if (editor.getText() === '') enterBlockMode();
         return consumed;
       }
-      // Issue #454: Ctrl-C interrupts a running turn (a second press while
+      // Ctrl-C interrupts a running turn (a second press while
       // it drains quits — the root's rule); idle, it clears a draft, then
       // arms: a second press within QUIT_ARM_MS quits.
       if (action === 'app.interrupt') {
@@ -2163,8 +2160,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         armQuit(key);
         return consumed;
       }
-      // An operator-bound quit key (app.exit has no default since #454): a
-      // composed draft is cleared first (#302), an empty editor quits.
+      // An operator-bound quit key (app.exit has no default): a
+      // composed draft is cleared first, an empty editor quits.
       if (action === 'app.exit') {
         denyPending();
         if (editor.getText() !== '') {
@@ -2191,13 +2188,13 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         tree.handleInput('t');
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #96: Ctrl-O / Ctrl-R toggle the §17 inspectable pair. Both are
+      // Ctrl-O / Ctrl-R toggle the inspectable pair. Both are
       // free of pi-tui's own bindings (probed: editor bindings claim
       // a/b/c/d/e/f/g/j/k/u/w/y, the alt-screen claims the arrows, home/end,
       // page keys and ctrl+shift+*), and both are classified through the same
       // seam as every other global key.
       if (action === 'panel.diff') {
-        // Through the setter, not a bare assignment: the panel reset (#301)
+        // Through the setter, not a bare assignment: the panel reset
         // must run on the operator's real open path.
         setPanel(mode === 'diff' ? 'closed' : 'diff');
         return { quit: false, consumed: true, cancel: false };
@@ -2210,7 +2207,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         transcript.toggleExpanded();
         return { quit: false, consumed: true, cancel: false };
       }
-      // Issue #334: Alt+Enter is the steer key. The draft leaves the editor
+      // Alt+Enter is the steer key. The draft leaves the editor
       // here (like Enter clears it) and the loop decides: a running turn is
       // steered through the harness' own steer queue, an idle session gets
       // the text as a normal submit. An empty draft is a no-op, never a
@@ -2221,12 +2218,12 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         editor.setText('');
         return { quit: false, consumed: true, cancel: false, steer: text };
       }
-      // Issue #305: Ctrl-P opens the command palette (the registry's rows);
+      // Ctrl-P opens the command palette (the registry's rows);
       // the loop owns the list and the dispatch.
       if (action === 'app.palette') {
         return { quit: false, consumed: true, cancel: false, palette: true };
       }
-      // Issue #309: Alt+A asks the loop to toggle full access (the loop
+      // Alt+A asks the loop to toggle full access (the loop
       // confirms before enabling and writes the posture).
       if (action === 'approvals.fullAccess') {
         return {
@@ -2236,7 +2233,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           fullAccess: true,
         };
       }
-      // Issue #328: Alt+M opens the model picker; Alt+T cycles the thinking
+      // Alt+M opens the model picker; Alt+T cycles the thinking
       // level. Both are classified here and acted on by the loop.
       if (action === 'model.pick') {
         return { quit: false, consumed: true, cancel: false, pickModel: true };
@@ -2249,7 +2246,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           cycleThinking: true,
         };
       }
-      // Issue #462: `?` on an idle, empty editor lists every key; anywhere
+      // `?` on an idle, empty editor lists every key; anywhere
       // else it is the character.
       if (
         action === 'help.keys' &&
@@ -2284,7 +2281,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           },
         });
         transcript.setQueuedPrompts(lane.queued);
-        // Issue #455: the cards' facts. A call that left the snapshot while
+        // The cards' facts. A call that left the snapshot while
         // still marked running was cut off with its turn: it runs no more.
         const live = new Set<string>();
         for (const tool of lane.tools) {
@@ -2309,7 +2306,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         const last = lane.tools.at(-1);
         if (last !== undefined) diffPanel.followToolCall(last.toolCallId);
       }
-      // Issue #333 (review): the state's session facts are the SEED — the
+      // The state's session facts are the SEED — the
       // lane the boot selected — and the projector never updates them from
       // events. Writing them back here would silently revert the operator's
       // own Ctrl-G toggle or the posture the installed policy reports (and
@@ -2347,7 +2344,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         revision,
       );
       // A lane snapshot is the session's own transcript, so the command
-      // notices stop being it (review fix: a stale notice list must never be
+      // notices stop being it (a stale notice list must never be
       // re-applied by the next `/help`).
       noticeCells = [];
       // The echoed prompt is dropped once the lane has committed a NEW
@@ -2355,7 +2352,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       // must not clear on the previous turn's cell).
       promptCells = cells.filter((cell) => cell.kind === 'prompt').length;
       toolCells = cells.filter((cell) => cell.kind === 'tool').length;
-      // Issue #462: a session with history never shows the first screen.
+      // A session with history never shows the first screen.
       if (promptCells > 0) hideWelcome();
       if (title === undefined) {
         const first = cells
@@ -2400,7 +2397,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         receiptBase = { at: Date.now(), rows: status.getState().rows.length };
       }
       busy = next;
-      // Issue #453: a settled turn ends any cancel; a new one clears the
+      // A settled turn ends any cancel; a new one clears the
       // last turn's error.
       cancelling = false;
       if (next) failed = false;
@@ -2409,7 +2406,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         turnToolsBase = toolCells;
       }
       disarmQuit();
-      // Issue #334: the editor stays ENABLED through a turn. Enter is no
+      // The editor stays ENABLED through a turn. Enter is no
       // longer a silent no-op while the lane works: the loop submits it as
       // a follow-up into the conversation's inbox, and Alt+Enter steers.
       noticeRow.busySince = next ? Date.now() : undefined;
@@ -2438,7 +2435,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     setTurnOutcome: (outcome, info = {}): void => {
       failed = outcome === 'failed';
       cancelling = false;
-      // Issue #457 (01-J): a turn ends with its receipt.
+      // A turn ends with its receipt.
       const now = Date.now();
       const start = Math.max(info.startedAt ?? receiptBase.at, receiptBase.at);
       const rows = status.getState().rows;
@@ -2584,10 +2581,10 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         journalChanges: 0,
       });
       status.setRows([...(options.usage ?? [])]);
-      // Issue #463: the old session's blocks are gone.
+      // The old session's blocks are gone.
       closeBlockViewer();
       exitBlockMode();
-      // Issue #462: a fresh session starts on the first screen again (a
+      // A fresh session starts on the first screen again (a
       // resumed one with history hides it when its entries apply).
       welcomeVisible = true;
       refreshWelcome();
@@ -2602,7 +2599,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       echoPendingPrompt(prompt);
       transcript.rePin();
     },
-    // Issue #338: the attachments the next echo carries. The loop sets them
+    // The attachments the next echo carries. The loop sets them
     // as part of the submit it accepted, so the echoed prompt renders the
     // images the lane was actually given.
     setPendingImages: (images: readonly LaneImagePart[]): void => {
@@ -2641,24 +2638,24 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     panelJumpFile: (delta: number): boolean => panelJumpFile(delta),
     attachApprovalOverlay: (host: ApprovalOverlayTui): void => {
       overlayHost = host;
-      // Issue #460: while the palette or a picker is open the screen behind
-      // it is dimmed (03-A); the key-hint row at the bottom stays lit.
+      // While the palette or a picker is open the screen behind
+      // it is dimmed; the key-hint row at the bottom stays lit.
       host.baseFilter = (lines: string[]): string[] =>
         palette !== undefined ||
         modelPicker !== undefined ||
         blockViewer !== undefined
           ? dimFrame(tuiTheme().ui, lines)
           : lines;
-      // Issue #96: the live screen's render request, so an ask that arrives
+      // The live screen's render request, so an ask that arrives
       // from the lane's async turn paints a frame immediately. Optional on
       // the seam (see ApprovalOverlayTui) — a host that lacks it still gets
       // the overlay, just drawn on the next frame the loop already renders.
       approvalSurface.renderRequest = (): void => {
         host.requestRender?.();
       };
-      // Issue #316: whether the shown ask fits the live terminal; a host
+      // Whether the shown ask fits the live terminal; a host
       // that reports no size keeps the fixed layout.
-      // Issue #459: the card, the header, status and hint rows and three
+      // The card, the header, status and hint rows and three
       // rows of transcript must fit the terminal; until they do, only deny
       // acts (the card says so). Measured with the allow keys showing.
       approvalSurface.fitCheck = (): boolean => {

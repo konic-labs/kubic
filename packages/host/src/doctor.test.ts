@@ -1,4 +1,4 @@
-// kubic doctor (issue #29; §41.4, §50): providers, deps, policy
+// kubic doctor: providers, deps, policy
 // mismatches, skip flag — with --json parity. Faux-only: probes are
 // injected, never network.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,7 +38,7 @@ function cleanDeps(out: (line: string) => void): DoctorDeps {
   };
 }
 
-describe('policy:detection-only and enterprise checks (issue #289)', () => {
+describe('policy:detection-only and enterprise checks', () => {
   it('the default install names network=none as detection-only, exit stays 0', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
@@ -190,11 +190,11 @@ describe('runDoctorCommand', () => {
       'provider:local',
       'dep:node',
       'policy:approvals',
-      // Issue #361: private-state posture is part of the matrix.
+      // Private-state posture is part of the matrix.
       'state:permissions',
-      // Issue #59 license identity rides the same command.
+      // License identity rides the same command.
       'license:kubic',
-      // Issue #58 honest-limits registration rides the same command.
+      // Honest-limits registration rides the same command.
       'limit:solo-no-isolation',
       'limit:no-injection-prevention',
       'limit:policy-offer',
@@ -211,7 +211,7 @@ describe('runDoctorCommand', () => {
     }
   });
 
-  it('provider-down fails distinct with exit 6 in text and --json (§78)', async () => {
+  it('provider-down fails distinct with exit 6 in text and --json', async () => {
     const deps = (out: (line: string) => void): DoctorDeps => ({
       ...cleanDeps(out),
       probeProviders: () => [
@@ -285,7 +285,7 @@ describe('runDoctorCommand', () => {
   it('main.ts-style wiring (assembled providers + node dep) passes clean', async () => {
     const dir = mkTmp('doctor-');
     // A provider must exist for a clean run: with zero providers the
-    // honest-limits aggregate (issue #58) fails missing-provider.
+    // honest-limits aggregate fails missing-provider.
     writeFileSync(
       join(dir, 'models.json'),
       JSON.stringify({
@@ -331,7 +331,7 @@ describe('runDoctorCommand', () => {
     expect(text).toContain('probe exploded');
   });
 
-  it('reports the MIT license as a passing check (issue #59)', async () => {
+  it('reports the MIT license as a passing check', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(
       {},
@@ -342,14 +342,14 @@ describe('runDoctorCommand', () => {
   });
 });
 
-describe('runDoctorCommand mutation hardening (issue #68)', () => {
+describe('runDoctorCommand mutation hardening', () => {
   it('reports a listed-but-not-dialled provider without models as 0 registered', async () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.probeProviders = () => [{ id: 'local', reachable: true }];
     const code = await runDoctorCommand({}, deps);
     expect(code).toBe(0);
-    // Issue #86 honesty: the default probe never dialled, and the line says
+    // Honesty: the default probe never dialled, and the line says
     // so — a fabricated "reachable" would be a claim nothing measured.
     expect(lines.join('\n')).toContain(
       'PASS provider:local (ok): listed, not dialled, 0 model(s) registered',
@@ -467,7 +467,7 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
     const text = lines.join('\n');
     expect(text).toContain('SKIP dep:node (skipped)');
     expect(text).toContain('SKIP policy:approvals (skipped)');
-    // Issue #291: dep:node was the only dep, so skipping it empties the
+    // Dep:node was the only dep, so skipping it empties the
     // section and the limit:deps-present aggregate reports skip too.
     expect(text).toContain('SKIP limit:deps-present (skipped)');
     expect(text).toContain('3 skip');
@@ -487,10 +487,10 @@ describe('runDoctorCommand mutation hardening (issue #68)', () => {
   });
 });
 
-// Issue #361: session transcripts and journaled file content are private
+// Session transcripts and journaled file content are private
 // state; a group- or world-accessible state directory is named, warned
 // about (never exit-flipping), and tightened by the next open.
-describe('state permissions (issue #361)', () => {
+describe('state permissions', () => {
   it('warns on a world-readable sessions root, and passes when private', async () => {
     const loose: string[] = [];
     const looseCode = await runDoctorCommand(
@@ -527,7 +527,7 @@ describe('state permissions (issue #361)', () => {
   });
 });
 
-describe('doctor probes run once and --skip clears aggregates (issue #291)', () => {
+describe('doctor probes run once and --skip clears aggregates', () => {
   function refusedConfigDeps(out: (line: string) => void): DoctorDeps {
     return {
       out,
@@ -630,7 +630,7 @@ describe('doctor probes run once and --skip clears aggregates (issue #291)', () 
   });
 });
 
-describe('full-access sessions (issue #310)', () => {
+describe('full-access sessions', () => {
   interface CheckView {
     id: string;
     status: string;
@@ -714,7 +714,7 @@ describe('full-access sessions (issue #310)', () => {
   });
 });
 
-describe('audit sink checks (issue #286)', () => {
+describe('audit sink checks', () => {
   function reportOf(lines: string[]): Array<{
     id: string;
     status: string;
@@ -782,9 +782,9 @@ describe('audit sink checks (issue #286)', () => {
   });
 });
 
-// Issue #448: the grouped summary on an interactive terminal, the full
+// The grouped summary on an interactive terminal, the full
 // report behind --verbose, and the full report everywhere else.
-describe('doctor rendering modes (issue #448)', () => {
+describe('doctor rendering modes', () => {
   it('prints the grouped summary when the output is fancy', async () => {
     const lines: string[] = [];
     const code = await runDoctorCommand(

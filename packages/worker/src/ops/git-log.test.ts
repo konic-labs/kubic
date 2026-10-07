@@ -1,5 +1,4 @@
-// Slice B: git log/show read ops (issue #19; §43.1).
-// RED: git_log/git_show do not exist yet.
+// Git log/show read ops.
 import { describe, expect, it } from 'vitest';
 import { argvKey, FakeExecutionEnv } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
@@ -16,7 +15,7 @@ function ctx(
   };
 }
 
-// Human form of the recorded argv, for exact-argv pins (issue #356).
+// Human form of the recorded argv, for exact-argv pins.
 function argvOf(env: FakeExecutionEnv): string[] {
   return env.calls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
 }
@@ -32,7 +31,7 @@ const LOG_OUT = `abc1234\u001fauthor one\u001f2026-09-01\u001ffirst commit
 def5678\u001fauthor two\u001f2026-09-02\u001fsecond commit
 `;
 
-describe('git log/show (issue #19, slice B)', () => {
+describe('git log/show', () => {
   it('git_log parses entries with sha/author/date/message', async () => {
     const env = new FakeExecutionEnv({
       [argvKey(

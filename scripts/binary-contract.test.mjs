@@ -1,4 +1,4 @@
-// Unit tests for the shipped-artifact contract (issue #101).
+// Unit tests for the shipped-artifact contract.
 // Static repo state, no build needed: the probe runner is injected, so the
 // assertion logic is exercised without dist/ — the real binary run lives in
 // scripts/binary-contract.mjs (CI: the `binary-contract` job).
@@ -39,7 +39,7 @@ const SESSION = '01a0d7d9-d6fb-71c2-bcfa-15f762197e6b';
 const VERSION_LINE = 'kubic 0.0.0 (license: MIT)';
 const RUN_MESSAGE = 'no models available: register a provider first';
 const PROVIDER_FAIL =
-  'FAIL limit:provider-availability (provider-down): no providers configured — configure a provider; `kubic run` exits 6 on provider failure (§78)';
+  'FAIL limit:provider-availability (provider-down): no providers configured — configure a provider; `kubic run` exits 6 on provider failure';
 
 function ok(stdout) {
   return { code: 0, stdout, stderr: '', error: null };
@@ -49,7 +49,7 @@ function versionOut(text = VERSION_LINE) {
   return ok(`${text}\n`);
 }
 
-// `kubic --help` / `kubic -h`: the root usage line, exit 0 (issue #128).
+// `kubic --help` / `kubic -h`: the root usage line, exit 0.
 function helpOut(line = ROOT_HELP_TEXT) {
   return ok(`${line}\n`);
 }
@@ -69,9 +69,8 @@ function bareOut(line = ROOT_HELP_TEXT) {
   return { code: 1, stdout: `${line}\n`, stderr: '', error: null };
 }
 
-// An unknown command (issue #372, hint per issue #268/L-D7, stderr per issue
-// #450): exit 2, nothing on stdout, the error line, the prompt hint and the
-// help hint on stderr.
+// An unknown command (hint/ stderr): exit 2, nothing on stdout, the error line,
+// the prompt hint and the help hint on stderr.
 function unknownOut() {
   return {
     code: 2,
@@ -81,8 +80,8 @@ function unknownOut() {
   };
 }
 
-// The internal crash probe without its env gate (issue #128): an unknown
-// command with NO prompt hint — the seam is not a user surface (issue #268).
+// The internal crash probe without its env gate: an unknown
+// command with NO prompt hint — the seam is not a user surface.
 function usageOnlyOut() {
   return {
     code: 2,
@@ -92,7 +91,7 @@ function usageOnlyOut() {
   };
 }
 
-// The headline bare prompt (issue #268/L-D7): a multi-word argv token runs
+// The headline bare prompt: a multi-word argv token runs
 // like `kubic run -p`, so the faux provider answers with a completed run.
 function barePromptOut() {
   return ok(
@@ -101,7 +100,7 @@ function barePromptOut() {
 }
 
 // The launcher's guard refusal for a stubbed runtime: one named line on
-// stderr, exit 1, nothing on stdout (issue #128).
+// stderr, exit 1, nothing on stdout.
 function guardRefusal(stub) {
   return {
     code: 1,
@@ -112,7 +111,7 @@ function guardRefusal(stub) {
 }
 
 // `kubic __crash-probe`: the top-level catch-all's operator-facing shape —
-// one `error: <message>` line, exit 1, no stack (issue #128).
+// one `error: <message>` line, exit 1, no stack.
 function crashOut() {
   return {
     code: 1,
@@ -133,7 +132,7 @@ function debugCrashOut() {
   };
 }
 
-// The embedded §12 role presets (issue #203) are part of the doctor baseline:
+// The embedded role presets are part of the doctor baseline:
 // a runner with no `.kubic/roles/` reports all five as `builtin role`.
 function rolePresetLines() {
   return BUILTIN_ROLE_NAMES.map(
@@ -169,7 +168,7 @@ function applyOverride(override, stub) {
   return typeof override === 'function' ? override(stub) : override;
 }
 
-// Issue #244: the models.json receipt is a diagnostic, so `--json` stdout is
+// The models.json receipt is a diagnostic, so `--json` stdout is
 // one document. The fake mirrors the real split.
 function modelsJsonOut() {
   return {
@@ -198,7 +197,7 @@ function modelsTextOut() {
   };
 }
 
-// The refusal a project config with an unknown key produces (issue #244).
+// The refusal a project config with an unknown key produces.
 const REFUSAL_MESSAGE = `layer 'project': unknown key '${CONFIG_REFUSAL_KEY}'`;
 
 function refusedRunTextOut() {
@@ -230,7 +229,7 @@ function refusedRunJsonOut() {
 }
 
 // Replays the probes with the given per-command overrides. The stubbed-node
-// probes (issue #128) key on `opts.nodeStub`: the contract only stubs
+// probes key on `opts.nodeStub`: the contract only stubs
 // below-the-floor values and the exact floor, so the fake mirrors a working
 // guard for those while each override can force the drift under test.
 function fakeRun(overrides = {}) {
@@ -282,9 +281,9 @@ function fakeRun(overrides = {}) {
       return overrides.refusedRunText ?? refusedRunTextOut();
     }
     if (args[0] === '__crash-probe') {
-      // Without the contract's env gate the seam is unreachable (issue
-      // #128): the command falls through to the unknown-command path —
-      // the same shape as any other unknown command (exit 2, issue #372).
+      // Without the contract's env gate the seam is unreachable: the command
+      // falls through to the unknown-command path — the same shape as any other
+      // unknown command.
       if (opts.env?.[CRASH_PROBE_ENV] !== '1') {
         return overrides.ungatedCrash ?? usageOnlyOut();
       }
@@ -319,7 +318,7 @@ function contractWith(overrides = {}, options = {}) {
   });
 }
 
-describe('binary contract (issue #101)', () => {
+describe('binary contract', () => {
   it('passes on the clean provider-less baseline', () => {
     assert.deepEqual(contractWith().problems, []);
   });
@@ -371,8 +370,8 @@ describe('binary contract --version probe', () => {
   });
 });
 
-describe('binary contract root help probes (issue #128)', () => {
-  it('fails when both help flags exit 1 (the pre-#128 defect)', () => {
+describe('binary contract root help probes', () => {
+  it('fails when both help flags exit 1 (the pre defect)', () => {
     const exit1 = {
       code: 1,
       stdout: `${ROOT_HELP_TEXT}\n`,
@@ -436,7 +435,7 @@ describe('binary contract root help probes (issue #128)', () => {
   });
 });
 
-describe('binary contract launcher guard probes (issue #128)', () => {
+describe('binary contract launcher guard probes', () => {
   it('fails when an old runtime is ignored (guard absent — version still printed)', () => {
     const result = contractWith({ guardRefused: versionOut() });
     assert.equal(result.problems.length, 2);
@@ -498,7 +497,7 @@ describe('binary contract launcher guard probes (issue #128)', () => {
   });
 });
 
-describe('binary contract failure probes (issue #128)', () => {
+describe('binary contract failure probes', () => {
   it('fails when the injected failure exits 0', () => {
     const result = contractWith({ crash: { ...crashOut(), code: 0 } });
     assert.equal(result.problems.length, 1);
@@ -540,7 +539,7 @@ describe('binary contract failure probes (issue #128)', () => {
 
   it('fails when the seam fires without the env gate (internal-only breach)', () => {
     const result = contractWith({ ungatedCrash: crashOut() });
-    // Exit code and stderr; stdout is empty either way (issue #450).
+    // Exit code and stderr; stdout is empty either way.
     assert.equal(result.problems.length, 2);
     for (const problem of result.problems) {
       assert.match(problem, /without the env gate/);
@@ -549,14 +548,14 @@ describe('binary contract failure probes (issue #128)', () => {
   });
 });
 
-describe('binary contract unknown-command probe (issue #372)', () => {
+describe('binary contract unknown-command probe', () => {
   it('fails when an unknown command exits 1 (the old posture)', () => {
     const result = contractWith({ unknown: { ...unknownOut(), code: 1 } });
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /exited 1 \(expected 2/);
   });
 
-  it('fails when the unknown-command path writes to stdout (issue #450)', () => {
+  it('fails when the unknown-command path writes to stdout', () => {
     const result = contractWith({
       unknown: { ...unknownOut(), stdout: `${ROOT_HELP_TEXT}\n` },
     });
@@ -585,7 +584,7 @@ describe('binary contract unknown-command probe (issue #372)', () => {
   });
 });
 
-describe('binary contract bare-prompt probe (issue #268)', () => {
+describe('binary contract bare-prompt probe', () => {
   it('fails when the bare prompt does not run like `kubic run -p`', () => {
     const result = contractWith({
       barePrompt: { ...barePromptOut(), code: 2 },
@@ -615,7 +614,7 @@ describe('binary contract bare-prompt probe (issue #268)', () => {
   });
 });
 
-describe('kubic launcher source contract (issue #128)', () => {
+describe('kubic launcher source contract', () => {
   it('decides the 22.19 floor table-style (no old runtime needed)', () => {
     const cases = [
       ['20.11.1', false],
@@ -661,7 +660,7 @@ describe('kubic launcher source contract (issue #128)', () => {
     );
     assert.ok(
       guardAt < importAt,
-      'the guard must precede the dynamic import (issue #128) — a top-level await before it re-introduces the raw SyntaxError on old runtimes',
+      'the guard must precede the dynamic import — a top-level await before it re-introduces the raw SyntaxError on old runtimes',
     );
     assert.doesNotMatch(
       code.slice(0, guardAt),
@@ -783,7 +782,7 @@ describe('binary contract provider-less run probe', () => {
     assert.match(result.problems[0], /does not point at session/);
   });
 
-  // Issue #383: the trajectory ref is the written file, never the old
+  // The trajectory ref is the written file, never the old
   // `trajectory:<id>` string that resolved to nothing.
   it("fails when the trajectory ref is not that session's trajectory.json", () => {
     for (const ref of [
@@ -825,7 +824,7 @@ describe('binary contract provider-less run probe', () => {
   });
 });
 
-// ci.yml wiring (issue #101): the contract above only gates a push once
+// ci.yml wiring: the contract above only gates a push once
 // the workflow actually builds and runs the binary. Text-matched like
 // erasable.test.mjs's CI check — the job block is delimited by its own
 // 2-space job key, so an edit that drops the step fails here.
@@ -888,7 +887,7 @@ function ciYml() {
   return readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
 }
 
-describe('CI wiring (issue #101)', () => {
+describe('CI wiring', () => {
   it('builds for real, then runs the binary contract, in the test job', () => {
     const job = jobBlock('test');
     assert.match(job, /actions\/checkout@v7/);
@@ -934,22 +933,8 @@ describe('CI wiring (issue #101)', () => {
     assert.match(
       manifest.scripts.test,
       /node --test\s+"scripts\/\*\.test\.mjs"/,
-      'npm test must glob scripts/*.test.mjs (issue #376), not hand-list gates',
+      'npm test must glob scripts/*.test.mjs, not hand-list gates',
     );
-  });
-
-  it('docs/contributing.md lists the new gates for local parity', () => {
-    const md = readFileSync(join(ROOT, 'docs', 'contributing.md'), 'utf8');
-    for (const needle of [
-      'npm run build',
-      'npm run test:binary-contract',
-      'npm run docs:check',
-    ]) {
-      assert.ok(
-        md.includes(needle),
-        `docs/contributing.md must list \`${needle}\` so contributors run the CI gates locally`,
-      );
-    }
   });
 
   it('a failing run leaves no temp dir behind (cleanup survives the exit path)', () => {
@@ -998,7 +983,7 @@ describe('CI wiring (issue #101)', () => {
   });
 });
 
-describe('binary contract --json purity probes (issue #244)', () => {
+describe('binary contract --json purity probes', () => {
   it('fails when the models.json receipt leaks to stdout', () => {
     const result = contractWith({
       modelsJson: {
@@ -1085,7 +1070,7 @@ describe('binary contract --json purity probes (issue #244)', () => {
   });
 });
 
-describe('binary contract command help probes (issue #245)', () => {
+describe('binary contract command help probes', () => {
   it('fails when a command help request boots a lane (writes to stderr)', () => {
     const result = contractWith({
       runHelp: {

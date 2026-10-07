@@ -1,5 +1,5 @@
-// Enterprise policy engine tests (issue #57; §58 surface, precedence).
-// RED first: imports fail until enterprise.ts lands. Faux-only, zero network.
+// Enterprise policy engine tests (surface, precedence).
+// Imports fail until enterprise.ts lands. Faux-only, zero network.
 import { describe, expect, it } from 'vitest';
 import {
   assertToolGrantable,
@@ -36,7 +36,7 @@ logging_policy = "full-audit"
     expect(layer.tools?.deny).toEqual(['network_fetch']);
     expect(layer.models?.allowed).toEqual(['claude-sonnet-4-6', 'local/*']);
     expect(layer.models?.providers).toEqual(['anthropic', 'local']);
-    // §58's 'proxy' is the engine's allowlist mode; proxy enforcement itself
+    // 's 'proxy' is the engine's allowlist mode; proxy enforcement itself
     // is a named follow-up, so the shape is what travels here.
     expect(layer.network?.mode).toBe('allowlist');
     expect(layer.network?.domains).toEqual([
@@ -46,7 +46,7 @@ logging_policy = "full-audit"
     // 'workspace-only' is the engine's 'workspace-write' level.
     expect(layer.filesystem?.level).toBe('workspace-write');
     // Values with no enforceable engine leaf are carried, never dropped —
-    // doctor reports them (the §58 "never silent" rule).
+    // doctor reports them (the "never silent" rule).
     expect(layer.data?.policy).toBe('no-external-training');
     expect(layer.logging?.policy).toBe('full-audit');
   });
@@ -203,7 +203,7 @@ describe('enterprise precedence', () => {
     ).toThrow(PolicyDeniedError);
   });
 
-  it('a grant follows the lane gate: a deny-only policy grants what it does not deny (issue #288)', () => {
+  it('a grant follows the lane gate: a deny-only policy grants what it does not deny', () => {
     const { policy } = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
     ]);

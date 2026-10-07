@@ -1,6 +1,6 @@
 // Tabular output for CLI reports. Two renderings of one input:
 //
-// - fancy (the output kit's borderless table, issue #445): a fg2 header, a
+// - fancy (the output kit's borderless table): a fg2 header, a
 //   faint rule, aligned columns and optional row markers, on an interactive,
 //   coloured terminal;
 // - plain, space-aligned columns everywhere else (pipes, CI logs,

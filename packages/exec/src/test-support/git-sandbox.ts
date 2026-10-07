@@ -1,4 +1,4 @@
-// Shared real-git sandbox for tests (issue #365).
+// Shared real-git sandbox for tests.
 //
 // Real-git tests must be isolated from the developer's git configuration
 // and from ambient `GIT_*` environment variables: the same result on every

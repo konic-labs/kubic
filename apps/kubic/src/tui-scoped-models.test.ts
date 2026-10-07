@@ -1,4 +1,4 @@
-// The role's allowed set on `kubic tui` (issue #255; §38.2): the boot
+// The role's allowed set on `kubic tui`: the boot
 // selects in-set, and a `/model` switch outside the set refuses by name
 // with the live model untouched. Drives the real `bootTuiLane` through
 // the production deps builder with faux providers: zero network, zero
@@ -91,7 +91,7 @@ async function waitFor(
   condition: () => boolean,
   deadlineMs = 10_000,
 ): Promise<void> {
-  // Deadline-based (issue #385): a tick count is a latency assertion in
+  // Deadline-based: a tick count is a latency assertion in
   // disguise — under contention a fixed poll lapses before the frame
   // lands. A generous deadline only fails a true hang, never a slow
   // scheduler.
@@ -131,7 +131,7 @@ function cliConfig(files: Record<string, string>): CliConfigResult {
   };
 }
 
-describe('scoped role set on the TUI lane (issue #255)', () => {
+describe('scoped role set on the TUI lane', () => {
   it('refuses a /model switch outside the set, keeping the live model', async () => {
     const workspace = tmpRoot();
     writeRole(workspace, 'reviewer');
@@ -172,7 +172,7 @@ describe('scoped role set on the TUI lane (issue #255)', () => {
   });
 
   it('reports the resolved set through the /scoped-models loop case', async () => {
-    // Review #255 (low, carried): the loop case had no loop-level test —
+    // Review (low, carried): the loop case had no loop-level test —
     // only the pure helper and the help count were pinned. Dispatch
     // `/scoped-models` through the real loop (fake terminal, prod boot)
     // and assert the transcript carries the report, scoped and roleless.

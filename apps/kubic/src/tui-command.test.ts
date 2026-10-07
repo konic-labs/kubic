@@ -1,4 +1,4 @@
-// `kubic tui` wiring over the solo lane (issue #75).
+// `kubic tui` wiring over the solo lane.
 //
 // Headless snapshots through the real TuiAltScreen + a fake Terminal
 // (same pattern as screen.test.ts): alt-screen open/restore asserted on
@@ -50,7 +50,7 @@ function deps(
   };
 }
 
-describe('kubic tui (issue #75)', () => {
+describe('kubic tui', () => {
   it('opens the alt-screen, shows rows in root order, restores on Ctrl-C', async () => {
     const lines: string[] = [];
     let input!: (data: string) => void;
@@ -63,7 +63,7 @@ describe('kubic tui (issue #75)', () => {
     );
     await waitFor(() => terminal.started === 1);
     input('T');
-    // Issue #302/#454: with the draft on screen the first Ctrl-C clears it;
+    // With the draft on screen the first Ctrl-C clears it;
     // the double press after it quits.
     input('\x03');
     input('\x03');
@@ -80,7 +80,7 @@ describe('kubic tui (issue #75)', () => {
     );
     expect(terminal.stopped).toBe(1);
     const doc = lines.join('\n');
-    // Issue #453: header, transcript, status line, key hints.
+    // Header, transcript, status line, key hints.
     const order = ['approvals on', 'PREFLIGHT', ' ready ', '⏎ send'].map((m) =>
       doc.indexOf(m),
     );
@@ -223,9 +223,9 @@ describe('kubic tui (issue #75)', () => {
   });
 });
 
-// Issue #319: the suite must not depend on the shell's colour variables, and
+// The suite must not depend on the shell's colour variables, and
 // a run must not leave its colour theme behind for the next test.
-describe('kubic tui colour isolation (issue #319)', () => {
+describe('kubic tui colour isolation', () => {
   it('passes under FORCE_COLOR=3 with the injected colour level', async () => {
     vi.stubEnv('FORCE_COLOR', '3');
     const lines: string[] = [];
@@ -264,10 +264,10 @@ describe('kubic tui colour isolation (issue #319)', () => {
   });
 });
 
-// Issue #303 (§16.9): ~/.kubic/keybindings.json is read at boot. Conflicting
+// ~/.kubic/keybindings.json is read at boot. Conflicting
 // overrides are reported before the screen opens (and the TUI still runs);
 // a broken file refuses the boot by name.
-describe('kubic tui keybindings file (issue #303)', () => {
+describe('kubic tui keybindings file', () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const dir of dirs.splice(0))

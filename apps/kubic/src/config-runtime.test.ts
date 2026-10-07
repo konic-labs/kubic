@@ -1,15 +1,14 @@
-// Composition-root trust wiring (issue #228; §35.1): the persisted
+// Composition-root trust wiring: the persisted
 // decision under `~/.kubic/trust.json` is what makes a committed
 // `.kubic/config.toml` usable, with no env var exported per invocation.
 //
 // These tests drive the real `loadCliConfig` over temp home/project dirs
 // (no network, no paid tokens) and clean every temp dir up in `afterEach`.
 
-// The `cli` config layer on the composition root's own load (issue #227,
-// §35.1): `kubic run --model`, `kubic tui --model` and `kubic config
-// --model` are one input to the ONE load dispatch performs, so the model
-// the projection hands the lane is the same model `kubic config` reports —
-// never two derivations that can drift.
+// The `cli` config layer on the composition root's own load: `kubic run
+// --model`, `kubic tui --model` and `kubic config --model` are one input to the
+// ONE load dispatch performs, so the model the projection hands the lane is the
+// same model `kubic config` reports — never two derivations that can drift.
 import {
   mkdirSync,
   mkdtempSync,
@@ -112,7 +111,7 @@ function storeFor(home: string): ProjectTrustStore {
   return new ProjectTrustStore(projectTrustStorePath(home));
 }
 
-describe('project trust store wiring (issue #228)', () => {
+describe('project trust store wiring', () => {
   it('loads the project layer after `kubic trust`, with no env var set', () => {
     const home = tmpDir('kubic-trust-home-');
     const project = projectWithConfig();
@@ -197,7 +196,7 @@ describe('project trust store wiring (issue #228)', () => {
   });
 });
 
-describe('project root resolution (issue #229)', () => {
+describe('project root resolution', () => {
   function repoWithConfig(): { root: string; sub: string } {
     const root = tmpDir('kubic-root-repo-');
     mkdirSync(join(root, '.git'), { recursive: true });
@@ -251,7 +250,7 @@ describe('project root resolution (issue #229)', () => {
   });
 });
 
-describe('interactive trust prompt (issue #228)', () => {
+describe('interactive trust prompt', () => {
   it('accepting records the decision and the lane boots on it', async () => {
     const home = tmpDir('kubic-trust-home-');
     const project = projectWithConfig();
@@ -274,7 +273,7 @@ describe('interactive trust prompt (issue #228)', () => {
     ).toBeUndefined();
   });
 
-  // Issue #229: asked from a subdirectory, the grant is recorded at the
+  // Asked from a subdirectory, the grant is recorded at the
   // project root — the same root the config load keys its trust report
   // to — so the loader honours it from any cwd under the root.
   it('records the grant at the project root when asked from a subdirectory', async () => {
@@ -456,7 +455,7 @@ describe('interactive trust prompt (issue #228)', () => {
   });
 });
 
-describe('cli model layer (issue #227)', () => {
+describe('cli model layer', () => {
   it('projects --model as the cli layer, above the file pin', () => {
     const home = tmp('cli-model-home-');
     const cwd = tmp('cli-model-cwd-');
@@ -502,7 +501,7 @@ describe('cli model layer (issue #227)', () => {
   });
 });
 
-// The config-runtime projections (issue #384): every export of
+// The config-runtime projections: every export of
 // config-runtime.ts is referenced by a behavioural test below, driven
 // through the real loadCliConfig over temp dirs (no network, no tokens).
 // Helpers write one layer file at a time: the global layer needs no trust,
@@ -531,7 +530,7 @@ function refusedGlobal(): ReturnType<typeof loadCliConfig> {
   return refused;
 }
 
-describe('runtimeModelPin + requireRuntimeConfig + configRefusalExit (issue #384)', () => {
+describe('runtimeModelPin + requireRuntimeConfig + configRefusalExit', () => {
   it('is undefined when no model is pinned', () => {
     const home = tmpDir('kubic-pin-absent-home-');
     const cwd = tmpDir('kubic-pin-absent-cwd-');
@@ -576,7 +575,7 @@ describe('runtimeModelPin + requireRuntimeConfig + configRefusalExit (issue #384
   });
 });
 
-describe('kubicConfigLoader + doctorPolicyLoader fail closed (issue #384)', () => {
+describe('kubicConfigLoader + doctorPolicyLoader fail closed', () => {
   it('kubicConfigLoader renders the runtime, or throws the refusal', () => {
     const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
     const clean = loadCliConfig({ cwd, home, env: {} });
@@ -598,7 +597,7 @@ describe('kubicConfigLoader + doctorPolicyLoader fail closed (issue #384)', () =
   });
 });
 
-describe('installedPolicyClasses over the same load the lane uses (issue #384)', () => {
+describe('installedPolicyClasses over the same load the lane uses', () => {
   it('is {} when the config declares no classes', () => {
     const home = tmpDir('kubic-pol-absent-home-');
     const cwd = tmpDir('kubic-pol-absent-cwd-');
@@ -620,7 +619,7 @@ describe('installedPolicyClasses over the same load the lane uses (issue #384)',
   });
 });
 
-describe('session compaction projection (issue #239)', () => {
+describe('session compaction projection', () => {
   it('maps the keys onto the lane compaction options', () => {
     const { home, cwd } = globalHome(
       '[session]\nautoCompact = false\nreserveTokens = 4000\nkeepRecentTokens = 5000\n',
@@ -655,7 +654,7 @@ describe('session compaction projection (issue #239)', () => {
     expect(prodRunDeps(bare).compaction).toBeUndefined();
   });
 
-  it('doctor reports the effective reserve (issue #239)', () => {
+  it('doctor reports the effective reserve', () => {
     const { home, cwd } = globalHome('[session]\nreserveTokens = 4000\n');
     const probe = doctorConfigProbe(loadCliConfig({ cwd, home, env: {} }));
     expect(probe.ok).toBe(true);
@@ -663,7 +662,7 @@ describe('session compaction projection (issue #239)', () => {
   });
 });
 
-describe('compaction disabled survives a threshold-crossing run (issue #239 review)', () => {
+describe('compaction disabled survives a threshold-crossing run', () => {
   // Token math mirrors the worker's threshold test: window 3000, default
   // reserve 16384 clamps to 750, blocking threshold 2250. One exchange of
   // ~1200 + ~1200 estimated tokens crosses it — enabled, it compacts.
@@ -795,7 +794,7 @@ describe('compaction disabled survives a threshold-crossing run (issue #239 revi
   });
 });
 
-describe('system prompt file section (issue #240)', () => {
+describe('system prompt file section', () => {
   it('projects the file contents as the lane section', () => {
     const { home, cwd } = globalHome(
       '[agent]\nsystemPromptFile = "~/.kubic/SYSTEM.md"\n',
@@ -841,7 +840,7 @@ describe('system prompt file section (issue #240)', () => {
   });
 });
 
-describe('doctorConfigProbe names clean vs refused (issue #384)', () => {
+describe('doctorConfigProbe names clean vs refused', () => {
   it('passes on a clean load', () => {
     const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
     const probe = doctorConfigProbe(loadCliConfig({ cwd, home, env: {} }));
@@ -857,7 +856,7 @@ describe('doctorConfigProbe names clean vs refused (issue #384)', () => {
   });
 });
 
-describe('roleLayersFromConfig (issue #384)', () => {
+describe('roleLayersFromConfig', () => {
   it('turns [roles.<name>] model/tools into layer inputs', () => {
     const { home, project } = trustedProject(
       '[roles.implementer]\nmodel = "g/file"\ntools = ["read"]\n',
@@ -883,7 +882,7 @@ describe('roleLayersFromConfig (issue #384)', () => {
     expect(runtime.config.roles?.implementer?.tools).toEqual(['read']);
   });
 
-  it('carries [roles.<name>] escalate with provenance, copied (issue #210)', () => {
+  it('carries [roles.<name>] escalate with provenance, copied', () => {
     const { home, project } = trustedProject(
       '[roles.implementer]\nescalate = ["local/a", "acme/big"]\n',
     );
@@ -904,7 +903,7 @@ describe('roleLayersFromConfig (issue #384)', () => {
     );
   });
 
-  it('resolveLaneLadder prefers the role ladder; model fills the bound (issue #210)', () => {
+  it('resolveLaneLadder prefers the role ladder; model fills the bound', () => {
     const model = {
       steps: ['local/a', 'acme/big'],
       maxEscalations: 1,
@@ -956,7 +955,7 @@ describe('roleLayersFromConfig (issue #384)', () => {
   });
 });
 
-describe('remaining projections stay fail-closed (issue #384)', () => {
+describe('remaining projections stay fail-closed', () => {
   it('runtimePolicy is defined on a clean load, undefined on a refusal', () => {
     const { home, cwd } = globalHome('[model]\nprovider = "g"\nid = "file"\n');
     expect(runtimePolicy(loadCliConfig({ cwd, home, env: {} }))).toBeDefined();
@@ -988,7 +987,7 @@ describe('remaining projections stay fail-closed (issue #384)', () => {
     expect(lane.agentId).toBe('alice');
     expect(lane.roles?.layers).toEqual([]);
     expect(typeof lane.roles?.trustProject).toBe('function');
-    // Issue #241 (§35): the fixture home travels on the projection, so
+    // The fixture home travels on the projection, so
     // both lanes layer the global `~/.kubic/roles` under the documents.
     expect(lane.roles?.homeDir).toBe(home);
     // A refused config contributes nothing: the command fails closed first.
@@ -999,7 +998,7 @@ describe('remaining projections stay fail-closed (issue #384)', () => {
   });
 });
 
-describe('selectModelUnderPolicy gates before the registry (issue #384)', () => {
+describe('selectModelUnderPolicy gates before the registry', () => {
   function catalog(
     spec: { provider: string; models: string[] }[],
   ): MutableModels {
@@ -1082,7 +1081,7 @@ describe('selectModelUnderPolicy gates before the registry (issue #384)', () => 
     ).toBe('approved');
   });
 
-  it('refuses an out-of-set pin by name; in-set selects (issue #255)', () => {
+  it('refuses an out-of-set pin by name; in-set selects', () => {
     const models = catalog([
       { provider: 'anthropic', models: ['x'] },
       { provider: 'local', models: ['a'] },
@@ -1137,7 +1136,7 @@ describe('selectModelUnderPolicy gates before the registry (issue #384)', () => 
     ).toBe('x');
   });
 
-  it('resolveRoleThinking prefers the matching entry over flat (issue #255)', () => {
+  it('resolveRoleThinking prefers the matching entry over flat', () => {
     const resolved = {
       thinking: 'medium',
       models: [
@@ -1156,7 +1155,7 @@ describe('selectModelUnderPolicy gates before the registry (issue #384)', () => 
   });
 });
 
-describe('end to end: the project [model] pin reaches the prod run runner (issue #384)', () => {
+describe('end to end: the project [model] pin reaches the prod run runner', () => {
   // Scope says `[agent] model`; `[agent]` only carries `name` (config.ts:
   // checkNoUnknown(agent, {'name'})) — the top-level `[model]` pin is what
   // Evidence describes and what runtimeModelPin projects, so that is what
@@ -1176,7 +1175,7 @@ describe('end to end: the project [model] pin reaches the prod run runner (issue
   });
 });
 
-describe('§37.4 request options projection (issue #257)', () => {
+describe('request options projection', () => {
   function tunedResult(toml: string): ReturnType<typeof loadCliConfig> {
     const { home, project } = trustedProject(toml);
     const result = loadCliConfig({
@@ -1236,7 +1235,7 @@ describe('§37.4 request options projection (issue #257)', () => {
   });
 });
 
-describe('settings skills from config (issue #237, §29.2)', () => {
+describe('settings skills from config', () => {
   it('resolves a relative project entry against the config file directory', () => {
     const home = tmpDir('kubic-skills-home-');
     const project = tmpDir('kubic-skills-project-');
@@ -1305,7 +1304,7 @@ describe('settings skills from config (issue #237, §29.2)', () => {
   });
 });
 
-describe('cli thinking layer (issue #225)', () => {
+describe('cli thinking layer', () => {
   function homeWithThinking(thinking: string): { home: string; cwd: string } {
     const home = tmp('cli-thinking-home-');
     const cwd = tmp('cli-thinking-cwd-');
@@ -1362,7 +1361,7 @@ describe('cli thinking layer (issue #225)', () => {
     expect(result.error).toMatch(/KUBIC_MODEL_THINKING.*banana/);
   });
 
-  it('carries the role thinking default in the lane layers (issue #225)', () => {
+  it('carries the role thinking default in the lane layers', () => {
     const home = tmp('cli-thinking-roles-home-');
     const cwd = tmp('cli-thinking-roles-cwd-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
@@ -1376,7 +1375,7 @@ describe('cli thinking layer (issue #225)', () => {
       { layer: 'global', roles: { reviewer: { thinking: 'low' } } },
     ]);
   });
-  it('carries the role model sets in the lane layers (issue #255)', () => {
+  it('carries the role model sets in the lane layers', () => {
     const home = tmp('cli-models-roles-home-');
     const cwd = tmp('cli-models-roles-cwd-');
     mkdirSync(join(home, '.kubic'), { recursive: true });

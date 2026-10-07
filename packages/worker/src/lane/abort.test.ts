@@ -1,4 +1,4 @@
-// Lane abort kill handling (issue #218, re-pointed at the #395 rewrite).
+// Lane abort kill handling (re-pointed at the rewrite).
 // abortLane drains the conversation's kills BEFORE running them, so a
 // rejected abort still consumed the handles: a retry finds the registry
 // empty and every original kill ran exactly once across both attempts.

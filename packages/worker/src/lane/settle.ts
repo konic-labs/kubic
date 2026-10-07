@@ -51,13 +51,13 @@ export interface SettledResult {
 }
 
 // Kubic's terminal vocabulary for a settled turn (was Pi 0.87's
-// `TerminalStatus`, removed in Pi 1.0; D6.1). 'completed' is a durable `done`
+// `TerminalStatus`, removed in Pi 1.0). 'completed' is a durable `done`
 // answer, 'failed' an `unanswered` settlement with a reason, and 'aborted' the
 // durable `unanswered`/'aborted' settlement or the conversation abort.
 export type LaneTerminalStatus = 'completed' | 'failed' | 'aborted';
 
-// One failed settlement in both vocabularies: the §52 code the lifecycle
-// retries on, the #7 ResultError a result carries, and the human message.
+// One failed settlement in both vocabularies: the failure code the lifecycle
+// retries on, the ResultError a result carries, and the human message.
 export interface SubmissionFailure {
   code: FailureCode;
   error: ResultError;
@@ -114,9 +114,9 @@ const KIND_BY_SUBMISSION_REASON: Record<string, ResultErrorKind> = {
   aborted: 'process',
 };
 
-// Reasons whose §52 code the keyword classifier cannot derive: a missing
+// Reasons whose failure code the keyword classifier cannot derive: a missing
 // model is a setup failure, and retrying it unchanged can never succeed
-// (§52 provider_auth carries that remedy).
+// (provider_auth carries that remedy).
 const CODE_BY_SUBMISSION_REASON: Record<string, FailureCode> = {
   no_model: 'provider_auth',
 };
@@ -128,7 +128,7 @@ function detailText(detail: JsonValue | undefined): string | undefined {
 }
 
 // One `unanswered` settlement (a durable reason, plus the harness's own
-// detail when it carried one) as Kubic's §52 vocabulary. The human message
+// detail when it carried one) as Kubic's vocabulary. The human message
 // is the harness detail when present — never a bare reason code.
 export function classifySubmissionFailure(
   reason: string,
@@ -159,10 +159,10 @@ export function classifyThrownError(error: unknown): SubmissionFailure {
   return { code: classified.code, message, error: { kind, message } };
 }
 
-// The trajectory/lane record for one settled submission: `done` is
-// 'completed'; `unanswered`/aborted is 'aborted' (no error, D6.1) and every
-// other reason is 'failed' with the raw reason as `code` (the §52 code lives
-// on the TurnOutcome).
+// The trajectory/lane record for one settled submission: `done` is 'completed';
+// `unanswered`/aborted is 'aborted' (no error) and every other reason is
+// 'failed' with the raw reason as `code` (the failure code lives on the
+// TurnOutcome).
 export function laneStatusOf(
   settled: SettledSubmissionRecord,
 ): LaneTerminalStatus {

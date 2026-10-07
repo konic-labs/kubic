@@ -1,4 +1,4 @@
-// License-guard for the open-source backlog (issue #59; §75.1).
+// License-guard for the open-source backlog.
 // Static repo state, no build needed: LICENSE text, NOTICE attribution,
 // and the license field in every publishable manifest.
 import assert from 'node:assert/strict';
@@ -41,7 +41,7 @@ function nonMitManifests(root = ROOT) {
     .map((manifest) => manifest.slice(root.length + 1));
 }
 
-describe('LICENSE (issue #59)', () => {
+describe('LICENSE', () => {
   it('exists and carries the MIT text with the Konic Labs copyright', () => {
     const text = readFileSync(join(ROOT, 'LICENSE'), 'utf8');
     assert.match(text, /MIT License/);
@@ -95,7 +95,7 @@ describe('LICENSE (issue #59)', () => {
     const direct = Object.keys(root.dependencies ?? {});
     // Floor, not an exact count: the CLI stack is commander (+ extra-typings),
     // consola and @clack/prompts since colour moved to Kubic's own style
-    // engine (issue #444) and tables to the output kit (issue #445).
+    // engine and tables to the output kit.
     assert.ok(direct.length >= 4, `expected the CLI stack, saw ${direct}`);
     for (const dep of direct) {
       assert.ok(text.includes(`\`${dep}\``), `NOTICE.md must list ${dep}`);

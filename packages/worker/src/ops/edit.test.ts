@@ -1,11 +1,8 @@
-// Edit line-ending and BOM handling (issue #195; §9.1, Pi's edit-diff.ts).
+// Edit line-ending and BOM handling (Pi's edit-diff.ts).
 // A Windows-authored file (CRLF, or CRLF + UTF-8 BOM) must edit where Pi
 // succeeds: matching happens on LF-normalized text with the BOM stripped,
 // and the file's own ending and BOM are restored on write. LF files must be
 // byte-for-byte unaffected.
-//
-// RED-first note: each test below was watched failing against edit as it
-// shipped (exact byte matching, split/join, no BOM handling).
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -51,7 +48,7 @@ function inv(): ToolInvocation {
   );
 }
 
-describe('edit line endings and BOM (issue #195)', () => {
+describe('edit line endings and BOM', () => {
   it('replaces a multi-line LF oldText in a CRLF file and keeps CRLF everywhere', async () => {
     const { root, c } = setup();
     writeFileSync(join(root, 'win.txt'), 'alpha\r\nbeta\r\ngamma\r\n');

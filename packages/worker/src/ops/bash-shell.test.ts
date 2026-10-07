@@ -1,4 +1,4 @@
-// Issue #123: the tool is named bash and the prompts say bash — the op
+// The tool is named bash and the prompts say bash — the op
 // must run bash when the system has it, degrade once to sh when it does
 // not, and say which shell actually ran (BashResult.shell). Resolution is
 // cached per process; detection and execution both go through
@@ -72,7 +72,7 @@ function inv(
   );
 }
 
-// env.ts's spawn-ENOENT hardening (issue #85) settles wait() with Node's
+// env.ts's spawn-ENOENT hardening settles wait() with Node's
 // `spawn <path> ENOENT` message line — the production shape when the
 // bash BINARY is missing (the only shape the detector may match).
 const BASH_MISSING: FakeScript = {
@@ -167,7 +167,7 @@ async function bashPresent(): Promise<boolean> {
 
 const HAS_BASH = await bashPresent();
 
-describe('bash shell resolution (issue #123)', () => {
+describe('bash shell resolution', () => {
   beforeEach(() => {
     __setResolvedShellForTests(undefined);
   });
@@ -226,7 +226,7 @@ describe('bash shell resolution (issue #123)', () => {
     expect(calls).toEqual(['bash -c nonexistentcmd123', 'bash -c echo two']);
   });
 
-  // Regression (issue #123 review, fix cycle 2): user command output is
+  // Regression: user command output is
   // NOT a spawn failure. A command that prints exactly the line
   // 'bash: not found' to stderr and exits 127 must not fall back to sh
   // (double side effects) or poison the per-process resolution cache —
@@ -274,7 +274,7 @@ describe('bash shell resolution (issue #123)', () => {
     expect(calls).toEqual(['bash -c echo-hostile', 'bash -c echo two']);
   });
 
-  // Regression (issue #123 review, fix cycle 2): the ENOENT signature must
+  // Regression: the ENOENT signature must
   // not substring-match spoofable user output — a line like
   // 'respawn ENOENT' from a working bash is not Node's spawn error.
   it('does not fall back on a spoofed "respawn ENOENT" line (exit 127)', async () => {

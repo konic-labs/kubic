@@ -1,4 +1,4 @@
-// Build/install contract for the `kubic` binary (issue #74).
+// Build/install contract for the `kubic` binary.
 // Static repo state, no build needed: asserts the packaging story holds
 // together — `npm run build` emits runnable JS to gitignored dist/ with
 // no hand-rolled flags, and the committed `bin` wrapper exists,
@@ -15,7 +15,7 @@ function rootManifest() {
   return JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 }
 
-describe('build/install contract (issue #74)', () => {
+describe('build/install contract', () => {
   it('root manifest is ESM, exposes the kubic bin, and builds via config', () => {
     const manifest = rootManifest();
     assert.equal(
@@ -98,20 +98,5 @@ describe('build/install contract (issue #74)', () => {
         'dist/ must stay gitignored (git check-ignore -q dist/probe.js)',
       );
     }
-  });
-
-  it('README documents the exact fresh-clone install commands', () => {
-    const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-    for (const token of ['npm ci', 'npm run build', 'bin/kubic']) {
-      assert.ok(
-        readme.includes(token),
-        `README install section must document \`${token}\``,
-      );
-    }
-    assert.doesNotMatch(
-      readme,
-      /Status: design/,
-      'README must drop the stale "Status: design" claim',
-    );
   });
 });

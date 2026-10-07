@@ -1,4 +1,4 @@
-// The ^P palette's state and render (EPIC N, issue #460; docs/ui 03-A … C).
+// The ^P palette's state and render.
 import { describe, expect, it } from 'vitest';
 import { createUiTheme } from '../../../core/src/ui/style.js';
 import { DARK_PALETTE } from '../../../core/src/ui/tokens.js';
@@ -112,7 +112,7 @@ const render = (state: PaletteState, width = 80, maxRows = 30): string[] =>
     keyLabel: '^P',
   });
 
-describe('palette state (issue #460)', () => {
+describe('palette state', () => {
   it('groups the matches in order, best first, and hides empty groups', () => {
     const state = query('mod');
     expect(shape(state)).toEqual([
@@ -237,7 +237,7 @@ describe('palette state (issue #460)', () => {
   });
 });
 
-describe('palette render (issue #460; 03-A … C)', () => {
+describe('palette render', () => {
   it('reads like the design at depth none', () => {
     expect(render(query('mod'))).toEqual([
       '┌─ ^P ─────────────────────────────────────────────────────────────────────────┐',

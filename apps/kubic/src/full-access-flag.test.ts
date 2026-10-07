@@ -1,9 +1,9 @@
-// Session-scoped `--dangerously-skip-approvals` on run, tui and bare kubic,
-// one enable path shared with `sessions create` (issue #308; §41.4, §78,
-// §80). Enabling full access writes the session's posture.json,
-// appends ONE §60 audit row naming the session and the originating command,
-// and warns on stderr; a headless run on a full-access session warns and
-// reports the posture in its --json envelope. Nothing reaches config.
+// Session-scoped `--dangerously-skip-approvals` on run, tui and bare kubic, one
+// enable path shared with `sessions create`. Enabling full access writes the
+// session's posture.json, appends ONE audit row naming the session and the
+// originating command, and warns on stderr; a headless run on a full-access
+// session warns and reports the posture in its --json envelope. Nothing reaches
+// config.
 //
 // Faux provider only; every temp dir and env stub is undone in afterEach.
 import {
@@ -92,7 +92,7 @@ function fullAccessRows(workspace: string) {
   );
 }
 
-describe('enableSessionFullAccess: the one enable path (issue #308)', () => {
+describe('enableSessionFullAccess: the one enable path', () => {
   it('writes posture.json and appends exactly one audit row naming session and command', () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = join(tmpRoot('sessions-'), 'sess-1');
@@ -118,13 +118,13 @@ describe('enableSessionFullAccess: the one enable path (issue #308)', () => {
   });
 });
 
-// Issue #234: full access used to append a `trigger:full-access` row for
+// Full access used to append a `trigger:full-access` row for
 // EVERY call — read and ls included — so a session wrote one fsync'd ledger
 // record per tool call and the trail could not name what was actually
 // waived. Now the detectors run first: an untriggered call is neither
 // audited nor marked challenged, and a triggered call gets one record per
 // capability it raised, all under posture 'full-access'.
-describe('full access audits only the capabilities it waived (issue #234)', () => {
+describe('full access audits only the capabilities it waived', () => {
   function fullAccessPolicy(workspace: string, sessionDir: string) {
     enableSessionFullAccess({
       sessionDir,
@@ -202,7 +202,7 @@ describe('full access audits only the capabilities it waived (issue #234)', () =
   });
 });
 
-describe('kubic run --dangerously-skip-approvals (issue #308)', () => {
+describe('kubic run --dangerously-skip-approvals', () => {
   it('auto-approves a destructive call and reports the posture in the envelope', async () => {
     const workspace = tmpRoot('ws-');
     const warnings: string[] = [];
@@ -282,7 +282,7 @@ describe('kubic run --dangerously-skip-approvals (issue #308)', () => {
     // regression that persisted the flag would stay green. This drives the
     // real `dispatchCommand` -> prod runner -> config load -> lane path with
     // both a global and a project config on disk, then proves the flag DID
-    // take effect (posture.json + the §60 row) while neither file changed.
+    // take effect (posture.json + the audit row) while neither file changed.
     const home = tmpRoot('home-');
     const workspace = tmpRoot('ws-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
@@ -350,7 +350,7 @@ describe('kubic run --dangerously-skip-approvals (issue #308)', () => {
   });
 });
 
-describe('kubic tui --dangerously-skip-approvals (issue #308)', () => {
+describe('kubic tui --dangerously-skip-approvals', () => {
   it('writes posture.json and an audit record at boot', async () => {
     const sessionsRoot = tmpRoot('sessions-');
     const workspace = tmpRoot('ws-');
@@ -415,7 +415,7 @@ describe('kubic tui --dangerously-skip-approvals (issue #308)', () => {
   });
 });
 
-describe('kubic sessions create --dangerously-skip-approvals (issue #308)', () => {
+describe('kubic sessions create --dangerously-skip-approvals', () => {
   it('also appends the audit row', async () => {
     const sessionsRoot = tmpRoot('sessions-');
     const workspace = tmpRoot('ws-');

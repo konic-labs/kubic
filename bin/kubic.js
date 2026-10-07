@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// `kubic` executable (issue #74): committed wrapper so the command works
+// `kubic` executable: committed wrapper so the command works
 // without a global install. The real entry is the tsc build output —
 // run `npm run build` first (see the README install section).
 //
-// Node guard (issue #128) BEFORE any top-level await: on a runtime below
+// Node guard BEFORE any top-level await: on a runtime below
 // 22.19 the dynamic import below is a raw parser SyntaxError — the guard
 // turns that into the named requirement instead. Plain statements only
 // above the import (asserted by scripts/binary-contract.test.mjs); the

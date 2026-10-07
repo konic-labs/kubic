@@ -1,4 +1,4 @@
-// Tool permission policy model (issue #15; §40). Layer-1 policy, not a
+// Tool permission policy model. Layer-1 policy, not a
 // boundary: in solo mode this is the only thing shaping the tool set.
 // Classes declare intent; toolsForClasses derives the allowlist;
 // checkAgreement refuses contradictions with named reasons, never silent.
@@ -30,7 +30,7 @@ export interface PermissionClasses {
   credentials: CredentialLevel;
 }
 
-// §12.1 solo defaults; unlisted classes default to most restrictive.
+// Solo defaults; unlisted classes default to most restrictive.
 export const SOLO_DEFAULTS: PermissionClasses = {
   filesystem: 'workspace-write',
   shell: true,
@@ -150,7 +150,7 @@ export function checkGrantable(
   return { agree: true };
 }
 
-// §40.2 (issue #166): a level the tool set cannot express is reported as
+// A level the tool set cannot express is reported as
 // unsupported, never silently widened. Each entry names the class, the
 // declared level, the level the lane actually enforces, and why.
 export interface UnsupportedLevel {
@@ -164,13 +164,13 @@ export interface UnsupportedLevel {
 // (PermissionClasses has nowhere to put one), and an allowlist naming no
 // domains allows nothing — so it is enforced as `none`: every network verb
 // is blocked by the guard and raises the network approval trigger. Never
-// the unrestricted `full` it used to behave as (§40.3 false confidence).
+// the unrestricted `full` it used to behave as (false confidence).
 export function effectiveNetworkLevel(level: NetworkLevel): NetworkLevel {
   return level === 'allowlist' ? 'none' : level;
 }
 
-// The credentials level the lane enforces (issue #275, mirroring
-// effectiveNetworkLevel). §40.2 (issue #166): `allowlist` carries no
+// The credentials level the lane enforces (mirroring
+// effectiveNetworkLevel). `allowlist` carries no
 // credential list and no credential tool exists, so it is enforced as
 // `none` — the credential-path detector stays gated and every credential
 // access raises the trigger, never the unrestricted access the level name
@@ -240,7 +240,7 @@ export function validateClasses(input: unknown): PermissionClasses {
     throw new PolicyValidationError('permission classes must be an object');
   }
   const record = input as Record<string, unknown>;
-  // Partial input merges over SOLO_DEFAULTS (§12.1: unlisted classes take
+  // Partial input merges over SOLO_DEFAULTS (unlisted classes take
   // the solo default; the restrictive tail — network none, credentials
   // none — is what makes that safe).
   const pick = (

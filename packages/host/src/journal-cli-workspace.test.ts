@@ -1,4 +1,4 @@
-// Issue #362 (§42.2, §42.4): a session journal's relative paths belong to
+// A session journal's relative paths belong to
 // the workspace the session recorded, never to whatever cwd `kubic undo`
 // happens to run in. The bare fallback considers only sessions recorded
 // for the current workspace; any session store resolves its root from the
@@ -95,7 +95,7 @@ async function run(
 }
 
 // Two projects, A and B, each with a recorded session. B's journal is the
-// newer one by mtime — the pre-#362 fallback picked it from anywhere.
+// newer one by mtime — the pre fallback picked it from anywhere.
 async function twoProjects() {
   const sessionsRoot = mkTmp('sr362-');
   const wsA = mkTmp('wsA362-');
@@ -132,7 +132,7 @@ async function twoProjects() {
   return { sessionsRoot, wsA, wsB };
 }
 
-describe('journal CLI workspace binding (issue #362)', () => {
+describe('journal CLI workspace binding', () => {
   it('bare diff from A shows only A’s session even when B’s journal is newer', async () => {
     const { sessionsRoot, wsA } = await twoProjects();
     const { code, lines, errs } = await run(
@@ -300,14 +300,14 @@ describe('journal CLI workspace binding (issue #362)', () => {
   });
 });
 
-// Issue #337: read-time retention and undo are cross-process hazards. A live
+// Read-time retention and undo are cross-process hazards. A live
 // run appends to its journal while `kubic log --session S` rewrites it (the
 // line it appended is dropped by the rename, and the sweep deletes the blobs
 // it just wrote), and `kubic undo --session S` restores files the run is
 // writing. The session lock is the shipped liveness view: a live holder makes
 // the reader skip its self-heal (with a notice) and makes undo refuse by name
 // until --force.
-describe('journal commands step aside for a live session (issue #337)', () => {
+describe('journal commands step aside for a live session', () => {
   function liveLock(sessionsRoot: string, id: string): void {
     // A live pid — this process — is what `sessionLockIsLive` probes for.
     writeFileSync(

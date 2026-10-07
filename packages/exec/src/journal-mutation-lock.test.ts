@@ -1,4 +1,4 @@
-// Journal cross-process coordination (issue #337; §42.4).
+// Journal cross-process coordination.
 //
 // pi-durable owns a storage exclusively and does no cross-process locking;
 // the journal had no guard at all either, so two processes could interleave.
@@ -8,9 +8,6 @@
 // under a live session. Mutations now run under an O_EXCL lock beside the
 // index, the rewrite abandons itself when the index changed under it, and the
 // sweep only removes blobs that are unambiguously dead.
-//
-// RED: no lock exists, the rewrite renames over whatever landed, and the
-// sweep removes every unreferenced name in blobs/ — tmp files included.
 import {
   appendFileSync,
   existsSync,
@@ -99,7 +96,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   };
 }
 
-describe('journal mutation lock (issue #337)', () => {
+describe('journal mutation lock', () => {
   it('holds the mutation lock while it appends, and releases it after', () => {
     const dir = tmpRoot();
     // Durable on purpose: the index append goes through `appendDurably`,
@@ -172,7 +169,7 @@ describe('journal mutation lock (issue #337)', () => {
     expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual(
       [],
     );
-    // Review fix 3: the abandon dropped the caches, so the next pass cannot
+    // The abandon dropped the caches, so the next pass cannot
     // prove the bound from a stale under-count — it re-reads the index.
     let indexReads = 0;
     hooks.onReadText = (path) => {
@@ -189,7 +186,7 @@ describe('journal mutation lock (issue #337)', () => {
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));
     const indexPath = join(dir, 'index.jsonl');
-    // Review fix 2: the size must be sampled BEFORE the read, so an append
+    // The size must be sampled BEFORE the read, so an append
     // that lands inside the read window cannot hide inside the sample. The
     // hook fires after the reader has its content: `all` does not contain the
     // line, and only a sample taken earlier can notice it.

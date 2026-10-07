@@ -1,8 +1,8 @@
-// §50 hook/handler-error + [model] lines on the headless debug channel
-// (issue #246): a faulted harness task (pi-durable task_failed — Pi 1.0
-// has no handler_error event) and each committed response's token counts
-// surface through laneActivityDebugLine, which the run's event sink
-// forwards to debug. Faux rows only: no lane, no network.
+// Hook/handler-error + [model] lines on the headless debug channel: a faulted
+// harness task (pi-durable task_failed — Pi 1.0 has no handler_error event) and
+// each committed response's token counts surface through laneActivityDebugLine,
+// which the run's event sink forwards to debug. Faux rows only: no lane, no
+// network.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,7 +36,7 @@ function usageEvent(): KubicLaneEvent {
   } as unknown as KubicLaneEvent;
 }
 
-describe('laneActivityDebugLine (issue #246)', () => {
+describe('laneActivityDebugLine', () => {
   it('maps a lane fault to the handler_error line', () => {
     expect(
       laneActivityDebugLine({
@@ -60,7 +60,7 @@ describe('laneActivityDebugLine (issue #246)', () => {
   });
 });
 
-describe('headless --debug order (issue #246 acceptance)', () => {
+describe('headless --debug order', () => {
   const made: string[] = [];
 
   function tmp(prefix: string): string {

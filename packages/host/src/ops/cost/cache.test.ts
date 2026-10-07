@@ -1,4 +1,4 @@
-// (2) cache preservation check + prefix hit-rate (issue #56): RED first.
+// (2) cache preservation check + prefix hit-rate.
 import { describe, expect, it } from 'vitest';
 import {
   checkCachePreservation,
@@ -6,7 +6,7 @@ import {
   transparentCachingNote,
 } from './cache.js';
 
-describe('cache preservation (issue #56)', () => {
+describe('cache preservation', () => {
   it('preserves the prefix when nothing breaks it', () => {
     const verdict = checkCachePreservation({ breaksPrefix: [] });
     expect(verdict.preserved).toBe(true);

@@ -1,5 +1,5 @@
 // Real-world command shapes -> the exact capability set the shipped
-// trigger context raises (issue #357). The audit found `git push` anchored
+// trigger context raises. The audit found `git push` anchored
 // to the command start (so `ls; git push`, `cd x && git push` and
 // `git -C . push` ran unasked), INSTALL limited to six package managers,
 // and no destructive-shell arm for force pushes, `find -delete` or the
@@ -19,7 +19,7 @@ function raised(command: string): Capability[] {
   return detectTriggers('bash', { command }, ctx).sort();
 }
 
-describe('command shapes -> capabilities (issue #357)', () => {
+describe('command shapes -> capabilities', () => {
   it.each<[string, Capability[]]>([
     // git push in any segment, after git global options.
     [

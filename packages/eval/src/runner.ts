@@ -1,4 +1,4 @@
-// Eval runner (issue #53; design §48, §73, §82).
+// Eval runner.
 // Two entry paths, one record shape:
 // - runEvalTask: execute a suite against a task prompt (suite execution is
 //   injected — faux in tests/CI, the real lane in prod) and score it.
@@ -88,11 +88,11 @@ export interface EvalTaskDeps {
 }
 
 // The trajectory path takes model/thinking/worktree/generation from the
-// export itself (§48, §73): the flags are optional cross-checks, and a
+// export itself: the flags are optional cross-checks, and a
 // flag that disagrees with the export is refused (provenance-mismatch)
 // rather than silently stamped over it. The record size is not recorded in
 // an export, so it stays required; the determinism tier is DERIVED from the
-// path (`recorded` here, §47.1) rather than asked of the caller.
+// path (`recorded` here) rather than asked of the caller.
 export interface EvalTrajectoryOptions {
   suite: string;
   trajectory: unknown;
@@ -119,7 +119,7 @@ function requireSize(size: string | undefined): EvalSize {
   return size;
 }
 
-// Exported for the benchmark path (issue #264): the matrix validates
+// Exported for the benchmark path: the matrix validates
 // provenance once before it runs anything, so a stub-only selection — which
 // never reaches runEvalTask — cannot skip the check and report `ok`.
 export function checkEvalProvenance(options: {
@@ -130,7 +130,7 @@ export function checkEvalProvenance(options: {
   if (typeof options.worktree !== 'string' || options.worktree.trim() === '') {
     throw new EvalRunnerError(
       'missing-worktree',
-      'worktree is required: eval records how it ran (§73) — refusing to store a worktree-less result',
+      'worktree is required: eval records how it ran — refusing to store a worktree-less result',
     );
   }
   if (
@@ -140,7 +140,7 @@ export function checkEvalProvenance(options: {
   ) {
     throw new EvalRunnerError(
       'missing-generation',
-      'generation is required: eval records which worker generation ran (§73)',
+      'generation is required: eval records which worker generation ran',
     );
   }
   return requireSize(options.size);
@@ -211,7 +211,7 @@ function toRecord(
     signals: options.signals,
   });
   if (!validated.valid) {
-    // Issue #266: the code names the real cause (a validation failure is
+    // The code names the real cause (a validation failure is
     // `invalid-record`, not `missing-worktree`).
     throw new EvalRunnerError(
       'invalid-record',
@@ -245,12 +245,12 @@ export async function runEvalTask(
     deps.ensureCleanWorktree,
   );
   const outcome = await deps.runSuite(options.suite, options.task);
-  // Fail closed (§39): a task-path record without usage rows cannot be
+  // Fail closed: a task-path record without usage rows cannot be
   // reconciled, so it is refused rather than stored unreconciled.
   if (outcome.usageRows === undefined) {
     throw new EvalRunnerError(
       'missing-usage-rows',
-      'usage rows are required: task-path signals must reconcile against §39 usage rows — refusing to store an unreconciled record',
+      'usage rows are required: task-path signals must reconcile against usage rows — refusing to store an unreconciled record',
     );
   }
   const reconciled = reconcileUsage(
@@ -264,7 +264,7 @@ export async function runEvalTask(
   if (!reconciled.ok) {
     throw new EvalRunnerError(
       'usage-mismatch',
-      `signals do not reconcile with §39 usage rows: ${reconciled.errors.join('; ')}`,
+      `signals do not reconcile with usage rows: ${reconciled.errors.join('; ')}`,
     );
   }
   // Gate success on the signals: a run that completed with a red

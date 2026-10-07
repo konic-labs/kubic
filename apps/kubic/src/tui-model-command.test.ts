@@ -1,4 +1,4 @@
-// The `/model` parser of the interactive loop (issue #227; §38.1). The
+// The `/model` parser of the interactive loop. The
 // submit path routes on these three outcomes, so what counts as a command —
 // and what is still a prompt for the lane — is pinned here, not inferred
 // from the prod test.
@@ -13,7 +13,7 @@ import {
   TuiTurnRunner,
 } from './tui-run.js';
 
-describe('parseModelCommand (issue #227)', () => {
+describe('parseModelCommand', () => {
   it('reads the report and switch forms', () => {
     expect(parseModelCommand('/model')).toEqual({ kind: 'pick' });
     expect(parseModelCommand('/model   ')).toEqual({ kind: 'pick' });
@@ -37,7 +37,7 @@ describe('parseModelCommand (issue #227)', () => {
   });
 });
 
-describe('TuiTurnRunner model switch (issue #227)', () => {
+describe('TuiTurnRunner model switch', () => {
   it('refuses a switch when the boot has no live lane', async () => {
     const loop = {
       context: BACKGROUND_CONTEXT,
@@ -45,7 +45,7 @@ describe('TuiTurnRunner model switch (issue #227)', () => {
     const runner = new TuiTurnRunner(
       {
         setModel: () => {},
-        // Issue #333: the runner seeds its presentation projector from the
+        // The runner seeds its presentation projector from the
         // app, so a stub app must answer the seed.
         presentationSeed: () => ({
           sessionId: 's',
@@ -63,7 +63,7 @@ describe('TuiTurnRunner model switch (issue #227)', () => {
   });
 });
 
-describe('parseEscalateCommand (issue #210)', () => {
+describe('parseEscalateCommand', () => {
   it('reads the switch form with an optional reason', () => {
     expect(parseEscalateCommand('/escalate local/b')).toEqual({
       kind: 'switch',
@@ -95,7 +95,7 @@ describe('parseEscalateCommand (issue #210)', () => {
   });
 });
 
-describe('parseThinkingCommand (issue #328)', () => {
+describe('parseThinkingCommand', () => {
   it('reads the report and switch forms', () => {
     expect(parseThinkingCommand('/thinking')).toEqual({ kind: 'pick' });
     expect(parseThinkingCommand('/thinking   ')).toEqual({ kind: 'pick' });

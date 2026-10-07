@@ -1,4 +1,4 @@
-// Shared real-git sandbox (issue #365): every real-git test in worker and
+// Shared real-git sandbox: every real-git test in worker and
 // exec builds its throwaway repo through `createGitSandbox`, never through
 // a bare `git init` on the inherited environment. The sandbox scrubs the
 // ambient git state (developer `~/.gitconfig`, `GIT_DIR` leaked from a git
@@ -45,7 +45,7 @@ function writeHostileGlobalConfig(dir: string): {
   return { config, hooks };
 }
 
-describe('createGitSandbox (issue #365)', () => {
+describe('createGitSandbox', () => {
   it('inits a usable repo: commits work and the log reads back', () => {
     const sb = createGitSandbox();
     writeFileSync(join(sb.path, 'a.txt'), 'one\n');

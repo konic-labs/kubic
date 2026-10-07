@@ -1,4 +1,4 @@
-// Tool cards (EPIC N, issue #455; docs/ui/01-session.html 01-D, 01-E, 01-H).
+// Tool cards.
 //
 // A tool call and its result render as one card: a header with the state
 // mark, the tool name, its target and the outcome on the right; up to five
@@ -26,9 +26,9 @@ import { fitLine, leftRight, wrapStyled } from './ui/line.js';
 
 /** Collapsed cards show at most this many body lines. */
 export const CARD_PREVIEW_LINES = 5;
-/** Collapsed edit cards show at most this many diff rows (#456). */
+/** Collapsed edit cards show at most this many diff rows. */
 export const DIFF_PREVIEW_ROWS = 12;
-/** Collapsed new-file cards show this many of the first lines (#456). */
+/** Collapsed new-file cards show this many of the first lines. */
 export const WRITE_PREVIEW_ROWS = 8;
 
 const INDENT = '  ';
@@ -214,11 +214,11 @@ export interface ToolCardInput {
   readonly expanded: boolean;
   /** The expand key's cap (`^X`); empty hides the hint. */
   readonly expandKey?: string;
-  /** A file change's display record (edit/write, #456). */
+  /** A file change's display record (edit/write). */
   readonly display?: CellDisplay;
 }
 
-// Issue #456: an edit or write result without a display record (an older
+// An edit or write result without a display record (an older
 // session) still says what it did, from the op's own JSON — never the JSON.
 function changeMeta(name: string, output: string): string | undefined {
   if (name !== 'edit' && name !== 'write') return undefined;
@@ -361,7 +361,7 @@ export function renderToolCard(
     target !== '' &&
     visibleWidth(`${name}${target}`) + 1 + visibleWidth(right) > w
   ) {
-    // Expanded, a target too long for the header wraps under it (#300):
+    // Expanded, a target too long for the header wraps under it:
     // the operator expanded to read exactly that command or path.
     out.push(leftRight(name, right, w));
     for (const row of wrapStyled(card.target ?? '', bodyWidth)) {
@@ -450,7 +450,7 @@ export function renderToolCard(
   return out;
 }
 
-// Issue #456: the body of a file-change card — the inline diff (01-G), or a
+// The body of a file-change card — the inline diff, or a
 // new file's first lines as additions.
 function displayBody(
   ui: UiTheme,

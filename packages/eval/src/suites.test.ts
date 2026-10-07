@@ -1,11 +1,11 @@
-// Built-in benchmark suites (issue #53; design §48, §76.1) — issue #70
+// Built-in benchmark suites
 // mutation hardening: exact shape assertions so dropped/added suites,
 // flipped stub flags, or a findSuite rewrite cannot survive.
 import { describe, expect, it } from 'vitest';
 import { EVAL_CATEGORIES } from './categories.js';
 import { EVAL_SUITES, findSuite, resolveSuites } from './suites.js';
 
-describe('eval suites exact shape (issue #53, §48)', () => {
+describe('eval suites exact shape', () => {
   it('covers all eight required categories, in order', () => {
     expect([...EVAL_CATEGORIES]).toEqual([
       'swe',
@@ -32,7 +32,7 @@ describe('eval suites exact shape (issue #53, §48)', () => {
     ]);
   });
 
-  it('runs every suite but the live-PTY one (issue #262)', () => {
+  it('runs every suite but the live-PTY one', () => {
     // The faux fixture suites execute through the real lane; terminal-live
     // still needs a live PTY the binary does not ship, so it stays a stub.
     expect(
@@ -51,7 +51,7 @@ describe('eval suites exact shape (issue #53, §48)', () => {
     ).toEqual(['terminal-live']);
   });
 
-  it('gives every executable suite a fixture with a prompt, files and a gate command (issue #262)', () => {
+  it('gives every executable suite a fixture with a prompt, files and a gate command', () => {
     for (const suite of EVAL_SUITES) {
       if (suite.stub) {
         expect(suite.fixture, suite.id).toBeUndefined();
@@ -68,7 +68,7 @@ describe('eval suites exact shape (issue #53, §48)', () => {
     }
   });
 
-  it('resolves a category alias to its suites, and an unknown selector to undefined (issue #262)', () => {
+  it('resolves a category alias to its suites, and an unknown selector to undefined', () => {
     expect(resolveSuites('swe')?.map((suite) => suite.id)).toEqual([
       'swe-bench-mini',
     ]);
@@ -106,7 +106,7 @@ describe('eval suites exact shape (issue #53, §48)', () => {
   });
 });
 
-describe('findSuite (issue #53)', () => {
+describe('findSuite', () => {
   it('returns the exact suite record for a known id', () => {
     expect(findSuite('swe-bench-mini')).toEqual({
       id: 'swe-bench-mini',

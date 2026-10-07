@@ -1,4 +1,4 @@
-// Baseline + sweep walk races (issue #351; §42.5, §42.1 mechanism 2).
+// Baseline + sweep walk races.
 //
 // The walk must never turn "I could not look" into "it is gone". Three ways
 // it used to:
@@ -9,9 +9,6 @@
 //     `chmod 000 secret.txt` read as a delete of a file that still exists.
 //   - a directory listing that failed at sweep time dropped its subtree from
 //     `current`, so reconcile recorded every file under it as deleted.
-//
-// RED: listDir throws for the whole listing, the per-file catch swallows
-// every error, and captureBaseline has no previous baseline to fall back on.
 import {
   chmodSync,
   mkdirSync,
@@ -85,7 +82,7 @@ function ctx(): {
   return { sessionId: 's1', agentId: 'root', timestamp: 100 };
 }
 
-describe('baseline walk races (issue #351)', () => {
+describe('baseline walk races', () => {
   it('keeps siblings in the baseline when one entry vanishes mid-listing', () => {
     const root = tmpRoot('ws-');
     writeFileSync(join(root, 'a.txt'), 'a\n');

@@ -1,4 +1,4 @@
-// `kubic skills` handler tests (issue #238): the listing shows every
+// `kubic skills` handler tests: the listing shows every
 // source and status, `--role` withholds like the lane, `--json` matches
 // the fixture shape, and a refusing `--role` fails closed. Real tmp dirs
 // through the node bridge (no git, no network); temp dirs removed in
@@ -70,7 +70,7 @@ function depsOver(
   return { deps, captured };
 }
 
-describe('runSkillsCommand (issue #238)', () => {
+describe('runSkillsCommand', () => {
   it('lists user/project/settings sources and hidden skills', () => {
     const home = tmpRoot('kubic-238-home-');
     const cwd = tmpRoot('kubic-238-cwd-');

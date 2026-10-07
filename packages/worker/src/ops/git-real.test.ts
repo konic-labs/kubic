@@ -1,11 +1,11 @@
-// Issue #193, prod path: every git_* op end to end against real git in a
+// Prod path: every git_* op end to end against real git in a
 // throwaway repository. The fake-execution suites pin argv and shape; these
 // pin what real git actually prints — renames, copies, quoted/non-ASCII
 // paths, MM/RM, detached HEAD, unborn branches, ahead/behind against a
 // local bare remote, diff variants, stage, commit, checkpoint (subject and
 // apply), log, show, and branch list/create.
 //
-// Hermetic (issue #365): every scratch repo is a shared git sandbox —
+// Hermetic: every scratch repo is a shared git sandbox —
 // system git config is off, global config has nowhere to live, and the
 // ambient GIT_DIR family is scrubbed — so op-spawned git (via
 // NodeExecutionEnv on the inherited environment) sees exactly the
@@ -72,7 +72,7 @@ async function ok<N extends OperationName>(
   return out.result;
 }
 
-describe('git_status over real git (issue #193)', () => {
+describe('git_status over real git', () => {
   it('reports a renamed file by its new path with the old path', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'old name.txt', 'one\n');
@@ -195,7 +195,7 @@ describe('git_status over real git (issue #193)', () => {
   });
 });
 
-describe('git read/effect ops over real git (issue #193)', () => {
+describe('git read/effect ops over real git', () => {
   it('scopes diff to unstaged, staged, path and range', async () => {
     const repo = scratchRepo();
     writeFileSync(join(repo.path, 'a.txt'), 'a1\n');
@@ -474,9 +474,9 @@ describe('git read/effect ops over real git (issue #193)', () => {
   });
 });
 
-// Structured merge/conflict/worktree tools (issue #380).
-// RED first: the operations do not exist yet.
-describe('git_merge over real git (issue #380)', () => {
+// Structured merge/conflict/worktree tools.
+// The operations do not exist yet.
+describe('git_merge over real git', () => {
   function conflictingRepo(): GitSandbox {
     const repo = scratchRepo();
     commitFile(repo, 'f.txt', 'base\n');
@@ -537,7 +537,7 @@ describe('git_merge over real git (issue #380)', () => {
   });
 });
 
-describe('git_conflict_status over real git (issue #380)', () => {
+describe('git_conflict_status over real git', () => {
   it('lists conflicted paths, empty when clean', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'f.txt', 'base\n');
@@ -557,7 +557,7 @@ describe('git_conflict_status over real git (issue #380)', () => {
   });
 });
 
-describe('git_worktree_list over real git (issue #380)', () => {
+describe('git_worktree_list over real git', () => {
   it('returns path/branch/head rows for the main checkout', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'a.txt', 'one\n');
@@ -570,7 +570,7 @@ describe('git_worktree_list over real git (issue #380)', () => {
     expect(listed.worktrees[0]?.head).toMatch(/^[0-9a-f]{40}$/);
   });
 
-  it('a clipped real diff carries a stat summary (issue #432)', async () => {
+  it('a clipped real diff carries a stat summary', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'big.txt', 'one\n');
     writeFileSync(

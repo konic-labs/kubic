@@ -114,7 +114,7 @@ function toolTranscript() {
 
 describe('transcript blocks', () => {
   it('renders prompt, prose, and each call with its output folded under it', () => {
-    // Issue #455 (01-B…E): the prompt block's edge, the prose mark, and a
+    // The prompt block's edge, the prose mark, and a
     // card per call with a gutter body and a footer naming what is hidden.
     expect(
       toolTranscript()
@@ -189,7 +189,7 @@ describe('transcript blocks', () => {
     );
     const lines = view.render(30);
     // Collapsed: both rows are CUT at the width (no wrap), and the output's
-    // hint says so instead of pretending the row is complete (issue #300).
+    // hint says so instead of pretending the row is complete.
     expect(lines).toHaveLength(3);
     for (const line of lines)
       expect(plain(line).length).toBeLessThanOrEqual(30);
@@ -233,7 +233,7 @@ describe('app chrome', () => {
     expect(app.render(100).at(-1)).toContain('⏎ send');
     app.setBusy(true);
     expect(app.busyElapsedMs()).toBeGreaterThanOrEqual(0);
-    // Issue #453/#454: the working line sits on the notice row above the
+    // The working line sits on the notice row above the
     // editor; the hint row switches to the keys that act on a running turn.
     const rows = app.render(100);
     expect(rows.join('\n')).toMatch(
@@ -245,7 +245,7 @@ describe('app chrome', () => {
     expect(app.busyElapsedMs()).toBeUndefined();
   });
 
-  it('names the queue key while a turn runs (#334)', () => {
+  it('names the queue key while a turn runs', () => {
     const app = createTuiApp({
       sessionId: 's',
       model: 'faux/m',
@@ -336,7 +336,7 @@ describe('compact tree', () => {
   });
 });
 
-describe('review fixes', () => {
+describe('regressions', () => {
   const userEntry = (id: string, seq: number, text: string) => ({
     id,
     seq,
@@ -419,7 +419,7 @@ describe('review fixes', () => {
   });
 
   it('fully redraws on a width change even through the differential update', async () => {
-    // Deterministic, no sleeps (issue #321): pi-tui schedules a requested
+    // Deterministic, no sleeps: pi-tui schedules a requested
     // render with process.nextTick, then a setTimeout bounded by its render
     // interval, measured with performance.now(). Faking only the timer and the
     // clock lets the real nextTick fire, after which the pending render timer

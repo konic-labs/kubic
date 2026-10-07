@@ -55,7 +55,7 @@ function capture() {
   };
 }
 
-describe('kubic audit secret backstop (issue #79)', () => {
+describe('kubic audit secret backstop', () => {
   it('prints zero secret-shaped values on a faux-seeded fixture', async () => {
     const cap = capture();
     const code = await runAuditCommand(
@@ -118,7 +118,7 @@ describe('kubic audit secret backstop (issue #79)', () => {
   });
 });
 
-describe('kubic audit query (issue #79)', () => {
+describe('kubic audit query', () => {
   const TWO: OrgAuditRecord[] = [
     EXAMPLE_AUDIT_RECORD,
     {
@@ -266,7 +266,7 @@ describe('kubic audit usage', () => {
   // commander's: apps/kubic/src/commands/analysis.test.ts pins it.
 });
 
-describe('kubic audit prod secrets wiring (issue #79 fix cycle 1)', () => {
+describe('kubic audit prod secrets wiring', () => {
   it('redacts a listed-inventory value supplied via the prod loadSecrets hook', async () => {
     const cap = capture();
     const code = await runAuditCommand(

@@ -1,11 +1,11 @@
-// Eval signals (issue #53; design §48).
-// Pure derivation of the §48 signal set from a parsed trajectory export
+// Eval signals.
+// Pure derivation of the signal set from a parsed trajectory export
 // (read via parseTrajectoryExport — this package never redefines the
 // trajectory shape). Counts (tokens/cost/latency/tools/escalations) come
 // straight from the trajectory; gate signals (tests/build/lint/typecheck)
 // are `unknown` unless the trajectory eval labels carry an explicit
 // `signal:<name>` = pass|fail — never guessed. The shipped producer is the
-// run verifier (issue #267): the configured `[verify]` commands run in the
+// run verifier: the configured `[verify]` commands run in the
 // worktree after settlement and write these labels, plus
 // `signal:regression` from a baseline run at the base revision.
 import type { TrajectoryExport } from '../../trajectory/src/schema.js';
@@ -47,7 +47,7 @@ export function gatesPass(
   );
 }
 
-// Graded patch quality (issue #267), in [0, 1]:
+// Graded patch quality, in [0, 1]:
 //   - 0 when the run did not complete;
 //   - otherwise the fraction of KNOWN gates that pass (1 when no gate is
 //     known — unknown gates abstain, they neither earn nor cost);
@@ -71,7 +71,7 @@ export function computeSignals(exported: TrajectoryExport): EvalSignals {
   const build = gateSignal(exported.eval.labels, 'build');
   const lint = gateSignal(exported.eval.labels, 'lint');
   const typecheck = gateSignal(exported.eval.labels, 'typecheck');
-  // The verifier's baseline comparison (issue #267): `pass` means no gate
+  // The verifier's baseline comparison: `pass` means no gate
   // that passed at the base revision fails after the run, `fail` names a
   // regression. Absent (no baseline was run) falls back to the green rule.
   const regression = gateSignal(exported.eval.labels, 'regression');

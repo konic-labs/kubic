@@ -1,4 +1,4 @@
-// Single-parser gate (issue #127; §78, the `--help` convention's sibling;
+// Single-parser gate (the `--help` convention's sibling;
 // extended when the CLI moved onto commander). commander — through
 // @commander-js/extra-typings, owned by the composition root
 // (apps/kubic/src) — is the single argv parser:
@@ -206,7 +206,7 @@ describe('commander is the single parser', () => {
   });
 });
 
-describe('legacy flag parser (issue #127)', () => {
+describe('legacy flag parser', () => {
   it('no hand-rolled startsWith("--") value guard survives', () => {
     const offenders = guardOffenders(ROOT, REPO_SOURCES);
     assert.deepEqual(

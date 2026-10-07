@@ -90,8 +90,8 @@ export const registerJournalCommands: CommandRegistrar = (program, ctx) => {
   program
     .command('diff')
     .description('show journaled changes as a unified diff')
-    // Issue #271: the path operand scopes exactly like `--path` (spec
-    // §42.2 `kubic diff <path>`); without the declaration commander dropped
+    // The path operand scopes exactly like `--path` (spec
+    // `kubic diff <path>`); without the declaration commander dropped
     // the operand as excess, so users believed the diff was scoped when it
     // was not. A second operand is commander's own too-many-arguments
     // refusal, the same as `undo`.
@@ -224,7 +224,7 @@ function registerGit(program: KubicProgram, ctx: CommandContext): void {
       await git({ command: 'commit', ...opts });
     });
 
-  // Issue #268 (§17): the top-level alias — `kubic commit -m <message>` is
+  // The top-level alias — `kubic commit -m <message>` is
   // `kubic git commit`, same runner, message rule and exit codes.
   program
     .command('commit')

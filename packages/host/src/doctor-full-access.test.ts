@@ -1,4 +1,4 @@
-// Doctor's full-access session enumeration (issue #310): the current
+// Doctor's full-access session enumeration: the current
 // workspace's LIVE sessions whose posture.json records fullAccess — the
 // report `kubic doctor` warns with. Real session dirs in a temp store
 // (createSession takes a real lock, so a created session is live until
@@ -62,7 +62,7 @@ function grantFullAccess(root: string, id: string, by = 'tester'): void {
   });
 }
 
-describe('listFullAccessSessions (issue #310)', () => {
+describe('listFullAccessSessions', () => {
   it('lists a live full-access session with its provenance', async () => {
     const root = tempRoot();
     const workspace = join(root, 'repo');

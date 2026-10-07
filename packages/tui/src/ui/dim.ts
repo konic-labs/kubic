@@ -1,8 +1,8 @@
-// The dimmed background behind the palette and the pickers (EPIC N, issue
-// #460; docs/ui 03-A: "the overlay floats over a dimmed screen; the
-// background never moves"). Every base row loses its colours, links and
-// markers and is drawn in fg3, so the overlay is the only thing in colour.
-// The last row — the key hints — stays lit: it names the overlay's keys.
+// The dimmed background behind the palette and the pickers ("the overlay floats
+// over a dimmed screen; the background never moves"). Every base row loses its
+// colours, links and markers and is drawn in fg3, so the overlay is the only
+// thing in colour. The last row — the key hints — stays lit: it names the
+// overlay's keys.
 
 import type { UiTheme } from '../../../core/src/ui/style.js';
 

@@ -1,4 +1,4 @@
-// Kitty key-event types at the app's single input entry (issue #306).
+// Kitty key-event types at the app's single input entry.
 //
 // pi-tui's ProcessTerminal negotiates Kitty flag 2 (report event types), so
 // every key arrives as a press (no suffix, or ':1'), optional repeats (':2')
@@ -33,7 +33,7 @@ function type(target: TuiApp, text: string): void {
   for (const ch of text) target.handleInput(ch);
 }
 
-describe('key-release events are presses only once (issue #306)', () => {
+describe('key-release events are presses only once', () => {
   it('Ctrl-O press then release leaves the diff panel open', () => {
     const target = app();
     target.handleInput('\x1b[111;5u');
@@ -52,7 +52,7 @@ describe('key-release events are presses only once (issue #306)', () => {
     expect(target.handleInput(release(cp('c')))).toEqual(NOT_QUIT);
   });
 
-  it('an idle Ctrl-C release never counts as the second press (issue #454)', () => {
+  it('an idle Ctrl-C release never counts as the second press', () => {
     const target = app();
     // The press arms the double-press quit; its key-up must not complete it.
     expect(target.handleInput(press(cp('c')))).toEqual(NOT_QUIT);
@@ -82,7 +82,7 @@ describe('key-release events are presses only once (issue #306)', () => {
   > = [
     ['ctrl+o', 'o', (t) => t.panelMode(), 'diff'],
     ['ctrl+r', 'r', (t) => t.panelMode(), 'journal'],
-    // Issue #453: solo starts with the tree collapsed (hidden), so exactly
+    // Solo starts with the tree collapsed (hidden), so exactly
     // one toggle opens it.
     ['ctrl+t', 't', (t) => t.tree.isCollapsed(), false],
     ['ctrl+x', 'x', (t) => t.transcript.expanded, true],

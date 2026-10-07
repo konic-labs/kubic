@@ -66,7 +66,7 @@ function inv(): ToolInvocation {
 
 const posix = process.platform !== 'win32';
 
-// Every tmp the tmp+rename writer leaves behind, under any spelling (#140).
+// Every tmp the tmp+rename writer leaves behind, under any spelling.
 function tmpNames(dir: string): string[] {
   return readdirSync(dir).filter((name) => name.includes('.kubic-tmp'));
 }
@@ -128,7 +128,7 @@ describe('write/edit safety on the node seam', () => {
     expect(readFileSync(join(root, 'img.png'), 'utf8')).toBe('text\n');
   });
 
-  it('hashes an oversized pre-image in bounded chunks, never a file-sized buffer (issue #139)', async () => {
+  it('hashes an oversized pre-image in bounded chunks, never a file-sized buffer', async () => {
     const { root, journal, c } = setup();
     const original = Buffer.alloc(PREIMAGE_MAX_BYTES + 4096, 0x61);
     writeFileSync(join(root, 'big.txt'), original);
@@ -165,7 +165,7 @@ describe('write/edit safety on the node seam', () => {
     expect(journalStatus(journal, root).corrupt).toBe(0);
   });
 
-  it('keeps a pre-image exactly at the bound reversible, and one byte over hash-only (issue #139)', async () => {
+  it('keeps a pre-image exactly at the bound reversible, and one byte over hash-only', async () => {
     const { root, journal, c } = setup();
     // Exactly at the bound: whole-file path, before-content recorded, undo
     // can restore it. This is the one off-by-one (`>` vs `>=`) that would
@@ -232,12 +232,12 @@ describe('write/edit safety on the node seam', () => {
   });
 });
 
-// Issue #140: tmp+rename must write THROUGH a symlink, not over it. The
+// Tmp+rename must write THROUGH a symlink, not over it. The
 // rename replaces the inode at the named path, so a symlinked target turned
 // into a regular file and the link (plus the target's real content) was
 // silently lost. A resolved target outside the workspace is refused
 // instead, and a failed rename never leaves its tmp behind.
-describe('write/edit symlink safety (issue #140)', () => {
+describe('write/edit symlink safety', () => {
   it.runIf(posix)(
     'edit through a symlink updates the target and keeps the link',
     async () => {
@@ -254,7 +254,7 @@ describe('write/edit symlink safety (issue #140)', () => {
       expect(lstatSync(join(root, 'link.md')).isSymbolicLink()).toBe(true);
       expect(readFileSync(join(root, 'real.md'), 'utf8')).toBe('new\n');
       expect(tmpNames(root)).toEqual([]);
-      // The journal names the file whose content changed (§42 attribution),
+      // The journal names the file whose content changed,
       // so the sweep keys it like the walk does and undo restores the
       // target — see the two tests below.
       expect(journal.entries()[0]?.path).toBe('real.md');

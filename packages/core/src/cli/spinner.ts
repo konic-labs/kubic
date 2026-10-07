@@ -1,4 +1,4 @@
-// A TTY-only spinner for CLI progress (EPIC N, issue #445). On a stream
+// A TTY-only spinner for CLI progress. On a stream
 // that is not a TTY every method is a no-op, so pipes, files and CI logs
 // never see a carriage return or an escape code. On a TTY it redraws one
 // line in place (`\r` + erase line), hides the cursor while spinning, and

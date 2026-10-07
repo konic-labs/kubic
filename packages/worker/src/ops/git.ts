@@ -1,9 +1,9 @@
-// Structured git operations (issue #19, slice A; §43.1).
+// Structured git operations.
 // Git runs THROUGH the shell seam (spawn('git', ...) — no shell, no
 // string commands), so provenance and the Fake script map apply as usual.
 // This module never runs `git init`: repos are never created on the
 // agent's behalf. Outside a repository every git op fails with the
-// structured code `not_a_repo` (unavailable-with-reason, §43.2) — the
+// structured code `not_a_repo` (unavailable-with-reason) — the
 // journal path keeps working without git (VCS-independent).
 
 import {
@@ -21,7 +21,7 @@ export interface GitRun {
   timedOut: boolean;
 }
 
-// Kill bound for git children (issue #190): a commit hook that blocks on
+// Kill bound for git children: a commit hook that blocks on
 // stdin must never hang the op forever. Same ceiling as bash (120s
 // default, 600s max); unlike bash there is no model timeout argument (git
 // argument contracts are frozen), so the default always applies unless a
@@ -40,8 +40,8 @@ export function isNotARepo(stderr: string): boolean {
 
 /**
  * Spawn git through the shell seam with lane abort + timeout wired like
- * bash (issue #190): the kill lands in the lane's kill registry under
- * this invocation and leaves it once settled (issue #142); the timeout or
+ * bash: the kill lands in the lane's kill registry under
+ * this invocation and leaves it once settled; the timeout or
  * an aborted signal kills the child. Throws `tool_failed` on timeout, or
  * on abort when the child did not exit cleanly — every other exit comes
  * back for the op to classify (not_a_repo, reason-bounded tool_failed).
@@ -78,7 +78,7 @@ export async function runGit(
     if (ctx.signal.aborted) handle.kill();
     else ctx.signal.addEventListener('abort', onAbort, { once: true });
   }
-  // Issue #432: the untrack, timer clear and listener removal sit in a
+  // The untrack, timer clear and listener removal sit in a
   // finally — a rejecting wait() must not leak the timer or the registry
   // entry (bash parity).
   let done: Awaited<ReturnType<typeof handle.wait>>;
@@ -108,7 +108,7 @@ export async function runGit(
   };
 }
 
-// Maximum --stat lines carried inline on a clipped result (issue #432):
+// Maximum --stat lines carried inline on a clipped result:
 // the file rows that fit plus the `N files changed` summary, so the model
 // knows what the clip dropped without re-inflating to the clipped size.
 const STAT_MAX_LINES = 40;
@@ -125,7 +125,7 @@ function capStat(out: string): string {
   ].join('\n');
 }
 
-// Best-effort `--stat` twin of a clipped query (issue #432): undefined
+// Best-effort `--stat` twin of a clipped query: undefined
 // when the stat query itself fails, so a summary can never fail the op —
 // a twin timeout or abort-throw degrades the same way as a non-zero exit.
 async function gitStatSummary(
@@ -168,11 +168,11 @@ export interface GitStatus {
   staged: string[];
   unstaged: string[];
   untracked: string[];
-  // Issue #380: paths with unresolved merge conflicts (UU, AA, DD, and
+  // Paths with unresolved merge conflicts (UU, AA, DD, and
   // the U-in-either-slot pairs). A conflicted path is conflict work, not
   // staged or unstaged work — it appears here only.
   conflicts: string[];
-  // Issue #380: the repo root, and one record per submodule.
+  // The repo root, and one record per submodule.
   repoRoot: string;
   submodules: GitSubmodule[];
   /** Rename/copy records: the new path plus the optional old path. */
@@ -206,7 +206,7 @@ export function parsePorcelainStatus(out: string): GitStatus {
     if (path === '') return;
     const x = xy[0] ?? '';
     const y = xy[1] ?? '';
-    // Unmerged XY codes (issue #380): a `U` in either slot, or the
+    // Unmerged XY codes: a `U` in either slot, or the
     // both-added / both-deleted pairs. Conflict work only — never staged
     // or unstaged. The rename relation still records when git reports one.
     if (x === 'U' || y === 'U' || xy === 'AA' || xy === 'DD') {
@@ -276,7 +276,7 @@ export function parsePorcelainStatus(out: string): GitStatus {
     unstaged,
     untracked,
     conflicts,
-    // The parser sees no repo root and no submodules (issue #380): the
+    // The parser sees no repo root and no submodules: the
     // status op fills them from its own queries; other consumers keep the
     // empty defaults.
     repoRoot: '',
@@ -386,11 +386,11 @@ export interface GitLogArgs {
 
 export interface GitLogResult {
   entries: GitLogEntry[];
-  /** True when the raw log was clipped to the model cap (issue #190). */
+  /** True when the raw log was clipped to the model cap. */
   truncated: boolean;
   /** Spill path holding the full log, when the lane provided a sink. */
   spillPath?: string;
-  // Issue #432: capped `--stat` summary, present only when truncated —
+  // Capped `--stat` summary, present only when truncated —
   // the shape of what the clip dropped.
   stat?: string;
 }
@@ -451,7 +451,7 @@ export const gitLogOperation: Operation<GitLogArgs, GitLogResult> = {
         `git_log failed (exit ${run.exitCode}): ${run.stderr.trim().slice(0, 200)}`,
       );
     }
-    // Clip the raw log before parsing (issue #190): a cut first line
+    // Clip the raw log before parsing: a cut first line
     // carries fewer than four fields and is skipped below, so a clipped
     // tail still parses cleanly.
     const clipped = clipStream('stdout', run.stdout, ctx);
@@ -496,9 +496,9 @@ export interface GitShowArgs {
 
 export interface GitShowResult {
   patch: string;
-  /** True when the patch was clipped to the model cap (issue #190). */
+  /** True when the patch was clipped to the model cap. */
   truncated: boolean;
-  // Issue #432: capped `--stat` summary, present only when truncated.
+  // Capped `--stat` summary, present only when truncated.
   stat?: string;
   /** Spill path holding the full patch, when the lane provided a sink. */
   spillPath?: string;
@@ -571,11 +571,11 @@ export interface GitDiffArgs {
 
 export interface GitDiffResult {
   diff: string;
-  /** True when the diff was clipped to the model cap (issue #190). */
+  /** True when the diff was clipped to the model cap. */
   truncated: boolean;
   /** Spill path holding the full diff, when the lane provided a sink. */
   spillPath?: string;
-  // Issue #432: capped `--stat` summary, present only when truncated.
+  // Capped `--stat` summary, present only when truncated.
   stat?: string;
 }
 
@@ -758,7 +758,7 @@ export interface GitCommitResult {
 export const gitCommitOperation: Operation<GitCommitArgs, GitCommitResult> = {
   name: 'git_commit',
   description:
-    'Commit staged changes; returns sha + file list (trajectory records commits from this result in EPIC F)',
+    'Commit staged changes; returns sha + file list (trajectory records commits from this result)',
   replay: 'never',
   validateArgs: (raw: unknown): GitCommitArgs => {
     if (typeof raw !== 'object' || raw === null)

@@ -1,9 +1,9 @@
-// The sessions the TUI's `/resume` picker lists (EPIC N, issue #461;
-// docs/ui 03-D): this project's sessions, newest first, each with its
-// title (the first prompt), turns, cost and age. Read the way `kubic cost`
-// reads (session-read.ts): a session another live process holds is never
-// opened (pi-durable: one process per storage) and a legacy (Pi 0.87) one
-// cannot be — both are listed so the picker can say why they are greyed.
+// The sessions the TUI's `/resume` picker lists: this project's sessions,
+// newest first, each with its title (the first prompt), turns, cost and age.
+// Read the way `kubic cost` reads (session-read.ts): a session another live
+// process holds is never opened (pi-durable: one process per storage) and a
+// legacy (Pi 0.87) one cannot be — both are listed so the picker can say why
+// they are greyed.
 
 import { join } from 'node:path';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';

@@ -1,4 +1,4 @@
-// Bash operation (issue #13, slice D; §9.1).
+// Bash operation.
 // Runs through ExecutionEnv.shell: streaming onUpdate, checkpoint store
 // under the invocation id, AbortSignal + timeout kill with partial
 // snapshots. replay:"never" — execution is an effect; the registry memo
@@ -25,11 +25,11 @@ export interface BashResult {
   /**
    * True when either stream was clipped to the model-facing cap — the
    * result names the dropped leading chars in a header, and the model
-   * knows it saw a slice (issue #121).
+   * knows it saw a slice.
    */
   truncated: boolean;
   /**
-   * Issue #182: the spill file holding a clipped stream's full text, so the
+   * The spill file holding a clipped stream's full text, so the
    * dropped head stays recoverable by path. Names the stdout spill when
    * there is one, else the stderr spill; each clipped stream's own notice
    * names its own file. Absent when nothing was clipped, when the lane gave
@@ -38,13 +38,13 @@ export interface BashResult {
   spillPath?: string;
   /**
    * Which shell actually executed the command — bash is preferred, sh is
-   * the recorded fallback (issue #123).
+   * the recorded fallback.
    */
   shell: 'bash' | 'sh' | 'cmd';
   aborted: boolean;
   timedOut: boolean;
   /**
-   * Issue #339: present when processes the command backgrounded outlived
+   * Present when processes the command backgrounded outlived
    * it — `killed` (the default: the group is reaped when the command
    * exits) or `detached` (KUBIC_BASH_KEEP_BACKGROUND=1 left them running).
    */
@@ -52,7 +52,7 @@ export interface BashResult {
   provenance: Provenance;
 }
 
-// Issue #339: a command the model gives no timeout still has one, and a
+// A command the model gives no timeout still has one, and a
 // model-supplied timeout is clamped to a maximum — a turn can never be
 // held open indefinitely by one bash call.
 export const BASH_DEFAULT_TIMEOUT_SEC = 120;
@@ -179,13 +179,13 @@ function turnNumber(turnId: string): number {
   return match ? Number.parseInt(match[1] as string, 10) : 0;
 }
 
-// Model-facing cap per stream (issue #121): chars, not bytes — this is a
+// Model-facing cap per stream: chars, not bytes — this is a
 // context-window bound. One grep over a big file must not dump megabytes
 // into the model's window; the harness has compaction, but the tool
 // result itself should never be the thing that blows it.
 export const BASH_RESULT_MAX_CHARS = 64 * 1024;
 
-// …and a line bound on top of it (issue #182; §27.5): pi-durable's
+// …and a line bound on top of it: pi-durable's
 // `DEFAULT_MAX_LINES` is 2000, and a stream of short lines reaches the char
 // cap with far more than 2000 of them in view. Whichever bound bites first,
 // the TAIL is what stays — and the full stream is spilled by path.
@@ -212,7 +212,7 @@ export interface ClippedStream {
 
 /**
  * Bound one stream to the tail the model sees, and spill the full text when
- * the lane gave the op a sink (issue #182). A spill that cannot be written
+ * the lane gave the op a sink. A spill that cannot be written
  * is not a failed call: the notice simply names no path.
  */
 export function clipStream(
@@ -242,7 +242,7 @@ export function clipStream(
   };
 }
 
-// Issue #123: the tool is named bash and the prompts say bash — run bash
+// The tool is named bash and the prompts say bash — run bash
 // when the system has it. Resolution is lazy and cached per process: the
 // first command attempts bash, and the exit-127 detect-and-retry inside
 // execute() (below) records 'sh' when bash is missing. Detection goes
@@ -250,7 +250,7 @@ export function clipStream(
 // env scripts its answer; no op touches child_process.
 
 // Spawn-ENOENT signature only: Node's `spawn <path> ENOENT` message (what
-// env.ts's issue #85 hardening writes to stderr when the bash BINARY
+// env.ts's hardening writes to stderr when the bash BINARY
 // cannot start) as its own anchored line — a bare substring like
 // `respawn ENOENT` in user output must not match, and no user-printable
 // text (e.g. `bash: not found`) is part of the signature. bash's inner
@@ -275,7 +275,7 @@ export function __setResolvedShellForTests(
 
 export const bashOperation: Operation<BashArgs, BashResult> = {
   name: 'bash',
-  // The limits the model must plan around (issue #339): the default and the
+  // The limits the model must plan around: the default and the
   // ceiling are the shipped constants and the override names come from
   // BASH_POLICY_ENV, so this text cannot drift from them. The description is
   // static (a policy can also arrive per call via OpContext.bashPolicy), so
@@ -296,7 +296,7 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       args.timeout ?? policy.defaultTimeoutSec,
       policy.maxTimeoutSec,
     );
-    // Issue #142: the unregister fn of whichever handle is currently live.
+    // The unregister fn of whichever handle is currently live.
     let untrack: (() => void) | undefined;
     const spawnShell = (shellName: string): ProcessHandle => {
       const shellArgs =
@@ -310,10 +310,10 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
         checkpointStore: ctx.checkpointStore,
         keepBackground: policy.keepBackground,
       });
-      // First attempt and any retry both land in the lane's kill registry
-      // (issue #11) so timeout/abort kill whichever handle is live — and the
-      // settled one leaves it again (issue #142): the registry is reused for
-      // a whole session, so a handle left per call was an unbounded leak.
+      // First attempt and any retry both land in the lane's kill registry so
+      // timeout/abort kill whichever handle is live — and the settled one
+      // leaves it again: the registry is reused for a whole session, so a
+      // handle left per call was an unbounded leak.
       untrack?.();
       untrack = ctx.trackHandle?.(() => handle.kill(), inv) ?? undefined;
       return handle;
@@ -331,9 +331,9 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       else ctx.signal.addEventListener('abort', onAbort, { once: true });
     }
     let result: ShellResult = await live.wait();
-    // Issue #123: one-shot detect-and-retry. A 127 settled with the
+    // One-shot detect-and-retry. A 127 settled with the
     // SPAWN-ENOENT signature means this box has no bash binary — env.ts's
-    // ENOENT hardening (issue #85) writes Node's `spawn <path> ENOENT`
+    // ENOENT hardening writes Node's `spawn <path> ENOENT`
     // message line to stderr. bash's own inner
     // `bash: <cmd>: command not found` is a user typo inside a working
     // bash and must NOT trigger the retry. Degrade once to sh,
@@ -355,7 +355,7 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
       result = await live.wait();
     }
     // The live handle has settled: drop its kill from the registry before
-    // anything else can retain it (issue #142).
+    // anything else can retain it.
     untrack?.();
     untrack = undefined;
     clearTimeout(timer);
@@ -365,7 +365,7 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
     // Clip AFTER abort/timeout handling: the seam already bounded memory;
     // this bound is the model's context window. The registry's
     // never-replay memoization stores the clipped result — consistent
-    // across retries. A clipped stream is spilled by path (issue #182), so
+    // across retries. A clipped stream is spilled by path, so
     // the head stays reachable even though the context only carries the
     // tail; `spillPath` names the stdout spill when there is one, else the
     // stderr spill (each stream's own notice names its own file).

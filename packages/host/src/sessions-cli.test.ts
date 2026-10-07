@@ -1,4 +1,4 @@
-// `kubic sessions` CLI (issue #14; #318/#400 for the attach transcript).
+// `kubic sessions` CLI (for the attach transcript).
 // The attach transcript is read through the shared pi-durable adapter, so
 // the fixtures are REAL sessions: a session created by the store, booted
 // into a pi-durable Harness over MemoryStorage-free JSONL storage with the
@@ -94,7 +94,7 @@ async function seededSession(
 }
 
 // One real session with a faux turn AND a real compaction, released for the
-// CLI to attach (issue #318: the compaction entry must render readable).
+// CLI to attach (the compaction entry must render readable).
 async function seededCompactedSession(root: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));
   const session = await createSession(
@@ -145,10 +145,10 @@ async function seededCompactedSession(root: string): Promise<string> {
   return session.id;
 }
 
-describe('sessions CLI (issue #14, slice F)', () => {
+describe('sessions CLI', () => {
   it('creates and lists sessions', async () => {
     const root = tmpRoot();
-    // Issue #261: create refuses a missing cwd, so the fixture workspace
+    // Create refuses a missing cwd, so the fixture workspace
     // must exist.
     const work = join(root, 'work');
     mkdirSync(work);
@@ -179,7 +179,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
     ).toBe(true);
   });
 
-  it('create --cwd resolves a relative path against the invoking directory (#261)', async () => {
+  it('create --cwd resolves a relative path against the invoking directory', async () => {
     const root = tmpRoot();
     const o = out();
     const code = await runSessionsCommand(
@@ -201,7 +201,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(entries.find((entry) => entry.id === id)?.cwd).toBe(process.cwd());
   });
 
-  it('create --cwd refuses a missing or non-directory path by name (#261)', async () => {
+  it('create --cwd refuses a missing or non-directory path by name', async () => {
     const root = tmpRoot();
     writeFileSync(join(root, 'file'), 'not a directory\n');
     for (const bad of [join(root, 'does-not-exist'), join(root, 'file')]) {
@@ -307,7 +307,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(o.lines[0]).toBe(`session ${id}  cwd=/work`);
     expect(o.lines).toContain('user: cli hello');
     expect(o.lines).toContain('assistant: cli hello back');
-    // #318: no raw truncated JSON entry anywhere on the attach output.
+    // No raw truncated JSON entry anywhere on the attach output.
     expect(o.lines.join('\n')).not.toContain('"role"');
   });
 
@@ -339,7 +339,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
     );
   });
 
-  it('renders a compaction entry as a readable line under --tail (#318)', async () => {
+  it('renders a compaction entry as a readable line under --tail', async () => {
     const root = tmpRoot();
     const id = await seededCompactedSession(root);
     const o = out();
@@ -356,7 +356,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
     expect(o.lines.join('\n')).not.toContain('"role"');
   });
 
-  it('attach --json keeps the raw tail entries (#318)', async () => {
+  it('attach --json keeps the raw tail entries', async () => {
     const root = tmpRoot();
     const id = await seededCompactedSession(root);
     const o = out();
@@ -519,7 +519,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
       { sessionsRoot: root, out: o.write },
     );
     expect(code).toBe(0);
-    // #396's storage-level probe owns the format, so this is the same line
+    // 's storage-level probe owns the format, so this is the same line
     // the run path prints when it settles the work.
     const pending = o.lines.filter((line) => line.startsWith('pending work:'));
     expect(pending).toHaveLength(1);
@@ -556,7 +556,7 @@ describe('sessions CLI (issue #14, slice F)', () => {
   });
 });
 
-describe('sessions CLI approvals posture (issue #16, slice D)', () => {
+describe('sessions CLI approvals posture', () => {
   it('records full-access on create with the flag and indicates on attach', async () => {
     const root = tmpRoot();
     const o = out();
@@ -581,7 +581,7 @@ describe('sessions CLI approvals posture (issue #16, slice D)', () => {
     );
   });
 
-  it('appends exactly one full-access ledger row on create with the flag (issue #284)', async () => {
+  it('appends exactly one full-access ledger row on create with the flag', async () => {
     const root = tmpRoot();
     const ws = tmpRoot();
     const o = out();

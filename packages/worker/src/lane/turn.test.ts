@@ -1,4 +1,4 @@
-// The durable turn glue (issue #395): submit → submission.wait, and every
+// The durable turn glue: submit → submission.wait, and every
 // way a run can end as one TurnOutcome. Faux provider only, MemoryStorage,
 // zero network.
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -125,7 +125,7 @@ async function transcript(solo: SoloLane): Promise<unknown[]> {
   return [...page.items];
 }
 
-describe('runTurn on pi-durable (issue #395)', () => {
+describe('runTurn on pi-durable', () => {
   it('settles one tool-call turn completed and reports its submission id', async () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'turn reads this\n');
@@ -151,13 +151,13 @@ describe('runTurn on pi-durable (issue #395)', () => {
     expect(outcome.submissionId).not.toBe('');
     const entries = await transcript(solo);
     expect(JSON.stringify(entries)).toContain('turn reads this');
-    // #247: ONE user entry for the prompt — submit writes pi.user itself.
+    // ONE user entry for the prompt — submit writes pi.user itself.
     expect(
       userTexts(entries).filter((text) => text === 'read the file'),
     ).toEqual(['read the file']);
   });
 
-  it('maps a failed generation to its §52 code and human message', async () => {
+  it('maps a failed generation to its failure code and human message', async () => {
     const { solo } = await boot([]);
     const outcome = await runTurn(solo, 'go', {
       requestId: 'req-fail',
@@ -197,7 +197,7 @@ describe('runTurn on pi-durable (issue #395)', () => {
     await first.catch(() => undefined);
   });
 
-  it('queues a busy follow-up, reports its id, and delivers it after settlement (#334)', async () => {
+  it('queues a busy follow-up, reports its id, and delivers it after settlement', async () => {
     let admitted: () => void = () => {};
     const landed = new Promise<void>((resolve) => {
       admitted = resolve;
@@ -232,12 +232,12 @@ describe('runTurn on pi-durable (issue #395)', () => {
     });
     // The busy Enter is ADMITTED at once (never refused): the id lands while
     // the first run is still in flight, and the item sits queued in the
-    // conversation's own inbox (#334: the queue is pi-durable's, not a
+    // conversation's own inbox (the queue is pi-durable's, not a
     // Kubic-owned list).
     await vi.waitFor(() => expect(ids).toHaveLength(1));
     expect(ids[0]).not.toBe('');
     // The admission answer is what the TUI's busy latch reads: a queued
-    // follow-up is not placed work (#334 review).
+    // follow-up is not placed work.
     expect(admissions).toEqual(['queued']);
     const queued = await solo.harness.inspect(BACKGROUND_CONTEXT);
     expect(
@@ -259,9 +259,9 @@ describe('runTurn on pi-durable (issue #395)', () => {
     expect(JSON.stringify(await transcript(solo))).toContain('second answer');
   });
 
-  it('places a busy steer on the running operation, never as a queued turn (#334)', async () => {
+  it('places a busy steer on the running operation, never as a queued turn', async () => {
     // The shell answers never matter (the round stays gated); opt out of
-    // strict mode explicitly (issue #356).
+    // strict mode explicitly.
     const base = new FakeExecutionEnv({}, { allowUnscripted: true });
     base.fs.writeFile('a.txt', 'steer me\n');
     let toolStarted: () => void = () => {};
@@ -381,7 +381,7 @@ describe('runTurn on pi-durable (issue #395)', () => {
   });
 });
 
-describe('durable retry (issue #395, §20.6)', () => {
+describe('durable retry', () => {
   it('retries a transient provider error inside the harness, with no Kubic sleep', async () => {
     const { solo, faux } = await boot(
       [
@@ -436,7 +436,7 @@ describe('durable retry (issue #395, §20.6)', () => {
   });
 });
 
-describe('turnLaneRecord (D6.1)', () => {
+describe('turnLaneRecord', () => {
   it('maps completed, failed and aborted to the lane record', () => {
     expect(turnLaneRecord({ kind: 'completed', submissionId: 's-1' })).toEqual({
       status: 'completed',
@@ -462,7 +462,7 @@ describe('turnLaneRecord (D6.1)', () => {
   });
 });
 
-describe('abortLane (D6.2)', () => {
+describe('abortLane', () => {
   function laneStub(abort: (context: Context) => Promise<void>): AbortableLane {
     const kills = new OperationKillRegistry();
     return {

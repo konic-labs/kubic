@@ -1,5 +1,5 @@
-// Slice D: lane journal wiring + durable next-day undo (issue #17; §42.4).
-// The lane boots through the shared faux harness factory (#401): the journal
+// Lane journal wiring + durable next-day undo.
+// The lane boots through the shared faux harness factory: the journal
 // row it records is the durable `api.callId` of the model's own tool call.
 import {
   mkdtempSync,
@@ -32,7 +32,7 @@ function scratch(prefix: string): string {
   return dir;
 }
 
-describe('lane journal wiring (issue #17, slice D)', () => {
+describe('lane journal wiring', () => {
   it('records a lane write into the session journal with toolCallId', async () => {
     const journal = new FileJournalStore(scratch('j-'));
     const lane = await bootFauxLane({
@@ -59,7 +59,7 @@ describe('lane journal wiring (issue #17, slice D)', () => {
     expect(lane.env.fs.readFile('n.txt')).toBe('hi\n');
   });
 
-  it('carries the lane turn supplier value on tool entries (#436)', async () => {
+  it('carries the lane turn supplier value on tool entries', async () => {
     const journal = new FileJournalStore(scratch('j-'));
     const lane = await bootFauxLane({
       journal,
@@ -85,7 +85,7 @@ describe('lane journal wiring (issue #17, slice D)', () => {
     expect(entries[0]?.turn).toBe(7);
   });
 
-  it('leaves tool entries turn-less with no supplier: headless by design (#436)', async () => {
+  it('leaves tool entries turn-less with no supplier: headless by design', async () => {
     const journal = new FileJournalStore(scratch('j-'));
     const lane = await bootFauxLane({
       journal,
@@ -110,7 +110,7 @@ describe('lane journal wiring (issue #17, slice D)', () => {
   });
 });
 
-describe('durable next-day undo (issue #17, slice D)', () => {
+describe('durable next-day undo', () => {
   it('reopens the journal from disk and restores before-content', () => {
     const dir = scratch('j-');
     const root = scratch('ws-');
@@ -185,7 +185,7 @@ describe('durable next-day undo (issue #17, slice D)', () => {
   it('still restores dot-dot names that stay inside, and refuses symlink parents', () => {
     const dir = scratch('j-');
     const root = scratch('ws-');
-    // Issue #108: restoreEntry verifies the disk sits at the entry's
+    // restoreEntry verifies the disk sits at the entry's
     // recorded after-state before writing — seed the after-content so the
     // restore path is exercised rather than the staleness refusal.
     writeFileSync(join(root, '..foo'), 'after\n');

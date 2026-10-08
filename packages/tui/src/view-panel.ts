@@ -47,18 +47,22 @@ export interface JournalChangeLike {
 // operator cannot tell apart from a broken view.
 export const PANEL_EMPTY_LINE = 'no changes';
 
-// Sanitise a journal row before it reaches a render function. Every string
-// field a tool call or the journal store can carry is cleaned; the non-string
-// fields are carried through untouched. A null body stays null —
+// Sanitise a journal row before it reaches a render function. The fields are
+// picked one by one, so a field the panels do not name (a stored attribution,
+// say) never reaches a render function at all. Every string field is cleaned;
+// the non-string fields are copied as they are. A null body stays null —
 // `create`/`delete` legitimately have one null side, and diff-view.ts renders
 // its own placeholder for those.
 function sanitizeJournalChange(change: JournalChangeLike): JournalChangeLike {
   return {
-    ...change,
     path: sanitizeLaneText(change.path),
+    op: change.op,
     toolCallId:
       change.toolCallId === null ? null : sanitizeLaneText(change.toolCallId),
     sessionId: sanitizeLaneText(change.sessionId),
+    timestamp: change.timestamp,
+    unattributed: change.unattributed,
+    reversible: change.reversible,
     before: change.before === null ? null : sanitizeLaneText(change.before),
     after: change.after === null ? null : sanitizeLaneText(change.after),
   };

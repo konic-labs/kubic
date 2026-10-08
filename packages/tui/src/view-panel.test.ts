@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DiffPanel,
   type JournalChangeLike,
+  JournalPanel,
   PANEL_EMPTY_LINE,
 } from './view-panel.js';
 
@@ -30,6 +31,36 @@ function row(
 
 const paths = (panel: DiffPanel): string[] =>
   panel.visibleRows().map((r) => r.path);
+
+describe('journal rows at ingress', () => {
+  it('copies only the fields the panels name, and cleans every string', () => {
+    const ESC = '\u001b';
+    const stored = {
+      ...row(`evil${ESC}[2Jname.ts`, `tc${ESC}[31m`, 1),
+      // A stored attribution the panels never read: it must not survive.
+      agentId: `root${ESC}[2J`,
+    } as JournalChangeLike;
+    // The panel is the ingress: its rows are the sanitised copies.
+    const [clean] = new JournalPanel([stored]).visibleRows();
+    if (clean === undefined) throw new Error('the panel dropped the row');
+    expect(clean).not.toHaveProperty('agentId');
+    expect(Object.keys(clean).sort()).toEqual([
+      'after',
+      'before',
+      'op',
+      'path',
+      'reversible',
+      'sessionId',
+      'timestamp',
+      'toolCallId',
+      'unattributed',
+    ]);
+    expect(clean.path).not.toContain(ESC);
+    expect(clean.toolCallId).not.toContain(ESC);
+    expect(clean.before).toBe('old\n');
+    expect(clean.after).toBe('new\n');
+  });
+});
 
 describe('DiffPanel following the run', () => {
   it('shows the call the run last touched when it wrote something', () => {

@@ -1963,7 +1963,7 @@ prints `no cost rows` and exits 0.
 | `--session <id>` | Reads only this session. Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). An explicitly named session ignores the project scope. |
 | `--all` | Lifts the default project scope: report sessions from every project on the machine. |
 | `--by <level>` | Group rows at `request`, `session` (the default) or `project`. Anything else exits 2. |
-| `--json` | Prints the in-code `toCostJson` shape (`rows`, `taskTotal`) field-for-field — rows carry the same `session`/`project`/`request` identity the table groups on. Exits 0. Pre-release change: the array was named `agents` before this change; Kubic has no published JSON contract yet, so the rename is not a versioned break. |
+| `--json` | Prints the in-code `toCostJson` shape (`rows`, `taskTotal`) field-for-field — rows carry the same `session`/`project`/`request` identity the table groups on. Exits 0. Kubic has no published JSON contract yet. |
 
 ## `kubic policy --tool <name> [--json]`
 

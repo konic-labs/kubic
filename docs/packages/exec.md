@@ -49,7 +49,7 @@ Supporting shapes, field-for-field:
 | `ShellResult` | `exitCode: number`, `stdout: string`, `stderr: string`, `provenance: Provenance` |
 | `ProcessSnapshot` | `stdout: string`, `stderr: string`, `exitCode: number \| null` |
 | `CheckpointStore` | `record(key, snapshot): void`, `recordFinal(key, snapshot): void`, `latest(key): ProcessSnapshot \| undefined` |
-| `SpawnOptions` | `provenance: Provenance`, `onUpdate?: UpdateCallback`, `checkpointKey?: string`, `checkpointStore?: CheckpointStore` |
+| `SpawnOptions` | `provenance: Provenance`, `onUpdate?: (snapshot: ProcessSnapshot, options?: { checkpoint?: boolean }) => void`, `checkpointKey?: string`, `checkpointStore?: CheckpointStore` |
 | `ProcessHandle` | `pid: number \| undefined`, `wait(): Promise<ShellResult>`, `kill(): void` — SIGTERM to the whole process group, escalating to SIGKILL after `killGraceMs` (default 2 s) if the child has not settled, so a child that traps SIGTERM can never leave `wait()` hanging |
 | `Shell` | `spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle` |
 

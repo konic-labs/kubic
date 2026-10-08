@@ -47,7 +47,7 @@ import { runHeadlessPrompt } from './headless-run.js';
 const roots: string[] = [];
 
 function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'kubic-86-run-'));
+  const root = mkdtempSync(join(tmpdir(), 'kubic-policy-run-'));
   roots.push(root);
   return root;
 }
@@ -216,7 +216,8 @@ describe('prod run path: second-segment outside redirect', () => {
         models: modelsWith([
           fauxToolUse([
             fauxToolCall('bash', {
-              command: 'echo a > notes.txt && echo b > /etc/cron.d/kubic-326',
+              command:
+                'echo a > notes.txt && echo b > /etc/cron.d/kubic-cron-probe',
             }),
           ]),
           fauxAssistantMessage('done'),

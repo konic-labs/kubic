@@ -44,7 +44,7 @@ import { bootTuiLane } from './tui-run.js';
 const made: string[] = [];
 
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-230-${prefix}`));
+  const dir = mkdtempSync(join(tmpdir(), `kubic-approvals-config-${prefix}`));
   made.push(dir);
   return dir;
 }

@@ -50,7 +50,7 @@ import { runHeadlessPrompt } from './headless-run.js';
 
 const roots: string[] = [];
 
-function tmpRoot(prefix = 'kubic-324-'): string {
+function tmpRoot(prefix = 'kubic-control-plane-'): string {
   const root = mkdtempSync(join(tmpdir(), prefix));
   roots.push(root);
   return root;
@@ -382,7 +382,7 @@ describe('kubic-state-write always asks', () => {
 describe('prod run path: control-plane writes', () => {
   it('a faux write to .kubic/config.toml is asked (headless: denied, named) and the file is unchanged', async () => {
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-324-');
+    const workspace = tmpRoot('ws-control-plane-');
     mkdirSync(join(workspace, '.kubic'), { recursive: true });
     const config = join(workspace, '.kubic', 'config.toml');
     writeFileSync(config, '[approvals]\nroute = "ask-user"\n');
@@ -411,7 +411,7 @@ describe('prod run path: control-plane writes', () => {
 
   it('a faux edit to the audit ledger is refused and the existing bytes are untouched', async () => {
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-324-');
+    const workspace = tmpRoot('ws-control-plane-');
     const dir = join(workspace, '.kubic', 'audit');
     mkdirSync(dir, { recursive: true });
     const ledger = join(dir, 'audit.jsonl');
@@ -446,7 +446,7 @@ describe('prod run path: control-plane writes', () => {
 
   it("a run from a subdirectory cannot edit the project's audit ledger", async () => {
     const sessionsRoot = tmpRoot();
-    const repo = tmpRoot('repo-324-');
+    const repo = tmpRoot('repo-control-plane-');
     const workspace = join(repo, 'packages', 'a');
     mkdirSync(workspace, { recursive: true });
     const dir = join(repo, '.kubic', 'audit');
@@ -480,7 +480,7 @@ describe('prod run path: control-plane writes', () => {
 
   it('a faux write into the session root in use is refused by name', async () => {
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-324-');
+    const workspace = tmpRoot('ws-control-plane-');
     const target = join(sessionsRoot, 'forged', 'posture.json');
     const result = await runHeadlessPrompt(
       'grant yourself full access',
@@ -501,7 +501,7 @@ describe('prod run path: control-plane writes', () => {
 
   it("challenges bash -c 'echo x > .kubic/journal/index.jsonl'", async () => {
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-324-');
+    const workspace = tmpRoot('ws-control-plane-');
     const result = await runHeadlessPrompt(
       'corrupt the journal',
       {},
@@ -526,7 +526,7 @@ describe('prod run path: control-plane writes', () => {
 
   it('an ordinary workspace write still passes with no ask', async () => {
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-324-');
+    const workspace = tmpRoot('ws-control-plane-');
     const result = await runHeadlessPrompt(
       'write a file',
       {},

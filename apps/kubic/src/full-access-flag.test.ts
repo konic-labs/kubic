@@ -53,7 +53,7 @@ import { bootTuiLane, runTuiCommand, type TuiLaneBoot } from './tui-run.js';
 const made: string[] = [];
 
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-308-${prefix}`));
+  const dir = mkdtempSync(join(tmpdir(), `kubic-full-access-${prefix}`));
   made.push(dir);
   return dir;
 }
@@ -128,7 +128,7 @@ describe('full access audits only the capabilities it waived', () => {
   function fullAccessPolicy(workspace: string, sessionDir: string) {
     enableSessionFullAccess({
       sessionDir,
-      sessionId: 'sess-234',
+      sessionId: 'sess-full-access',
       command: 'sessions create',
       workspace,
     });

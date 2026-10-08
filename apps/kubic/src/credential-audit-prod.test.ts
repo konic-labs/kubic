@@ -35,11 +35,11 @@ import {
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
-const SECRET = 'sk-live-kubic-359-do-not-leak';
+const SECRET = 'sk-live-kubic-do-not-leak';
 const roots: string[] = [];
 const servers: Server[] = [];
 
-function tmpRoot(prefix = 'kubic-359-'): string {
+function tmpRoot(prefix = 'kubic-credential-audit-'): string {
   const root = mkdtempSync(join(tmpdir(), prefix));
   roots.push(root);
   return root;
@@ -300,39 +300,39 @@ describe('createModelKeyResolver ref uses', () => {
       now: () => 0,
       runCommand: (argv) => {
         runs.push([...argv]);
-        return 'command-key-224';
+        return 'command-key-value';
       },
     });
     const use = {
       provider: 'gw',
-      ref: parseSecretRef('!echo hi-224'),
+      ref: parseSecretRef('!echo hi-cmd'),
       readEnv: async () => undefined,
     };
-    expect(await resolver.resolve(use)).toBe('command-key-224');
-    expect(await resolver.resolve(use)).toBe('command-key-224');
+    expect(await resolver.resolve(use)).toBe('command-key-value');
+    expect(await resolver.resolve(use)).toBe('command-key-value');
     expect(runs).toEqual([
-      ['echo', 'hi-224'],
-      ['echo', 'hi-224'],
+      ['echo', 'hi-cmd'],
+      ['echo', 'hi-cmd'],
     ]);
     // The audited ref is the ref as written (like `$VAR`), never the value.
     expect(events).toEqual([
       {
-        ref: '!echo hi-224',
+        ref: '!echo hi-cmd',
         role: 'root',
         purpose: 'model-request:gw',
         provider: 'gw',
         at: '1970-01-01T00:00:00.000Z',
       },
       {
-        ref: '!echo hi-224',
+        ref: '!echo hi-cmd',
         role: 'root',
         purpose: 'model-request:gw',
         provider: 'gw',
         at: '1970-01-01T00:00:00.000Z',
       },
     ]);
-    expect(JSON.stringify(events)).not.toContain('command-key-224');
-    expect(resolver.live()).toEqual(['command-key-224']);
+    expect(JSON.stringify(events)).not.toContain('command-key-value');
+    expect(resolver.live()).toEqual(['command-key-value']);
   });
 
   it('a command ref without a runner fails closed naming the provider', async () => {
@@ -343,7 +343,7 @@ describe('createModelKeyResolver ref uses', () => {
     await expect(
       resolver.resolve({
         provider: 'gw',
-        ref: parseSecretRef('!echo hi-224'),
+        ref: parseSecretRef('!echo hi-cmd'),
         readEnv: async () => undefined,
       }),
     ).rejects.toThrow(/provider 'gw': no secret-command runner/);
@@ -358,7 +358,7 @@ describe('createModelKeyResolver ref uses', () => {
     await expect(
       resolver.resolve({
         provider: 'gw',
-        ref: parseSecretRef('!echo hi-224'),
+        ref: parseSecretRef('!echo hi-cmd'),
         readEnv: async () => undefined,
       }),
     ).rejects.toThrow(/provider 'gw': empty output from secret command/);
@@ -406,12 +406,12 @@ describe('a first-use audit failure never carries the value', () => {
     // an error message on the first use, before a second use could have
     // taught the inventory about it. (The record itself carries the worktree
     // path, so it is not refused for material: the append really fails.)
-    const value = 'zqxjvw-firstuse-359';
+    const value = 'zqxjvw-firstuse-value';
     const main = tmpRoot(`main-${value}-`);
     mkdirSync(join(main, '.git', 'worktrees', 'wt'), { recursive: true });
     writeFileSync(join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..');
     writeFileSync(join(main, '.kubic'), 'not a directory');
-    const worktree = tmpRoot('wt-359-');
+    const worktree = tmpRoot('wt-credential-');
     writeFileSync(
       join(worktree, '.git'),
       `gitdir: ${join(main, '.git', 'worktrees', 'wt')}\n`,
@@ -424,7 +424,7 @@ describe('a first-use audit failure never carries the value', () => {
       },
       workspace: worktree,
       role: 'root',
-      sessionId: () => 'sess-359',
+      sessionId: () => 'sess-credential',
       onError: (message) => errors.push(message),
     });
     expect(
@@ -441,7 +441,7 @@ describe('a first-use audit failure never carries the value', () => {
   });
 
   it('a record that would carry the value is refused on the first use, not written', async () => {
-    const value = 'zqxjvw-firstuse-359';
+    const value = 'zqxjvw-firstuse-value';
     const workspace = tmpRoot(`ws-${value}-`);
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
@@ -451,7 +451,7 @@ describe('a first-use audit failure never carries the value', () => {
       },
       workspace,
       role: 'root',
-      sessionId: () => 'sess-359',
+      sessionId: () => 'sess-credential',
       onError: (message) => errors.push(message),
     });
     await resolver.resolve({
@@ -478,7 +478,7 @@ describe('a dummy key equal to its provider id', () => {
   it('a key matching its provider id does not blank identity, and its use is still audited', async () => {
     vi.stubEnv('LM_STUDIO_API_KEY', KEY);
     const provider = await fakeProvider();
-    const workspace = tmpRoot('ws-359-lms-');
+    const workspace = tmpRoot('ws-credential-lms-');
     const sessionsRoot = tmpRoot();
     writeModelsJson(workspace, provider.url, {
       id: 'lm-studio',
@@ -524,7 +524,7 @@ describe('a dummy key equal to its provider id', () => {
   // `kubic tui` resolves keys without a catalog identity: the row's own
   // provider is still exempt, on the first use and every later one.
   it('the ledger resolver writes a row for every use even with no catalog identity', async () => {
-    const workspace = tmpRoot('ws-359-lms-ledger-');
+    const workspace = tmpRoot('ws-credential-lms-ledger-');
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
       // Env-only tests: the runner must never fire for $VAR uses.
@@ -533,7 +533,7 @@ describe('a dummy key equal to its provider id', () => {
       },
       workspace,
       role: 'root',
-      sessionId: () => 'sess-359',
+      sessionId: () => 'sess-credential',
       onError: (message) => errors.push(message),
     });
     const use = {
@@ -573,7 +573,7 @@ describe('a dummy key equal to its provider id', () => {
 
 describe('createLedgerModelKeyResolver with a short or provider-named key', () => {
   it('appends a ledger row for EVERY use — a dummy key named like its provider is not a secret to refuse over', async () => {
-    const workspace = tmpRoot('ws-359-short-');
+    const workspace = tmpRoot('ws-credential-short-');
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
       // Env-only tests: the runner must never fire for $VAR uses.
@@ -582,7 +582,7 @@ describe('createLedgerModelKeyResolver with a short or provider-named key', () =
       },
       workspace,
       role: 'root',
-      sessionId: () => 'sess-359',
+      sessionId: () => 'sess-credential',
       onError: (message) => errors.push(message),
     });
     const use = {
@@ -610,7 +610,7 @@ describe('createLedgerModelKeyResolver with a short or provider-named key', () =
 describe('kubic run: models.json key use is audited', () => {
   it('appends one ledger record per request; kubic audit shows it without the value; nothing persisted carries it', async () => {
     const provider = await fakeProvider();
-    const workspace = tmpRoot('ws-359-');
+    const workspace = tmpRoot('ws-credential-');
     const sessionsRoot = tmpRoot();
     writeModelsJson(workspace, provider.url);
     const debugLines: string[] = [];
@@ -686,7 +686,7 @@ describe('kubic run: models.json key use is audited', () => {
   // holds one value-less record for the use.
   it('a !command apiKey resolves through the runner; the ledger holds the ref, never the value', async () => {
     const provider = await fakeProvider();
-    const workspace = tmpRoot('ws-224-');
+    const workspace = tmpRoot('ws-credential-');
     const sessionsRoot = tmpRoot();
     vi.stubEnv('KUBIC_TEST_KEY_224', SECRET);
     const command = `!${process.execPath} -e console.log(process.env.KUBIC_TEST_KEY_224)`;
@@ -736,7 +736,7 @@ describe('kubic run: models.json key use is audited', () => {
 
   it('a provider error that echoes the key never reaches the debug channel, the envelope or a persisted file', async () => {
     const provider = await fakeProvider({ rejectEchoingKey: true });
-    const workspace = tmpRoot('ws-359-echo-');
+    const workspace = tmpRoot('ws-credential-echo-');
     const sessionsRoot = tmpRoot();
     writeModelsJson(workspace, provider.url);
     const debugLines: string[] = [];
@@ -773,7 +773,7 @@ describe('kubic run: models.json key use is audited', () => {
   // getting a key into a diagnostic. Without the wrapper the key would reach
   // stderr.
   it('a run-generated debug line that carries the key reaches the debug sink redacted', async () => {
-    const workspace = tmpRoot('ws-359-dbg-');
+    const workspace = tmpRoot('ws-credential-dbg-');
     const sessionsRoot = tmpRoot(`sessions-${SECRET}-`);
     const journalDirs = (): string[] =>
       readdirSync(sessionsRoot)
@@ -819,7 +819,7 @@ describe('kubic run: models.json key use is audited', () => {
 
   it('a completed run whose answer echoes the key persists it nowhere (session, trajectory, envelope)', async () => {
     const provider = await fakeProvider({ answerEchoingKey: true });
-    const workspace = tmpRoot('ws-359-answer-');
+    const workspace = tmpRoot('ws-credential-answer-');
     const sessionsRoot = tmpRoot();
     writeModelsJson(workspace, provider.url);
     const result = await runHeadlessPrompt(
@@ -851,7 +851,7 @@ describe('kubic run: models.json key use is audited', () => {
   // run and are scrubbed of every resolved value.
   it('a prompt that quotes the key is scrubbed from the trajectory and the result', async () => {
     const provider = await fakeProvider();
-    const workspace = tmpRoot('ws-359-prompt-');
+    const workspace = tmpRoot('ws-credential-prompt-');
     const sessionsRoot = tmpRoot();
     writeModelsJson(workspace, provider.url);
     const result = await runHeadlessPrompt(
@@ -871,7 +871,7 @@ describe('kubic run: models.json key use is audited', () => {
   });
 
   it('assembleModels without a resolver keeps the plain env auth (no audit)', async () => {
-    const workspace = tmpRoot('ws-359-');
+    const workspace = tmpRoot('ws-credential-');
     writeModelsJson(workspace, 'http://127.0.0.1:9/v1');
     // A trusted project file without a resolver: the plain
     // env-key auth stays in place and nothing is audited.

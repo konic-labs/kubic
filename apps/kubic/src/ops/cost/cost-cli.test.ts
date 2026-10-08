@@ -770,7 +770,7 @@ describe('kubic cost lock-free reads', () => {
   const open: Harness[] = [];
 
   function tmpRoot(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'cost-251-'));
+    const dir = mkdtempSync(join(tmpdir(), 'cost-cli-'));
     made.push(dir);
     return dir;
   }
@@ -958,7 +958,7 @@ describe('kubic cost project scope and grouping', () => {
   const MODEL_REF = `${FAUX_PROVIDER_ID}/faux-1`;
 
   function tmpRoot(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'cost-250-'));
+    const dir = mkdtempSync(join(tmpdir(), 'cost-cli-'));
     made.push(dir);
     return dir;
   }

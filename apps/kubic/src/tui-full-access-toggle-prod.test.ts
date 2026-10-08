@@ -27,7 +27,7 @@ import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
 const made: string[] = [];
 
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-309-${prefix}`));
+  const dir = mkdtempSync(join(tmpdir(), `kubic-tui-full-access-${prefix}`));
   made.push(dir);
   return dir;
 }

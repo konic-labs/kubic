@@ -239,7 +239,7 @@ describe('explicit skill invocation reaches hidden skills', () => {
   });
 
   function hiddenSkillWorkspace(): { workspace: string; marker: string } {
-    const workspace = tmpRoot('kubic-prod-183-');
+    const workspace = tmpRoot('kubic-prod-skills-');
     const marker = join(workspace, 'invoked');
     // Project skills load inside a repository (the walk stops
     // at the git top level), so mark the workspace root.
@@ -312,7 +312,7 @@ describe('role classes and approval requires reach the installed policy', () => 
     `---\nrole: reviewer\ntools: [read, bash]\nfilesystem: read\nshell: true\nnetwork: ${network}\ngit: false\ncredentials: none\n---\n\n# reviewer\n\n## Prompt\n\nReview.\n`;
 
   function reviewerWorkspace(network: string): string {
-    const workspace = tmpRoot('kubic-prod-196-');
+    const workspace = tmpRoot('kubic-prod-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'reviewer.md'),
@@ -368,7 +368,7 @@ describe('role classes and approval requires reach the installed policy', () => 
   });
 
   it("the role document's requires challenge an otherwise-allowed tool", async () => {
-    const workspace = tmpRoot('kubic-prod-196-');
+    const workspace = tmpRoot('kubic-prod-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'reviewer.md'),
@@ -393,7 +393,7 @@ describe('role classes and approval requires reach the installed policy', () => 
   });
 
   it('a [roles.<name>] requires layer challenges like the document list', async () => {
-    const workspace = tmpRoot('kubic-prod-196-');
+    const workspace = tmpRoot('kubic-prod-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'reviewer.md'),

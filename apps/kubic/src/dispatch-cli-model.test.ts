@@ -20,7 +20,7 @@ import {
   dispatchCommand,
 } from './dispatch.js';
 
-const fixture = mkdtempSync(join(tmpdir(), 'kubic-227-dispatch-'));
+const fixture = mkdtempSync(join(tmpdir(), 'kubic-dispatch-model-'));
 afterAll(() => {
   rmSync(fixture, { recursive: true, force: true });
 });

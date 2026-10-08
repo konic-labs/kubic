@@ -38,8 +38,8 @@ describe('resumed prompt history', () => {
   it('Up recalls the last prompt from the previous process', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-340-ws-');
-    const sessionsRoot = tmpRoot('tui-340-sessions-');
+    const workspace = tmpRoot('tui-history-resume-ws-');
+    const sessionsRoot = tmpRoot('tui-history-resume-sessions-');
     const models = createModels();
     const faux = fauxProvider();
     faux.setResponses([fauxAssistantMessage('noted')]);

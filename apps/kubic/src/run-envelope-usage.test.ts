@@ -33,7 +33,7 @@ afterEach(() => {
 
 describe('run envelope usage', () => {
   it('reports the session usage rows, the tool calls and the model it ran', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'kubic-185-sessions-'));
+    const root = mkdtempSync(join(tmpdir(), 'kubic-run-envelope-sessions-'));
     made.push(root);
     const faux = fauxProvider();
     const models = createModels();

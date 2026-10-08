@@ -42,7 +42,7 @@ import {
 const made: string[] = [];
 
 function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-96-tui-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-approval-'));
   made.push(dir);
   return dir;
 }

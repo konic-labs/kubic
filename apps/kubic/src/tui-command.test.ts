@@ -282,7 +282,7 @@ describe('kubic tui keybindings file', () => {
       rmSync(dir, { recursive: true, force: true });
   });
   const keybindingsFile = (json: string): string => {
-    const dir = mkdtempSync(join(tmpdir(), 'kubic-303-'));
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-command-'));
     dirs.push(dir);
     const file = join(dir, 'keybindings.json');
     writeFileSync(file, json);

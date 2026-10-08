@@ -946,7 +946,7 @@ describe('journal CLI worktree status', () => {
   it('status names the repo root on a real repository', async () => {
     const journalDir = mkTmp('j-');
     const repo = createGitSandbox({
-      prefix: 'kubic-status-380-',
+      prefix: 'kubic-journal-status-',
       injectProcessEnv: true,
     });
     writeFileSync(join(repo.path, 'a.txt'), 'one\n');
@@ -972,7 +972,7 @@ describe('journal CLI worktree status', () => {
     const journalDir = mkTmp('j-');
     const origin = mkTmp('origin-');
     const repo = createGitSandbox({
-      prefix: 'kubic-status-380-',
+      prefix: 'kubic-journal-status-',
       injectProcessEnv: true,
     });
     repo.git(['init', '--bare', '-q', origin]);

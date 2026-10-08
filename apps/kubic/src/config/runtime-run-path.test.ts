@@ -41,7 +41,7 @@ import { runHeadlessPrompt } from '../headless-run.js';
 
 const tempDirs: string[] = [];
 
-function tmpRoot(prefix = 'kubic-90-run-'): string {
+function tmpRoot(prefix = 'kubic-run-path-'): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
@@ -144,7 +144,7 @@ describe('config feeds the live run path', () => {
 
     // The model asks for a shell write; with `shell = false` the lane never
     // installed bash, so the call is refused and the workspace is untouched.
-    const workspace = tmpRoot('kubic-90-ws-');
+    const workspace = tmpRoot('kubic-run-path-ws-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -183,7 +183,7 @@ describe('config feeds the live run path', () => {
     // out of scope; a change under it during the run is never baselined,
     // never swept, and never shown by `kubic diff`.
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-115-ws-');
+    const workspace = tmpRoot('kubic-run-path-ws-');
     mkdirSync(join(workspace, 'vendor'));
     writeFileSync(join(workspace, 'vendor', 'out.js'), 'gen\n');
     writeFileSync(join(workspace, 'in-scope.txt'), 'v1\n');
@@ -275,7 +275,7 @@ describe('config feeds the live run path', () => {
     expect(runtime.permissions.source).toBe('defaults');
     // The same shell write the narrowed lane refused goes through on the
     // defaults: the refusal above came from the config, not the lane.
-    const workspace = tmpRoot('kubic-90-ws-');
+    const workspace = tmpRoot('kubic-run-path-ws-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -324,7 +324,7 @@ describe('solo-lane projections reach the live path', () => {
     // and an entry that cannot fit is refused (journal_failed, file
     // untouched) instead of landing a record the same append's pruning would
     // delete.
-    const workspace = tmpRoot('kubic-350-bound-');
+    const workspace = tmpRoot('kubic-run-path-bound-');
     const runtime = namedRuntime(workspace, '[journal]\nmaxBytes = 1048576\n');
     expect(runtime.journal.maxBytes).toBe(1_048_576);
     const deps = runtimeRunDeps({
@@ -335,7 +335,7 @@ describe('solo-lane projections reach the live path', () => {
     });
     expect(deps.journalRetention).toEqual({ maxBytes: 1_048_576 });
 
-    const store = new FileJournalStore(tmpRoot('kubic-350-store-'), {
+    const store = new FileJournalStore(tmpRoot('kubic-run-path-store-'), {
       ...(deps.journalRetention ?? {}),
       durable: false,
     });
@@ -356,7 +356,7 @@ describe('solo-lane projections reach the live path', () => {
 
   it('names the lane from [agent].name in the journal and the diff filter', async () => {
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-133-agent-');
+    const workspace = tmpRoot('kubic-run-path-agent-');
     writeFileSync(join(workspace, 'note.txt'), 'v1\n');
     const runtime = namedRuntime(
       workspace,
@@ -460,7 +460,7 @@ describe('solo-lane projections reach the live path', () => {
 
   it('layers [roles.<name>] model + tools under the role document', async () => {
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-133-roles-');
+    const workspace = tmpRoot('kubic-run-path-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'implementer.md'),

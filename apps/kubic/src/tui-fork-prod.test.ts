@@ -131,8 +131,8 @@ describe('/fork and /tree in the TUI', () => {
   it('/fork <entry> switches to a new session; the next prompt continues from the fork', {
     timeout: 30000,
   }, async () => {
-    const sessionsRoot = tmpRoot('tui-332-sessions-');
-    const workspace = tmpRoot('tui-332-ws-');
+    const sessionsRoot = tmpRoot('tui-fork-sessions-');
+    const workspace = tmpRoot('tui-fork-ws-');
     const source = await twoTurnSource(sessionsRoot, workspace);
     const tui = openTui(sessionsRoot, workspace, source.id, ['three']);
     await waitFor(() => tui.fake.counts.started === 1);
@@ -161,8 +161,8 @@ describe('/fork and /tree in the TUI', () => {
   it('/tree forks before the picked prompt and puts it back in the editor', {
     timeout: 30000,
   }, async () => {
-    const sessionsRoot = tmpRoot('tui-332-tree-sessions-');
-    const workspace = tmpRoot('tui-332-tree-ws-');
+    const sessionsRoot = tmpRoot('tui-fork-tree-sessions-');
+    const workspace = tmpRoot('tui-fork-tree-ws-');
     const source = await twoTurnSource(sessionsRoot, workspace);
     const tui = openTui(sessionsRoot, workspace, source.id, ['retried']);
     await waitFor(() => tui.fake.counts.started === 1);

@@ -43,7 +43,7 @@ import {
 
 const tempDirs: string[] = [];
 
-function tmpRoot(prefix = 'kubic-294-tui-'): string {
+function tmpRoot(prefix = 'kubic-tui-path-'): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
@@ -211,7 +211,7 @@ describe('tuiDepsWithDefaults forwards the lane projection', () => {
 
   it('layers config [roles.implementer] tools under the document on kubic tui --role', async () => {
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-294-roles-');
+    const workspace = tmpRoot('kubic-tui-path-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'implementer.md'),

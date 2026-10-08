@@ -14,7 +14,7 @@ import {
   MemoryStorage,
   type Storage,
 } from '../pi-boundary.js';
-import { bootLane, escalateSoloModel, type Lane } from './solo.js';
+import { bootLane, escalateLaneModel, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -24,7 +24,7 @@ vi.mock('../compaction.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../compaction.js')>();
   return {
     ...original,
-    soloCompactionSettings: (options: {
+    compactionSettings: (options: {
       configuredReserveTokens?: number;
       currentWindow?: () => number | undefined;
     }) => ({
@@ -130,7 +130,7 @@ describe('escalateSoloModel validates before recording', () => {
       new Error('configure rejected'),
     );
     await expect(
-      escalateSoloModel(
+      escalateLaneModel(
         booted,
         ladder,
         'faux/b',
@@ -149,7 +149,7 @@ describe('escalateSoloModel validates before recording', () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();
     await expect(
-      escalateSoloModel(
+      escalateLaneModel(
         booted,
         ladder,
         'not-a-provider-id',
@@ -169,7 +169,7 @@ describe('escalateSoloModel rejects same-model no-ops', () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();
     await expect(
-      escalateSoloModel(
+      escalateLaneModel(
         booted,
         ladder,
         'faux/a',
@@ -188,7 +188,7 @@ describe('escalateSoloModel switches the live conversation', () => {
   it('fires exactly once: event recorded, model switched, second attempt refused', async () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();
-    const { affinity, event } = await escalateSoloModel(
+    const { affinity, event } = await escalateLaneModel(
       booted,
       ladder,
       'faux/b',
@@ -209,7 +209,7 @@ describe('escalateSoloModel switches the live conversation', () => {
     // A second, otherwise-distinct step is refused by the ladder bound
     // (maxEscalations: 1) — not by the same-model guard.
     await expect(
-      escalateSoloModel(
+      escalateLaneModel(
         booted,
         ladder,
         'faux/a',

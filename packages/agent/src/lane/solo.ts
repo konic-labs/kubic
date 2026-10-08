@@ -12,7 +12,7 @@ import {
   createManualKeepScope,
   DEFAULT_RESERVE_TOKENS,
   type ManualKeepScope,
-  soloCompactionSettings,
+  compactionSettings,
 } from '../compaction.js';
 import type { EscalationLadder, ThinkingInputs } from '../model-select.js';
 import {
@@ -84,7 +84,7 @@ export const DEFAULT_ROLE = [
   'Keep answers short and technical.',
 ].join('\n');
 
-export interface SoloPromptInput {
+export interface PromptInput {
   cwd: string;
   toolNames: string[];
   metadata: Record<string, string>;
@@ -100,7 +100,7 @@ export interface SoloPromptInput {
 // would change the model-visible bytes; a single untagged section carries
 // exactly the prompt the model sees, and the harness still diffs it as one
 // positional `pi.system` entry.
-export function assembleSoloPrompt(input: SoloPromptInput): string {
+export function assemblePrompt(input: PromptInput): string {
   const full: SystemPromptInput = {
     role: input.role ?? DEFAULT_ROLE,
     cwd: input.cwd,
@@ -113,7 +113,7 @@ export function assembleSoloPrompt(input: SoloPromptInput): string {
   return assembleSystemPrompt(full);
 }
 
-function defaultSoloModelId(model: { provider: string; id: string }): string {
+function defaultModelId(model: { provider: string; id: string }): string {
   return `${model.provider}/${model.id}`;
 }
 
@@ -322,7 +322,7 @@ export interface Lane {
   close(context: Context): Promise<void>;
 }
 
-export function splitSoloModelId(id: string): {
+export function splitModelId(id: string): {
   provider: string;
   modelId: string;
 } {
@@ -342,7 +342,7 @@ export function splitSoloModelId(id: string): {
 // plus sink event fire only AFTER configure resolves — so a refused step,
 // a malformed id, or a configure rejection burns no escalation budget,
 // emits no event, and leaves affinity untouched.
-export async function escalateSoloModel(
+export async function escalateLaneModel(
   solo: Lane,
   ladder: EscalationLadder,
   to: string,
@@ -366,7 +366,7 @@ export async function escalateSoloModel(
       `refusing no-op escalation: already on '${to}' (same-model step)`,
     );
   }
-  const parsed = splitSoloModelId(to);
+  const parsed = splitModelId(to);
   validateEscalation(ladder, from, to);
   // The reserve follows the live model through soloCompactionSettings'
   // `currentWindow` getter (which reads affinity first), so no explicit
@@ -459,7 +459,7 @@ export async function bootLane(
   // `configure({ model })`, a boot — re-clamps on the next use, with no
   // explicit re-clamp step. Affinity and the boot model are fallbacks for
   // the window between this boot and its first configure.
-  let currentModelId = defaultSoloModelId(options.model);
+  let currentModelId = defaultModelId(options.model);
   const windowOf = (provider: string, modelId: string) =>
     options.models.getModels(provider).find((model) => model.id === modelId)
       ?.contextWindow;
@@ -485,7 +485,7 @@ export async function bootLane(
     }
     const id = soloRef?.affinity?.modelId ?? currentModelId;
     try {
-      const parsed = splitSoloModelId(id);
+      const parsed = splitModelId(id);
       return windowOf(parsed.provider, parsed.modelId);
     } catch {
       return undefined;
@@ -497,7 +497,7 @@ export async function bootLane(
     // Kubic executes one tool at a time:
     // parallel rounds would race the destructive/effect operations.
     toolExecution: options.settings?.toolExecution ?? 'sequential',
-    compaction: soloCompactionSettings({
+    compaction: compactionSettings({
       ...(options.compaction?.enabled === undefined
         ? {}
         : { enabled: options.compaction.enabled }),
@@ -568,7 +568,7 @@ export async function bootLane(
   agentState = await harness.documentState(AgentDoc, conversation.id, context);
   // Reconcile the stored conversation model with the selection
   // BEFORE the extension fixes the system prompt and the reserve.
-  const selectedId = defaultSoloModelId(options.model);
+  const selectedId = defaultModelId(options.model);
   const storedAgent = await harness.snapshot(
     AgentDoc,
     conversation.id,
@@ -578,7 +578,7 @@ export async function bootLane(
   const storedId =
     stored === undefined
       ? undefined
-      : defaultSoloModelId({
+      : defaultModelId({
           provider: stored.provider,
           id: stored.modelId,
         });
@@ -598,12 +598,12 @@ export async function bootLane(
     keep === undefined
       ? options.model
       : resolveStoredModel(options.models, keep);
-  const effectiveId = defaultSoloModelId(effectiveModel);
+  const effectiveId = defaultModelId(effectiveModel);
   currentModelId = effectiveId;
 
   const promptText =
     options.systemPrompt ??
-    assembleSoloPrompt({
+    assemblePrompt({
       cwd: options.env.cwd,
       toolNames: effectiveToolNames,
       metadata: {

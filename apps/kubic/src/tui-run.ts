@@ -52,7 +52,7 @@ import {
 } from '../../../packages/agent/src/lane/session-store.js';
 import {
   bootLane,
-  escalateSoloModel,
+  escalateLaneModel,
   type LaneCompactionOptions,
   type Lane,
 } from '../../../packages/agent/src/lane/solo.js';
@@ -1961,7 +1961,7 @@ export async function bootTuiLane(
           // level for the NEW model in the same switch.
           const requested = `${selection.provider}/${selection.modelId}`;
           if (laneLadder !== undefined && requested !== liveModelRef) {
-            await escalateSoloModel(
+            await escalateLaneModel(
               booted,
               laneLadder,
               requested,
@@ -2124,7 +2124,7 @@ export async function bootTuiLane(
             );
             if (next !== undefined) {
               try {
-                await escalateSoloModel(
+                await escalateLaneModel(
                   booted,
                   laneLadder,
                   next,

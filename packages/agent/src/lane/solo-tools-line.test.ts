@@ -31,7 +31,7 @@ vi.mock('../compaction.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../compaction.js')>();
   return {
     ...original,
-    soloCompactionSettings: (options: {
+    compactionSettings: (options: {
       configuredReserveTokens?: number;
       currentWindow?: () => number | undefined;
     }) => ({

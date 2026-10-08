@@ -17,7 +17,7 @@ import {
   ToolTask,
 } from '../pi-boundary.js';
 import {
-  assembleSoloPrompt,
+  assemblePrompt,
   bootLane,
   PROMPT_SECTION,
   type Lane,
@@ -54,7 +54,7 @@ vi.mock('../compaction.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../compaction.js')>();
   return {
     ...original,
-    soloCompactionSettings: (options: {
+    compactionSettings: (options: {
       enabled?: boolean;
       configuredReserveTokens?: number;
       keepRecentTokens?: number;
@@ -240,7 +240,7 @@ describe('solo boot prompt sections', () => {
     const solo = await boot({ rolePrompt: 'ROLE TEXT' });
     const prompt = await committedPrompt(solo);
     expect(prompt).toBe(
-      assembleSoloPrompt({
+      assemblePrompt({
         role: 'ROLE TEXT',
         cwd: '/fake',
         toolNames: Object.keys((await import('../ops/registry.js')).OPERATIONS),
@@ -254,7 +254,7 @@ describe('solo boot prompt sections', () => {
     const solo = await boot({ promptSections: ['## Skills', 'skill-a'] });
     const prompt = await committedPrompt(solo);
     expect(prompt).toBe(
-      assembleSoloPrompt({
+      assemblePrompt({
         role: [
           'You are a coding agent working in a terminal.',
           'Use the read, write, edit, grep, find, ls, and bash tools to inspect and change files.',
@@ -312,8 +312,8 @@ describe('solo boot hands HarnessSettings compaction to', () => {
     });
     SOLOS.push(solo);
     expect(captured.compactionOptions[0]?.currentWindow()).toBe(200_000);
-    const { escalateSoloModel } = await import('./solo.js');
-    await escalateSoloModel(
+    const { escalateLaneModel } = await import('./solo.js');
+    await escalateLaneModel(
       solo,
       {
         steps: ['faux/big', 'faux/small'],

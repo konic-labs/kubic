@@ -157,7 +157,7 @@ export function createManualKeepScope(): ManualKeepScope {
 // caller that wants the head start can still pass an explicit value.
 export const BACKGROUND_TOKENS = 0;
 
-export interface SoloCompactionSettingsOptions {
+export interface CompactionSettingsOptions {
   enabled?: boolean;
   configuredReserveTokens?: number;
   keepRecentTokens?: number;
@@ -178,8 +178,8 @@ export interface SoloCompactionSettingsOptions {
  * threshold check, overflow decision, cut selection and summarization request,
  * so a model switch follows without any re-clamp call (Pi 1.0 has none).
  */
-export function soloCompactionSettings(
-  options: SoloCompactionSettingsOptions,
+export function compactionSettings(
+  options: CompactionSettingsOptions,
 ): Partial<CompactionPolicy> {
   const configured = options.configuredReserveTokens ?? DEFAULT_RESERVE_TOKENS;
   const configuredKeep = options.keepRecentTokens ?? KEEP_RECENT_TOKENS;
@@ -242,7 +242,7 @@ export function buildCompactPrompt(input: CompactPromptInput): string {
  * `Pick<SoloLane, 'harness' | 'conversation'>`. Naming `SoloLane` here would
  * make compaction.ts import lane/solo.ts while solo.ts imports this module.
  */
-export interface SoloCompactionLane {
+export interface CompactionLane {
   readonly harness: Harness;
   readonly conversation: Conversation;
   // The lane's manual-compaction scope: the user's `/compact` holds it from
@@ -334,7 +334,7 @@ export interface ManualCompactionOptions {
 // from that read, before the task is admitted: after placement the context is
 // the summary.
 async function admitCompaction(
-  solo: SoloCompactionLane,
+  solo: CompactionLane,
   focus: string | undefined,
   view: ContextView,
   context: Context,
@@ -352,7 +352,7 @@ async function admitCompaction(
  * holds the manual keep window while the task is pending.
  */
 export async function runManualCompaction(
-  solo: SoloCompactionLane,
+  solo: CompactionLane,
   focus: string | undefined,
   context: Context,
   options: ManualCompactionOptions = {},
@@ -376,7 +376,7 @@ export async function runManualCompaction(
  * exit path, admission refusals included.
  */
 export async function runCompactCommand(
-  solo: SoloCompactionLane,
+  solo: CompactionLane,
   focus: string | undefined,
   context: Context,
   options: ManualCompactionOptions = {},
@@ -390,7 +390,7 @@ export async function runCompactCommand(
 }
 
 async function admitAndSettle(
-  solo: SoloCompactionLane,
+  solo: CompactionLane,
   focus: string | undefined,
   view: ContextView,
   context: Context,

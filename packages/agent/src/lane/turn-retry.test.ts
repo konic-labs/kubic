@@ -16,7 +16,7 @@ import {
   type FauxResponseStep,
 } from './test-harness.js';
 import {
-  recoverSoloOverflowTurn,
+  recoverOverflowTurn,
   runTurnWithOverflowRecovery,
 } from './turn.js';
 
@@ -100,7 +100,7 @@ describe('solo overflow recovery', () => {
   it('a non-overflow failure passes through with no retry', async () => {
     const lane = await open();
     const failed = { reason: 'tool_failed' as const, error: 'boom' };
-    const recovered = await recoverSoloOverflowTurn(lane.solo, 'hi', failed, {
+    const recovered = await recoverOverflowTurn(lane.solo, 'hi', failed, {
       requestId: 'req-1',
       context: BACKGROUND_CONTEXT,
     });
@@ -116,7 +116,7 @@ describe('solo overflow recovery', () => {
       fauxAssistantMessage('retry-ok'),
     ]);
     const seen: RetryDecision[] = [];
-    const recovered = await recoverSoloOverflowTurn(
+    const recovered = await recoverOverflowTurn(
       lane.solo,
       'do the thing',
       { reason: 'context_overflow', error: 'too many tokens' },
@@ -145,7 +145,7 @@ describe('solo overflow recovery', () => {
         'completed',
       );
     }
-    const recovered = await recoverSoloOverflowTurn(
+    const recovered = await recoverOverflowTurn(
       lane.solo,
       'do the thing',
       { reason: 'context_overflow', error: 'prompt is too long' },
@@ -174,7 +174,7 @@ describe('solo overflow recovery', () => {
         'completed',
       );
     }
-    const recovered = await recoverSoloOverflowTurn(
+    const recovered = await recoverOverflowTurn(
       lane.solo,
       'do the thing',
       { reason: 'context_overflow', error: 'prompt is too long' },
@@ -190,7 +190,7 @@ describe('solo overflow recovery', () => {
   it('an exhausted budget abandons without compacting or retrying', async () => {
     const lane = await open();
     const failed = { reason: 'context_overflow' as const, error: 'full' };
-    const recovered = await recoverSoloOverflowTurn(
+    const recovered = await recoverOverflowTurn(
       lane.solo,
       'do the thing',
       failed,

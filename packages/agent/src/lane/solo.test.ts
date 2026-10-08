@@ -27,12 +27,12 @@ import {
 } from '../pi-boundary.js';
 import { PromptCacheError } from '../prompts.js';
 import {
-  assembleSoloPrompt,
+  assemblePrompt,
   bootLane,
   PROMPT_SECTION,
   DEFAULT_ROLE,
   type Lane,
-  splitSoloModelId,
+  splitModelId,
 } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
@@ -43,7 +43,7 @@ vi.mock('../compaction.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../compaction.js')>();
   return {
     ...original,
-    soloCompactionSettings: (options: {
+    compactionSettings: (options: {
       enabled?: boolean;
       configuredReserveTokens?: number;
       keepRecentTokens?: number;
@@ -134,18 +134,18 @@ vi.mock('./tools-adapter.js', async () => {
 // misrouted id fails at parse time, never inside a run.
 describe('splitSoloModelId', () => {
   it('splits provider from id on the first slash', () => {
-    expect(splitSoloModelId('prov/id')).toEqual({
+    expect(splitModelId('prov/id')).toEqual({
       provider: 'prov',
       modelId: 'id',
     });
   });
 
   it.each(['noslash', '/id', 'prov/'])('rejects %s', (id) => {
-    expect(() => splitSoloModelId(id)).toThrowError(PromptCacheError);
+    expect(() => splitModelId(id)).toThrowError(PromptCacheError);
   });
 
   it("keeps 'b/c' as the model id for 'a/b/c'", () => {
-    expect(splitSoloModelId('a/b/c')).toEqual({
+    expect(splitModelId('a/b/c')).toEqual({
       provider: 'a',
       modelId: 'b/c',
     });
@@ -305,7 +305,7 @@ describe('solo boot on the durable harness', () => {
   it('assembles exactly the prompt bytes in one untagged section', async () => {
     const solo = await boot();
     await driveOneTurn(solo);
-    const expected = assembleSoloPrompt({
+    const expected = assemblePrompt({
       role: DEFAULT_ROLE,
       cwd: '/fake',
       toolNames: Object.keys((await import('../ops/registry.js')).OPERATIONS),

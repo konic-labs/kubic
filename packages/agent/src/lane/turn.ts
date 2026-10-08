@@ -252,7 +252,7 @@ export function turnLaneRecord(outcome: TurnOutcome): {
 // compacted first and retried once on the fresh context. Every other failure
 // passes through untouched — stronger-model and new-agent decisions belong to
 // and, which consume `chooseRetry`'s outcome, never this wrapper.
-export interface SoloOverflowRecovery {
+export interface OverflowRecovery {
   outcome: TurnOutcome;
   retried: boolean;
   decision?: RetryDecision;
@@ -272,13 +272,13 @@ export interface OverflowRecoveryOptions {
 const OVERFLOW_RECOVERY_FOCUS =
   'The context overflowed mid-run; keep what a single retry of the current task needs.';
 
-export async function recoverSoloOverflowTurn(
+export async function recoverOverflowTurn(
   solo: Lane,
   prompt: string,
   failed: { reason: TurnFailureReason; error?: string },
   options: RunTurnOptions,
   recovery: OverflowRecoveryOptions = {},
-): Promise<SoloOverflowRecovery> {
+): Promise<OverflowRecovery> {
   const outcome: TurnOutcome = {
     kind: 'failed',
     reason: failed.reason,
@@ -326,12 +326,12 @@ export async function runTurnWithOverflowRecovery(
   solo: Lane,
   prompt: string,
   options: RunTurnOptions & OverflowRecoveryOptions,
-): Promise<SoloOverflowRecovery> {
+): Promise<OverflowRecovery> {
   const outcome = await runTurn(solo, prompt, options);
   if (outcome.kind !== 'failed' || outcome.reason !== 'context_overflow')
     return { outcome, retried: false };
   const { retryBudget, onRetryDecision } = options;
-  return recoverSoloOverflowTurn(solo, prompt, outcome, options, {
+  return recoverOverflowTurn(solo, prompt, outcome, options, {
     ...(retryBudget === undefined ? {} : { retryBudget }),
     ...(onRetryDecision === undefined ? {} : { onRetryDecision }),
   });

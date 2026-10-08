@@ -41,10 +41,10 @@ vi.mock('../compaction.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../compaction.js')>();
   return {
     ...original,
-    soloCompactionSettings: (
-      options: Parameters<typeof original.soloCompactionSettings>[0],
+    compactionSettings: (
+      options: Parameters<typeof original.compactionSettings>[0],
     ) => {
-      const settings = original.soloCompactionSettings(options);
+      const settings = original.compactionSettings(options);
       compaction.captured.push(settings as never);
       return settings;
     },

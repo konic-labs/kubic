@@ -23,9 +23,9 @@ import {
   runManualCompaction,
   BACKGROUND_TOKENS,
   KEEP_RECENT_TOKENS,
-  type SoloCompactionLane,
+  type CompactionLane,
   SYSTEM_ENTRY_ESTIMATE,
-  soloCompactionSettings,
+  compactionSettings,
 } from './compaction.js';
 import {
   BACKGROUND_CONTEXT,
@@ -136,7 +136,7 @@ afterEach(async () => {
   openHarnesses.clear();
 });
 
-async function openSolo(options: {
+async function openLane(options: {
   readonly models: readonly ModelSpec[];
   readonly compaction: HarnessSettings['compaction'];
   readonly reply?: (request: CapturedRequest) => string;
@@ -196,7 +196,7 @@ function entryReason(entry: { readonly data?: unknown }): unknown {
 
 describe('soloCompactionSettings (the reserve is read live)', () => {
   it('defaults to the Kubic budget: enabled, 16384 reserve, 20000 keep-recent, background off', () => {
-    const settings = soloCompactionSettings({ currentWindow: () => 200000 });
+    const settings = compactionSettings({ currentWindow: () => 200000 });
     expect(DEFAULT_RESERVE_TOKENS).toBe(16384);
     expect(KEEP_RECENT_TOKENS).toBe(20000);
     expect(BACKGROUND_TOKENS).toBe(0);
@@ -208,7 +208,7 @@ describe('soloCompactionSettings (the reserve is read live)', () => {
 
   it('clamps the reserve to the current model window and re-clamps when the window changes', () => {
     let window = 8192;
-    const settings = soloCompactionSettings({
+    const settings = compactionSettings({
       currentWindow: () => window,
     });
     // 8192 * 0.25 = 2048, below the configured default: clamped.
@@ -225,7 +225,7 @@ describe('soloCompactionSettings (the reserve is read live)', () => {
   });
 
   it('honours explicit overrides (configured reserve, keep-recent, background)', () => {
-    const settings = soloCompactionSettings({
+    const settings = compactionSettings({
       enabled: false,
       configuredReserveTokens: 1000,
       keepRecentTokens: 123,
@@ -242,7 +242,7 @@ describe('soloCompactionSettings (the reserve is read live)', () => {
 
   it('caps the reserve at a quarter of a small window', () => {
     expect(MAX_RESERVE_FRACTION).toBe(0.25);
-    const settings = soloCompactionSettings({ currentWindow: () => 4096 });
+    const settings = compactionSettings({ currentWindow: () => 4096 });
     expect(settings.reserveTokens).toBe(1024);
   });
 });
@@ -253,9 +253,9 @@ describe('the harness threshold follows the live reserve', () => {
   it('keeps a small-window session below the clamped threshold, so nothing compacts', async () => {
     // Window 3000, clamped reserve 750: threshold 2250. Unclamped (16384) the
     // threshold would be negative and this exchange would compact.
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'small', contextWindow: 3000, maxTokens: 1000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
         keepRecentTokens: 200,
         currentWindow: () => 3000,
@@ -273,12 +273,12 @@ describe('the harness threshold follows the live reserve', () => {
     // The settings object is built ONCE. `laneModel` mirrors the lane's
     // current model; updates it on a switch and never touches settings.
     let laneModel = { contextWindow: 3000, maxTokens: 5000 };
-    const settings = soloCompactionSettings({
+    const settings = compactionSettings({
       configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
       keepRecentTokens: 200,
       currentWindow: () => laneModel.contextWindow,
     });
-    const result = await openSolo({
+    const result = await openLane({
       models: [
         { id: 'small', contextWindow: 3000, maxTokens: 5000 },
         { id: 'large', contextWindow: 100000, maxTokens: 5000 },
@@ -331,9 +331,9 @@ describe('automatic compaction (threshold crossing)', () => {
     // Window 3000, configured reserve 7000 -> clamped to 750; blocking
     // threshold 2250. The first exchange (~2600 estimated tokens) crosses it;
     // the compacted context (summary + a1 + u2) stays below it.
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'small', contextWindow: 3000, maxTokens: 1000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: 7000,
         keepRecentTokens: 200,
         currentWindow: () => 3000,
@@ -365,9 +365,9 @@ describe('automatic compaction (threshold crossing)', () => {
 describe('runManualCompaction (manual compaction)', () => {
   it('passes the focus verbatim into Kubic compact prompt as the instructions', async () => {
     const focus = 'keep the failing test names and exact file paths';
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
         keepRecentTokens: 200,
         currentWindow: () => 100000,
@@ -403,9 +403,9 @@ describe('runManualCompaction (manual compaction)', () => {
 describe('runManualCompaction (the TUI /compact path)', () => {
   it('admits, awaits and reports the pre-cut context estimate', async () => {
     const focus = 'keep the failing test names';
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
         keepRecentTokens: 200,
         currentWindow: () => 100000,
@@ -441,9 +441,9 @@ describe('runManualCompaction (the TUI /compact path)', () => {
     // has nothing to cut, and Pi completes the task without placing a
     // `pi.compaction` entry (CompactionResult's entryId/submissionId both
     // absent). Claiming `compacted` there would be a lie.
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
         keepRecentTokens: KEEP_RECENT_TOKENS,
         currentWindow: () => 100000,
@@ -463,9 +463,9 @@ describe('runManualCompaction (the TUI /compact path)', () => {
   });
 
   it('reports a cancelled compaction as aborted, never as a silent no-op', async () => {
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
         keepRecentTokens: 200,
         currentWindow: () => 100000,
@@ -493,9 +493,9 @@ describe('runManualCompaction (the TUI /compact path)', () => {
   });
 
   it('reports an unavailable model as a failed compaction, not a throw', async () => {
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
         keepRecentTokens: 200,
         currentWindow: () => 100000,
@@ -528,9 +528,9 @@ describe('background compaction is pinned off', () => {
     // Window 3000, reserve 750, blocking threshold 2250. Pi's own default
     // (32768 below the threshold) would compact anywhere above -30518 -- i.e.
     // always; Kubic's pinned 0 keeps the reserved room as the only trigger.
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'small', contextWindow: 3000, maxTokens: 1000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: 7000,
         keepRecentTokens: 200,
         currentWindow: () => 3000,
@@ -548,9 +548,9 @@ describe('background compaction is pinned off', () => {
     // Same exchange, background band lowered to 2000 tokens below blocking:
     // now the ~1200-token context is inside the band, and the compaction
     // starts without blocking the turn.
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'small', contextWindow: 3000, maxTokens: 1000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: 7000,
         keepRecentTokens: 200,
         backgroundTokens: 2000,
@@ -658,7 +658,7 @@ describe('effectiveKeepRecentTokens (the kept window scales with the window)', (
 describe('soloCompactionSettings (the kept window is read live)', () => {
   it('follows the current model window, like the reserve', () => {
     let window = 8192;
-    const settings = soloCompactionSettings({ currentWindow: () => window });
+    const settings = compactionSettings({ currentWindow: () => window });
     expect(settings.keepRecentTokens).toBe(1536);
     window = 200000;
     expect(settings.keepRecentTokens).toBe(20000);
@@ -671,7 +671,7 @@ describe('manual compaction keeps less while it is pending', () => {
   it('keeps at most MANUAL_KEEP_RECENT_TOKENS while the scope is open, and resets on release', () => {
     expect(MANUAL_KEEP_RECENT_TOKENS).toBe(2000);
     const manualKeep = createManualKeepScope();
-    const settings = soloCompactionSettings({
+    const settings = compactionSettings({
       currentWindow: () => 200000,
       manualKeep,
     });
@@ -687,7 +687,7 @@ describe('manual compaction keeps less while it is pending', () => {
 
   it('keeps the smaller effective window on a tiny model', () => {
     const manualKeep = createManualKeepScope();
-    const settings = soloCompactionSettings({
+    const settings = compactionSettings({
       currentWindow: () => 8192,
       manualKeep,
     });
@@ -712,9 +712,9 @@ describe('manual compaction keeps less while it is pending', () => {
 describe('runManualCompaction on a short session', () => {
   it('places a summary on about 5k tokens of history with the default keep window', async () => {
     const manualKeep = createManualKeepScope();
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'large', contextWindow: 200000, maxTokens: 20000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
         currentWindow: () => 200000,
         manualKeep,
@@ -735,9 +735,9 @@ describe('runManualCompaction on a short session', () => {
   });
 
   it('reports a session that is only its most recent turn as nothing, with the reason', async () => {
-    const result = await openSolo({
+    const result = await openLane({
       models: [{ id: 'large', contextWindow: 200000, maxTokens: 20000 }],
-      compaction: soloCompactionSettings({
+      compaction: compactionSettings({
         configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
         currentWindow: () => 200000,
       }),
@@ -776,7 +776,7 @@ function fakeManualLane(
   outcome: unknown,
   admissionError?: string,
 ): {
-  lane: SoloCompactionLane;
+  lane: CompactionLane;
   manualKeep: ReturnType<typeof createManualKeepScope>;
   activeWhilePending: boolean[];
 } {
@@ -805,7 +805,7 @@ function fakeManualLane(
     },
   };
   return {
-    lane: lane as unknown as SoloCompactionLane,
+    lane: lane as unknown as CompactionLane,
     manualKeep,
     activeWhilePending,
   };

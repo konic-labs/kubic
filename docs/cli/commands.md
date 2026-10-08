@@ -1898,7 +1898,7 @@ the record count, exclusions **by tag** (`env-failure-excluded`,
 `cross-boundary-excluded`, `no-preference-signal-excluded`,
 `prompt-mismatch-excluded`, `no-counterpart-excluded`,
 `singleton-excluded`) with a file/tag/reason row each, and a provenance
-summary (distinct sessions, agents, worktrees and models). Text mode
+summary (distinct sessions, worktrees and models). Text mode
 prints one `dataset: …` summary line; `--json` wraps the manifest in
 `{ok, exitCode, type, dataset, out, manifest}`.
 

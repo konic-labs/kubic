@@ -118,7 +118,6 @@ export interface DatasetManifest {
   // Distinct provenance values across the dataset, sorted.
   provenance: {
     sessions: string[];
-    agents: string[];
     worktrees: string[];
     models: string[];
   };
@@ -210,7 +209,6 @@ export function exportDataset(options: DatasetExportOptions): DatasetManifest {
   }
   const manifestPath = `${options.out}.manifest.json`;
   const sessions = new Set<string>();
-  const agents = new Set<string>();
   const worktrees = new Set<string>();
   const models = new Set<string>();
   const excluded: Record<string, number> = {};
@@ -241,7 +239,6 @@ export function exportDataset(options: DatasetExportOptions): DatasetManifest {
   };
   const collect = (exported: TrajectoryExport): void => {
     sessions.add(exported.provenance.sessionId);
-    agents.add(exported.provenance.agentId);
     worktrees.add(exported.provenance.worktree);
     models.add(exported.provenance.model);
   };
@@ -366,7 +363,6 @@ export function exportDataset(options: DatasetExportOptions): DatasetManifest {
     exclusions,
     provenance: {
       sessions: [...sessions].sort(),
-      agents: [...agents].sort(),
       worktrees: [...worktrees].sort(),
       models: [...models].sort(),
     },

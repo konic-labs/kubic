@@ -1,5 +1,5 @@
+import { EXIT_FAILED, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { describe, expect, it } from 'vitest';
-import { EXIT_FAILED, EXIT_USAGE } from '../../core/src/cli/exit-codes.js';
 import { runBenchmarkCommand, runEvalCommand } from './cli.js';
 import { EvalRunnerError } from './runner.js';
 import type { EvalSignals } from './signals.js';

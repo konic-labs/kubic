@@ -9,7 +9,7 @@
 // directory and what the journal covers, the model's explanation on `?`,
 // the next queued ask, and the keys that answer it. Pure over a UiTheme.
 
-import type { UiTheme } from '../../core/src/ui/style.js';
+import type { UiTheme } from '@kubic/core/ui/style';
 import type { ApprovalAction, ApprovalViewRequest } from './approval-view.js';
 import { keyCap } from './chrome.js';
 import type { CellDisplay } from './transcript.js';

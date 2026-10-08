@@ -2,8 +2,9 @@
 // editor's autocomplete and the submit path's dispatcher all read this one
 // list, so a command that exists is discoverable and an unknown one is
 // refused locally instead of being sent to the model.
+
+import { PRESENTATION_COMMANDS } from '@kubic/core/presentation';
 import { describe, expect, it } from 'vitest';
-import { PRESENTATION_COMMANDS } from '../../core/src/presentation.js';
 import { DEFAULT_KEY_REGISTRY } from './keybindings.js';
 import {
   findSlashCommand,

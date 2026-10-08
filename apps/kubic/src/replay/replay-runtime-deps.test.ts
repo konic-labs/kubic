@@ -13,17 +13,16 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   attachSession,
   openSessionStore,
-} from '../../../../packages/agent/src/lane/session-store.js';
-import { fauxToolUse } from '../../../../packages/agent/src/lane/test-harness.js';
+} from '@kubic/agent/lane/session-store';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../../../packages/agent/src/lane/transcript.js';
-import { DEFAULT_PERMISSIONS } from '../../../../packages/agent/src/permissions.js';
+} from '@kubic/agent/lane/transcript';
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -31,19 +30,20 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../../packages/exec/src/file-bridge.js';
-import { loadRuntimeConfig } from '../../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../../packages/host/src/config/trust-store.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { loadRuntimeConfig } from '@kubic/host/config/runtime';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
 import {
   type ReplayRunRequest,
   type ReplayRuntimeDeps,
   runReplayCommand,
-} from '../../../../packages/host/src/replay/replay.js';
-import { createProdReplayRun } from '../../../../packages/host/src/replay/run-prod.js';
-import { buildTrajectoryExport } from '../../../../packages/trajectory/src/export.js';
-import { parseTrajectoryExportJSON } from '../../../../packages/trajectory/src/schema.js';
+} from '@kubic/host/replay/replay';
+import { createProdReplayRun } from '@kubic/host/replay/run-prod';
+import { buildTrajectoryExport } from '@kubic/trajectory/export';
+import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type CliConfigResult, runtimeRunDeps } from '../config-runtime.js';
 import { runHeadlessPrompt } from '../headless-run.js';
 

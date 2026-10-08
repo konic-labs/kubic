@@ -4,7 +4,7 @@
 // bounded upstream by the trajectory truncation contract
 // (MAX_OBSERVATION_BYTES with byte counts kept) — alongside the
 // provenance, label, and reference-verifier verdict.
-import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { checkFailureCategory, checkProvenance, checkVerifier } from './sft.js';
 import {
   extractProvenance,

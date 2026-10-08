@@ -11,7 +11,7 @@
 // secret-scrubbing bridge and the file modes all keep applying to
 // session JSONL.
 
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import type { FileBridge } from '@kubic/exec/file-bridge';
 import {
   type Context,
   err,

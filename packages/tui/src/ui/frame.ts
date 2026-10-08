@@ -4,9 +4,9 @@
 // (`┌─┐ │ │ └─┘`), a left edge only (the heavy `┏ ┃ ┗` card), or rules
 // above and below with no verticals.
 
-import { FRAME_HEAVY, FRAME_LIGHT } from '../../../core/src/ui/glyphs.js';
-import type { UiTheme } from '../../../core/src/ui/style.js';
-import type { TokenRole } from '../../../core/src/ui/tokens.js';
+import { FRAME_HEAVY, FRAME_LIGHT } from '@kubic/core/ui/glyphs';
+import type { UiTheme } from '@kubic/core/ui/style';
+import type { TokenRole } from '@kubic/core/ui/tokens';
 import { visibleWidth } from '../tui-boundary.js';
 import { exactWidth, fitLine } from './line.js';
 import { fillLine } from './surface.js';

@@ -10,8 +10,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { policyInterceptorHooks } from '../../agent/src/lane/interceptors.js';
+import { policyInterceptorHooks } from '@kubic/agent/lane/interceptors';
 import {
   BACKGROUND_CONTEXT,
   type Conversation,
@@ -27,7 +26,8 @@ import {
   openNodeJsonlStorage,
   type Storage,
   Type,
-} from '../../agent/src/pi-boundary.js';
+} from '@kubic/agent/pi-boundary';
+import { afterEach, describe, expect, it } from 'vitest';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import {
   type ApprovalRequest,

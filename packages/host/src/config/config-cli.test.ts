@@ -2,8 +2,9 @@
 // Presentation only over an injected load: the command must never re-derive
 // paths, trust, or env overrides of its own, and must fail closed with the
 // named reason instead of printing a default.
+
+import { EXIT_FAILED, EXIT_OK } from '@kubic/core/cli/exit-codes';
 import { describe, expect, it } from 'vitest';
-import { EXIT_FAILED, EXIT_OK } from '../../../core/src/cli/exit-codes.js';
 import { resolveEffectivePolicy } from '../policy/enterprise.js';
 import { runConfigCommand } from './config-cli.js';
 import type { RuntimeConfig } from './runtime.js';

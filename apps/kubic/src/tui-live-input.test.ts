@@ -13,13 +13,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { bootLane } from '../../../packages/agent/src/lane/boot.js';
+import { bootLane } from '@kubic/agent/lane/boot';
 import {
   createSession,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
-import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+} from '@kubic/agent/lane/session-store';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -27,10 +26,11 @@ import {
   fauxProvider,
   fauxText,
   fauxToolCall,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   runTuiCommand,

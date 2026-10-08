@@ -12,7 +12,7 @@
 // only the fields the tree reads are typed here. `usage` rows sum into the
 // head row; `fault` events are ignored.
 
-import { DEFAULT_RUN_ROLE } from '../../core/src/run-role.js';
+import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import {
   sanitizeLaneText,
   summarizeToolArguments,

@@ -3,30 +3,24 @@
 // CommandResult, and its exit code is the ExitCode union, so a handler cannot
 // return a code the docs do not name.
 
+import type { CommandResult, ExitCode } from '@kubic/core/cli/exit-codes';
+import { runBenchmarkCommand, runEvalCommand } from '@kubic/eval/cli';
+import { runExportCommand } from '@kubic/eval/export-cli';
+import { runConfigCommand } from '@kubic/host/config/config-cli';
+import { runDoctorCommand } from '@kubic/host/doctor';
+import { runGitCommand } from '@kubic/host/git-cli';
+import { runJournalCommand } from '@kubic/host/journal-cli';
+import { runModelsCommand } from '@kubic/host/models-cli';
+import { runCostCommand } from '@kubic/host/ops/cost/cost-cli';
+import { runAuditCommand } from '@kubic/host/policy/audit-cli';
+import { runPolicyCommand } from '@kubic/host/policy/policy-cli';
+import { runReplayCommand } from '@kubic/host/replay/replay';
+import { runRunCommand } from '@kubic/host/run-cli';
+import { runSessionsCommand } from '@kubic/host/sessions-cli';
+import { runSetupCommand } from '@kubic/host/setup-cli';
+import { runSkillsCommand } from '@kubic/host/skills-cli';
+import { runTrustCommand } from '@kubic/host/trust-cli';
 import { describe, expectTypeOf, it } from 'vitest';
-import type {
-  CommandResult,
-  ExitCode,
-} from '../../../../packages/core/src/cli/exit-codes.js';
-import {
-  runBenchmarkCommand,
-  runEvalCommand,
-} from '../../../../packages/eval/src/cli.js';
-import { runExportCommand } from '../../../../packages/eval/src/export-cli.js';
-import { runConfigCommand } from '../../../../packages/host/src/config/config-cli.js';
-import { runDoctorCommand } from '../../../../packages/host/src/doctor.js';
-import { runGitCommand } from '../../../../packages/host/src/git-cli.js';
-import { runJournalCommand } from '../../../../packages/host/src/journal-cli.js';
-import { runModelsCommand } from '../../../../packages/host/src/models-cli.js';
-import { runCostCommand } from '../../../../packages/host/src/ops/cost/cost-cli.js';
-import { runAuditCommand } from '../../../../packages/host/src/policy/audit-cli.js';
-import { runPolicyCommand } from '../../../../packages/host/src/policy/policy-cli.js';
-import { runReplayCommand } from '../../../../packages/host/src/replay/replay.js';
-import { runRunCommand } from '../../../../packages/host/src/run-cli.js';
-import { runSessionsCommand } from '../../../../packages/host/src/sessions-cli.js';
-import { runSetupCommand } from '../../../../packages/host/src/setup-cli.js';
-import { runSkillsCommand } from '../../../../packages/host/src/skills-cli.js';
-import { runTrustCommand } from '../../../../packages/host/src/trust-cli.js';
 import { prodFirstRunSetup } from '../setup-prod.js';
 import { runTuiCommand } from '../tui-run.js';
 

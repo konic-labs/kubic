@@ -15,35 +15,17 @@
 // that workspace after the run settles, so the trajectory carries the
 // signal:* labels the score is built from.
 import { dirname, join } from 'node:path';
-import {
-  ModelSelectError,
-  parseModelFlag,
-} from '../../../packages/agent/src/model-select.js';
-import {
-  EVAL_DEFAULT_MODEL,
-  type EvalOptions,
-} from '../../../packages/eval/src/cli.js';
-import {
-  EvalRunnerError,
-  type SuiteRunOutcome,
-} from '../../../packages/eval/src/runner.js';
-import {
-  computeSignals,
-  gatesPass,
-} from '../../../packages/eval/src/signals.js';
-import {
-  type EvalSuite,
-  findSuite,
-} from '../../../packages/eval/src/suites.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import {
-  gitHeadOf,
-  withDetachedCheckout,
-} from '../../../packages/exec/src/git-clean.js';
-import { assembleModels } from '../../../packages/host/src/models-cli.js';
-import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
-import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
+import { ModelSelectError, parseModelFlag } from '@kubic/agent/model-select';
+import { EVAL_DEFAULT_MODEL, type EvalOptions } from '@kubic/eval/cli';
+import { EvalRunnerError, type SuiteRunOutcome } from '@kubic/eval/runner';
+import { computeSignals, gatesPass } from '@kubic/eval/signals';
+import { type EvalSuite, findSuite } from '@kubic/eval/suites';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { gitHeadOf, withDetachedCheckout } from '@kubic/exec/git-clean';
+import { assembleModels } from '@kubic/host/models-cli';
+import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
+import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import {
   type CliConfigResult,
   projectTrustFor,

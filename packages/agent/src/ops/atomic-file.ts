@@ -4,9 +4,9 @@
 
 import { createHash } from 'node:crypto';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import type { FileSystem } from '../../../exec/src/env.js';
-import type { JournalEntryInput } from '../../../exec/src/journal.js';
-import { HASH_CHUNK_BYTES } from '../../../exec/src/journal.js';
+import type { FileSystem } from '@kubic/exec/env';
+import type { JournalEntryInput } from '@kubic/exec/journal';
+import { HASH_CHUNK_BYTES } from '@kubic/exec/journal';
 import type { OpContext } from './types.js';
 import { OpError } from './types.js';
 

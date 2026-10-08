@@ -4,11 +4,8 @@
 // never ship without a place in the help. Plain when piped (the binary
 // contract pins that text literally), coloured on a TTY.
 
-import {
-  type CliTheme,
-  createCliTheme,
-} from '../../../../packages/core/src/cli/theme.js';
-import { padVisible } from '../../../../packages/core/src/cli/width.js';
+import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
+import { padVisible } from '@kubic/core/cli/width';
 
 export interface CommandGroup {
   readonly label: string;

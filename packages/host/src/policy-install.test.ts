@@ -6,21 +6,18 @@
 // Faux provider only: zero network, zero paid tokens. The lane boots through
 // the shared faux harness factory.
 
-import { afterAll, describe, expect, it } from 'vitest';
 import {
   bootFauxLane,
   type FauxLane,
   invokeRegisteredTool,
-} from '../../agent/src/lane/test-harness.js';
+} from '@kubic/agent/lane/test-harness';
 import {
   PolicyDeniedError,
   type TelemetryRecord,
-} from '../../agent/src/lane/wrap.js';
-import {
-  DEFAULT_PERMISSIONS,
-  toolsForClasses,
-} from '../../agent/src/permissions.js';
-import { FakeExecutionEnv } from '../../exec/src/env.js';
+} from '@kubic/agent/lane/wrap';
+import { DEFAULT_PERMISSIONS, toolsForClasses } from '@kubic/agent/permissions';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
   type InstalledPolicy,
   installedPolicyPosture,

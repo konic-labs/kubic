@@ -1,9 +1,10 @@
 // The dimmed background behind the palette and pickers: base rows lose every
 // colour, link and marker and are drawn in fg3; the key-hint row (the last)
 // stays lit.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../../core/src/ui/tokens.js';
 import { CURSOR_MARKER } from '../tui-boundary.js';
 import { dimFrame, dimLine } from './dim.js';
 

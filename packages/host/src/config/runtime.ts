@@ -19,13 +19,13 @@ import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
   KEEP_RECENT_TOKENS,
-} from '../../../agent/src/compaction.js';
+} from '@kubic/agent/compaction';
 import {
   type PermissionClasses,
   validateClasses,
-} from '../../../agent/src/permissions.js';
-import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
+} from '@kubic/agent/permissions';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
+import type { FileBridge } from '@kubic/exec/file-bridge';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import {
   type EffectivePolicy,

@@ -7,7 +7,7 @@
 // their longest common subsequence take the stronger *WordBg surface (and
 // bold, so the change still reads where the palette has no backgrounds).
 
-import type { UiTheme } from '../../../core/src/ui/style.js';
+import type { UiTheme } from '@kubic/core/ui/style';
 import { fitLine } from './line.js';
 import { fillLine } from './surface.js';
 

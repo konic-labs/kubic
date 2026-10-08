@@ -1,8 +1,9 @@
 // Syntax highlighting: calm roles over lowlight's
 // scopes, plain fallbacks that never throw.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../../core/src/ui/tokens.js';
 import {
   HIGHLIGHT_MAX_LINES,
   highlightCode,

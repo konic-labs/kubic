@@ -5,22 +5,22 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   attachSession,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
-import { bootFauxLane } from '../../../packages/agent/src/lane/test-harness.js';
+} from '@kubic/agent/lane/session-store';
+import { bootFauxLane } from '@kubic/agent/lane/test-harness';
 import {
   BACKGROUND_CONTEXT,
   fauxAssistantMessage,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { createLineLogger } from '../../../packages/core/src/cli/logger.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+} from '@kubic/agent/pi-boundary';
+import { createLineLogger } from '@kubic/core/cli/logger';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   runSessionsCommand,
   type SessionsInvocation,
-} from '../../../packages/host/src/sessions-cli.js';
+} from '@kubic/host/sessions-cli';
+import { afterEach, describe, expect, it } from 'vitest';
 import { dispatchCommand } from './dispatch.js';
 import { createProdRunners } from './prod-runners.js';
 

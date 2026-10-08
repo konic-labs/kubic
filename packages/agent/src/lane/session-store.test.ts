@@ -16,12 +16,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createNodeFileBridge, type FileBridge } from '@kubic/exec/file-bridge';
+import { processStartTimeOf } from '@kubic/exec/lock-file';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import {
-  createNodeFileBridge,
-  type FileBridge,
-} from '../../../exec/src/file-bridge.js';
-import { processStartTimeOf } from '../../../exec/src/lock-file.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,

@@ -14,8 +14,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { createSessionSpillSink, SPILL_DIR_NAME } from './spill.js';
 
 const dirs: string[] = [];

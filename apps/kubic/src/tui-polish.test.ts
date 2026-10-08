@@ -1,37 +1,32 @@
 // TUI polish: Konic palette, transcript tool blocks, streaming echo,
 // working indicator, header, compact tree. Headless snapshots of pure
 // render functions only (no terminal, no network).
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderHeader } from '../../../packages/tui/src/chrome.js';
-import {
-  formatTurnClock,
-  renderWorkingLine,
-} from '../../../packages/tui/src/editor-frame.js';
-import { sanitizeLaneText } from '../../../packages/tui/src/lane-cells.js';
-import {
-  buildLayoutRoot,
-  TREE_MAX_ROWS,
-} from '../../../packages/tui/src/layout.js';
-import { bootScreen } from '../../../packages/tui/src/screen.js';
+
+import { renderHeader } from '@kubic/tui/chrome';
+import { formatTurnClock, renderWorkingLine } from '@kubic/tui/editor-frame';
+import { sanitizeLaneText } from '@kubic/tui/lane-cells';
+import { buildLayoutRoot, TREE_MAX_ROWS } from '@kubic/tui/layout';
+import { bootScreen } from '@kubic/tui/screen';
 import {
   createTuiTheme,
   detectColorLevel,
   setTuiTheme,
   spinnerFrame,
   tuiTheme,
-} from '../../../packages/tui/src/theme.js';
+} from '@kubic/tui/theme';
 import {
   createTranscriptView,
   TOOL_OUTPUT_PREVIEW_LINES,
-} from '../../../packages/tui/src/transcript.js';
+} from '@kubic/tui/transcript';
 import {
   applyTreeSnapshot,
   createTreeState,
   renderTreeLines,
   type TreeToolSnapshot,
-} from '../../../packages/tui/src/tree.js';
-import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
-import { Text, visibleWidth } from '../../../packages/tui/src/tui-boundary.js';
+} from '@kubic/tui/tree';
+import { createTuiApp } from '@kubic/tui/tui-app';
+import { Text, visibleWidth } from '@kubic/tui/tui-boundary';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { TuiTurnRunner } from './tui-run.js';
 

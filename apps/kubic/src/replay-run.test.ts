@@ -9,17 +9,17 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_PERMISSIONS,
   type PermissionClasses,
-} from '../../../packages/agent/src/permissions.js';
+} from '@kubic/agent/permissions';
 import type {
   ReplayRunRequest,
   ReplayRuntimeDeps,
-} from '../../../packages/host/src/replay/replay.js';
-import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
-import type { TrajectoryExport } from '../../../packages/trajectory/src/schema.js';
+} from '@kubic/host/replay/replay';
+import { buildTrajectoryExport } from '@kubic/trajectory/export';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The lane entry the re-execution drives: mocked away so a refused pin is
 // observable as "never booted" (and no real lane, journal or model is

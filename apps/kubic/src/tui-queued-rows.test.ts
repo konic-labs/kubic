@@ -3,13 +3,11 @@
 // the inbox only at its own `inbox` event wiped the row on the next lane event
 // (a tool end, a delta) and left it gone for the rest of the turn. Stub lane
 // only: zero network, zero paid tokens.
+
+import type { KubicLaneEvent, LaneEventSink } from '@kubic/agent/lane/events';
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
+import { createTuiApp } from '@kubic/tui/tui-app';
 import { describe, expect, it } from 'vitest';
-import type {
-  KubicLaneEvent,
-  LaneEventSink,
-} from '../../../packages/agent/src/lane/events.js';
-import { BACKGROUND_CONTEXT } from '../../../packages/agent/src/pi-boundary.js';
-import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import { type TuiLaneLoop, TuiTurnRunner } from './tui-run.js';
 
 function app() {

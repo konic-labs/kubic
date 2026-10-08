@@ -3,9 +3,10 @@
 // kept. The bar renders only what the lane really reports (Pi 1.0 routes no
 // timing Kubic can read, so there is no TTFT or tool-ms segment). The bar is
 // one row: plain text at depth none reads like the design.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import {
   compactCount,
   formatStatusCost,

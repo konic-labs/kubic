@@ -5,27 +5,27 @@
 
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { getSupportedThinkingLevels } from '../../../packages/agent/src/pi-boundary.js';
+import { getSupportedThinkingLevels } from '@kubic/agent/pi-boundary';
 import {
   type CommandResult,
   EXIT_CANCELLED,
   EXIT_PROVIDER,
-} from '../../../packages/core/src/cli/exit-codes.js';
-import { createLineLogger } from '../../../packages/core/src/cli/logger.js';
+} from '@kubic/core/cli/exit-codes';
+import { createLineLogger } from '@kubic/core/cli/logger';
 import {
   promptConfirm,
   promptFrame,
   promptSelect,
-} from '../../../packages/core/src/cli/prompt.js';
-import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { assembleModels } from '../../../packages/host/src/models-cli.js';
+} from '@kubic/core/cli/prompt';
+import type { CliTheme } from '@kubic/core/cli/theme';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { assembleModels } from '@kubic/host/models-cli';
 import {
   runSetupCommand,
   type SetupDeps,
   type SetupProviderChoice,
   type SetupUi,
-} from '../../../packages/host/src/setup-cli.js';
+} from '@kubic/host/setup-cli';
 import {
   type CliConfigResult,
   projectTrustFor,

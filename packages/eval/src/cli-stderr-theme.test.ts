@@ -3,9 +3,9 @@
 // build their stderr logger from `errTheme`.
 
 import { stripVTControlCharacters } from 'node:util';
+import type { CommandResult } from '@kubic/core/cli/exit-codes';
+import { createCliTheme } from '@kubic/core/cli/theme';
 import { describe, expect, it } from 'vitest';
-import type { CommandResult } from '../../core/src/cli/exit-codes.js';
-import { createCliTheme } from '../../core/src/cli/theme.js';
 import { runBenchmarkCommand, runEvalCommand } from './cli.js';
 import { runExportCommand } from './export-cli.js';
 

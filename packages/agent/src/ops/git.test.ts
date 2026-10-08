@@ -3,9 +3,9 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { argvKey } from '@kubic/exec/test-support/env-fakes';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
-import { argvKey } from '../../../exec/src/test-support/env-fakes.js';
 import { createSessionSpillSink } from '../spill.js';
 import { BASH_RESULT_MAX_CHARS } from './bash.js';
 import { runGit } from './git.js';
@@ -196,7 +196,7 @@ describe('git wait rejection cleanup', () => {
           },
         }),
       },
-    } as unknown as import('../../../exec/src/env.js').ExecutionEnv;
+    } as unknown as import('@kubic/exec/env').ExecutionEnv;
     const context: OpContext = {
       env,
       sessionId: 's1',

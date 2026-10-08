@@ -15,30 +15,30 @@ import {
   type ModelSelection,
   parseModelFlag,
   parseThinkingFlag,
-} from '../../../packages/agent/src/model-select.js';
+} from '@kubic/agent/model-select';
 import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
   type ExitCode,
-} from '../../../packages/core/src/cli/exit-codes.js';
-import { errorBlock } from '../../../packages/core/src/cli/kit.js';
-import { formatJson } from '../../../packages/core/src/cli/output.js';
-import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
-import { formatVersionLine } from '../../../packages/core/src/license.js';
-import { suggest } from '../../../packages/core/src/suggest.js';
-import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
+} from '@kubic/core/cli/exit-codes';
+import { errorBlock } from '@kubic/core/cli/kit';
+import { formatJson } from '@kubic/core/cli/output';
+import type { CliTheme } from '@kubic/core/cli/theme';
+import { formatVersionLine } from '@kubic/core/license';
+import { suggest } from '@kubic/core/suggest';
+import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
 import {
   buildConfiguredSinks,
   setAuditSinks,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { refusedReplayEnvelope } from '../../../packages/host/src/replay/replay.js';
+} from '@kubic/host/policy/audit-ledger';
+import { refusedReplayEnvelope } from '@kubic/host/replay/replay';
 import {
   buildRunEnvelope,
   refusedRunResult,
   shellQuote,
-} from '../../../packages/host/src/run-cli.js';
+} from '@kubic/host/run-cli';
 import type {
   CommandContext,
   CommandRegistrar,

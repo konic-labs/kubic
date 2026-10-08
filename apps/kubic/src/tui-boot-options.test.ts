@@ -2,8 +2,9 @@
 // runner hands `tuiDepsWithDefaults` the config projections and commander's
 // parity flags; this pins what reaches `bootTuiLane` — including the model
 // pin — without opening a terminal.
+
+import { resolveEffectivePolicy } from '@kubic/host/policy/enterprise';
 import { describe, expect, it } from 'vitest';
-import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
 import { tuiBootOptions, tuiDepsWithDefaults } from './tui-run.js';
 
 describe('tuiBootOptions', () => {

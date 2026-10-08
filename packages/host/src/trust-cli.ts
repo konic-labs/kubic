@@ -15,8 +15,8 @@ import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
-} from '../../core/src/cli/exit-codes.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/core/cli/exit-codes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { type CliIo, diagnosticsOf } from './cli-io.js';
 import {
   canonicalTrustPath,

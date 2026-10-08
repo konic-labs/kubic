@@ -25,49 +25,49 @@ import {
   type ManualCompactionOutcome,
   parseCompactCommand,
   runCompactCommand,
-} from '../../../packages/agent/src/compaction.js';
+} from '@kubic/agent/compaction';
 import {
   abortLane,
   forgetLaneKills,
   type OperationKillRegistry,
-} from '../../../packages/agent/src/lane/abort.js';
+} from '@kubic/agent/lane/abort';
 import {
   bootLane,
   escalateLaneModel,
   type Lane,
   type LaneCompactionOptions,
-} from '../../../packages/agent/src/lane/boot.js';
+} from '@kubic/agent/lane/boot';
 import type {
   KubicInboxItem,
   KubicLaneEvent,
   LaneEventSink,
-} from '../../../packages/agent/src/lane/events.js';
-import { subscribeLaneEvents } from '../../../packages/agent/src/lane/events.js';
+} from '@kubic/agent/lane/events';
+import { subscribeLaneEvents } from '@kubic/agent/lane/events';
 import {
   describePendingSettlement,
   inspectPending,
   pendingInputText,
   settlePending,
-} from '../../../packages/agent/src/lane/pending.js';
+} from '@kubic/agent/lane/pending';
 import {
   attachSession,
   createSession,
   forkSession,
   listSessions,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   entriesToTranscript,
   readConversationEntries,
   type TranscriptItem,
-} from '../../../packages/agent/src/lane/transcript.js';
+} from '@kubic/agent/lane/transcript';
 import {
   runTurn,
   TURN_BUSY_REASON,
   type TurnOutcome,
   turnLaneRecord,
-} from '../../../packages/agent/src/lane/turn.js';
-import type { EscalationLadder } from '../../../packages/agent/src/model-select.js';
+} from '@kubic/agent/lane/turn';
+import type { EscalationLadder } from '@kubic/agent/model-select';
 import {
   type AnyModel,
   clampThinking,
@@ -76,19 +76,16 @@ import {
   NoModelAvailableError,
   parseModelFlag,
   supportedThinking,
-} from '../../../packages/agent/src/model-select.js';
-import {
-  isThinkingLevel,
-  THINKING_LEVELS,
-} from '../../../packages/agent/src/models-config.js';
-import { OPERATIONS } from '../../../packages/agent/src/ops/registry.js';
-import { walkFiles } from '../../../packages/agent/src/ops/walk.js';
-import type { PermissionClasses } from '../../../packages/agent/src/permissions.js';
+} from '@kubic/agent/model-select';
+import { isThinkingLevel, THINKING_LEVELS } from '@kubic/agent/models-config';
+import { OPERATIONS } from '@kubic/agent/ops/registry';
+import { walkFiles } from '@kubic/agent/ops/walk';
+import type { PermissionClasses } from '@kubic/agent/permissions';
 import {
   checkAgreement,
   DEFAULT_PERMISSIONS,
   validateClasses,
-} from '../../../packages/agent/src/permissions.js';
+} from '@kubic/agent/permissions';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -97,16 +94,16 @@ import {
   type ModelThinkingLevel,
   type MutableModels,
   type SubmissionId,
-} from '../../../packages/agent/src/pi-boundary.js';
-import type { ModelEscalationEvent } from '../../../packages/agent/src/prompts.js';
+} from '@kubic/agent/pi-boundary';
+import type { ModelEscalationEvent } from '@kubic/agent/prompts';
 import {
   expandSkillInvocation,
   type LoadedSkill,
-} from '../../../packages/agent/src/skills/skills.js';
+} from '@kubic/agent/skills/skills';
 import {
   resolveStreamOptions,
   type StreamTuningTables,
-} from '../../../packages/agent/src/stream-options.js';
+} from '@kubic/agent/stream-options';
 import {
   type CommandResult,
   EXIT_FAILED,
@@ -116,33 +113,21 @@ import {
   EXIT_WORKSPACE,
   type ExitCode,
   INTERRUPT_EXIT_CODES,
-} from '../../../packages/core/src/cli/exit-codes.js';
-import { formatCost } from '../../../packages/core/src/cli/kit.js';
-import type { LaneImagePart } from '../../../packages/core/src/presentation.js';
-import {
-  DEFAULT_RUN_ROLE,
-  runRoleLabel,
-} from '../../../packages/core/src/run-role.js';
-import {
-  type FileSystem,
-  NodeExecutionEnv,
-} from '../../../packages/exec/src/env.js';
-import type { FileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import {
-  FileJournalStore,
-  type JournalRetention,
-} from '../../../packages/exec/src/journal.js';
-import { diffEntries } from '../../../packages/exec/src/journal-diff.js';
+} from '@kubic/core/cli/exit-codes';
+import { formatCost } from '@kubic/core/cli/kit';
+import type { LaneImagePart } from '@kubic/core/presentation';
+import { DEFAULT_RUN_ROLE, runRoleLabel } from '@kubic/core/run-role';
+import { type FileSystem, NodeExecutionEnv } from '@kubic/exec/env';
+import type { FileBridge } from '@kubic/exec/file-bridge';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FileJournalStore, type JournalRetention } from '@kubic/exec/journal';
+import { diffEntries } from '@kubic/exec/journal-diff';
 import {
   beginReconciliation,
   type RunReconciliation,
-} from '../../../packages/exec/src/journal-reconcile.js';
-import {
-  applyUndo,
-  planUndo,
-} from '../../../packages/exec/src/journal-undo.js';
-import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
+} from '@kubic/exec/journal-reconcile';
+import { applyUndo, planUndo } from '@kubic/exec/journal-undo';
+import { createSecretCommandRunner } from '@kubic/exec/secret-runner';
 import {
   type ApprovalConfig,
   type ApprovalRequest,
@@ -152,72 +137,60 @@ import {
   type InstalledPolicy,
   installPolicy,
   type SessionFullAccessGrant,
-} from '../../../packages/host/src/approvals.js';
-import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
-import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
+} from '@kubic/host/approvals';
+import type { RoleModelEntry } from '@kubic/host/config/config';
+import { createLedgerModelKeyResolver } from '@kubic/host/config/model-key-audit';
 import type {
   RuntimeEscalation,
   RuntimeThinking,
-} from '../../../packages/host/src/config/runtime.js';
+} from '@kubic/host/config/runtime';
 import {
   FAUX_FOOTER,
   FAUX_MODEL_ID,
   FAUX_PROVIDER_ID,
   fauxProviderActive,
-} from '../../../packages/host/src/faux-provider.js';
+} from '@kubic/host/faux-provider';
 import {
   noIsolationNoticeLines,
   noIsolationTuiLine,
   shouldEmitNotice,
-} from '../../../packages/host/src/limits/no-isolation-notice.js';
-import {
-  type AssembledModels,
-  assembleModels,
-} from '../../../packages/host/src/models-cli.js';
+} from '@kubic/host/limits/no-isolation-notice';
+import { type AssembledModels, assembleModels } from '@kubic/host/models-cli';
 import {
   readSessionUsage,
   type SessionUsageRow,
-} from '../../../packages/host/src/ops/cost/cost-cli.js';
-import { resolveRunBaseRevision } from '../../../packages/host/src/policy/audit-ledger.js';
+} from '@kubic/host/ops/cost/cost-cli';
+import { resolveRunBaseRevision } from '@kubic/host/policy/audit-ledger';
 import {
   type EffectivePolicy,
   hasModelPolicy,
   hasToolPolicy,
   isModelAllowed,
   isToolAllowedByEnterprise,
-} from '../../../packages/host/src/policy/enterprise.js';
-import { PresentationProjector } from '../../../packages/host/src/presentation/projector.js';
-import { findProjectRoot } from '../../../packages/host/src/project-root.js';
-import { providerKeyHints } from '../../../packages/host/src/provider-key-hints.js';
-import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
-import { effectiveRoleClasses } from '../../../packages/host/src/roles/resolver.js';
-import {
-  rolePromptFor,
-  selectRole,
-} from '../../../packages/host/src/roles/roles-boot.js';
+} from '@kubic/host/policy/enterprise';
+import { PresentationProjector } from '@kubic/host/presentation/projector';
+import { findProjectRoot } from '@kubic/host/project-root';
+import { providerKeyHints } from '@kubic/host/provider-key-hints';
+import type { RoleLayerInput } from '@kubic/host/roles/resolver';
+import { effectiveRoleClasses } from '@kubic/host/roles/resolver';
+import { rolePromptFor, selectRole } from '@kubic/host/roles/roles-boot';
 import {
   mapCaughtErrorToTerminus,
   type RunTerminusKind,
   SESSION_ID_PATTERN,
-} from '../../../packages/host/src/run-cli.js';
-import {
-  TurnSpans,
-  type TurnSpansSink,
-} from '../../../packages/host/src/run-spans.js';
+} from '@kubic/host/run-cli';
+import { TurnSpans, type TurnSpansSink } from '@kubic/host/run-spans';
 import {
   type SessionSummary,
   summarizeProjectSessions,
-} from '../../../packages/host/src/session-summaries.js';
-import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
-import type { SkippedSkill } from '../../../packages/host/src/skills-boot.js';
-import {
-  bootSkills,
-  describeSkillSkips,
-} from '../../../packages/host/src/skills-boot.js';
-import type { DebugSink } from '../../../packages/host/src/spans.js';
-import { hookErrorLine, modelLine } from '../../../packages/host/src/spans.js';
-import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
-import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
+} from '@kubic/host/session-summaries';
+import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
+import type { SkippedSkill } from '@kubic/host/skills-boot';
+import { bootSkills, describeSkillSkips } from '@kubic/host/skills-boot';
+import type { DebugSink } from '@kubic/host/spans';
+import { hookErrorLine, modelLine } from '@kubic/host/spans';
+import type { RunOutcome } from '@kubic/host/trajectory/run-trajectory';
+import { createApprovalSurface } from '@kubic/tui/approval-surface';
 import {
   type AttachmentImage,
   formatImageBytes,
@@ -225,23 +198,23 @@ import {
   inlineImageTerminatorEnd,
   scanInlineImageChunk,
   validateImageAttachment,
-} from '../../../packages/tui/src/attachments.js';
-import { formatClock } from '../../../packages/tui/src/chrome.js';
+} from '@kubic/tui/attachments';
+import { formatClock } from '@kubic/tui/chrome';
 import {
   createKeyRegistry,
   KeybindingsError,
   type KeyRegistry,
   parseKeybindingsJson,
-} from '../../../packages/tui/src/keybindings.js';
+} from '@kubic/tui/keybindings';
 import {
   type ForkPoint,
   forkPickerRows,
   type LaneEntryLike,
   userPromptsOf,
-} from '../../../packages/tui/src/lane-cells.js';
-import { renderNoKeyPreflight } from '../../../packages/tui/src/preflight.js';
-import type { Screen } from '../../../packages/tui/src/screen.js';
-import { bootScreen } from '../../../packages/tui/src/screen.js';
+} from '@kubic/tui/lane-cells';
+import { renderNoKeyPreflight } from '@kubic/tui/preflight';
+import type { Screen } from '@kubic/tui/screen';
+import { bootScreen } from '@kubic/tui/screen';
 import {
   findSlashCommand,
   helpLines,
@@ -249,8 +222,8 @@ import {
   parseSlashCommand,
   SLASH_COMMAND_NAMES,
   SLASH_COMMANDS,
-} from '../../../packages/tui/src/slash-commands.js';
-import type { StatusUsageRow } from '../../../packages/tui/src/status-bar.js';
+} from '@kubic/tui/slash-commands';
+import type { StatusUsageRow } from '@kubic/tui/status-bar';
 import {
   builtinThemePalette,
   type ColorLevel,
@@ -262,7 +235,7 @@ import {
   ThemeError,
   type TuiTheme,
   tuiTheme,
-} from '../../../packages/tui/src/theme.js';
+} from '@kubic/tui/theme';
 import {
   createTuiApp,
   type JournalChangeLike,
@@ -270,20 +243,17 @@ import {
   type TuiPickerRow,
   type TuiSubmitOutcome,
   type TuiWorkspace,
-} from '../../../packages/tui/src/tui-app.js';
-import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
+} from '@kubic/tui/tui-app';
+import type { Terminal } from '@kubic/tui/tui-boundary';
 import {
   isKeyRelease,
   isKeyRepeat,
   ProcessTerminal,
   parseKey,
-} from '../../../packages/tui/src/tui-boundary.js';
-import {
-  clipboardSupported,
-  osc52,
-} from '../../../packages/tui/src/ui/clipboard.js';
-import { loadHighlighter } from '../../../packages/tui/src/ui/highlight.js';
-import { formatAge } from '../../../packages/tui/src/ui/palette.js';
+} from '@kubic/tui/tui-boundary';
+import { clipboardSupported, osc52 } from '@kubic/tui/ui/clipboard';
+import { loadHighlighter } from '@kubic/tui/ui/highlight';
+import { formatAge } from '@kubic/tui/ui/palette';
 import {
   AUTO_ESCALATION_TOOL_FAILURES,
   createAutoEscalation,

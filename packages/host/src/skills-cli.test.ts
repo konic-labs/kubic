@@ -6,8 +6,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { selectRole } from './roles/roles-boot.js';
 import { runSkillsCommand, type SkillsCommandDeps } from './skills-cli.js';
 

@@ -2,8 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { FileBridge } from '@kubic/exec/file-bridge';
 import { describe, expect, it } from 'vitest';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { EXAMPLE_TOML } from '../test-support/config-fixtures.js';
 import {
   CONFIG_LAYERS,
@@ -967,7 +967,7 @@ describe('config serialization hardening', () => {
   // set — it is derived from the module that writes the rules. If the two
   // ever drift, this fails instead of shipping a gate that checks fiction.
   it('derives the required entries from the shipped runtime rules', async () => {
-    const shipped = await import('../../../exec/src/runtime-exclude.js');
+    const shipped = await import('@kubic/exec/runtime-exclude');
     expect([...GITIGNORE_REQUIRED_ENTRIES]).toEqual([
       ...shipped.RUNTIME_EXCLUDE_ENTRIES,
     ]);

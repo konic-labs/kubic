@@ -1,9 +1,10 @@
 // The framed editor and the working line (and the mid-turn frame). Pure renders
 // at depth none read like the design; the real PromptEditor proves the rule
 // markers, scroll indicators and the cursor marker survive the frame.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import {
   EDITOR_FRAME_CELLS,
   formatTurnClock,

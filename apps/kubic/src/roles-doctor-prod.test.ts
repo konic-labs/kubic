@@ -13,18 +13,15 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import {
-  type DoctorDeps,
-  runDoctorCommand,
-} from '../../../packages/host/src/doctor.js';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { type DoctorDeps, runDoctorCommand } from '@kubic/host/doctor';
 import {
   type EffectivePolicy,
   resolveEffectivePolicy,
-} from '../../../packages/host/src/policy/enterprise.js';
-import type { RoleLayerInput } from '../../../packages/host/src/roles/resolver.js';
-import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
+} from '@kubic/host/policy/enterprise';
+import type { RoleLayerInput } from '@kubic/host/roles/resolver';
+import { rolesDoctorProbe } from '@kubic/host/roles/roles-boot';
+import { afterEach, describe, expect, it } from 'vitest';
 
 const roots: string[] = [];
 

@@ -3,7 +3,7 @@
 // never be removed — the absent observation licenses nothing.
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../exec/src/lock-file.js', () => ({
+vi.mock('@kubic/exec/lock-file', () => ({
   claimLockLink: vi.fn(() => true),
   createLockFile: vi.fn(() => false),
   processStartTimeOf: vi.fn(() => undefined),
@@ -16,7 +16,7 @@ import {
   claimLockLink,
   readLockFile,
   removeLockFile,
-} from '../../../exec/src/lock-file.js';
+} from '@kubic/exec/lock-file';
 import { acquireSessionLock, SessionLockError } from './session-store.js';
 
 describe('steal conditional clear', () => {

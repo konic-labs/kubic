@@ -8,8 +8,8 @@ import {
   displayDiff,
   type ToolDisplay,
   writeDisplay,
-} from '../../agent/src/ops/display-diff.js';
-import type { FileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/agent/ops/display-diff';
+import type { FileBridge } from '@kubic/exec/file-bridge';
 
 /** Files past this size are not read for a preview. */
 export const APPROVAL_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;

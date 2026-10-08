@@ -2,8 +2,9 @@
 // sorted by name, at most the entry cap, with `truncated` + a notice naming
 // the total when the cap stopped the listing. FakeExecutionEnv fs only —
 // no real filesystem.
+
+import { FakeExecutionEnv } from '@kubic/exec/env';
 import { describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { lsOperation } from './ls.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import type { OpContext, ToolInvocation } from './types.js';

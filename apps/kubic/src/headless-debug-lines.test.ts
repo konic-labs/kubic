@@ -6,15 +6,15 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { KubicLaneEvent } from '../../../packages/agent/src/lane/events.js';
-import type { MutableModels } from '../../../packages/agent/src/pi-boundary.js';
+import type { KubicLaneEvent } from '@kubic/agent/lane/events';
+import type { MutableModels } from '@kubic/agent/pi-boundary';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { laneActivityDebugLine, runHeadlessPrompt } from './headless-run.js';
 
 function usageEvent(): KubicLaneEvent {

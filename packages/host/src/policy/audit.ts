@@ -14,7 +14,7 @@ import {
   containsSecretShape,
   REDACTED_SECRET,
   redactSecretShapes,
-} from '../../../core/src/secret-shapes.js';
+} from '@kubic/core/secret-shapes';
 import type { AuditSinkKind } from './enterprise.js';
 
 // The version of the record shape. emitAudit stamps it on every record; a

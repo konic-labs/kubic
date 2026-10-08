@@ -13,10 +13,10 @@
 // routes no streaming/timing field Kubic could read (message deltas stay
 // inside the harness; the lane watch commits whole entries), so the two
 // segments could never render — dead code, which was the bug.
-import { formatCost } from '../../core/src/cli/kit.js';
-import { TOOL } from '../../core/src/ui/glyphs.js';
-import type { UiTheme } from '../../core/src/ui/style.js';
-import type { TokenRole } from '../../core/src/ui/tokens.js';
+import { formatCost } from '@kubic/core/cli/kit';
+import { TOOL } from '@kubic/core/ui/glyphs';
+import type { UiTheme } from '@kubic/core/ui/style';
+import type { TokenRole } from '@kubic/core/ui/tokens';
 import { spinnerFrame, tuiTheme } from './theme.js';
 import type { Component } from './tui-boundary.js';
 import { visibleWidth } from './tui-boundary.js';

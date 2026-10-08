@@ -5,21 +5,21 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   attachSession,
   createSession,
   openSessionStore,
-} from '../../agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   createRegistry,
   Harness,
   UserEntry,
-} from '../../agent/src/pi-boundary.js';
-import { createLineLogger } from '../../core/src/cli/logger.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/agent/pi-boundary';
+import { createLineLogger } from '@kubic/core/cli/logger';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   failureForTerminus,
   type HeadlessRunResult,

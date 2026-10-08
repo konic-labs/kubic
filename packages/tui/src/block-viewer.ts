@@ -4,7 +4,7 @@
 // page, `g`/`G` the ends, `y` copies, `esc` closes. Its rows come from the
 // transcript (rendered expanded at the viewer's width).
 
-import type { UiTheme } from '../../core/src/ui/style.js';
+import type { UiTheme } from '@kubic/core/ui/style';
 import { tuiTheme } from './theme.js';
 import { type Component, matchesKey, visibleWidth } from './tui-boundary.js';
 import { exactWidth, fitLine } from './ui/line.js';

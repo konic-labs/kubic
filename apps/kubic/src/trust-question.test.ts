@@ -3,9 +3,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createCliTheme } from '@kubic/core/cli/theme';
+import { ProjectTrustStore } from '@kubic/host/config/trust-store';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
-import { ProjectTrustStore } from '../../../packages/host/src/config/trust-store.js';
 import { resolveInteractiveProjectTrust } from './config-runtime.js';
 import {
   TRUST_VIEW_MAX_LINES,

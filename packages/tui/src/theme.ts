@@ -9,20 +9,16 @@
 // composition root opts into colour after checking the real terminal
 // (`setTuiTheme(createTuiTheme(detectColorLevel(env, isTTY)))`).
 
-import { type ColorLevel, detectColorLevel } from '../../core/src/ui/color.js';
-import { spinnerFrame } from '../../core/src/ui/glyphs.js';
-import {
-  createUiTheme,
-  type Style,
-  type UiTheme,
-} from '../../core/src/ui/style.js';
-import { parseThemeJson, ThemeError } from '../../core/src/ui/theme-file.js';
+import { type ColorLevel, detectColorLevel } from '@kubic/core/ui/color';
+import { spinnerFrame } from '@kubic/core/ui/glyphs';
+import { createUiTheme, type Style, type UiTheme } from '@kubic/core/ui/style';
+import { parseThemeJson, ThemeError } from '@kubic/core/ui/theme-file';
 import {
   builtinPalette,
   isPaletteBuiltin,
   type Palette,
   type PaletteBuiltin,
-} from '../../core/src/ui/tokens.js';
+} from '@kubic/core/ui/tokens';
 
 export type { ColorLevel };
 export { detectColorLevel, parseThemeJson, spinnerFrame, ThemeError };

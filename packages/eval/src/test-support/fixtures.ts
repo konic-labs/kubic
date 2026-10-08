@@ -1,7 +1,7 @@
 // Test-only fixture builder for RL export tests.
 // Builds minimal valid TrajectoryExport records (schema major 1)
 // so exporter tests exercise the real trajectory contract, faux-only.
-import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 
 export interface FixtureOverrides {
   pid?: number | null;

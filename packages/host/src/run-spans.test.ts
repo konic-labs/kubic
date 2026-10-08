@@ -1,7 +1,7 @@
 // Run-span emission: The recorder is the SpanRecorder; this module only maps
 // live lane/tool events onto it and serializes the result. Faux-only: injected
 // clock, no I/O, no network.
-import { describe, expect, it, vi } from 'vitest';
+
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -14,7 +14,8 @@ import {
   Harness,
   MemoryStorage,
   Type,
-} from '../../agent/src/pi-boundary.js';
+} from '@kubic/agent/pi-boundary';
+import { describe, expect, it, vi } from 'vitest';
 import {
   RUN_SPAN_NAMES,
   RunSpans,

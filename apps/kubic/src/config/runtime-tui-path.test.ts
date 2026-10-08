@@ -10,28 +10,28 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fauxToolUse } from '../../../../packages/agent/src/lane/test-harness.js';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../../packages/agent/src/pi-boundary.js';
-import { EXIT_PROVIDER } from '../../../../packages/core/src/cli/exit-codes.js';
-import { NodeExecutionEnv } from '../../../../packages/exec/src/env.js';
-import { FileJournalStore } from '../../../../packages/exec/src/journal.js';
+} from '@kubic/agent/pi-boundary';
+import { EXIT_PROVIDER } from '@kubic/core/cli/exit-codes';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { FileJournalStore } from '@kubic/exec/journal';
 import {
   loadRuntimeConfig,
   type RuntimeConfig,
-} from '../../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../../packages/host/src/config/trust-store.js';
-import { runJournalCommand } from '../../../../packages/host/src/journal-cli.js';
+} from '@kubic/host/config/runtime';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { runJournalCommand } from '@kubic/host/journal-cli';
 import {
   auditLedgerDir,
   readAuditLedger,
-} from '../../../../packages/host/src/policy/audit-ledger.js';
+} from '@kubic/host/policy/audit-ledger';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
 import { runtimeLaneDeps, runtimeModelPin } from '../config-runtime.js';
 import {

@@ -6,28 +6,25 @@
 // settled `kubic run` and per TUI turn; the file lands at <sessions-root>/<id>/trajectory.json.
 
 import { join } from 'node:path';
-import { toolSpawnEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { gitHeadOf } from '../../../packages/exec/src/git-clean.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import {
-  diffEntries,
-  type FileChange,
-} from '../../../packages/exec/src/journal-diff.js';
-import type { OrgAuditRecord } from '../../../packages/host/src/policy/audit.js';
+import { toolSpawnEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { gitHeadOf } from '@kubic/exec/git-clean';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { diffEntries, type FileChange } from '@kubic/exec/journal-diff';
+import type { OrgAuditRecord } from '@kubic/host/policy/audit';
 import {
   AUDIT_LEDGER_FILE,
   auditLedgerDirFor,
   readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { SESSION_ID_PATTERN } from '../../../packages/host/src/run-cli.js';
+} from '@kubic/host/policy/audit-ledger';
+import { SESSION_ID_PATTERN } from '@kubic/host/run-cli';
 import {
   assembleRunTrajectory,
   type RunOutcome,
   TRAJECTORY_FILE,
   writeRunTrajectory,
-} from '../../../packages/host/src/trajectory/run-trajectory.js';
-import type { TrajectoryEscalation } from '../../../packages/trajectory/src/schema.js';
+} from '@kubic/host/trajectory/run-trajectory';
+import type { TrajectoryEscalation } from '@kubic/trajectory/schema';
 
 // Recorded when the workspace is not a git checkout: the journal, not git,
 // is Kubic's change record, so there is no revision to pin — named,

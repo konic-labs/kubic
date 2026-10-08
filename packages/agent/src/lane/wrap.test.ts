@@ -2,8 +2,9 @@
 // Composition stays pre-registration: `composeTools` returns the tool
 // registrations the Kubic extension is installed with, and the wrappers ride
 // the pi-durable `execute(args, api, context)` signature unchanged.
+
+import { FakeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,

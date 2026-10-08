@@ -2,21 +2,19 @@
 // the filters and redaction. Records are injected; the command redacts
 // before printing. Faux-only — shape-matching values below carry a FAUX
 // marker and stay inert.
-import { describe, expect, it } from 'vitest';
+
 import {
   containsSecretShape,
   REDACTED_SECRET,
-} from '../../../../packages/core/src/secret-shapes.js';
-import {
-  AUDIT_FIELDS,
-  type OrgAuditRecord,
-} from '../../../../packages/host/src/policy/audit.js';
-import { runAuditCommand } from '../../../../packages/host/src/policy/audit-cli.js';
+} from '@kubic/core/secret-shapes';
+import { AUDIT_FIELDS, type OrgAuditRecord } from '@kubic/host/policy/audit';
+import { runAuditCommand } from '@kubic/host/policy/audit-cli';
 import {
   fullAccessEnabledAudit,
   undoRestoreAudit,
-} from '../../../../packages/host/src/policy/audit-ledger.js';
-import { EXAMPLE_AUDIT_RECORD } from '../../../../packages/host/src/test-support/audit-fixtures.js';
+} from '@kubic/host/policy/audit-ledger';
+import { EXAMPLE_AUDIT_RECORD } from '@kubic/host/test-support/audit-fixtures';
+import { describe, expect, it } from 'vitest';
 
 // Shape-matching but inert (FAUX marker, never a live key): exercises the
 // redaction path the way secret-shapes.test.ts does.

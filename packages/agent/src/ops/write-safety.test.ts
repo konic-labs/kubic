@@ -16,16 +16,16 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { type FileSystem, NodeExecutionEnv } from '../../../exec/src/env.js';
+import { type FileSystem, NodeExecutionEnv } from '@kubic/exec/env';
 import {
   captureBaseline,
   FileJournalStore,
   reconcile,
-} from '../../../exec/src/journal.js';
-import { diffEntries } from '../../../exec/src/journal-diff.js';
-import { journalStatus } from '../../../exec/src/journal-status.js';
-import { applyUndo, planUndo } from '../../../exec/src/journal-undo.js';
+} from '@kubic/exec/journal';
+import { diffEntries } from '@kubic/exec/journal-diff';
+import { journalStatus } from '@kubic/exec/journal-status';
+import { applyUndo, planUndo } from '@kubic/exec/journal-undo';
+import { afterEach, describe, expect, it } from 'vitest';
 import { PREIMAGE_CHUNK_BYTES, PREIMAGE_MAX_BYTES } from './atomic-file.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';

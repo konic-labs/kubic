@@ -10,9 +10,9 @@ import {
   type SecretRef as CoreSecretRef,
   SecretRefError as CoreSecretRefError,
   parseSecretRef as parseCoreSecretRef,
-} from '../../../core/src/secret-refs.js';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import { SecretCommandError } from '../../../exec/src/secret-runner.js';
+} from '@kubic/core/secret-refs';
+import type { FileBridge } from '@kubic/exec/file-bridge';
+import { SecretCommandError } from '@kubic/exec/secret-runner';
 
 const REDACTED = '[REDACTED]';
 

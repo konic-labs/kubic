@@ -3,16 +3,11 @@
 // runner renders them as a draft and the committed entry replaces it. The
 // transcript is read once per turn, never per event. Stub lane only: zero
 // network, zero paid tokens.
+
+import type { KubicLaneEvent, LaneEventSink } from '@kubic/agent/lane/events';
+import { BACKGROUND_CONTEXT, type EntryRecord } from '@kubic/agent/pi-boundary';
+import { createTuiApp } from '@kubic/tui/tui-app';
 import { describe, expect, it } from 'vitest';
-import type {
-  KubicLaneEvent,
-  LaneEventSink,
-} from '../../../packages/agent/src/lane/events.js';
-import {
-  BACKGROUND_CONTEXT,
-  type EntryRecord,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import { type TuiLaneLoop, TuiTurnRunner } from './tui-run.js';
 
 const COMMITTED: EntryRecord = {

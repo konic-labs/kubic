@@ -6,7 +6,7 @@
 // inline fixture role documents, never real filesystem roles (role contents
 // land).
 
-import type { PermissionClasses } from '../../../agent/src/permissions.js';
+import type { PermissionClasses } from '@kubic/agent/permissions';
 import {
   CREDENTIAL_LEVELS,
   checkAgreement,
@@ -16,7 +16,7 @@ import {
   SHELL_LEVELS,
   toolsForClasses,
   validateClasses,
-} from '../../../agent/src/permissions.js';
+} from '@kubic/agent/permissions';
 import type { ConfigLayer, RoleModelEntry } from '../config/config.js';
 import { CONFIG_LAYERS } from '../config/config.js';
 import type { DoctorCheck } from '../doctor.js';

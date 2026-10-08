@@ -7,10 +7,10 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { applyUndo, planUndo } from '@kubic/exec/journal-undo';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from '../../../exec/src/env.js';
-import { FileJournalStore } from '../../../exec/src/journal.js';
-import { applyUndo, planUndo } from '../../../exec/src/journal-undo.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';

@@ -9,8 +9,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -18,20 +17,21 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   type ApprovalRequest,
   type ApprovalVerdict,
   installedPolicyPosture,
   installPolicy,
-} from '../../../packages/host/src/approvals.js';
-import { collectDoctorChecks } from '../../../packages/host/src/doctor.js';
+} from '@kubic/host/approvals';
+import { collectDoctorChecks } from '@kubic/host/doctor';
 import {
   auditLedgerDir,
   readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
+} from '@kubic/host/policy/audit-ledger';
+import { mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   installedPolicyDeps,
   loadCliConfig,

@@ -13,8 +13,8 @@ import {
   EXIT_PROVIDER,
   EXIT_USAGE,
   type ExitCode,
-} from '../../core/src/cli/exit-codes.js';
-import type { SelectChoice } from '../../core/src/cli/prompt.js';
+} from '@kubic/core/cli/exit-codes';
+import type { SelectChoice } from '@kubic/core/cli/prompt';
 import { type CliIo, diagnosticsOf } from './cli-io.js';
 import { upsertModelTable } from './config/toml-model.js';
 import { formatContext } from './models-render.js';

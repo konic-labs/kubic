@@ -8,14 +8,14 @@
 //
 // One session, one lane: the TUI renders exactly one lane, the session's own.
 
-import type { KubicLaneEvent } from '../../../agent/src/lane/events.js';
+import type { KubicLaneEvent } from '@kubic/agent/lane/events';
 import type {
   KubicPresentationState,
   LaneSnapshot,
   LaneToolSnapshot,
   UsageTotals,
-} from '../../../core/src/presentation.js';
-import { PRESENTATION_STATE_FIELDS } from '../../../core/src/presentation.js';
+} from '@kubic/core/presentation';
+import { PRESENTATION_STATE_FIELDS } from '@kubic/core/presentation';
 
 export interface PresentationSeed {
   readonly sessionId: string;

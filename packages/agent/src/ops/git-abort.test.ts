@@ -9,12 +9,12 @@
 
 import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from '../../../exec/src/env.js';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
-} from '../../../exec/src/test-support/git-sandbox.js';
+} from '@kubic/exec/test-support/git-sandbox';
+import { afterEach, describe, expect, it } from 'vitest';
 import { OperationKillRegistry } from '../lane/abort.js';
 import { runGit } from './git.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';

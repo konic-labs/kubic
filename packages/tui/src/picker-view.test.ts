@@ -1,8 +1,9 @@
 // The "choose one" overlay: filtering through Pi's
 // Input, moving, expanding a folded group, the side control and choosing.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import { PickerView } from './picker-view.js';
 import type { PickerGroup } from './ui/picker.js';
 

@@ -3,7 +3,7 @@
 // rewards (pass → 1, fail → 0). Candidates keep their own provenance +
 // Label + prompt copy so the group validates even shuffled; the
 // group prompt must equal every candidate prompt.
-import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import {
   checkFailureCategory,
   checkProvenance,

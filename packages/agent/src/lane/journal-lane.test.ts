@@ -10,8 +10,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FileJournalStore, restoreEntry } from '@kubic/exec/journal';
 import { afterAll, describe, expect, it } from 'vitest';
-import { FileJournalStore, restoreEntry } from '../../../exec/src/journal.js';
 import { fauxAssistantMessage, fauxToolCall } from '../pi-boundary.js';
 import { bootFauxLane, type FauxLane, fauxToolUse } from './test-harness.js';
 

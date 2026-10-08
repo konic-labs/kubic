@@ -4,16 +4,16 @@
 // arrives injected (faux in tests); deny-by-default holds — a tool with no
 // enterprise allow is denied.
 
-import { describeUnsupported } from '../../../agent/src/permissions.js';
+import { describeUnsupported } from '@kubic/agent/permissions';
 import {
   type CommandResult,
   EXIT_OK,
   EXIT_USAGE,
-} from '../../../core/src/cli/exit-codes.js';
-import { createLineLogger } from '../../../core/src/cli/logger.js';
-import { formatJson } from '../../../core/src/cli/output.js';
-import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
-import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
+} from '@kubic/core/cli/exit-codes';
+import { createLineLogger } from '@kubic/core/cli/logger';
+import { formatJson } from '@kubic/core/cli/output';
+import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
 import {
   type EffectivePolicy,
   isToolAllowed,

@@ -9,9 +9,9 @@
 // returns the command's exit code.
 
 import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
-import { CliUsageError } from '../../../../packages/core/src/cli/exit-codes.js';
-import type { GitRequest } from '../../../../packages/host/src/git-cli.js';
-import type { JournalRequest } from '../../../../packages/host/src/journal-cli.js';
+import { CliUsageError } from '@kubic/core/cli/exit-codes';
+import type { GitRequest } from '@kubic/host/git-cli';
+import type { JournalRequest } from '@kubic/host/journal-cli';
 import type {
   CommandContext,
   CommandRegistrar,

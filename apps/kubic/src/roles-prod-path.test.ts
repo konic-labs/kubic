@@ -6,13 +6,12 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PROMPT_SECTION } from '../../../packages/agent/src/lane/boot.js';
+import { PROMPT_SECTION } from '@kubic/agent/lane/boot';
 import {
   attachSession,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
-import { readSessionEntries } from '../../../packages/agent/src/lane/transcript.js';
+} from '@kubic/agent/lane/session-store';
+import { readSessionEntries } from '@kubic/agent/lane/transcript';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -20,13 +19,14 @@ import {
   fauxProvider,
   type MutableModels,
   SystemEntry,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { projectTrustCheck } from '../../../packages/host/src/config/trust-store.js';
-import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
-import { rolesDoctorProbe } from '../../../packages/host/src/roles/roles-boot.js';
-import { runRunCommand } from '../../../packages/host/src/run-cli.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { projectTrustCheck } from '@kubic/host/config/trust-store';
+import { runDoctorCommand } from '@kubic/host/doctor';
+import { rolesDoctorProbe } from '@kubic/host/roles/roles-boot';
+import { runRunCommand } from '@kubic/host/run-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const roots: string[] = [];

@@ -7,7 +7,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ExecutionEnv,
   FakeScript,
@@ -15,12 +14,13 @@ import type {
   Shell,
   ShellResult,
   SpawnOptions,
-} from '../../../exec/src/env.js';
+} from '@kubic/exec/env';
 import {
   FakeExecutionEnv,
   NodeExecutionEnv,
   ROOT_PROVENANCE,
-} from '../../../exec/src/env.js';
+} from '@kubic/exec/env';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import type {
   JsonValue,

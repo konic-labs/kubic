@@ -3,7 +3,7 @@
 // When the row is too narrow, hints are dropped from the end (never split);
 // the right-aligned hint is kept as long as it fits at all.
 
-import type { UiTheme } from '../../../core/src/ui/style.js';
+import type { UiTheme } from '@kubic/core/ui/style';
 import { visibleWidth } from '../tui-boundary.js';
 import { fitLine } from './line.js';
 

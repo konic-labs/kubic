@@ -5,25 +5,25 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   listSessions,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
-import type { MutableModels } from '../../../packages/agent/src/pi-boundary.js';
+} from '@kubic/agent/lane/session-store';
+import type { MutableModels } from '@kubic/agent/pi-boundary';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   auditLedgerDirFor,
   readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { buildRunEnvelope } from '../../../packages/host/src/run-cli.js';
+} from '@kubic/host/policy/audit-ledger';
+import { buildRunEnvelope } from '@kubic/host/run-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];

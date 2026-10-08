@@ -17,71 +17,65 @@ import { join } from 'node:path';
 import {
   openSessionStore,
   sessionsTouchingWorkspace,
-} from '../../../packages/agent/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../../packages/agent/src/pi-boundary.js';
+} from '@kubic/agent/lane/session-store';
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_USAGE,
-} from '../../../packages/core/src/cli/exit-codes.js';
-import { isFancy } from '../../../packages/core/src/cli/kit.js';
+} from '@kubic/core/cli/exit-codes';
+import { isFancy } from '@kubic/core/cli/kit';
 import {
   type CliLogger,
   createLineLogger,
   debugEnabled,
-} from '../../../packages/core/src/cli/logger.js';
-import { outputModeFor } from '../../../packages/core/src/cli/output.js';
-import { promptConfirm } from '../../../packages/core/src/cli/prompt.js';
+} from '@kubic/core/cli/logger';
+import { outputModeFor } from '@kubic/core/cli/output';
+import { promptConfirm } from '@kubic/core/cli/prompt';
 import {
   type CliTheme,
   createCliTheme,
   detectColorLevel,
   themeFor,
-} from '../../../packages/core/src/cli/theme.js';
-import {
-  runBenchmarkCommand,
-  runEvalCommand,
-} from '../../../packages/eval/src/cli.js';
-import { runExportCommand as runTrajectoryExportCommand } from '../../../packages/eval/src/export-cli.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { isGitWorktreeClean } from '../../../packages/exec/src/git-clean.js';
-import { looseStateDirMode } from '../../../packages/exec/src/lock-file.js';
-import { readStdinText } from '../../../packages/exec/src/stdin.js';
-import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
-import { runConfigCommand } from '../../../packages/host/src/config/config-cli.js';
+} from '@kubic/core/cli/theme';
+import { runBenchmarkCommand, runEvalCommand } from '@kubic/eval/cli';
+import { runExportCommand as runTrajectoryExportCommand } from '@kubic/eval/export-cli';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { isGitWorktreeClean } from '@kubic/exec/git-clean';
+import { looseStateDirMode } from '@kubic/exec/lock-file';
+import { readStdinText } from '@kubic/exec/stdin';
+import { installedPolicyPosture } from '@kubic/host/approvals';
+import { runConfigCommand } from '@kubic/host/config/config-cli';
 import {
   ProjectTrustStore,
   projectTrustStorePath,
-} from '../../../packages/host/src/config/trust-store.js';
-import type { SessionOverlapProbe } from '../../../packages/host/src/doctor.js';
-import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
+} from '@kubic/host/config/trust-store';
+import type { SessionOverlapProbe } from '@kubic/host/doctor';
+import { runDoctorCommand } from '@kubic/host/doctor';
 import {
   describeFullAccessSession,
   type FullAccessSession,
   listFullAccessSessions,
-} from '../../../packages/host/src/doctor-full-access.js';
-import {
-  FAUX_NOTICE,
-  fauxProviderActive,
-} from '../../../packages/host/src/faux-provider.js';
-import { runGitCommand } from '../../../packages/host/src/git-cli.js';
-import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
+} from '@kubic/host/doctor-full-access';
+import { FAUX_NOTICE, fauxProviderActive } from '@kubic/host/faux-provider';
+import { runGitCommand } from '@kubic/host/git-cli';
+import { runJournalCommand } from '@kubic/host/journal-cli';
 import {
   assembleModels,
   contextRoomProbeOf,
   modelsSourcesProbe,
   providerProbesOf,
   runModelsCommand,
-} from '../../../packages/host/src/models-cli.js';
+} from '@kubic/host/models-cli';
 import {
   loadSessionCostRows,
   runCostCommand,
-} from '../../../packages/host/src/ops/cost/cost-cli.js';
+} from '@kubic/host/ops/cost/cost-cli';
 import {
   loadProdAuditSecrets,
   runAuditCommand,
-} from '../../../packages/host/src/policy/audit-cli.js';
+} from '@kubic/host/policy/audit-cli';
 import {
   auditLedgerDirFor,
   auditSinkSnapshot,
@@ -89,34 +83,28 @@ import {
   buildConfiguredSinks,
   isSyslogTargetAvailable,
   readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { enterpriseDoctorChecks } from '../../../packages/host/src/policy/enterprise.js';
+} from '@kubic/host/policy/audit-ledger';
+import { enterpriseDoctorChecks } from '@kubic/host/policy/enterprise';
 import {
   policyFromInstalledAllowlist,
   policyWithInstalledAllowlist,
   runPolicyCommand,
-} from '../../../packages/host/src/policy/policy-cli.js';
-import { findProjectRoot } from '../../../packages/host/src/project-root.js';
+} from '@kubic/host/policy/policy-cli';
+import { findProjectRoot } from '@kubic/host/project-root';
 import {
   type ReplayRuntimeDeps,
   runReplayCommand,
-} from '../../../packages/host/src/replay/replay.js';
-import {
-  rolesDoctorProbe,
-  selectRole,
-} from '../../../packages/host/src/roles/roles-boot.js';
-import {
-  runRunCommand,
-  SESSION_ID_PATTERN,
-} from '../../../packages/host/src/run-cli.js';
+} from '@kubic/host/replay/replay';
+import { rolesDoctorProbe, selectRole } from '@kubic/host/roles/roles-boot';
+import { runRunCommand, SESSION_ID_PATTERN } from '@kubic/host/run-cli';
 import {
   defaultSessionsRoot,
   runSessionsCommand,
-} from '../../../packages/host/src/sessions-cli.js';
-import { runSetupCommand } from '../../../packages/host/src/setup-cli.js';
-import { skillsDoctorProbe } from '../../../packages/host/src/skills-boot.js';
-import { runSkillsCommand } from '../../../packages/host/src/skills-cli.js';
-import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
+} from '@kubic/host/sessions-cli';
+import { runSetupCommand } from '@kubic/host/setup-cli';
+import { skillsDoctorProbe } from '@kubic/host/skills-boot';
+import { runSkillsCommand } from '@kubic/host/skills-cli';
+import { runTrustCommand } from '@kubic/host/trust-cli';
 import {
   type CliConfigResult,
   doctorConfigProbe,

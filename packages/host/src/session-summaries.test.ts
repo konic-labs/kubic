@@ -4,11 +4,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   createSession,
   openSessionStore,
-} from '../../agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -17,8 +16,9 @@ import {
   fauxProvider,
   Harness,
   type Storage,
-} from '../../agent/src/pi-boundary.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/agent/pi-boundary';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { afterEach, describe, expect, it } from 'vitest';
 import { summarizeProjectSessions } from './session-summaries.js';
 
 const made: string[] = [];

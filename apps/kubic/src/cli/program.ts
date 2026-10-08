@@ -33,10 +33,10 @@ import {
   EXIT_FAILED,
   type ExitCode,
   exitCodeForParseError,
-} from '../../../../packages/core/src/cli/exit-codes.js';
-import { errorBlock } from '../../../../packages/core/src/cli/kit.js';
-import type { CliTheme } from '../../../../packages/core/src/cli/theme.js';
-import { shellQuote } from '../../../../packages/host/src/run-cli.js';
+} from '@kubic/core/cli/exit-codes';
+import { errorBlock } from '@kubic/core/cli/kit';
+import type { CliTheme } from '@kubic/core/cli/theme';
+import { shellQuote } from '@kubic/host/run-cli';
 import type { KubicProgram } from './context.js';
 
 export interface ProgramIo {

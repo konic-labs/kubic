@@ -12,17 +12,14 @@ import {
   type Command,
   InvalidArgumentError,
 } from '@commander-js/extra-typings';
-import {
-  parseModelFlag,
-  parseThinkingFlag,
-} from '../../../../packages/agent/src/model-select.js';
-import { CliUsageError } from '../../../../packages/core/src/cli/exit-codes.js';
+import { parseModelFlag, parseThinkingFlag } from '@kubic/agent/model-select';
+import { CliUsageError } from '@kubic/core/cli/exit-codes';
 import {
   checkPromptValue,
   parseRunMaxTurns,
   parseRunTimeout,
   parseSessionIdArg,
-} from '../../../../packages/host/src/run-cli.js';
+} from '@kubic/host/run-cli';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
 
 // The `--model` help: one sentence per behaviour the

@@ -15,14 +15,14 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FakeExecutionEnv,
   type ProcessHandle,
   type ShellResult,
   type SpawnOptions,
-} from '../../../exec/src/env.js';
-import { FileJournalStore } from '../../../exec/src/journal.js';
+} from '@kubic/exec/env';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
   createModels,

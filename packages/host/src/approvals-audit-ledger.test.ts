@@ -16,8 +16,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ensureRuntimeExcludeRules } from '../../exec/src/runtime-exclude.js';
 import { installPolicy } from './approvals.js';
 import { runAuditCommand } from './policy/audit-cli.js';
 import {

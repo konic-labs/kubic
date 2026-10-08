@@ -2,8 +2,9 @@
 // hands the handle's storage to the Harness through `adopt()`, so the handle
 // records that a harness owns it and its `release()` gives the lock back
 // without closing a storage a live harness is using.
+
+import { FakeExecutionEnv } from '@kubic/exec/env';
 import { describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,

@@ -6,11 +6,8 @@
 // Runners are fakes: the handlers' own behaviour is pinned in their host
 // test files; this file pins argv → options and the exit-code mapping.
 
+import type { CommandResult, ExitCode } from '@kubic/core/cli/exit-codes';
 import { describe, expect, it } from 'vitest';
-import type {
-  CommandResult,
-  ExitCode,
-} from '../../../../packages/core/src/cli/exit-codes.js';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
 import type { CliConfigResult } from '../config-runtime.js';

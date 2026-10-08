@@ -7,9 +7,9 @@
 // directory name alone.
 
 import { basename } from 'node:path';
-import { parsePorcelainStatus } from '../../../packages/agent/src/ops/git.js';
-import type { Shell } from '../../../packages/exec/src/env.js';
-import type { TuiWorkspace } from '../../../packages/tui/src/tui-app.js';
+import { parsePorcelainStatus } from '@kubic/agent/ops/git';
+import type { Shell } from '@kubic/exec/env';
+import type { TuiWorkspace } from '@kubic/tui/tui-app';
 
 const PROVENANCE = {
   sessionId: '',

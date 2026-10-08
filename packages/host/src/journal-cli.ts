@@ -20,8 +20,8 @@ import {
   listSessions,
   openSessionStore,
   sessionLockIsLive,
-} from '../../agent/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../agent/src/pi-boundary.js';
+} from '@kubic/agent/lane/session-store';
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import {
   CliUsageError,
   type CommandResult,
@@ -29,28 +29,28 @@ import {
   EXIT_OK,
   EXIT_USAGE,
   type ExitCode,
-} from '../../core/src/cli/exit-codes.js';
-import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
-import { formatJson } from '../../core/src/cli/output.js';
-import { renderTable } from '../../core/src/cli/table.js';
-import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
-import { redactSecretShapes } from '../../core/src/secret-shapes.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
-import { gitHeadOf } from '../../exec/src/git-clean.js';
-import { FileJournalStore, type JournalEntry } from '../../exec/src/journal.js';
+} from '@kubic/core/cli/exit-codes';
+import { type CliLogger, createLineLogger } from '@kubic/core/cli/logger';
+import { formatJson } from '@kubic/core/cli/output';
+import { renderTable } from '@kubic/core/cli/table';
+import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { gitHeadOf } from '@kubic/exec/git-clean';
+import { FileJournalStore, type JournalEntry } from '@kubic/exec/journal';
 import {
   clipChangeContent,
   DEFAULT_MAX_CONTENT_BYTES,
   diffEntries,
   renderDiff,
   renderDiffStat,
-} from '../../exec/src/journal-diff.js';
+} from '@kubic/exec/journal-diff';
 import {
   formatHeadMove,
   journalStatus,
   reconciliationSummary,
-} from '../../exec/src/journal-status.js';
-import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
+} from '@kubic/exec/journal-status';
+import { applyUndo, planUndo } from '@kubic/exec/journal-undo';
 import { MS_PER_DAY } from './config/runtime.js';
 import {
   appendToLedger,

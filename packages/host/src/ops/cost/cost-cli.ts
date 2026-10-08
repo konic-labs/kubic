@@ -17,34 +17,31 @@ import {
   SessionAttachError,
   SessionLockError,
   sessionLockIsLive,
-} from '../../../../agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../../../agent/src/lane/transcript.js';
+} from '@kubic/agent/lane/transcript';
 import {
   BACKGROUND_CONTEXT,
   type Context,
   type Storage,
   type Usage,
   UsageDoc,
-} from '../../../../agent/src/pi-boundary.js';
+} from '@kubic/agent/pi-boundary';
 import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
-} from '../../../../core/src/cli/exit-codes.js';
-import { createLineLogger } from '../../../../core/src/cli/logger.js';
-import { formatJson } from '../../../../core/src/cli/output.js';
-import { renderTable } from '../../../../core/src/cli/table.js';
-import {
-  type CliTheme,
-  createCliTheme,
-} from '../../../../core/src/cli/theme.js';
-import { redactSecretShapes } from '../../../../core/src/secret-shapes.js';
-import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
-import { stripUnsafeCharacters } from '../../../../exec/src/runtime-exclude.js';
+} from '@kubic/core/cli/exit-codes';
+import { createLineLogger } from '@kubic/core/cli/logger';
+import { formatJson } from '@kubic/core/cli/output';
+import { renderTable } from '@kubic/core/cli/table';
+import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { stripUnsafeCharacters } from '@kubic/exec/runtime-exclude';
 import { type RunUsage, SESSION_ID_PATTERN } from '../../run-cli.js';
 import {
   openReadOnlySessionStorage,

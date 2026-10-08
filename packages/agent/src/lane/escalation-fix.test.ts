@@ -2,8 +2,9 @@
 // (b) same-model no-op. The escalation applies through
 // `conversation.configure({ model })`; the reserve re-clamp lives in the live
 // CompactionPolicy getter.
+
+import { FakeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { EscalationLadder } from '../model-select.js';
 import {
   BACKGROUND_CONTEXT,

@@ -10,30 +10,27 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  abortLane,
-  forgetLaneKills,
-} from '../../../packages/agent/src/lane/abort.js';
+import { abortLane, forgetLaneKills } from '@kubic/agent/lane/abort';
 import {
   bootLane,
   type Lane,
   type LaneCompactionOptions,
-} from '../../../packages/agent/src/lane/boot.js';
+} from '@kubic/agent/lane/boot';
 import {
   type KubicLaneEvent,
   subscribeLaneEvents,
-} from '../../../packages/agent/src/lane/events.js';
+} from '@kubic/agent/lane/events';
 import {
   type ClassifiedFailure,
   classifyFailure,
   type RetryDecision,
-} from '../../../packages/agent/src/lane/failures.js';
+} from '@kubic/agent/lane/failures';
 import {
   describePendingSettlement,
   inspectPending,
   pendingInputText,
   settlePending,
-} from '../../../packages/agent/src/lane/pending.js';
+} from '@kubic/agent/lane/pending';
 import {
   attachSession,
   createSession,
@@ -41,33 +38,33 @@ import {
   openSessionStore,
   type SessionHandle,
   sessionsTouchingWorkspace,
-} from '../../../packages/agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   entriesToTranscript,
   readConversationEntries,
   readSessionEntries,
   type TranscriptItem,
-} from '../../../packages/agent/src/lane/transcript.js';
+} from '@kubic/agent/lane/transcript';
 import {
   awaitTurn,
   runTurnWithOverflowRecovery,
   type TurnOutcome,
   turnAbort,
   turnLaneRecord,
-} from '../../../packages/agent/src/lane/turn.js';
+} from '@kubic/agent/lane/turn';
 import {
   ModelSelectError,
   type ModelSelection,
   type selectModel,
-} from '../../../packages/agent/src/model-select.js';
-import { OPERATIONS } from '../../../packages/agent/src/ops/registry.js';
+} from '@kubic/agent/model-select';
+import { OPERATIONS } from '@kubic/agent/ops/registry';
 import {
   checkAgreement,
   DEFAULT_PERMISSIONS,
   type PermissionClasses,
   type RunMode,
   validateClasses,
-} from '../../../packages/agent/src/permissions.js';
+} from '@kubic/agent/permissions';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -78,84 +75,75 @@ import {
   type MutableModels,
   UserEntry,
   withCancel,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { expandSkillInvocation } from '../../../packages/agent/src/skills/skills.js';
+} from '@kubic/agent/pi-boundary';
+import { expandSkillInvocation } from '@kubic/agent/skills/skills';
 import {
   resolveStreamOptions,
   type StreamTuningTables,
-} from '../../../packages/agent/src/stream-options.js';
-import { DEFAULT_RUN_ROLE } from '../../../packages/core/src/run-role.js';
-import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import {
-  gitHeadOf,
-  withDetachedCheckout,
-} from '../../../packages/exec/src/git-clean.js';
-import {
-  FileJournalStore,
-  type JournalRetention,
-} from '../../../packages/exec/src/journal.js';
+} from '@kubic/agent/stream-options';
+import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
+import type { ExecutionEnv } from '@kubic/exec/env';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { gitHeadOf, withDetachedCheckout } from '@kubic/exec/git-clean';
+import { FileJournalStore, type JournalRetention } from '@kubic/exec/journal';
 import {
   beginReconciliation,
   type RunReconciliation,
-} from '../../../packages/exec/src/journal-reconcile.js';
-import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
-import { TIMEOUT_REASON_MARKER } from '../../../packages/host/src/approval-timeout.js';
+} from '@kubic/exec/journal-reconcile';
+import { createSecretCommandRunner } from '@kubic/exec/secret-runner';
+import { TIMEOUT_REASON_MARKER } from '@kubic/host/approval-timeout';
 import {
   type ApprovalConfig,
   enableSessionFullAccess,
   fullAccessInForceWarning,
   type InstalledPolicy,
   installPolicy,
-} from '../../../packages/host/src/approvals.js';
-import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
+} from '@kubic/host/approvals';
+import { createLedgerModelKeyResolver } from '@kubic/host/config/model-key-audit';
 import type {
   RuntimeThinking,
   RuntimeVerify,
-} from '../../../packages/host/src/config/runtime.js';
+} from '@kubic/host/config/runtime';
 import {
   matchableSecrets,
   redactBridgeWrites,
   redactingSink,
   redactSecretValues,
-} from '../../../packages/host/src/config/secrets.js';
+} from '@kubic/host/config/secrets';
 import {
   FAUX_NOTICE,
   invalidProviderMessage,
   providerOverrideFromEnv,
-} from '../../../packages/host/src/faux-provider.js';
+} from '@kubic/host/faux-provider';
 import {
   emitNoIsolationNotice,
   shouldEmitNotice,
-} from '../../../packages/host/src/limits/no-isolation-notice.js';
-import { assembleModels } from '../../../packages/host/src/models-cli.js';
-import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
+} from '@kubic/host/limits/no-isolation-notice';
+import { assembleModels } from '@kubic/host/models-cli';
+import { readSessionRunUsage } from '@kubic/host/ops/cost/cost-cli';
 import {
   appendToLedger,
   auditLedgerDirFor,
   resolveRunBaseRevision,
   runStartAudit,
-} from '../../../packages/host/src/policy/audit-ledger.js';
+} from '@kubic/host/policy/audit-ledger';
 import {
   type EffectivePolicy,
   hasModelPolicy,
   hasToolPolicy,
   isModelAllowed,
   isToolAllowedByEnterprise,
-} from '../../../packages/host/src/policy/enterprise.js';
-import { findProjectRoot } from '../../../packages/host/src/project-root.js';
-import type {
-  ResolvedRole,
-  RoleLayerInput,
-} from '../../../packages/host/src/roles/resolver.js';
-import { effectiveRoleClasses } from '../../../packages/host/src/roles/resolver.js';
+} from '@kubic/host/policy/enterprise';
+import { findProjectRoot } from '@kubic/host/project-root';
+import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles/resolver';
+import { effectiveRoleClasses } from '@kubic/host/roles/resolver';
 import {
   rolePromptFor,
   type SelectedRole,
   selectRole,
-} from '../../../packages/host/src/roles/roles-boot.js';
-import type { RunProgressSink } from '../../../packages/host/src/run-cli.js';
+} from '@kubic/host/roles/roles-boot';
+import type { RunProgressSink } from '@kubic/host/run-cli';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
@@ -165,22 +153,22 @@ import {
   mapLaneOutcomeToFailure,
   type RetryRecord,
   SESSION_ID_PATTERN,
-} from '../../../packages/host/src/run-cli.js';
+} from '@kubic/host/run-cli';
 import {
   RunSpans,
   runSpanHooks,
   serializeSpanArtifact,
-} from '../../../packages/host/src/run-spans.js';
-import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
-import { bootSkills } from '../../../packages/host/src/skills-boot.js';
-import type { DebugSink } from '../../../packages/host/src/spans.js';
-import { hookErrorLine, modelLine } from '../../../packages/host/src/spans.js';
-import type { RunOutcome } from '../../../packages/host/src/trajectory/run-trajectory.js';
+} from '@kubic/host/run-spans';
+import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
+import { bootSkills } from '@kubic/host/skills-boot';
+import type { DebugSink } from '@kubic/host/spans';
+import { hookErrorLine, modelLine } from '@kubic/host/spans';
+import type { RunOutcome } from '@kubic/host/trajectory/run-trajectory';
 import {
   hasVerifyCommands,
   runVerifier,
   verifierLabels,
-} from '../../../packages/host/src/verify/verifier.js';
+} from '@kubic/host/verify/verifier';
 import {
   resolveRoleThinking,
   roleModelScope,

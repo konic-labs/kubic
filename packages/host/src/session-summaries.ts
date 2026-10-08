@@ -9,17 +9,17 @@ import {
   listSessions,
   openSessionStore,
   sessionLockIsLive,
-} from '../../agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../agent/src/lane/transcript.js';
+} from '@kubic/agent/lane/transcript';
 import {
   BACKGROUND_CONTEXT,
   type Context,
   type Storage,
-} from '../../agent/src/pi-boundary.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/agent/pi-boundary';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { readSessionUsage, totalSessionUsage } from './ops/cost/cost-cli.js';
 import {
   openReadOnlySessionStorage,

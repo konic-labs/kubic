@@ -10,15 +10,12 @@ import {
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
-} from '../../../core/src/cli/exit-codes.js';
-import { createLineLogger } from '../../../core/src/cli/logger.js';
-import { formatJson } from '../../../core/src/cli/output.js';
-import { renderTable } from '../../../core/src/cli/table.js';
-import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
-import {
-  REDACTED_SECRET,
-  redactSecretShapes,
-} from '../../../core/src/secret-shapes.js';
+} from '@kubic/core/cli/exit-codes';
+import { createLineLogger } from '@kubic/core/cli/logger';
+import { formatJson } from '@kubic/core/cli/output';
+import { renderTable } from '@kubic/core/cli/table';
+import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
+import { REDACTED_SECRET, redactSecretShapes } from '@kubic/core/secret-shapes';
 import { type AuditResult, type OrgAuditRecord, queryAudits } from './audit.js';
 
 // The parsed `kubic audit` options (commander's `opts()`).

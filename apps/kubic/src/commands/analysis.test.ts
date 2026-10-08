@@ -7,24 +7,18 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CommandResult, ExitCode } from '@kubic/core/cli/exit-codes';
+import { runBenchmarkCommand, runEvalCommand } from '@kubic/eval/cli';
+import { runExportCommand } from '@kubic/eval/export-cli';
+import { makeExport } from '@kubic/eval/test-support/fixtures';
+import { runCostCommand } from '@kubic/host/ops/cost/cost-cli';
+import { AUDIT_FIELDS } from '@kubic/host/policy/audit';
+import { runAuditCommand } from '@kubic/host/policy/audit-cli';
+import { resolveEffectivePolicy } from '@kubic/host/policy/enterprise';
+import { runPolicyCommand } from '@kubic/host/policy/policy-cli';
+import { runReplayCommand } from '@kubic/host/replay/replay';
+import { EXAMPLE_AUDIT_RECORD } from '@kubic/host/test-support/audit-fixtures';
 import { afterAll, describe, expect, it } from 'vitest';
-import type {
-  CommandResult,
-  ExitCode,
-} from '../../../../packages/core/src/cli/exit-codes.js';
-import {
-  runBenchmarkCommand,
-  runEvalCommand,
-} from '../../../../packages/eval/src/cli.js';
-import { runExportCommand } from '../../../../packages/eval/src/export-cli.js';
-import { makeExport } from '../../../../packages/eval/src/test-support/fixtures.js';
-import { runCostCommand } from '../../../../packages/host/src/ops/cost/cost-cli.js';
-import { AUDIT_FIELDS } from '../../../../packages/host/src/policy/audit.js';
-import { runAuditCommand } from '../../../../packages/host/src/policy/audit-cli.js';
-import { resolveEffectivePolicy } from '../../../../packages/host/src/policy/enterprise.js';
-import { runPolicyCommand } from '../../../../packages/host/src/policy/policy-cli.js';
-import { runReplayCommand } from '../../../../packages/host/src/replay/replay.js';
-import { EXAMPLE_AUDIT_RECORD } from '../../../../packages/host/src/test-support/audit-fixtures.js';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
 import type { CliConfigResult } from '../config-runtime.js';

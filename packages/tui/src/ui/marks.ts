@@ -1,9 +1,9 @@
 // Small marks for the TUI kit: badges, gauges, section
 // labels and rules. All pure over a UiTheme; plain text at depth none.
 
-import { GAUGE } from '../../../core/src/ui/glyphs.js';
-import type { UiTheme } from '../../../core/src/ui/style.js';
-import type { TokenRole } from '../../../core/src/ui/tokens.js';
+import { GAUGE } from '@kubic/core/ui/glyphs';
+import type { UiTheme } from '@kubic/core/ui/style';
+import type { TokenRole } from '@kubic/core/ui/tokens';
 
 export type BadgeKind = 'accent' | 'waiting' | 'ok' | 'error' | 'key';
 

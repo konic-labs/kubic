@@ -1,8 +1,8 @@
 // `--json` envelopes are one two-space-indented document (core formatJson),
 // like every other command's (docs/cli/commands.md, analysis shared rules).
 
+import { formatJson } from '@kubic/core/cli/output';
 import { describe, expect, it } from 'vitest';
-import { formatJson } from '../../core/src/cli/output.js';
 import { runExportCommand } from './export-cli.js';
 
 describe('export --json envelope', () => {

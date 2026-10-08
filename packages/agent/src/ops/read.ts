@@ -3,7 +3,7 @@
 // replay:"safe" — reading has no side effects.
 
 import { StringDecoder } from 'node:string_decoder';
-import type { FileSystem } from '../../../exec/src/env.js';
+import type { FileSystem } from '@kubic/exec/env';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
 

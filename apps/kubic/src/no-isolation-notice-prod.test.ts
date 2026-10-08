@@ -15,29 +15,29 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bootLane } from '../../../packages/agent/src/lane/boot.js';
+import { bootLane } from '@kubic/agent/lane/boot';
 import {
   createSession,
   openSessionStore,
   type SessionHandle,
-} from '../../../packages/agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import { FAUX_MODEL_REF } from '../../../packages/host/src/faux-provider.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { FAUX_MODEL_REF } from '@kubic/host/faux-provider';
 import {
   NOTICE_OPT_OUT_ENV,
   noIsolationNoticeLines,
   noIsolationTuiLine,
-} from '../../../packages/host/src/limits/no-isolation-notice.js';
+} from '@kubic/host/limits/no-isolation-notice';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { runTuiCommand, type TuiRunDeps, tuiLoop } from './tui-run.js';

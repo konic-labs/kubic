@@ -11,10 +11,7 @@
 // nothing would ever clean).
 
 import { join } from 'node:path';
-import {
-  createNodeFileBridge,
-  type FileBridge,
-} from '../../exec/src/file-bridge.js';
+import { createNodeFileBridge, type FileBridge } from '@kubic/exec/file-bridge';
 
 /** The subdirectory of a session that holds its spill files. */
 export const SPILL_DIR_NAME = 'spill';

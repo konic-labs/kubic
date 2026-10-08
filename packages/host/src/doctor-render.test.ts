@@ -1,6 +1,7 @@
 // `kubic doctor` grouped summary.
+
+import { createCliTheme } from '@kubic/core/cli/theme';
 import { describe, expect, it } from 'vitest';
-import { createCliTheme } from '../../core/src/cli/theme.js';
 import type { DoctorCheck } from './doctor.js';
 import {
   doctorGroup,

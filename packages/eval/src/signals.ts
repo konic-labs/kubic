@@ -8,7 +8,7 @@
 // run verifier: the configured `[verify]` commands run in the
 // worktree after settlement and write these labels, plus
 // `signal:regression` from a baseline run at the base revision.
-import type { TrajectoryExport } from '../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 
 export type GateSignal = 'pass' | 'fail' | 'unknown';
 

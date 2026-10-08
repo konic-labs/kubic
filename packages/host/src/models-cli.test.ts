@@ -6,9 +6,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createModels, fauxProvider } from '@kubic/agent/pi-boundary';
+import { LOCAL_MODELS_EXAMPLE } from '@kubic/agent/test-support/models-fixtures';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createModels, fauxProvider } from '../../agent/src/pi-boundary.js';
-import { LOCAL_MODELS_EXAMPLE } from '../../agent/src/test-support/models-fixtures.js';
 import {
   assembleModels,
   contextRoomProbeOf,

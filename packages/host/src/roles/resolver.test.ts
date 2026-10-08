@@ -1,8 +1,9 @@
 // Role resolver tests: per-role tool filtering + policy
 // validation. Fixture role documents are inline strings — never real
 // filesystem roles (role contents land).
+
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PERMISSIONS } from '../../../agent/src/permissions.js';
 import {
   effectiveRoleClasses,
   mergeRoleLayers,

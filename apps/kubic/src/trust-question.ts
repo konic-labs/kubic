@@ -6,8 +6,8 @@
 // the config load and the alt-screen (the layer must be decided before the
 // lane boots); config-runtime.ts owns what each answer records.
 
-import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import type { CliTheme } from '@kubic/core/cli/theme';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { TrustQuestion } from './config-runtime.js';
 
 const LABEL = 12;

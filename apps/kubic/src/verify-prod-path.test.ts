@@ -15,30 +15,30 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { buildPreferencePair } from '../../../packages/eval/src/rl/preference.js';
-import { referenceVerifier } from '../../../packages/eval/src/rl/verifier.js';
-import { computeSignals } from '../../../packages/eval/src/signals.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { buildPreferencePair } from '@kubic/eval/rl/preference';
+import { referenceVerifier } from '@kubic/eval/rl/verifier';
+import { computeSignals } from '@kubic/eval/signals';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
   type GitSandbox,
-} from '../../../packages/exec/src/test-support/git-sandbox.js';
-import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
+} from '@kubic/exec/test-support/git-sandbox';
+import { loadRuntimeConfig } from '@kubic/host/config/runtime';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
-} from '../../../packages/trajectory/src/schema.js';
+} from '@kubic/trajectory/schema';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runtimeRunDeps } from './config-runtime.js';
 import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
 

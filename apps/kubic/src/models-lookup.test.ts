@@ -6,17 +6,14 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { FakeExecutionEnv } from '@kubic/exec/env';
 import {
   ProjectTrustStore,
   projectTrustCheck,
   projectTrustStorePath,
-} from '../../../packages/host/src/config/trust-store.js';
-import {
-  assembleModels,
-  findModelsProjectRoot,
-} from '../../../packages/host/src/models-cli.js';
+} from '@kubic/host/config/trust-store';
+import { assembleModels, findModelsProjectRoot } from '@kubic/host/models-cli';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];

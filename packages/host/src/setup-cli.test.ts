@@ -1,9 +1,10 @@
 // `kubic setup`. The prompt frame is
 // faked: every question the wizard asks is answered from a script.
+
+import { EXIT_CANCELLED } from '@kubic/core/cli/exit-codes';
+import { createLineLogger } from '@kubic/core/cli/logger';
+import type { SelectChoice } from '@kubic/core/cli/prompt';
 import { describe, expect, it } from 'vitest';
-import { EXIT_CANCELLED } from '../../core/src/cli/exit-codes.js';
-import { createLineLogger } from '../../core/src/cli/logger.js';
-import type { SelectChoice } from '../../core/src/cli/prompt.js';
 import {
   runSetupCommand,
   type SetupDeps,

@@ -15,14 +15,14 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   createSession,
   openSessionStore,
-} from '../../agent/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../agent/src/pi-boundary.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
-import { FileJournalStore } from '../../exec/src/journal.js';
+} from '@kubic/agent/lane/session-store';
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { afterEach, describe, expect, it } from 'vitest';
 import { type JournalRequest, runJournalCommand } from './journal-cli.js';
 
 const made: string[] = [];

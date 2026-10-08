@@ -3,7 +3,7 @@
 // embedded provenance, failure category, and reference-verifier verdict.
 // Fail-closed both ways: build throws on stripped input; validate
 // returns errors (never warnings) for stripped wire records.
-import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import {
   extractProvenance,
   isTrajectoryFailureCode,

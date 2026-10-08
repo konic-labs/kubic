@@ -18,13 +18,12 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   attachSession,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
-import { readSessionEntries } from '../../../packages/agent/src/lane/transcript.js';
-import { ModelSelectError } from '../../../packages/agent/src/model-select.js';
+} from '@kubic/agent/lane/session-store';
+import { readSessionEntries } from '@kubic/agent/lane/transcript';
+import { ModelSelectError } from '@kubic/agent/model-select';
 import {
   BACKGROUND_CONTEXT,
   CompactionEntry,
@@ -32,19 +31,20 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   effectiveConfigView,
   loadRuntimeConfig,
   renderEffectiveConfig,
-} from '../../../packages/host/src/config/runtime.js';
+} from '@kubic/host/config/runtime';
 import {
   NO_PROJECT_TRUST,
   ProjectTrustStore,
   projectTrustStorePath,
-} from '../../../packages/host/src/config/trust-store.js';
+} from '@kubic/host/config/trust-store';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   configRefusalExit,
   doctorConfigProbe,

@@ -1,10 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ProcessSnapshot } from '@kubic/exec/env';
+import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
+import { MemoryCheckpointStore } from '@kubic/exec/test-support/env-fakes';
 import { afterAll, describe, expect, it } from 'vitest';
-import type { ProcessSnapshot } from '../../../exec/src/env.js';
-import { FakeExecutionEnv, NodeExecutionEnv } from '../../../exec/src/env.js';
-import { MemoryCheckpointStore } from '../../../exec/src/test-support/env-fakes.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { JsonValue, OpContext, ToolInvocation } from './types.js';

@@ -8,11 +8,12 @@
 // entriesToCells must not pass text through verbatim: the assertion below
 // fails with `has raw ESC: true` if it does (verified by dumping the
 // rendered frame: 'HI\u001b[2J\u001b[31mRED\u001b[0m\u0007END').
-import { describe, expect, it } from 'vitest';
+
 import type {
   KubicPresentationState,
   LaneSnapshot,
-} from '../../core/src/presentation.js';
+} from '@kubic/core/presentation';
+import { describe, expect, it } from 'vitest';
 import { createTuiApp } from './tui-app.js';
 
 const ESC = '\u001b';

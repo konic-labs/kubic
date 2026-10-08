@@ -6,8 +6,9 @@
 // Commands that do not consume config projections stay unaffected, and the
 // commands whose job is to REPORT a refusal (`config`, `doctor`, `trust`)
 // must still run so the operator can see the named reason.
+
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
 import { describe, expect, it } from 'vitest';
-import { NO_PROJECT_TRUST } from '../../../../packages/host/src/config/trust-store.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import { configRefusalExit, requireRuntimeConfig } from '../config-runtime.js';
 

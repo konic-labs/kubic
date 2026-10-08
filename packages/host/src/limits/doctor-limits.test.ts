@@ -2,12 +2,13 @@
 // Static notices plus dynamic provider/dep/policy
 // builders with honest messages; provider-down maps to exit 6; --json
 // matches the envelope shape. Faux-only: injected values, no I/O.
-import { describe, expect, it } from 'vitest';
+
 import {
   EXIT_FAILED,
   EXIT_OK,
   EXIT_PROVIDER,
-} from '../../../core/src/cli/exit-codes.js';
+} from '@kubic/core/cli/exit-codes';
+import { describe, expect, it } from 'vitest';
 import { MCP_ARRIVAL_REQUIREMENTS } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
 import { runDoctorCommand } from '../doctor.js';

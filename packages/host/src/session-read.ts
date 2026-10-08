@@ -5,14 +5,14 @@
 // age signal) stays untouched.
 
 import { join, sep } from 'node:path';
-import { bridgeToPiFileSystem } from '../../agent/src/lane/session-fs.js';
-import { SessionAttachError } from '../../agent/src/lane/session-store.js';
+import { bridgeToPiFileSystem } from '@kubic/agent/lane/session-fs';
+import { SessionAttachError } from '@kubic/agent/lane/session-store';
 import {
   BACKGROUND_CONTEXT,
   JsonlStorage,
   type Storage,
-} from '../../agent/src/pi-boundary.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/agent/pi-boundary';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 
 // Lock-free read-only open of one session's storage. The
 // caller classified the session via `listSessions` and probed no live

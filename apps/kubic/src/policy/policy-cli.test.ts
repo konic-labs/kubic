@@ -1,18 +1,19 @@
 // `kubic policy` CLI tests. Policy-cli.ts
 // lands after this file. The command is a routing offer only — it never
 // enforces, never mutates. Faux-only, zero network.
-import { describe, expect, it } from 'vitest';
-import { createCliTheme } from '../../../../packages/core/src/cli/theme.js';
-import { REDACTED_SECRET } from '../../../../packages/core/src/secret-shapes.js';
+
+import { createCliTheme } from '@kubic/core/cli/theme';
+import { REDACTED_SECRET } from '@kubic/core/secret-shapes';
 import {
   type EffectivePolicy,
   isToolAllowed,
   resolveEffectivePolicy,
-} from '../../../../packages/host/src/policy/enterprise.js';
+} from '@kubic/host/policy/enterprise';
 import {
   policyWithInstalledAllowlist,
   runPolicyCommand,
-} from '../../../../packages/host/src/policy/policy-cli.js';
+} from '@kubic/host/policy/policy-cli';
+import { describe, expect, it } from 'vitest';
 
 // stdout (`lines`) and stderr (`errs`) captured separately.
 function capture() {

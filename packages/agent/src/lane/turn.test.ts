@@ -1,12 +1,13 @@
 // The durable turn glue: submit → submission.wait, and every
 // way a run can end as one TurnOutcome. Faux provider only, MemoryStorage,
 // zero network.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+
 import {
   type ExecutionEnv,
   FakeExecutionEnv,
   type Shell,
-} from '../../../exec/src/env.js';
+} from '@kubic/exec/env';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
   type Context,

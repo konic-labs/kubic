@@ -22,7 +22,7 @@ import {
   fauxText,
   fauxToolCall,
   type MutableModels,
-} from '../../agent/src/pi-boundary.js';
+} from '@kubic/agent/pi-boundary';
 
 export const FAUX_PROVIDER_ID = 'faux';
 export const FAUX_MODEL_ID = 'echo';

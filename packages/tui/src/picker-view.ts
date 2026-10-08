@@ -6,7 +6,7 @@
 // level) with `←`, `esc` closes. Keys that would move the filter's cursor
 // off its end are ignored.
 
-import type { UiTheme } from '../../core/src/ui/style.js';
+import type { UiTheme } from '@kubic/core/ui/style';
 import { tuiTheme } from './theme.js';
 import {
   type Component,

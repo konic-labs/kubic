@@ -16,17 +16,14 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CliUsageError,
   EXIT_FAILED,
   EXIT_OK,
-} from '../../../packages/core/src/cli/exit-codes.js';
-import {
-  FileJournalStore,
-  sha256Hex,
-} from '../../../packages/exec/src/journal.js';
-import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
+} from '@kubic/core/cli/exit-codes';
+import { FileJournalStore, sha256Hex } from '@kubic/exec/journal';
+import { runJournalCommand } from '@kubic/host/journal-cli';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { journalRetentionDays, loadCliConfig } from './config-runtime.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;

@@ -13,15 +13,15 @@ import { Buffer } from 'node:buffer';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
   FakeExecutionEnv,
   type ProcessHandle,
   type ProcessSnapshot,
   type ShellResult,
   type SpawnOptions,
-} from '../../../exec/src/env.js';
-import { FileJournalStore } from '../../../exec/src/journal.js';
+} from '@kubic/exec/env';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { GREP_MAX_LINE_LENGTH } from '../ops/grep.js';
 import { OPERATION_PARAMETERS, OPERATIONS } from '../ops/registry.js';
 import type { JsonValue } from '../ops/types.js';

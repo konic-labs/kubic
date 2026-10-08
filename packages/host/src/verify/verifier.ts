@@ -10,7 +10,7 @@
 // verifierLabels turns the results into the trajectory eval labels the eval
 // package reads (packages/eval/src/signals.ts): `signal:<gate>`, plus
 // `signal:regression` when a baseline run at the base revision exists.
-import type { ExecutionEnv } from '../../../exec/src/env.js';
+import type { ExecutionEnv } from '@kubic/exec/env';
 
 export const VERIFY_GATES = ['tests', 'build', 'lint', 'typecheck'] as const;
 type VerifyGate = (typeof VERIFY_GATES)[number];

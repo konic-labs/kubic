@@ -5,14 +5,14 @@
 
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { parseModelFlag, selectModel } from '../../agent/src/model-select.js';
+import { parseModelFlag, selectModel } from '@kubic/agent/model-select';
 import {
   DEFAULT_CONTEXT_WINDOW,
   parseModelsJson,
   type RegisterCustomProvidersOptions,
   refuseBuiltinCollisions,
   registerCustomProviders,
-} from '../../agent/src/models-config.js';
+} from '@kubic/agent/models-config';
 import {
   type AuthContext,
   builtinProviders,
@@ -20,17 +20,17 @@ import {
   getSupportedThinkingLevels,
   InMemoryCredentialStore,
   type MutableModels,
-} from '../../agent/src/pi-boundary.js';
+} from '@kubic/agent/pi-boundary';
 import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
-} from '../../core/src/cli/exit-codes.js';
-import { formatJson } from '../../core/src/cli/output.js';
-import { renderTable } from '../../core/src/cli/table.js';
-import { suggest } from '../../core/src/suggest.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/core/cli/exit-codes';
+import { formatJson } from '@kubic/core/cli/output';
+import { renderTable } from '@kubic/core/cli/table';
+import { suggest } from '@kubic/core/suggest';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import type { ContextRoomProbe, DepProbe, ProviderProbe } from './doctor.js';
 import {

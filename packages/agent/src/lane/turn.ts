@@ -13,7 +13,7 @@
 // Idempotency: `requestId` is a stable per-invocation value, so re-submitting
 // after a crash returns the SAME submission instead of prompting twice.
 
-import type { LaneImagePart } from '../../../core/src/presentation.js';
+import type { LaneImagePart } from '@kubic/core/presentation';
 import type { ManualCompactionOutcome } from '../compaction.js';
 import { runManualCompaction } from '../compaction.js';
 import type { Context, Submission } from '../pi-boundary.js';

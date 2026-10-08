@@ -1,8 +1,9 @@
 // The inline diff block: display-diff
 // rows, line numbers, add/del surfaces and the word-level highlight.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../../core/src/ui/tokens.js';
 import { visibleWidth } from '../tui-boundary.js';
 import { parseDisplayDiff, renderDiffRows, wordDiff } from './diff-block.js';
 

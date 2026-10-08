@@ -5,27 +5,24 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { applyToolPolicy } from '../../../agent/src/lane/policy.js';
-import {
-  bootFauxLane,
-  promptToolsLine,
-} from '../../../agent/src/lane/test-harness.js';
-import { DEFAULT_PERMISSIONS } from '../../../agent/src/permissions.js';
-import { BACKGROUND_CONTEXT } from '../../../agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../exec/src/journal.js';
+import { applyToolPolicy } from '@kubic/agent/lane/policy';
+import { bootFauxLane, promptToolsLine } from '@kubic/agent/lane/test-harness';
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import type { FileBridge } from '@kubic/exec/file-bridge';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FileJournalStore } from '@kubic/exec/journal';
 import {
   ensureRuntimeExcludeRules,
   gitSync,
-} from '../../../exec/src/runtime-exclude.js';
+} from '@kubic/exec/runtime-exclude';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
   type GitSandbox,
-} from '../../../exec/src/test-support/git-sandbox.js';
+} from '@kubic/exec/test-support/git-sandbox';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   hasToolPolicy,
   isToolAllowed,

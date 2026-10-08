@@ -13,6 +13,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CommandResult } from '@kubic/core/cli/exit-codes';
+import { createCliTheme } from '@kubic/core/cli/theme';
+import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
 import {
   afterAll,
   afterEach,
@@ -22,10 +26,6 @@ import {
   it,
   vi,
 } from 'vitest';
-import type { CommandResult } from '../../../packages/core/src/cli/exit-codes.js';
-import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
-import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import {
   type CliConfigResult,
   CONFIG_CONSUMING_COMMANDS,

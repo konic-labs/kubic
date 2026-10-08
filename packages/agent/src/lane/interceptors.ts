@@ -39,8 +39,8 @@
 // targets stay unenforceable, documented as such in host/approvals.ts.
 import { createHash } from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
-import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
-import { readRootFor } from '../../../exec/src/read-roots.js';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
+import { readRootFor } from '@kubic/exec/read-roots';
 import {
   effectiveNetworkLevel,
   type NetworkLevel,

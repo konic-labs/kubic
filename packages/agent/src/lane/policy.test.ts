@@ -1,8 +1,9 @@
 // Allowlisting on the lane, ported to the durable
 // harness. The class-derived allowlist is now a
 // `conversation.configure({ tools })` against the registry's registrations.
+
+import { FakeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { DEFAULT_PERMISSIONS } from '../permissions.js';
 import {
   AgentDoc,

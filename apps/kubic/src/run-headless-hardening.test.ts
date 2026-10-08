@@ -5,17 +5,17 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { abortLane } from '../../../packages/agent/src/lane/abort.js';
-import { createSession } from '../../../packages/agent/src/lane/session-store.js';
+import { abortLane } from '@kubic/agent/lane/abort';
+import { createSession } from '@kubic/agent/lane/session-store';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const mockState = vi.hoisted(() => ({ closeShouldReject: false }));
@@ -24,29 +24,22 @@ const mockState = vi.hoisted(() => ({ closeShouldReject: false }));
 // beginReconciliation is wrapped (sweep still logs; the real module is
 // untouched for every other suite — file-local mock).
 const guardEvents = vi.hoisted(() => ({ events: [] as string[] }));
-vi.mock(
-  '../../../packages/exec/src/journal-reconcile.js',
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import('../../../packages/exec/src/journal-reconcile.js')
-      >();
-    return {
-      ...actual,
-      beginReconciliation: vi.fn(() => ({
-        sweep: () => {
-          guardEvents.events.push('sweep');
-        },
-      })),
-    };
-  },
-);
-
-vi.mock('../../../packages/agent/src/lane/abort.js', async (importOriginal) => {
+vi.mock('@kubic/exec/journal-reconcile', async (importOriginal) => {
   const actual =
-    await importOriginal<
-      typeof import('../../../packages/agent/src/lane/abort.js')
-    >();
+    await importOriginal<typeof import('@kubic/exec/journal-reconcile')>();
+  return {
+    ...actual,
+    beginReconciliation: vi.fn(() => ({
+      sweep: () => {
+        guardEvents.events.push('sweep');
+      },
+    })),
+  };
+});
+
+vi.mock('@kubic/agent/lane/abort', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@kubic/agent/lane/abort')>();
   const wrapped = async (
     ...args: Parameters<typeof actual.abortLane>
   ): ReturnType<typeof actual.abortLane> => {
@@ -56,35 +49,30 @@ vi.mock('../../../packages/agent/src/lane/abort.js', async (importOriginal) => {
   return { ...actual, abortLane: vi.fn(wrapped) };
 });
 
-vi.mock(
-  '../../../packages/agent/src/lane/session-store.js',
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import('../../../packages/agent/src/lane/session-store.js')
-      >();
-    return {
-      ...actual,
-      createSession: vi.fn((...args: Parameters<typeof actual.createSession>) =>
-        actual.createSession(...args).then(wrapClose),
-      ),
-      attachSession: vi.fn((...args: Parameters<typeof actual.attachSession>) =>
-        actual.attachSession(...args).then(wrapClose),
-      ),
-    };
+vi.mock('@kubic/agent/lane/session-store', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@kubic/agent/lane/session-store')>();
+  return {
+    ...actual,
+    createSession: vi.fn((...args: Parameters<typeof actual.createSession>) =>
+      actual.createSession(...args).then(wrapClose),
+    ),
+    attachSession: vi.fn((...args: Parameters<typeof actual.attachSession>) =>
+      actual.attachSession(...args).then(wrapClose),
+    ),
+  };
 
-    async function wrapClose(
-      session: Awaited<ReturnType<typeof actual.createSession>>,
-    ) {
-      if (mockState.closeShouldReject) {
-        session.release = async () => {
-          throw new Error('release blew up');
-        };
-      }
-      return session;
+  async function wrapClose(
+    session: Awaited<ReturnType<typeof actual.createSession>>,
+  ) {
+    if (mockState.closeShouldReject) {
+      session.release = async () => {
+        throw new Error('release blew up');
+      };
     }
-  },
-);
+    return session;
+  }
+});
 
 const made: string[] = [];
 

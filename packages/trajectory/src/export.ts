@@ -6,7 +6,7 @@
 // env (post-allowlist + role grant), never the intended config:
 // callers must pass capturedFrom: 'used' or the build is refused.
 
-import { redactSecretEnv } from '../../core/src/secret-keys.js';
+import { redactSecretEnv } from '@kubic/core/secret-keys';
 import {
   isTrajectoryFailureCode,
   SCHEMA_VERSION,

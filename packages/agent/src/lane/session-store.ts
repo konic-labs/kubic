@@ -33,10 +33,7 @@
 // never attachable.
 
 import { dirname, join } from 'node:path';
-import type {
-  BridgeFileInfo,
-  FileBridge,
-} from '../../../exec/src/file-bridge.js';
+import type { BridgeFileInfo, FileBridge } from '@kubic/exec/file-bridge';
 import {
   claimLockLink,
   createLockFile,
@@ -44,7 +41,7 @@ import {
   readLockFile,
   removeLockFile,
   tightenStateDir,
-} from '../../../exec/src/lock-file.js';
+} from '@kubic/exec/lock-file';
 import type { RunMode } from '../permissions.js';
 import {
   type Context,

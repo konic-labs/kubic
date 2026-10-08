@@ -6,19 +6,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { KubicLaneEvent, LaneEventSink } from '@kubic/agent/lane/events';
+import { bootFauxLane, fauxToolUse } from '@kubic/agent/lane/test-harness';
+import { fauxAssistantMessage, fauxToolCall } from '@kubic/agent/pi-boundary';
 import { afterEach, describe, expect, it } from 'vitest';
-import type {
-  KubicLaneEvent,
-  LaneEventSink,
-} from '../../agent/src/lane/events.js';
-import {
-  bootFauxLane,
-  fauxToolUse,
-} from '../../agent/src/lane/test-harness.js';
-import {
-  fauxAssistantMessage,
-  fauxToolCall,
-} from '../../agent/src/pi-boundary.js';
 import {
   enableFullAccess,
   FileApprovalStore,

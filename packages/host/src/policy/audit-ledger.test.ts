@@ -11,13 +11,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { REDACTED_SECRET } from '../../../core/src/secret-shapes.js';
+import { REDACTED_SECRET } from '@kubic/core/secret-shapes';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
   type GitSandbox,
-} from '../../../exec/src/test-support/git-sandbox.js';
+} from '@kubic/exec/test-support/git-sandbox';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { AuditInput } from './audit.js';
 import { runAuditCommand } from './audit-cli.js';
 import {

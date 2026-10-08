@@ -385,7 +385,7 @@ describe('enterprise doctor checks', () => {
 
 describe('secret-shape case transforms', () => {
   it('redactSecretShapes replaces uppercase SK- material', async () => {
-    const shapes = await import('../../../core/src/secret-shapes.js');
+    const shapes = await import('@kubic/core/secret-shapes');
     expect(shapes.containsSecretShape('SK-FAUX-TEST-KEY-0001')).toBe(true);
     const redacted = shapes.redactSecretShapes(
       'saw SK-FAUX-TEST-KEY-0001 on the wire',

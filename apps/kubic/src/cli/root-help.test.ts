@@ -1,13 +1,13 @@
 // The grouped root help and styled subcommand help.
 
-import { describe, expect, it } from 'vitest';
-import { createCliTheme } from '../../../../packages/core/src/cli/theme.js';
-import { openStyles } from '../../../../packages/core/src/ui/style.js';
+import { createCliTheme } from '@kubic/core/cli/theme';
+import { openStyles } from '@kubic/core/ui/style';
 import {
   DARK_PALETTE,
   LIGHT_PALETTE,
   TERMINAL_PALETTE,
-} from '../../../../packages/core/src/ui/tokens.js';
+} from '@kubic/core/ui/tokens';
+import { describe, expect, it } from 'vitest';
 import { registerSessionCommands } from '../commands/session.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import { COMMAND_NAMES } from '../dispatch.js';

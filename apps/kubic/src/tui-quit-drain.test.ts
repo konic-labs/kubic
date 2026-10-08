@@ -17,24 +17,24 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { inspectStoredWork } from '../../../packages/agent/src/lane/pending.js';
+import { inspectStoredWork } from '@kubic/agent/lane/pending';
 import {
   attachSession,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
-import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+} from '@kubic/agent/lane/session-store';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from '../../../packages/agent/src/pi-boundary.js';
-import type { CommandResult } from '../../../packages/core/src/cli/exit-codes.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+} from '@kubic/agent/pi-boundary';
+import type { CommandResult } from '@kubic/core/cli/exit-codes';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,

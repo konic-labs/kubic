@@ -7,7 +7,7 @@
 // the same block for a launch with no provider key: printed to the
 // terminal, then exit 6. Pure over a UiTheme.
 
-import type { UiTheme } from '../../core/src/ui/style.js';
+import type { UiTheme } from '@kubic/core/ui/style';
 import { visibleWidth } from './tui-boundary.js';
 import { leftRight, wrapStyled } from './ui/line.js';
 import { sectionLabel } from './ui/marks.js';

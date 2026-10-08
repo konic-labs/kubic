@@ -11,21 +11,21 @@
 // loader is told, never asked to guess.
 
 import { basename, dirname, resolve, sep } from 'node:path';
-import type { PermissionClasses } from '../../agent/src/permissions.js';
-import { DEFAULT_PERMISSIONS } from '../../agent/src/permissions.js';
+import type { PermissionClasses } from '@kubic/agent/permissions';
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import type {
   DiscoverSkillsOptions,
   LoadedSkill,
   SkillSource,
   SkippedSkill,
   WithheldSkill,
-} from '../../agent/src/skills/skills.js';
+} from '@kubic/agent/skills/skills';
 import {
   discoverSkills,
   formatSkillsForSystemPrompt,
   gateSkills,
-} from '../../agent/src/skills/skills.js';
-import type { FileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/agent/skills/skills';
+import type { FileBridge } from '@kubic/exec/file-bridge';
 import type { DoctorCheck } from './doctor.js';
 
 export interface BootSkillOptions {
@@ -202,7 +202,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
   };
 }
 
-export type { SkippedSkill } from '../../agent/src/skills/skills.js';
+export type { SkippedSkill } from '@kubic/agent/skills/skills';
 
 // The role/capability gate: applied in `bootSkills`
 // above — discovery stays in the loader (it owns the roots and trust),

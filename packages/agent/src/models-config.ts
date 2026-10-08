@@ -9,7 +9,7 @@ import {
   parseSecretRef,
   type SecretRef,
   SecretRefError,
-} from '../../core/src/secret-refs.js';
+} from '@kubic/core/secret-refs';
 import {
   type ApiKeyAuth,
   createProvider,

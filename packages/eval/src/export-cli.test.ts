@@ -1,12 +1,9 @@
 // `kubic export` command surface: trajectory-export
 // inspection plus RL dataset export over trajectory files.
+
+import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  EXIT_FAILED,
-  EXIT_OK,
-  EXIT_USAGE,
-} from '../../core/src/cli/exit-codes.js';
-import type { TrajectoryExport } from '../../trajectory/src/schema.js';
 import { type ExportCommandOptions, runExportCommand } from './export-cli.js';
 import { makeExport } from './test-support/fixtures.js';
 

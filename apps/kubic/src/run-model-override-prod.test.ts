@@ -6,20 +6,20 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
 import {
   effectiveConfigView,
   loadRuntimeConfig,
   renderEffectiveConfig,
-} from '../../../packages/host/src/config/runtime.js';
-import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
+} from '@kubic/host/config/runtime';
+import { mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadCliConfig, runtimeModelPin } from './config-runtime.js';
 import { runHeadlessPrompt } from './headless-run.js';
 

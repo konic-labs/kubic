@@ -1,14 +1,15 @@
 // The lane-model projection: the role default and the explicit selection the
 // boots hand to the policy-gated pick. The prod-path tests prove the wiring;
 // these prove the order.
-import { describe, expect, it } from 'vitest';
-import { ModelSelectError } from '../../../packages/agent/src/model-select.js';
+
+import { ModelSelectError } from '@kubic/agent/model-select';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
+} from '@kubic/agent/pi-boundary';
+import { describe, expect, it } from 'vitest';
 import { selectBootModel } from './config-runtime.js';
 import {
   hasExplicitModelSelection,

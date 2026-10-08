@@ -10,7 +10,7 @@
 //
 // The `Terminal` type comes from the presentation boundary, not from
 // `@earendil-works/*` directly: only `tui-boundary.ts` may touch Pi.
-import type { Terminal } from '../packages/tui/src/tui-boundary.js';
+import type { Terminal } from '@kubic/tui/tui-boundary';
 
 export interface FakeTerminal extends Terminal {
   /** One entry per write() call, in order. */

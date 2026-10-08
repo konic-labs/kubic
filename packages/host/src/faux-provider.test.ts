@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
 import {
   createModels,
   InMemoryCredentialStore,
-} from '../../agent/src/pi-boundary.js';
+} from '@kubic/agent/pi-boundary';
+import { describe, expect, it } from 'vitest';
 import {
   FAUX_MODEL_ID,
   FAUX_PROVIDER_ID,

@@ -1,8 +1,9 @@
 // The inline approval card. Pure
 // renders at depth none read like the design.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import {
   type ApprovalCardOptions,
   approvalReason,

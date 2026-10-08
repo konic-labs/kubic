@@ -5,7 +5,7 @@
 // fuzzyPositions marks the matched letters. An empty query shows the recent
 // commands and the current model. Pure: state in, state or lines out.
 
-import type { UiTheme } from '../../../core/src/ui/style.js';
+import type { UiTheme } from '@kubic/core/ui/style';
 import { fuzzyMatch, visibleWidth } from '../tui-boundary.js';
 import { exactWidth, leftRight, padTo } from './line.js';
 import { sectionLabel } from './marks.js';

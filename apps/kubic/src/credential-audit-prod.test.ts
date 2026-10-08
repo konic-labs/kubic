@@ -20,19 +20,19 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createLedgerModelKeyResolver } from '@kubic/host/config/model-key-audit';
 import {
   createModelKeyResolver,
   parseSecretRef,
-} from '../../../packages/host/src/config/secrets.js';
-import { assembleModels } from '../../../packages/host/src/models-cli.js';
-import { runAuditCommand } from '../../../packages/host/src/policy/audit-cli.js';
+} from '@kubic/host/config/secrets';
+import { assembleModels } from '@kubic/host/models-cli';
+import { runAuditCommand } from '@kubic/host/policy/audit-cli';
 import {
   auditLedgerDir,
   readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
+} from '@kubic/host/policy/audit-ledger';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const SECRET = 'sk-live-kubic-do-not-leak';

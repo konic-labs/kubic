@@ -15,20 +15,17 @@
 // prompt apply through the same role machinery `kubic run` uses — and the
 // effective config's lane projections travel with it.
 
-import {
-  ModelSelectError,
-  parseModelFlag,
-} from '../../../packages/agent/src/model-select.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { assembleModels } from '../../../packages/host/src/models-cli.js';
+import { ModelSelectError, parseModelFlag } from '@kubic/agent/model-select';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { assembleModels } from '@kubic/host/models-cli';
 import type {
   ReplayRunRequest,
   ReplayRunResult,
   ReplayRuntimeDeps,
-} from '../../../packages/host/src/replay/replay.js';
-import { createProdReplayRun } from '../../../packages/host/src/replay/run-prod.js';
-import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
+} from '@kubic/host/replay/replay';
+import { createProdReplayRun } from '@kubic/host/replay/run-prod';
+import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { runHeadlessPrompt } from './headless-run.js';
 
 // The re-execution is rooted at the pinned worktree when

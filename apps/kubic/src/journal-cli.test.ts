@@ -12,29 +12,29 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   createSession,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../../packages/agent/src/pi-boundary.js';
-import { CliUsageError } from '../../../packages/core/src/cli/exit-codes.js';
-import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+} from '@kubic/agent/lane/session-store';
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
+import { CliUsageError } from '@kubic/core/cli/exit-codes';
+import { createCliTheme } from '@kubic/core/cli/theme';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FileJournalStore } from '@kubic/exec/journal';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
-} from '../../../packages/exec/src/test-support/git-sandbox.js';
+} from '@kubic/exec/test-support/git-sandbox';
 import {
   colorizeDiffLine,
   type JournalRequest,
   runJournalCommand,
-} from '../../../packages/host/src/journal-cli.js';
+} from '@kubic/host/journal-cli';
 import {
   auditLedgerDirFor,
   readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
+} from '@kubic/host/policy/audit-ledger';
+import { afterEach, describe, expect, it } from 'vitest';
 
 const made: string[] = [];
 

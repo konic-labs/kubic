@@ -103,8 +103,11 @@ export interface SessionCostEntry extends SessionCostInput {}
 export interface SessionCostSummary {
   rows: SessionCostEntry[];
   taskTotal: number;
-  // Prefix hit-rate over the rows that carried cache counters. null when no
-  // row carried any (nothing to measure — never a fabricated 0%).
+  // The units the level counts: distinct sessions at `session` (a session with
+  // several model buckets is one unit), otherwise one per row.
+  units: number;
+  // Prefix hit-rate per unit that carried cache counters. null when none did
+  // (nothing to measure — never a fabricated 0%).
   cache: PrefixHitRate | null;
 }
 
@@ -114,29 +117,54 @@ export interface CostJsonShape {
   taskTotal: number;
 }
 
+// The cache counters each unit carries. At the `session` level a session's
+// buckets sum into one unit, so its prefix hit is judged on the session.
+function cacheUnitsOf(
+  rows: readonly SessionCostEntry[],
+  by: CostGroupBy,
+): Array<{ cacheRead: number; cacheWrite: number }> {
+  const withCache = rows.filter(
+    (row) => row.cacheRead !== undefined || row.cacheWrite !== undefined,
+  );
+  if (by !== 'session') {
+    return withCache.map((row) => ({
+      cacheRead: row.cacheRead ?? 0,
+      cacheWrite: row.cacheWrite ?? 0,
+    }));
+  }
+  const perSession = new Map<
+    string,
+    { cacheRead: number; cacheWrite: number }
+  >();
+  for (const row of withCache) {
+    const key = row.session ?? '';
+    const unit = perSession.get(key) ?? { cacheRead: 0, cacheWrite: 0 };
+    unit.cacheRead += row.cacheRead ?? 0;
+    unit.cacheWrite += row.cacheWrite ?? 0;
+    perSession.set(key, unit);
+  }
+  return [...perSession.values()];
+}
+
 export function summarizeSessionCost(
   rows: SessionCostInput[],
+  by: CostGroupBy = DEFAULT_COST_GROUP_BY,
 ): SessionCostSummary {
   const entries: SessionCostEntry[] = rows.map((row) => ({ ...row }));
   const taskTotal = entries.reduce(
     (acc: number, entry: SessionCostEntry) => acc + entry.costUsd,
     0,
   );
-  const withCache = entries.filter(
-    (entry) => entry.cacheRead !== undefined || entry.cacheWrite !== undefined,
-  );
+  const units =
+    by === 'session'
+      ? new Set(entries.map((entry) => entry.session)).size
+      : entries.length;
+  const cacheUnits = cacheUnitsOf(entries, by);
   return {
     rows: entries,
     taskTotal,
-    cache:
-      withCache.length === 0
-        ? null
-        : prefixHitRate(
-            withCache.map((entry) => ({
-              cacheRead: entry.cacheRead ?? 0,
-              cacheWrite: entry.cacheWrite ?? 0,
-            })),
-          ),
+    units,
+    cache: cacheUnits.length === 0 ? null : prefixHitRate(cacheUnits),
   };
 }
 

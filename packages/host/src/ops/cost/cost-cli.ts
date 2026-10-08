@@ -534,6 +534,13 @@ function costTable(
   );
 }
 
+// The noun a level's count is reported in: `(1 session)`, `(2 sessions)`.
+function unitNoun(by: CostGroupBy, count: number): string {
+  const noun =
+    by === 'request' ? 'request' : by === 'session' ? 'session' : 'project';
+  return count === 1 ? noun : `${noun}s`;
+}
+
 // `kubic cost` over parsed options: commander (apps/kubic/src/commands/
 // analysis.ts) owns argv syntax — unknown flags, missing values, `--help`;
 // this handler owns the semantics (the session id pattern, the store).
@@ -593,7 +600,7 @@ export async function runCostCommand(
     );
     return EXIT_FAILED;
   }
-  const summary = summarizeSessionCost(rows);
+  const summary = summarizeSessionCost(rows, by);
   if (json) {
     deps.out(formatJson(toCostJson(summary)));
     return EXIT_OK;
@@ -603,11 +610,9 @@ export async function runCostCommand(
     return EXIT_OK;
   }
   deps.out(costTable(summary, deps, by));
-  const unit =
-    by === 'request' ? 'requests' : by === 'session' ? 'sessions' : 'projects';
   deps.out(
     theme.bold(
-      `task total ${formatCostUsd(summary.taskTotal)} (${summary.rows.length} ${unit})`,
+      `task total ${formatCostUsd(summary.taskTotal)} (${summary.units} ${unitNoun(by, summary.units)})`,
     ),
   );
   // Prefix-cache readout over real usage rows: reported only when the
@@ -615,7 +620,7 @@ export async function runCostCommand(
   // shows a fabricated 0%.
   if (summary.cache !== null) {
     deps.out(
-      `cache: ${summary.cache.hits}/${summary.cache.total} ${unit} with prefix hits ` +
+      `cache: ${summary.cache.hits}/${summary.cache.total} ${unitNoun(by, summary.cache.total)} with prefix hits ` +
         `(${Math.round(summary.cache.rate * 100)}%)`,
     );
     deps.out(theme.muted(transparentCachingNote()));

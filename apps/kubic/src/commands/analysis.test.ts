@@ -482,7 +482,7 @@ describe('analysis commands: happy paths over the real handlers', () => {
     expect(run.out[0]).toMatch(
       /^SESSION +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
     );
-    expect(run.out[1]).toBe('task total $0.2000 (1 sessions)');
+    expect(run.out[1]).toBe('task total $0.2000 (1 session)');
     expect(run.err).toEqual([]);
   });
 

@@ -136,6 +136,42 @@ describe('kubic cost text view', () => {
     expect(cap.errs).toEqual([]);
   });
 
+  it('counts a session with two buckets once in the total and the cache line', async () => {
+    const cap = capture();
+    const code = await runCostCommand(
+      {},
+      {
+        loadRows: () => [
+          {
+            session: 'sess-1',
+            model: 'cheap/small',
+            costUsd: 0.2,
+            input: 100,
+            output: 50,
+            cacheRead: 100,
+            cacheWrite: 0,
+          },
+          {
+            session: 'sess-1',
+            model: 'tool:bash',
+            costUsd: 0.3,
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+        ],
+        out: cap.out,
+        err: cap.err,
+      },
+    );
+    expect(code).toBe(0);
+    const text = cap.lines.join('\n');
+    expect(text).toContain('task total $0.5000 (1 session)');
+    expect(text).toContain('cache: 1/1 session with prefix hits');
+    expect(text).not.toContain('sessions');
+  });
+
   it('draws the kit table only when fancy', async () => {
     const cap = capture();
     await runCostCommand(
@@ -1145,7 +1181,7 @@ describe('kubic cost project scope and grouping', () => {
     expect(body).toMatch(/1900/);
     expect(body).toMatch(/4000/);
     expect(body).toMatch(/\$0\.0023/);
-    expect(body).toMatch(/task total \$0\.0023 \(1 sessions\)/);
+    expect(body).toMatch(/task total \$0\.0023 \(1 session\)/);
     expect(err).toEqual([]);
   });
 });

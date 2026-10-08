@@ -44,6 +44,40 @@ describe('per-session cost surface', () => {
     expect(row).toMatch(/0\.2000/);
   });
 
+  it('counts a session with several model buckets as one unit', () => {
+    const buckets = [
+      {
+        session: 's-1',
+        model: 'faux/faux-1',
+        costUsd: 0.2,
+        input: 10,
+        output: 5,
+        cacheRead: 100,
+        cacheWrite: 0,
+      },
+      { session: 's-1', model: 'tool:bash', costUsd: 0.1, input: 1, output: 1 },
+      {
+        session: 's-2',
+        model: 'faux/faux-1',
+        costUsd: 0.3,
+        input: 20,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 50,
+      },
+    ];
+    const summary = summarizeSessionCost(buckets, 'session');
+    expect(summary.rows).toHaveLength(3);
+    expect(summary.units).toBe(2);
+    // s-1 is one unit: its cache read is the session's, judged once.
+    expect(summary.cache).toEqual({ hits: 1, total: 2, rate: 0.5 });
+  });
+
+  it('counts one unit per row at the request and project levels', () => {
+    expect(summarizeSessionCost(ROWS, 'project').units).toBe(2);
+    expect(summarizeSessionCost(ROWS, 'request').units).toBe(2);
+  });
+
   it('exposes a --json shape with the rows plus the task total', () => {
     const json = toCostJson(summarizeSessionCost(ROWS));
     expect(json.taskTotal).toBeCloseTo(0.5);

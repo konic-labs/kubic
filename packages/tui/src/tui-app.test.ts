@@ -65,11 +65,11 @@ describe('tui app root', () => {
       model: MODEL,
       approvalsSkipped: false,
     });
-    expect(app.render(100).join('\n')).not.toContain('◌ solo');
+    expect(app.render(100).join('\n')).not.toContain('◌ default');
     app.handleInput('\x14');
-    expect(app.render(100).join('\n')).toContain('◌ solo');
+    expect(app.render(100).join('\n')).toContain('◌ default');
     const narrow = app.render(70).join('\n');
-    expect(narrow).not.toContain('◌ solo');
+    expect(narrow).not.toContain('◌ default');
     expect(narrow).toContain('approvals on');
   });
 
@@ -291,7 +291,7 @@ describe('tui app root', () => {
     });
     app.applyPresentation(presentation());
     app.handleInput('\x14');
-    expect(app.render(100).join('\n')).toContain('● solo');
+    expect(app.render(100).join('\n')).toContain('● default');
     app.setUsage([
       {
         model: MODEL,

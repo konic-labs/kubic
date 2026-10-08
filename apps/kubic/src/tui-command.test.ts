@@ -125,7 +125,7 @@ describe('kubic tui', () => {
     input('\x03');
     expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
-    expect(doc).not.toMatch(/[✓●◌] solo/);
+    expect(doc).not.toMatch(/[✓●◌] default/);
     expect(doc).toContain('approvals on');
     expect(doc).toContain(' ready ');
   });

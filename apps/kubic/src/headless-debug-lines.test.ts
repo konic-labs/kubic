@@ -121,7 +121,7 @@ describe('headless --debug order', () => {
       debugLines.findIndex((line) => line.includes(cls));
     // The stock run resolves no role document but still names its
     // default role.
-    expect(debugLines).toContain('[policy] role=solo (default)');
+    expect(debugLines).toContain('[policy] role=default (default)');
     expect(debugLines.some((line) => line.startsWith('[session] id='))).toBe(
       true,
     );

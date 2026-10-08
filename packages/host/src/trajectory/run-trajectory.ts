@@ -66,7 +66,7 @@ export interface RunOutcome {
 export interface RunTrajectoryInput {
   sessionId: string;
   agentId: string;
-  // The role the lane ran as: 'solo', or the `--role` name.
+  // The role the lane ran as: 'default', or the `--role` name.
   role: string;
   prompt: string;
   // The session's durable entries (any order; older runs filtered here).

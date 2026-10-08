@@ -44,7 +44,7 @@ The pure assembler is `packages/host/src/trajectory/run-trajectory.ts`
 | `provenance` | Session and agent ids; `pid` = the process; `worktree` = the run's cwd; `model` = `provider/id`, or `none/none` when the run ended before a model was selected. |
 | `worktree` | `git rev-parse HEAD` and the branch (null when detached); `no-vcs` outside a git checkout. |
 | `environment` | The env the lane spawns tools with, with every secret-classified value redacted. |
-| `task` | `taskId` is `prompt:<sha256 prefix>`, stable per prompt text, so two runs of one prompt can be paired. `role` is the role the run ran as (`solo` without `--role`). |
+| `task` | `taskId` is `prompt:<sha256 prefix>`, stable per prompt text, so two runs of one prompt can be paired. `role` is the role the run ran as (`default` without `--role`). |
 | `result` | The run's terminus mapped to a result status and failure category. Lane failures go through `classifyFailure`; a wall-clock timeout is `timeout` and the `--max-turns` stop is `turn_limit`, both with category `run_limit`; a boot failure or interrupt is `process_crashed` (an interrupt is `cancelled`). |
 
 ## Contracts

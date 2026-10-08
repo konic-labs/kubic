@@ -899,7 +899,7 @@ export interface GitBranchResult {
 export const gitBranchOperation: Operation<GitBranchArgs, GitBranchResult> = {
   name: 'git_branch',
   description:
-    'List branches, or create one (checkout is out of scope: solo works on the current branch)',
+    'List branches, or create one (checkout is out of scope: Kubic works on the current branch)',
   replay: 'never',
   validateArgs: (raw: unknown): GitBranchArgs => {
     if (typeof raw !== 'object' || raw === null)

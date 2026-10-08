@@ -1373,7 +1373,7 @@ export async function bootTuiLane(
     // default the boot runs as when no --role was given (mirrors the
     // headless runner's line).
     if (selectedRole === undefined) {
-      options.debug?.(`[policy] role=solo (default)`);
+      options.debug?.(`[policy] role=default (default)`);
     } else {
       options.debug?.(
         `[policy] role=${selectedRole.resolved.name} tools=${selectedRole.resolved.tools.join(',')}`,
@@ -2149,7 +2149,7 @@ export async function bootTuiLane(
             sessionsRoot: root,
             sessionId: id,
             agentId: options.agentId ?? 'root',
-            role: options.role ?? 'solo',
+            role: options.role ?? 'default',
             prompt: turn.prompt,
             entries,
             model: { provider: live.provider, id: live.id },

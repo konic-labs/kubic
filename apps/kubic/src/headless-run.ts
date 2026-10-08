@@ -891,7 +891,7 @@ export async function runHeadlessPrompt(
       sessionsRoot: capture.sessionsRoot,
       sessionId: capture.sessionId,
       agentId: resolveRunAgentId(deps.agentId),
-      role: capture.role ?? 'solo',
+      role: capture.role ?? 'default',
       prompt: scrub(prompt),
       entries: capture.entries,
       ...(capture.model === undefined ? {} : { model: capture.model }),
@@ -1335,7 +1335,7 @@ async function runHeadlessPromptImpl(
     } else {
       // The stock run resolves no role document — the
       // [policy] line still names the default role it runs as.
-      debug?.(`[policy] role=solo (default)`);
+      debug?.(`[policy] role=default (default)`);
     }
     // A refused models.json is a config error the user must see: it goes
     // to the warning channel unconditionally; a successful load is a

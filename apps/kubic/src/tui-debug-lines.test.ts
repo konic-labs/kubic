@@ -181,7 +181,7 @@ describe('TUI boot debug lines', () => {
       expect(debugLines.some((line) => line.startsWith('[session] id='))).toBe(
         true,
       );
-      expect(debugLines).toContain('[policy] role=solo (default)');
+      expect(debugLines).toContain('[policy] role=default (default)');
       // The runner is threaded the same sink for its fault/token lines.
       expect(boot.debug).toBeDefined();
     } finally {

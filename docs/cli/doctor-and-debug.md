@@ -124,7 +124,7 @@ The vocabulary is seven line classes (`[policy]`,
 
 - **`kubic run --debug`** (stderr): the boot `[session] id=<id>` and
   `[policy] role=<name> tools=<…>` lines (a stock
-  run names `role=solo (default)`), then per turn the `[agent]` run/lane
+  run names `role=default (default)`), then per turn the `[agent]` run/lane
   spans, one `[tool] in/out` pair per tool call, one `[model]
   in=<n> out=<n> cached=<n> <provider>/<model>` line per committed
   response, and retry/compaction `[lane]` lines. A faulted harness task

@@ -68,7 +68,7 @@ export type TrajectoryResultStatus = (typeof RESULT_STATUSES)[number];
 export interface TrajectoryTask {
   taskId: string;
   objective: string;
-  // The role the run ran as: 'solo', or the `--role` name.
+  // The role the run ran as: 'default', or the `--role` name.
   role: string;
 }
 

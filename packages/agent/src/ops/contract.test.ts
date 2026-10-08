@@ -78,7 +78,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   git_branch: {
     description:
-      'List branches, or create one (checkout is out of scope: solo works on the current branch)',
+      'List branches, or create one (checkout is out of scope: Kubic works on the current branch)',
     replay: 'never',
   },
   git_checkpoint: {

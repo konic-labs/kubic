@@ -83,7 +83,7 @@ export interface TreeState {
   usage: TreeUsage;
 }
 
-export function createTreeState(label = 'solo'): TreeState {
+export function createTreeState(label = 'default'): TreeState {
   return {
     label,
     status: 'idle',

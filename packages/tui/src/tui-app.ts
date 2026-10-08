@@ -780,7 +780,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         })();
   // The tree row starts hidden (collapsed); Ctrl-T opens it.
   const tree = new TreeView(undefined, {
-    label: seed.label ?? 'solo',
+    label: seed.label ?? 'default',
     collapsed: true,
   });
   // The transcript row must stay the ScrollView itself so the layout engine

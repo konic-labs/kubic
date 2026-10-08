@@ -153,9 +153,9 @@ function ledger(overrides: Partial<OrgAuditRecord> = {}): OrgAuditRecord {
     who: 'user',
     what: 'approval',
     when: new Date(STARTED + 12).toISOString(),
-    agent: { session: 'sess-1', role: 'solo' },
+    agent: { session: 'sess-1', role: 'default' },
     model: { provider: 'faux', id: 'echo', thinking: 'off' },
-    worker: { pid: 1, role: 'solo' },
+    worker: { pid: 1, role: 'default' },
     workspace: { path: '/ws', base: 'abc' },
     permission: { permission: 'shell', approval: 'ask' },
     credential: { sentinel: '' },
@@ -173,7 +173,7 @@ function input(
   return {
     sessionId: 'sess-1',
     agentId: 'root',
-    role: 'solo',
+    role: 'default',
     prompt: 'read a.txt',
     entries: ENTRIES,
     model: { provider: 'faux', id: 'echo', thinking: null },
@@ -309,7 +309,7 @@ describe('assembleRunTrajectory', () => {
             result: 'deny',
             reason: 'approval timed out after 120000ms',
           }),
-          ledger({ agent: { session: 'sess-2', role: 'solo' } }),
+          ledger({ agent: { session: 'sess-2', role: 'default' } }),
           ledger({ when: new Date(STARTED - 5).toISOString() }),
         ],
       }),
@@ -367,7 +367,7 @@ describe('assembleRunTrajectory', () => {
     expect(a.task.taskId).toBe(b.task.taskId);
     expect(a.task.taskId).toBe(taskIdForPrompt('read a.txt'));
     expect(taskIdForPrompt('read b.txt')).not.toBe(a.task.taskId);
-    expect(a.task).toMatchObject({ objective: 'read a.txt', role: 'solo' });
+    expect(a.task).toMatchObject({ objective: 'read a.txt', role: 'default' });
     expect(a.resources).toEqual({ skills: ['review'] });
     expect(a.prompt).toEqual({ text: 'read a.txt' });
   });

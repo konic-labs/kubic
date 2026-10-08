@@ -157,7 +157,7 @@ export function createRunProgress(
   return {
     begin(info) {
       runStart = now();
-      const parts = ['solo'];
+      const parts = ['default'];
       if (info.model !== undefined) parts.push(info.model);
       const where = shortPath(options.cwd, options.home);
       const columns = stream.columns ?? DEFAULT_COLUMNS;

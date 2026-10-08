@@ -67,7 +67,7 @@ async function boot(handle: SessionHandle): Promise<Lane> {
 describe('solo boot adopts the session storage', () => {
   it('adopts the handle and keeps the storage usable after release', async () => {
     const tracked = trackableHandle('sess-adopt');
-    const solo = await boot(tracked.handle);
+    const lane = await boot(tracked.handle);
     try {
       expect(tracked.adopted()).toBe(true);
       // The caller's release path: the lock goes back, the storage stays
@@ -75,7 +75,7 @@ describe('solo boot adopts the session storage', () => {
       await tracked.handle.release(BACKGROUND_CONTEXT);
       expect(tracked.closed()).toBe(false);
       // Still usable: a read on the live harness does not throw `closed`.
-      const page = await solo.conversation.entries(
+      const page = await lane.conversation.entries(
         {},
         1,
         undefined,
@@ -83,7 +83,7 @@ describe('solo boot adopts the session storage', () => {
       );
       expect(Array.isArray(page.items)).toBe(true);
     } finally {
-      await solo.close(BACKGROUND_CONTEXT);
+      await lane.close(BACKGROUND_CONTEXT);
     }
   });
 

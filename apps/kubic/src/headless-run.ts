@@ -557,14 +557,14 @@ function stoppedResult(
 // while the lane is open, the session storage otherwise. A read failure
 // leaves the trajectory without actions, never the run without its result.
 async function captureEntries(
-  solo: Lane | undefined,
+  lane: Lane | undefined,
   session: SessionHandle,
   context: Context,
 ): Promise<EntryRecord[]> {
   try {
-    return solo === undefined
+    return lane === undefined
       ? await readSessionEntries(session.storage, context)
-      : await readConversationEntries(solo.conversation, context);
+      : await readConversationEntries(lane.conversation, context);
   } catch {
     return [];
   }
@@ -601,7 +601,7 @@ async function settledWithin<T>(
 // a context that is NOT the cancelled bound, and the wait is bounded so the
 // run's own result never hangs on it.
 async function abortAbandonedLane(
-  solo: Lane,
+  lane: Lane,
   report: (message: string) => void,
 ): Promise<void> {
   const cancel = withCancel(BACKGROUND_CONTEXT);
@@ -611,7 +611,7 @@ async function abortAbandonedLane(
     LANE_ABORT_BOUND_MS,
   );
   try {
-    await abortLane(solo, cancel.context);
+    await abortLane(lane, cancel.context);
   } catch (error) {
     report(
       `guard: drain failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -679,23 +679,23 @@ async function appendPromptEntry(
 // earlier identical prompt) is never written twice, and a lane that booted
 // but never admitted the prompt still gets its entry.
 async function ensurePromptDurable(
-  solo: Lane | undefined,
+  lane: Lane | undefined,
   session: SessionHandle,
   prompt: string,
   context: Context,
   report: (message: string) => void,
 ): Promise<void> {
-  const entries = await captureEntries(solo, session, context);
+  const entries = await captureEntries(lane, session, context);
   const present = entriesToTranscript(entries).some(
     (item) => item.kind === 'user' && item.text.trim() === prompt.trim(),
   );
   if (present) return;
   try {
-    if (solo === undefined) {
+    if (lane === undefined) {
       await appendPromptEntry(session, prompt, context);
     } else {
-      await solo.conversation.commit(async (tx) => {
-        await tx.appendEntry(UserEntry, solo.conversation.id, {
+      await lane.conversation.commit(async (tx) => {
+        await tx.appendEntry(UserEntry, lane.conversation.id, {
           model: [{ role: 'user', content: prompt, timestamp: Date.now() }],
         });
       }, context);
@@ -1134,7 +1134,7 @@ async function runHeadlessPromptImpl(
   // The booted lane is hoisted so every exit path can stop the
   // in-flight turn — a guard firing mid-turn must not abandon the tool
   // processes it interrupted.
-  let solo: Lane | undefined;
+  let lane: Lane | undefined;
   // Set when a guard or an interrupt abandoned a live turn: the finally then
   // states the durable conversation abort (plus the kill drain) instead of
   // dropping handles for work that is still running.
@@ -1184,8 +1184,8 @@ async function runHeadlessPromptImpl(
   function onSignal(signal: string): void {
     detachSignals();
     interruptedBy ??= signal;
-    if (solo !== undefined) {
-      for (const kill of solo.kills.drain(String(solo.conversation.id))) {
+    if (lane !== undefined) {
+      for (const kill of lane.kills.drain(String(lane.conversation.id))) {
         try {
           kill();
         } catch {
@@ -1756,7 +1756,7 @@ async function runHeadlessPromptImpl(
     // climbs only via the single auto trigger; explicit switches are a
     // TUI affordance).
     try {
-      solo = await bootLane({
+      lane = await bootLane({
         session,
         models,
         model,
@@ -1840,7 +1840,7 @@ async function runHeadlessPromptImpl(
     // The boot reconciled the selection with the session's stored model: the
     // trajectory and the audit rows name what the lane reports, the same source
     // as the envelope and the usage rows.
-    const running = await liveModel(solo, context);
+    const running = await liveModel(lane, context);
     if (running !== undefined) {
       capture.model = { provider: running.provider, id: running.id };
       liveModelRef = `${running.provider}/${running.id}`;
@@ -1849,15 +1849,15 @@ async function runHeadlessPromptImpl(
     // defaults an unset level to `off`, the same answer `/thinking`
     // reports) — the audit rows name this, not the pre-boot pick.
     liveThinkingRef =
-      (await solo.conversation.agent(context)).thinkingLevel ?? 'off';
+      (await lane.conversation.agent(context)).thinkingLevel ?? 'off';
     // What the lane booted with (post-clamp), read
     // from the committed agent doc — the same source the envelope reports.
     // Unset stays unset: the trajectory omits the key rather than
     // inventing a level the lane never committed.
-    const bootedThinking = (await solo.conversation.agent(context))
+    const bootedThinking = (await lane.conversation.agent(context))
       .thinkingLevel;
     if (bootedThinking !== undefined) capture.thinking = bootedThinking;
-    report.model = await liveModelId(solo, context);
+    report.model = await liveModelId(lane, context);
     options.progress?.begin({
       ...(report.model === undefined ? {} : { model: report.model }),
       notice: noIsolationNotice,
@@ -1866,8 +1866,8 @@ async function runHeadlessPromptImpl(
     // the run's turns for `--max-turns`. Durable retries are the harness's own
     // (they commit no assistant entry), so a turn is one committed response.
     const detachEvents = await subscribeLaneEvents(
-      solo.harness,
-      solo.conversation.id,
+      lane.harness,
+      lane.conversation.id,
       (event) => {
         // A retry backoff and a compaction are
         // named on the debug channel — tens of silent seconds otherwise.
@@ -1916,13 +1916,13 @@ async function runHeadlessPromptImpl(
       // covers the durable turn itself (submit → wait → settlement). Tool
       // spans nest under `drive` because `startLane('drive')` is the lane
       // open when the harness runs them.
-      const pending = await inspectPending(solo, context);
+      const pending = await inspectPending(lane, context);
       const acceptSpan = spans.startLane('accept');
-      let resumed: Awaited<ReturnType<typeof solo.harness.submission>>;
+      let resumed: Awaited<ReturnType<typeof lane.harness.submission>>;
       try {
         if (pending.pending) {
-          const pendingPrompt = await pendingInputText(solo, context);
-          const placed = (await solo.harness.inspect(context)).submissions.find(
+          const pendingPrompt = await pendingInputText(lane, context);
+          const placed = (await lane.harness.inspect(context)).submissions.find(
             (record) => record.type === 'input' && record.status === 'placed',
           );
           if (
@@ -1933,14 +1933,14 @@ async function runHeadlessPromptImpl(
             pendingPrompt === effectivePrompt &&
             placed !== undefined
           ) {
-            resumed = await solo.harness.submission(placed.id, context);
+            resumed = await lane.harness.submission(placed.id, context);
             notice(
               `${pending.summary ?? 'pending work'} carries this prompt: resuming it instead of re-prompting`,
             );
           } else {
-            const settlement = await settlePending(solo, 'resume', {
+            const settlement = await settlePending(lane, 'resume', {
               context,
-              kills: solo.kills,
+              kills: lane.kills,
               guard: guard.context,
             });
             notice(describePendingSettlement(pending.summary, settlement));
@@ -1972,7 +1972,7 @@ async function runHeadlessPromptImpl(
           // once on the fresh context; every other outcome passes through
           // exactly as runTurn reports it.
           const recovered = await runTurnWithOverflowRecovery(
-            solo,
+            lane,
             effectivePrompt,
             {
               requestId,
@@ -2040,7 +2040,7 @@ async function runHeadlessPromptImpl(
       }
       if (outcome.kind === 'completed') {
         const items = entriesToTranscript(
-          await readConversationEntries(solo.conversation, context),
+          await readConversationEntries(lane.conversation, context),
         );
         return finished(
           id,
@@ -2076,13 +2076,13 @@ async function runHeadlessPromptImpl(
     // plain completion); a completed or failed turn forgets its (dead) kill
     // handles. Failures only reach the debug channel: the mapped result
     // and the sweep both stand.
-    if (solo !== undefined) {
+    if (lane !== undefined) {
       if (abandoned) {
-        await abortAbandonedLane(solo, (message) =>
+        await abortAbandonedLane(lane, (message) =>
           guardedReport(debug, message),
         );
       } else {
-        forgetLaneKills(solo);
+        forgetLaneKills(lane);
       }
     }
     // In-flight work is dead: a later signal takes the default path again.
@@ -2118,7 +2118,7 @@ async function runHeadlessPromptImpl(
     // the capture below so the trajectory carries the fallback write.
     try {
       await ensurePromptDurable(
-        solo,
+        lane,
         session,
         effectivePrompt,
         context,
@@ -2134,15 +2134,15 @@ async function runHeadlessPromptImpl(
     // still open through the shared transcript adapter; a read
     // failure leaves the trajectory without actions, never the run without
     // its result.
-    capture.entries = await captureEntries(solo, session, context);
+    capture.entries = await captureEntries(lane, session, context);
     // The harness owns the storage it adopted; closing it first means the
     // handle's release only gives the lock back (and closes a storage no
     // harness took). The result is already mapped: a close failure must
     // neither escape nor mask it. An abandoned turn may still hold a stuck
     // invocation, so THAT close is bounded — the run's own result wins.
     try {
-      if (solo !== undefined) {
-        const closing = solo.close(context);
+      if (lane !== undefined) {
+        const closing = lane.close(context);
         if (abandoned) {
           await settledWithin(closing, LANE_ABORT_BOUND_MS);
         } else {
@@ -2176,22 +2176,22 @@ function catalogIdentity(models: MutableModels | undefined): string[] {
 // conversation's agent model, else the boot's effective model. Tolerant of
 // liveness gaps, which report nothing rather than fail.
 async function liveModel(
-  solo: Lane,
+  lane: Lane,
   context: Context,
 ): Promise<{ provider: string; id: string } | undefined> {
-  const agent = await solo.conversation.agent(context);
+  const agent = await lane.conversation.agent(context);
   const live = agent.model;
   if (live !== undefined) {
     return { provider: live.provider, id: live.modelId };
   }
-  return solo.model as Lane['model'] | undefined;
+  return lane.model as Lane['model'] | undefined;
 }
 
 async function liveModelId(
-  solo: Lane,
+  lane: Lane,
   context: Context,
 ): Promise<string | undefined> {
-  const running = await liveModel(solo, context);
+  const running = await liveModel(lane, context);
   return running === undefined
     ? undefined
     : `${running.provider}/${running.id}`;

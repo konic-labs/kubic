@@ -38,7 +38,7 @@ function reasoning() {
 }
 
 async function agentThinking(lane: FauxLane): Promise<unknown> {
-  return (await lane.solo.conversation.agent(BACKGROUND_CONTEXT)).thinkingLevel;
+  return (await lane.lane.conversation.agent(BACKGROUND_CONTEXT)).thinkingLevel;
 }
 
 describe('lane thinking resolution', () => {
@@ -126,7 +126,7 @@ describe('lane thinking resolution', () => {
       ],
     });
     lanes.push(lane);
-    const result = await runPrompt(lane.solo, 'hello', { requestId: 'u1' });
+    const result = await runPrompt(lane.lane, 'hello', { requestId: 'u1' });
     expect(result.status).toBe('completed');
     expect(seen).toEqual(['high']);
   });

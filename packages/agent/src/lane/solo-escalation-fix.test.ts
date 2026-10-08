@@ -57,12 +57,12 @@ vi.mock('./tools-adapter.js', async () => {
   };
 });
 
-const SOLOS: Lane[] = [];
+const LANES: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const solo of SOLOS.splice(0)) {
-    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  for (const lane of LANES.splice(0)) {
+    await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
 });
 
@@ -103,7 +103,7 @@ async function bootPinned(taskId = 'task-1') {
     agentId: 'root',
     taskId,
   });
-  SOLOS.push(booted);
+  LANES.push(booted);
   const ladder: EscalationLadder = {
     steps: ['faux/a', 'faux/b'],
     maxEscalations: 1,
@@ -112,8 +112,8 @@ async function bootPinned(taskId = 'task-1') {
   return { booted, ladder };
 }
 
-function liveModelId(solo: Lane): Promise<string | undefined> {
-  return solo.conversation
+function liveModelId(lane: Lane): Promise<string | undefined> {
+  return lane.conversation
     .agent(BACKGROUND_CONTEXT)
     .then((agent) =>
       agent.model === undefined

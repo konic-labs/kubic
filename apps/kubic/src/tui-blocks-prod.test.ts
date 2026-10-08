@@ -58,7 +58,7 @@ function boot(answer: string): TuiRunDeps['bootLane'] {
       provider === undefined ? undefined : models.getModels(provider.id)[0];
     if (provider === undefined || model === undefined)
       throw new Error('no model');
-    const solo = await bootLane({
+    const lane = await bootLane({
       session,
       models,
       model,
@@ -70,9 +70,9 @@ function boot(answer: string): TuiRunDeps['bootLane'] {
     return {
       sessionId: session.id,
       model: `${provider.id}/${model.id}`,
-      loop: tuiLoop(solo),
+      loop: tuiLoop(lane),
       close: async () => {
-        await solo.close(BACKGROUND_CONTEXT);
+        await lane.close(BACKGROUND_CONTEXT);
         await session.release(BACKGROUND_CONTEXT);
       },
     };

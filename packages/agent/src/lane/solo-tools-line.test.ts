@@ -64,13 +64,13 @@ vi.mock('./tools-adapter.js', async () => {
   };
 });
 
-const SOLOS: Lane[] = [];
+const LANES: Lane[] = [];
 const DIRS: string[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const solo of SOLOS.splice(0)) {
-    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  for (const lane of LANES.splice(0)) {
+    await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
   for (const dir of DIRS.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -126,7 +126,7 @@ async function boot(extra: {
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage('hi')]);
-  const solo = await bootLane({
+  const lane = await bootLane({
     session: handle() as never,
     models,
     model: faux.getModel(),
@@ -135,15 +135,15 @@ async function boot(extra: {
     agentId: 'root',
     ...extra,
   });
-  SOLOS.push(solo);
+  LANES.push(lane);
   const settled = await (
-    await solo.conversation.submit(
+    await lane.conversation.submit(
       { type: 'input', content: 'hi' },
       BACKGROUND_CONTEXT,
     )
   ).wait(BACKGROUND_CONTEXT);
   expect(settled.status).toBe('done');
-  const page = await solo.conversation.entries(
+  const page = await lane.conversation.entries(
     {},
     200,
     undefined,
@@ -156,7 +156,7 @@ async function boot(extra: {
     }>
   )?.[0];
   const prompt = message?.sections?.[PROMPT_SECTION] ?? '';
-  const offered = (await solo.conversation.agent(BACKGROUND_CONTEXT)).tools
+  const offered = (await lane.conversation.agent(BACKGROUND_CONTEXT)).tools
     .map((tool) => tool.name)
     .sort();
   return { advertised: toolsLine(prompt), offered };
@@ -233,7 +233,7 @@ describe('the prompt tools line is the same intersection the conversation offers
       models.setProvider(faux.provider);
       faux.setResponses([fauxAssistantMessage('hi')]);
       const sessionId = 'reopen';
-      const solo = await bootLane({
+      const lane = await bootLane({
         session: {
           id: sessionId,
           dir,
@@ -251,15 +251,15 @@ describe('the prompt tools line is the same intersection the conversation offers
         agentId: 'root',
         ...extra,
       });
-      SOLOS.push(solo);
+      LANES.push(lane);
       const settled = await (
-        await solo.conversation.submit(
+        await lane.conversation.submit(
           { type: 'input', content: 'hi' },
           BACKGROUND_CONTEXT,
         )
       ).wait(BACKGROUND_CONTEXT);
       expect(settled.status).toBe('done');
-      const page = await solo.conversation.entries(
+      const page = await lane.conversation.entries(
         {},
         200,
         undefined,
@@ -273,7 +273,7 @@ describe('the prompt tools line is the same intersection the conversation offers
       )?.[0];
       return {
         advertised: toolsLine(message?.sections?.[PROMPT_SECTION] ?? ''),
-        offered: (await solo.conversation.agent(BACKGROUND_CONTEXT)).tools
+        offered: (await lane.conversation.agent(BACKGROUND_CONTEXT)).tools
           .map((tool) => tool.name)
           .sort(),
       };
@@ -284,14 +284,14 @@ describe('the prompt tools line is the same intersection the conversation offers
       advertised: ['grep', 'read'],
       offered: ['grep', 'read'],
     });
-    await SOLOS.at(-1)?.close(BACKGROUND_CONTEXT);
+    await LANES.at(-1)?.close(BACKGROUND_CONTEXT);
 
     // The narrowing was durably stored; this boot has none, so it must clear
     // the stored filter instead of keeping a set the prompt does not name.
     const cleared = await bootOn({});
     expect(cleared.advertised).toEqual(all);
     expect(cleared.offered).toEqual(all);
-    await SOLOS.at(-1)?.close(BACKGROUND_CONTEXT);
+    await LANES.at(-1)?.close(BACKGROUND_CONTEXT);
   });
 });
 

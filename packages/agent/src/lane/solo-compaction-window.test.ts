@@ -118,7 +118,7 @@ function reasonOf(entry: { readonly data?: unknown }): unknown {
 
 /** The active context's estimated tokens, counted the way the harness counts them. */
 async function contextTokens(lane: FauxLane): Promise<number> {
-  const view = await lane.solo.conversation.context(BACKGROUND_CONTEXT);
+  const view = await lane.lane.conversation.context(BACKGROUND_CONTEXT);
   return estimateContextTokens(view.messages).tokens;
 }
 
@@ -136,7 +136,7 @@ function textTokens(message: { readonly content?: unknown }): number {
 
 /** The verbatim history after the summary head: the kept window. */
 async function keptTokens(lane: FauxLane): Promise<number> {
-  const view = await lane.solo.conversation.context(BACKGROUND_CONTEXT);
+  const view = await lane.lane.conversation.context(BACKGROUND_CONTEXT);
   return view.contributions
     .slice(view.head === undefined ? 0 : 1)
     .flat()
@@ -236,7 +236,7 @@ describe('manual compaction (/compact)', () => {
       );
     }
     const outcome = await runCompactCommand(
-      lane.solo,
+      lane.lane,
       undefined,
       BACKGROUND_CONTEXT,
     );
@@ -248,7 +248,7 @@ describe('manual compaction (/compact)', () => {
     const lane = await bootWindow(200000, { reply: () => text('reply', 300) });
     expect((await lane.run(text('user only', 200))).status).toBe('completed');
     const outcome = await runCompactCommand(
-      lane.solo,
+      lane.lane,
       undefined,
       BACKGROUND_CONTEXT,
     );
@@ -316,12 +316,12 @@ describe('the kept window beside the real system prompt and tool set', () => {
         'completed',
       );
       expect((await lane.run('short follow-up')).status).toBe('completed');
-      await lane.solo.conversation.configure(
+      await lane.lane.conversation.configure(
         { model: { provider: 'faux', modelId: 'target' } },
         BACKGROUND_CONTEXT,
       );
       const outcome = await runManualCompaction(
-        lane.solo,
+        lane.lane,
         undefined,
         BACKGROUND_CONTEXT,
       );
@@ -353,12 +353,12 @@ describe('a model switch moves the budgets live, as the harness applies them', (
 
     // The 8k window: the summary budget is 0.8 of its 2048 reserve, and the
     // kept window is 1536 tokens, so the cut keeps only the last message.
-    await lane.solo.conversation.configure(
+    await lane.lane.conversation.configure(
       { model: { provider: 'faux', modelId: 'small' } },
       BACKGROUND_CONTEXT,
     );
     expect(
-      (await runManualCompaction(lane.solo, undefined, BACKGROUND_CONTEXT))
+      (await runManualCompaction(lane.lane, undefined, BACKGROUND_CONTEXT))
         .status,
     ).toBe('completed');
     expect(budgets.at(-1)).toBe(1638);
@@ -366,7 +366,7 @@ describe('a model switch moves the budgets live, as the harness applies them', (
 
     // The 200k window again: the summary budget is 0.8 of 16384, and the kept
     // window is the configured 20000 tokens.
-    await lane.solo.conversation.configure(
+    await lane.lane.conversation.configure(
       { model: { provider: 'faux', modelId: 'large' } },
       BACKGROUND_CONTEXT,
     );
@@ -376,7 +376,7 @@ describe('a model switch moves the budgets live, as the harness applies them', (
       );
     }
     expect(
-      (await runManualCompaction(lane.solo, undefined, BACKGROUND_CONTEXT))
+      (await runManualCompaction(lane.lane, undefined, BACKGROUND_CONTEXT))
         .status,
     ).toBe('completed');
     expect(budgets.at(-1)).toBe(13107);

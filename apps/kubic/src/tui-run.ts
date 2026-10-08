@@ -1093,36 +1093,36 @@ export interface TuiRunOptions {
 // share ONE wiring: a lane member the loop needs cannot be forgotten in a
 // hand-spread fake (the failure mode that hides a dropped dep).
 export function tuiLoop(
-  solo: Lane,
+  lane: Lane,
   context: Context = BACKGROUND_CONTEXT,
 ): TuiLaneLoop {
   return {
-    runTurn: (prompt, opts) => runTurn(solo, prompt, opts),
+    runTurn: (prompt, opts) => runTurn(lane, prompt, opts),
     // The live model's own input modalities. The boot
     // model is what this closure can see; `bootTuiLane` overrides it with
     // the catalog read so a `/model` switch moves the verdict with it.
-    supportsImages: async () => solo.model.input.includes('image'),
+    supportsImages: async () => lane.model.input.includes('image'),
     subscribe: (sink, loopContext) =>
       subscribeLaneEvents(
-        solo.harness,
-        solo.conversation.id,
+        lane.harness,
+        lane.conversation.id,
         sink,
         loopContext,
       ),
     entries: (loopContext) =>
-      readConversationEntries(solo.conversation, loopContext),
+      readConversationEntries(lane.conversation, loopContext),
     // `/compact [focus]` — Pi's manual compaction task with Kubic's compact
     // prompt as the summarizer instructions, under the manual keep window.
     compact: (focus, loopContext, options) =>
-      runCompactCommand(solo, focus, loopContext, options),
+      runCompactCommand(lane, focus, loopContext, options),
     // The shared abort+drain (conversation.abort, every kill
     // attempted, failures aggregated) and the settled-turn forget.
     abort: async (loopContext) => {
-      await abortLane(solo, loopContext);
+      await abortLane(lane, loopContext);
     },
-    forgetKills: () => forgetLaneKills(solo),
-    killsKey: String(solo.conversation.id),
-    kills: solo.kills,
+    forgetKills: () => forgetLaneKills(lane),
+    killsKey: String(lane.conversation.id),
+    kills: lane.kills,
     // The lane's own context: every member is called with it, so an embedder
     // that booted the lane on a bounded context is never silently
     // un-cancellable.
@@ -1220,7 +1220,7 @@ export async function bootTuiLane(
   let settlePolicy: (() => void) | undefined;
   // The booted lane, once it exists. The session release is the caller's job:
   // the harness closes first, then the handle gives the lock back.
-  let solo: Lane | undefined;
+  let lane: Lane | undefined;
   // The quit's last-resort kill drain. keys every bash group
   // by String(conversation.id): whatever is still registered when the quit
   // runs is killed here — before the sweep and the close — because a tool
@@ -1246,7 +1246,7 @@ export async function bootTuiLane(
       // Best-effort, like the sweep: the clean quit stands.
     }
     try {
-      await solo?.close(context);
+      await lane?.close(context);
     } catch {
       // A harness that was never booted, or one already closed, still
       // releases the session handle below.
@@ -1711,7 +1711,7 @@ export async function bootTuiLane(
     });
     // The booted lane: `solo` stays optional for the close closure (a boot
     // that failed before the assignment must still release the session).
-    solo = booted;
+    lane = booted;
     {
       const running = await liveModelOf(booted, context);
       liveModelRef = `${running.provider}/${running.id}`;
@@ -1741,10 +1741,10 @@ export async function bootTuiLane(
     // operator sees WHAT was interrupted. The outcome is named in the footer
     // from the first render.
     const pendingNotices: string[] = [];
-    const pending = await inspectPending(solo, context);
+    const pending = await inspectPending(lane, context);
     if (pending.pending) {
-      const interrupted = await pendingInputText(solo, context);
-      const settlement = await settlePending(solo, 'abort', {
+      const interrupted = await pendingInputText(lane, context);
+      const settlement = await settlePending(lane, 'abort', {
         context,
         kills: booted.kills,
       });
@@ -1760,14 +1760,14 @@ export async function bootTuiLane(
     // The model the lane actually runs: the status bar, the
     // usage rows the turn runner records and the context gauge all
     // read this.
-    const runningModel = await liveModelOf(solo, context);
+    const runningModel = await liveModelOf(lane, context);
     // The thinking level the lane actually
     // runs — read back from the committed agent document, exactly the
     // value whose clamp (or keep) the boot notices already reported. The
     // seed below shows this from the first frame; a stale seed would
     // disagree with the lane until the first turn's refresh.
     const runningThinking =
-      (await solo.conversation.agent(context)).thinkingLevel ?? 'off';
+      (await lane.conversation.agent(context)).thinkingLevel ?? 'off';
     return {
       sessionId: id,
       model: `${runningModel.provider}/${runningModel.id}`,
@@ -2231,15 +2231,15 @@ function tuiTurnOutcome(
 // `pi.agent` document first, the boot model as the fallback for the window
 // before the first configure.
 async function liveModelOf(
-  solo: Lane,
+  lane: Lane,
   context: Context,
 ): Promise<{ provider: string; id: string }> {
-  const agent = await solo.conversation.agent(context);
+  const agent = await lane.conversation.agent(context);
   const live = agent.model;
   if (live !== undefined) {
     return { provider: live.provider, id: live.modelId };
   }
-  return { provider: solo.model.provider, id: solo.model.id };
+  return { provider: lane.model.provider, id: lane.model.id };
 }
 
 // One durable entry → the coarse transcript cell the TUI app renders. The

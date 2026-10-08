@@ -80,16 +80,16 @@ function failureText(error: unknown): string {
 // already cancelled, so callers hand it a live one (BACKGROUND_CONTEXT on the
 // headless guard path).
 export async function abortLane(
-  solo: AbortableLane,
+  lane: AbortableLane,
   context: Context,
 ): Promise<LaneAbortResult> {
-  const conversationId = String(solo.conversation.id);
+  const conversationId = String(lane.conversation.id);
   // Started, not awaited: the kills below are what unblocks a child that
   // ignores cancellation.
-  const aborting = solo.conversation.abort(context);
+  const aborting = lane.conversation.abort(context);
   const failures: string[] = [];
   let killed = 0;
-  for (const kill of solo.kills.drain(conversationId)) {
+  for (const kill of lane.kills.drain(conversationId)) {
     try {
       kill();
       killed += 1;
@@ -113,6 +113,6 @@ export async function abortLane(
 // The settled-turn path: the kills are already dead (the tool tasks
 // finished), so drop their handles without running them — a later abort of
 // the conversation must not signal a process group that no longer is one.
-export function forgetLaneKills(solo: AbortableLane): void {
-  solo.kills.drain(String(solo.conversation.id));
+export function forgetLaneKills(lane: AbortableLane): void {
+  lane.kills.drain(String(lane.conversation.id));
 }

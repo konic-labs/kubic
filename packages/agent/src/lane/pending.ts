@@ -92,10 +92,10 @@ const UNFINISHED_TASK_STATUSES = [
 const UNFINISHED_SUBMISSION_STATUSES = ['queued', 'placed'] as const;
 
 export async function inspectPending(
-  solo: PendingLane,
+  lane: PendingLane,
   context: Context,
 ): Promise<PendingReport> {
-  return reportInspection(await solo.harness.inspect(context));
+  return reportInspection(await lane.harness.inspect(context));
 }
 
 function reportInspection(inspection: HarnessInspection): PendingReport {
@@ -114,11 +114,11 @@ function reportInspection(inspection: HarnessInspection): PendingReport {
 }
 
 export async function settlePending(
-  solo: PendingLane,
+  lane: PendingLane,
   policy: PendingPolicy,
   opts: SettlePendingOptions,
 ): Promise<PendingSettlementResult> {
-  const inspection = await solo.harness.inspect(opts.context);
+  const inspection = await lane.harness.inspect(opts.context);
   if (!reportInspection(inspection).pending) {
     return { outcome: 'none', fellBack: false };
   }
@@ -126,22 +126,22 @@ export async function settlePending(
   // mark is the operator's cancel, so the
   // interrupted run is never started for it.
   if (policy === 'abort' || abortedPending(inspection)) {
-    await abortPending(solo, opts);
+    await abortPending(lane, opts);
     return { outcome: 'aborted', fellBack: false };
   }
   const bound = opts.guard ?? opts.context;
   const exhaustion = exhausted(bound);
   if (exhaustion !== undefined) {
     // Never start a paid generation the guard would abandon at once.
-    await abortPending(solo, opts);
+    await abortPending(lane, opts);
     return { outcome: 'aborted', fellBack: true, reason: exhaustion };
   }
-  solo.harness.resume();
+  lane.harness.resume();
   let settled: ResumedSettlement;
   try {
-    settled = await resumePending(solo, inspection, opts, bound);
+    settled = await resumePending(lane, inspection, opts, bound);
   } catch (error) {
-    await abortPending(solo, opts);
+    await abortPending(lane, opts);
     return { outcome: 'aborted', fellBack: true, reason: failureText(error) };
   }
   if (settled.status === undefined) {
@@ -164,7 +164,7 @@ interface ResumedSettlement {
 }
 
 async function resumePending(
-  solo: PendingLane,
+  lane: PendingLane,
   inspection: HarnessInspection,
   opts: SettlePendingOptions,
   bound: Context,
@@ -176,7 +176,7 @@ async function resumePending(
   );
   let settlement: ResumedSettlement = {};
   for (const record of pending) {
-    const submission = await solo.harness.submission(record.id, opts.context);
+    const submission = await lane.harness.submission(record.id, opts.context);
     if (submission === undefined) continue;
     const settled = await submission.wait(bound);
     if (settled.status === 'unanswered') {
@@ -189,12 +189,12 @@ async function resumePending(
   }
   // Confirm the lane is free when no input carried the work (a compaction
   // task, a stray task) or a submission resolved before its tasks drained.
-  await solo.conversation.waitForIdle(bound);
+  await lane.conversation.waitForIdle(bound);
   return settlement;
 }
 
 async function abortPending(
-  solo: PendingLane,
+  lane: PendingLane,
   opts: SettlePendingOptions,
 ): Promise<void> {
   // The abort must commit: a context cancelled by the failed resume would be
@@ -203,11 +203,11 @@ async function abortPending(
   // Start the durable abort first (mark, signal, join); the kill drain then
   // unblocks a process that ignores cancellation, and awaiting the abort
   // joins every task it marked.
-  const aborting = solo.conversation.abort(abortContext);
-  const failures = drainKills(opts.kills, String(solo.conversation.id));
+  const aborting = lane.conversation.abort(abortContext);
+  const failures = drainKills(opts.kills, String(lane.conversation.id));
   try {
     await aborting;
-    await solo.conversation.waitForIdle(abortContext);
+    await lane.conversation.waitForIdle(abortContext);
   } catch (error) {
     const abortFailure = `lane abort failed: ${failureText(error) ?? 'unknown error'}`;
     throw failures.length === 0
@@ -282,16 +282,16 @@ export function describePendingSettlement(
 // placed input submission's own entry is that text; undefined when nothing
 // is placed (nothing to resume-as-this-run).
 export async function pendingInputText(
-  solo: PendingLane,
+  lane: PendingLane,
   context: Context,
 ): Promise<string | undefined> {
-  const inspection = await solo.harness.inspect(context);
+  const inspection = await lane.harness.inspect(context);
   const placed = inspection.submissions.find(
     (submission) =>
       submission.type === 'input' && submission.status === 'placed',
   );
   if (placed?.entry === undefined) return undefined;
-  const page = await solo.conversation.entries(
+  const page = await lane.conversation.entries(
     { minEntryId: placed.entry, maxEntryId: placed.entry },
     1,
     undefined,

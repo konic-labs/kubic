@@ -51,13 +51,13 @@ vi.mock('../compaction.js', async (importOriginal) => {
   };
 });
 
-const SOLOS: Lane[] = [];
+const LANES: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
   compaction.captured = [];
-  for (const solo of SOLOS.splice(0)) {
-    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  for (const lane of LANES.splice(0)) {
+    await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
 });
 
@@ -107,7 +107,7 @@ async function boot(
     fauxAssistantMessage('second'),
   ]);
   const session = handle();
-  const solo = await bootLane({
+  const lane = await bootLane({
     session: session as never,
     models,
     model: big,
@@ -116,8 +116,8 @@ async function boot(
     agentId: 'root',
     ...extra,
   });
-  SOLOS.push(solo);
-  return solo;
+  LANES.push(lane);
+  return lane;
 }
 
 describe('the boot against the real Kubic tools and compaction policy', () => {
@@ -132,7 +132,7 @@ describe('the boot against the real Kubic tools and compaction policy', () => {
       fauxAssistantMessage('read it'),
     ]);
     const session = handle();
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: session as never,
       models,
       model: big,
@@ -140,19 +140,19 @@ describe('the boot against the real Kubic tools and compaction policy', () => {
       sessionId: session.id,
       agentId: 'root',
     });
-    SOLOS.push(solo);
-    const agent = await solo.conversation.agent(BACKGROUND_CONTEXT);
+    LANES.push(lane);
+    const agent = await lane.conversation.agent(BACKGROUND_CONTEXT);
     expect(agent.tools.map((tool) => tool.name).sort()).toEqual(
       Object.keys(OPERATIONS).sort(),
     );
     const settled = await (
-      await solo.conversation.submit(
+      await lane.conversation.submit(
         { type: 'input', content: 'read the file' },
         BACKGROUND_CONTEXT,
       )
     ).wait(BACKGROUND_CONTEXT);
     expect(settled.status).toBe('done');
-    const page = await solo.conversation.entries(
+    const page = await lane.conversation.entries(
       {},
       200,
       undefined,
@@ -175,7 +175,7 @@ describe('the boot against the real Kubic tools and compaction policy', () => {
   });
 
   it('clamps the live reserve to every configure({ model }), not just boot', async () => {
-    const solo = await boot();
+    const lane = await boot();
     expect(compaction.captured).toHaveLength(1);
     const settings = compaction.captured[0];
     expect(settings?.enabled).toBe(true);
@@ -187,7 +187,7 @@ describe('the boot against the real Kubic tools and compaction policy', () => {
       effectiveReserveTokens(200_000, DEFAULT_RESERVE_TOKENS),
     );
     // The TUI/headless switch path is a plain configure.
-    await solo.conversation.configure(
+    await lane.conversation.configure(
       { model: { provider: 'faux', modelId: 'small' } },
       BACKGROUND_CONTEXT,
     );
@@ -195,7 +195,7 @@ describe('the boot against the real Kubic tools and compaction policy', () => {
       effectiveReserveTokens(8_192, DEFAULT_RESERVE_TOKENS),
     );
     // ... and back, so the getter is live in both directions.
-    await solo.conversation.configure(
+    await lane.conversation.configure(
       { model: { provider: 'faux', modelId: 'big' } },
       BACKGROUND_CONTEXT,
     );
@@ -205,19 +205,19 @@ describe('the boot against the real Kubic tools and compaction policy', () => {
   });
 
   it('drives a turn on the switched small-window model', async () => {
-    const solo = await boot();
-    await solo.conversation.configure(
+    const lane = await boot();
+    await lane.conversation.configure(
       { model: { provider: 'faux', modelId: 'small' } },
       BACKGROUND_CONTEXT,
     );
     const settled = await (
-      await solo.conversation.submit(
+      await lane.conversation.submit(
         { type: 'input', content: 'small turn' },
         BACKGROUND_CONTEXT,
       )
     ).wait(BACKGROUND_CONTEXT);
     expect(settled.status).toBe('done');
-    expect((await solo.conversation.agent(BACKGROUND_CONTEXT)).model).toEqual({
+    expect((await lane.conversation.agent(BACKGROUND_CONTEXT)).model).toEqual({
       provider: 'faux',
       modelId: 'small',
     });

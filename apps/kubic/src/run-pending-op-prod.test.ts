@@ -77,7 +77,7 @@ async function crashAfterAccept(
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([() => new Promise<never>(() => undefined)]);
-  const solo = await bootLane({
+  const lane = await bootLane({
     session,
     models,
     model: faux.getModel(),
@@ -85,7 +85,7 @@ async function crashAfterAccept(
     sessionId: session.id,
     agentId: 'root',
   });
-  const submission = await solo.conversation.submit(
+  const submission = await lane.conversation.submit(
     { type: 'input', content: prompt, requestId: 'crashed-run' },
     BACKGROUND_CONTEXT,
   );

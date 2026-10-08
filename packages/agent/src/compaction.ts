@@ -334,14 +334,14 @@ export interface ManualCompactionOptions {
 // from that read, before the task is admitted: after placement the context is
 // the summary.
 async function admitCompaction(
-  solo: CompactionLane,
+  lane: CompactionLane,
   focus: string | undefined,
   view: ContextView,
   context: Context,
 ): Promise<ManualCompactionAdmission> {
   const instructions = buildCompactPrompt(focus === undefined ? {} : { focus });
   const tokensBefore = estimateContextTokens(view.messages).tokens;
-  const taskId = await solo.conversation.compact(instructions, context);
+  const taskId = await lane.conversation.compact(instructions, context);
   return { taskId, tokensBefore };
 }
 
@@ -352,14 +352,14 @@ async function admitCompaction(
  * holds the manual keep window while the task is pending.
  */
 export async function runManualCompaction(
-  solo: CompactionLane,
+  lane: CompactionLane,
   focus: string | undefined,
   context: Context,
   options: ManualCompactionOptions = {},
 ): Promise<ManualCompactionOutcome> {
   let view: ContextView;
   try {
-    view = await solo.conversation.context(context);
+    view = await lane.conversation.context(context);
   } catch (error) {
     return { status: 'failed', tokensBefore: 0, error: messageOf(error) };
   }
@@ -367,7 +367,7 @@ export async function runManualCompaction(
   if (!hasOlderHistory(view)) {
     return { status: 'nothing', tokensBefore, reason: 'most-recent-turn' };
   }
-  return admitAndSettle(solo, focus, view, context, options);
+  return admitAndSettle(lane, focus, view, context, options);
 }
 
 /**
@@ -376,21 +376,21 @@ export async function runManualCompaction(
  * exit path, admission refusals included.
  */
 export async function runCompactCommand(
-  solo: CompactionLane,
+  lane: CompactionLane,
   focus: string | undefined,
   context: Context,
   options: ManualCompactionOptions = {},
 ): Promise<ManualCompactionOutcome> {
-  const release = solo.manualKeep?.open();
+  const release = lane.manualKeep?.open();
   try {
-    return await runManualCompaction(solo, focus, context, options);
+    return await runManualCompaction(lane, focus, context, options);
   } finally {
     release?.();
   }
 }
 
 async function admitAndSettle(
-  solo: CompactionLane,
+  lane: CompactionLane,
   focus: string | undefined,
   view: ContextView,
   context: Context,
@@ -398,7 +398,7 @@ async function admitAndSettle(
 ): Promise<ManualCompactionOutcome> {
   let admitted: ManualCompactionAdmission;
   try {
-    admitted = await admitCompaction(solo, focus, view, context);
+    admitted = await admitCompaction(lane, focus, view, context);
   } catch (error) {
     return { status: 'failed', tokensBefore: 0, error: messageOf(error) };
   }
@@ -409,7 +409,7 @@ async function admitAndSettle(
       // The replay is best-effort: the task's own settlement still decides.
     }
   }
-  const waited = await solo.harness
+  const waited = await lane.harness
     .waitForTask(admitted.taskId, context)
     .then((settled) => ({ outcome: settled.state.outcome }))
     .catch((error: unknown) => ({ error: messageOf(error) }));

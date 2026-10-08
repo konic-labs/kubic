@@ -153,12 +153,12 @@ describe('splitSoloModelId', () => {
 });
 
 const DIRS: string[] = [];
-const SOLOS: Lane[] = [];
+const LANES: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const solo of SOLOS.splice(0)) {
-    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  for (const lane of LANES.splice(0)) {
+    await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
   for (const dir of DIRS.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -218,7 +218,7 @@ async function boot(
     fauxAssistantMessage('second answer'),
   ]);
   const session = handle(new MemoryStorage());
-  const solo = await bootLane({
+  const lane = await bootLane({
     session: session as never,
     models,
     model: big,
@@ -227,8 +227,8 @@ async function boot(
     agentId: 'root',
     ...extra,
   });
-  SOLOS.push(solo);
-  return solo;
+  LANES.push(lane);
+  return lane;
 }
 
 function promptTextOf(entry: { model?: unknown }): string {
@@ -242,10 +242,10 @@ function promptTextOf(entry: { model?: unknown }): string {
 
 // The prompt sections the harness has committed, oldest first.
 async function committedPrompts(
-  solo: Lane,
+  lane: Lane,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<string[]> {
-  const page = await solo.conversation.entries({}, 200, undefined, context);
+  const page = await lane.conversation.entries({}, 200, undefined, context);
   return page.items
     .filter((entry) => SystemEntry.is(entry))
     .map(promptTextOf)
@@ -254,9 +254,9 @@ async function committedPrompts(
 
 // `pi.system` entries are planned at request preparation, so a turn has to
 // run before the assembled prompt is in the transcript.
-async function driveOneTurn(solo: Lane, content = 'say hi'): Promise<void> {
+async function driveOneTurn(lane: Lane, content = 'say hi'): Promise<void> {
   const settled = await (
-    await solo.conversation.submit(
+    await lane.conversation.submit(
       { type: 'input', content },
       BACKGROUND_CONTEXT,
     )
@@ -270,7 +270,7 @@ describe('solo boot on the durable harness', () => {
     const session = handle(new MemoryStorage());
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: session as never,
       models,
       model: big,
@@ -278,21 +278,21 @@ describe('solo boot on the durable harness', () => {
       sessionId: session.id,
       agentId: 'root',
     });
-    SOLOS.push(solo);
+    LANES.push(lane);
     // The harness and the root conversation are the session's, in-process.
-    const root = await solo.harness.root(BACKGROUND_CONTEXT);
-    expect(root.id).toBe(solo.conversation.id);
-    expect((await solo.harness.inspect(BACKGROUND_CONTEXT)).scheduling).toBe(
+    const root = await lane.harness.root(BACKGROUND_CONTEXT);
+    expect(root.id).toBe(lane.conversation.id);
+    expect((await lane.harness.inspect(BACKGROUND_CONTEXT)).scheduling).toBe(
       'paused',
     );
     // The per-process registry carries the Kubic extension and its tools.
     expect(
-      solo.registry
+      lane.registry
         .snapshot()
         .installed()
         .map((extension) => extension.name),
     ).toContain('kubic');
-    const agent = await solo.conversation.agent(BACKGROUND_CONTEXT);
+    const agent = await lane.conversation.agent(BACKGROUND_CONTEXT);
     const allNames = Object.keys(
       (await import('../ops/registry.js')).OPERATIONS,
     );
@@ -303,15 +303,15 @@ describe('solo boot on the durable harness', () => {
   });
 
   it('assembles exactly the prompt bytes in one untagged section', async () => {
-    const solo = await boot();
-    await driveOneTurn(solo);
+    const lane = await boot();
+    await driveOneTurn(lane);
     const expected = assemblePrompt({
       role: DEFAULT_ROLE,
       cwd: '/fake',
       toolNames: Object.keys((await import('../ops/registry.js')).OPERATIONS),
       metadata: { agent: 'root', lane: 'main', model: 'faux/big' },
     });
-    const prompts = await committedPrompts(solo);
+    const prompts = await committedPrompts(lane);
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toBe(expected);
     expect(prompts[0]).toMatchSnapshot();
@@ -321,19 +321,19 @@ describe('solo boot on the durable harness', () => {
   });
 
   it('sends no new pi.system entry on a second turn (prompt cache prefix)', async () => {
-    const solo = await boot();
-    await driveOneTurn(solo, 'one');
-    const afterFirst = await committedPrompts(solo);
+    const lane = await boot();
+    await driveOneTurn(lane, 'one');
+    const afterFirst = await committedPrompts(lane);
     expect(afterFirst).toHaveLength(1);
-    await driveOneTurn(solo, 'two');
-    const afterSecond = await committedPrompts(solo);
+    await driveOneTurn(lane, 'two');
+    const afterSecond = await committedPrompts(lane);
     expect(afterSecond).toEqual(afterFirst);
   });
 
   it('keeps an explicit systemPrompt byte-authoritative', async () => {
-    const solo = await boot({ systemPrompt: 'custom bytes\nline two' });
-    await driveOneTurn(solo);
-    expect(await committedPrompts(solo)).toEqual(['custom bytes\nline two']);
+    const lane = await boot({ systemPrompt: 'custom bytes\nline two' });
+    await driveOneTurn(lane);
+    expect(await committedPrompts(lane)).toEqual(['custom bytes\nline two']);
   });
 
   it('runs a Kubic op through the harness for a faux tool call', async () => {
@@ -347,7 +347,7 @@ describe('solo boot on the durable harness', () => {
       fauxAssistantMessage('read it'),
     ]);
     const session = handle(new MemoryStorage());
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: session as never,
       models,
       model: big,
@@ -355,15 +355,15 @@ describe('solo boot on the durable harness', () => {
       sessionId: session.id,
       agentId: 'root',
     });
-    SOLOS.push(solo);
+    LANES.push(lane);
     const settled = await (
-      await solo.conversation.submit(
+      await lane.conversation.submit(
         { type: 'input', content: 'read the file' },
         BACKGROUND_CONTEXT,
       )
     ).wait(BACKGROUND_CONTEXT);
     expect(settled.status).toBe('done');
-    const page = await solo.conversation.entries(
+    const page = await lane.conversation.entries(
       {},
       200,
       undefined,
@@ -383,7 +383,7 @@ describe('solo boot on the durable harness', () => {
       fauxAssistantMessage('wrote it'),
     ]);
     const session = handle(new MemoryStorage());
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: session as never,
       models,
       model: big,
@@ -397,9 +397,9 @@ describe('solo boot on the durable harness', () => {
         },
       } as never,
     });
-    SOLOS.push(solo);
+    LANES.push(lane);
     await (
-      await solo.conversation.submit(
+      await lane.conversation.submit(
         { type: 'input', content: 'write the file' },
         BACKGROUND_CONTEXT,
       )
@@ -414,7 +414,7 @@ describe('solo boot on the durable harness', () => {
     const session = handle(new MemoryStorage());
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: session as never,
       models,
       model: big,
@@ -422,8 +422,8 @@ describe('solo boot on the durable harness', () => {
       sessionId: session.id,
       agentId: 'root',
     });
-    await solo.close(BACKGROUND_CONTEXT);
-    await expect(solo.harness.inspect(BACKGROUND_CONTEXT)).rejects.toThrow();
+    await lane.close(BACKGROUND_CONTEXT);
+    await expect(lane.harness.inspect(BACKGROUND_CONTEXT)).rejects.toThrow();
     expect(session.release).not.toHaveBeenCalled();
   });
 
@@ -467,7 +467,7 @@ describe('solo boot on the durable harness', () => {
       agentId: 'root',
       onThinkingNotice: (line) => notices.push(line),
     });
-    SOLOS.push(second);
+    LANES.push(second);
     const agent = await second.conversation.agent(BACKGROUND_CONTEXT);
     expect(agent.thinkingLevel).toBe('off');
     expect(notices).toEqual([

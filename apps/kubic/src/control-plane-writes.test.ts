@@ -191,7 +191,7 @@ describe('control plane beyond the workspace', () => {
     credentials: 'none',
   } as const;
   const subCtx = triggerContextFor(classes, SUB, { home: HOME });
-  const soloCtx = triggerContextFor(classes, WS, { home: HOME });
+  const laneCtx = triggerContextFor(classes, WS, { home: HOME });
 
   it.each([
     ['write', { path: '../../.kubic/audit/audit.jsonl', content: '' }],
@@ -239,12 +239,12 @@ describe('control plane beyond the workspace', () => {
     expect(controlPlaneRefusal(tool, args, WS, { home: HOME })).toMatch(
       /Kubic control-plane state/,
     );
-    expect(detectTriggers(tool, args, soloCtx)).toContain('kubic-state-write');
+    expect(detectTriggers(tool, args, laneCtx)).toContain('kubic-state-write');
   });
 
   it('the global config.toml is asked', () => {
     const args = { path: '/home/u/.kubic/config.toml', content: 'x' };
-    expect(detectTriggers('write', args, soloCtx)).toContain(
+    expect(detectTriggers('write', args, laneCtx)).toContain(
       'kubic-state-write',
     );
     expect(controlPlaneRefusal('write', args, WS, { home: HOME })).toBe(

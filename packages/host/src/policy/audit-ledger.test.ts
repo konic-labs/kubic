@@ -262,7 +262,7 @@ describe('audit ledger', () => {
     });
 
     it("no live-path record carries 'unknown' for a field whose data exists", () => {
-      const solo = decisionAudit({
+      const lane = decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'destructive-shell',
@@ -274,7 +274,7 @@ describe('audit ledger', () => {
         by: 'user',
         posture: 'approvals',
       });
-      expect(JSON.stringify(solo)).not.toContain('unknown');
+      expect(JSON.stringify(lane)).not.toContain('unknown');
     });
   });
 

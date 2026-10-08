@@ -1145,8 +1145,8 @@ describe('effective config view', () => {
     });
     try {
       const allowed = await applyToolPolicy(
-        lane.solo.registry,
-        lane.solo.conversation,
+        lane.lane.registry,
+        lane.lane.conversation,
         runtime.permissions.classes,
         BACKGROUND_CONTEXT,
       );

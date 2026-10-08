@@ -58,12 +58,12 @@ vi.mock('./tools-adapter.js', async () => {
   };
 });
 
-const SOLOS: Lane[] = [];
+const LANES: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const solo of SOLOS.splice(0)) {
-    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  for (const lane of LANES.splice(0)) {
+    await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
 });
 
@@ -93,7 +93,7 @@ async function booted(): Promise<Lane> {
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage('hi')]);
-  const solo = await bootLane({
+  const lane = await bootLane({
     session: handle() as never,
     models,
     model: faux.getModel(),
@@ -101,22 +101,22 @@ async function booted(): Promise<Lane> {
     sessionId: 'sess-1',
     agentId: 'root',
   });
-  SOLOS.push(solo);
-  return solo;
+  LANES.push(lane);
+  return lane;
 }
 
-async function offered(solo: Lane): Promise<string[]> {
-  return (await solo.conversation.agent(BACKGROUND_CONTEXT)).tools.map(
+async function offered(lane: Lane): Promise<string[]> {
+  return (await lane.conversation.agent(BACKGROUND_CONTEXT)).tools.map(
     (tool) => tool.name,
   );
 }
 
 describe('tool policy allowlisting', () => {
   it('allowlists all eighteen tools active under solo defaults', async () => {
-    const solo = await booted();
+    const lane = await booted();
     const allowed = await applyToolPolicy(
-      solo.registry,
-      solo.conversation,
+      lane.registry,
+      lane.conversation,
       DEFAULT_PERMISSIONS,
       BACKGROUND_CONTEXT,
     );
@@ -143,11 +143,11 @@ describe('tool policy allowlisting', () => {
       ].sort(),
     );
     // The conversation offers exactly the allowlist the policy reported.
-    expect([...(await offered(solo))].sort()).toEqual(allowed.sort());
+    expect([...(await offered(lane))].sort()).toEqual(allowed.sort());
     // ... and the durable agent document stores the same names.
-    const stored = await solo.harness.snapshot(
+    const stored = await lane.harness.snapshot(
       AgentDoc,
-      solo.conversation.id,
+      lane.conversation.id,
       BACKGROUND_CONTEXT,
     );
     expect([...((stored?.tools as string[] | undefined) ?? [])].sort()).toEqual(
@@ -156,18 +156,18 @@ describe('tool policy allowlisting', () => {
   });
 
   it('allowlist removes tools outside the classes', async () => {
-    const solo = await booted();
+    const lane = await booted();
     await applyToolPolicy(
-      solo.registry,
-      solo.conversation,
+      lane.registry,
+      lane.conversation,
       { ...DEFAULT_PERMISSIONS, filesystem: 'none', shell: false, git: false },
       BACKGROUND_CONTEXT,
     );
-    expect(await offered(solo)).toEqual([]);
+    expect(await offered(lane)).toEqual([]);
   });
 
   it('derives the allowlist the conversation actually offers', async () => {
-    const solo = await booted();
+    const lane = await booted();
     const classes = {
       ...DEFAULT_PERMISSIONS,
       filesystem: 'read' as const,
@@ -175,17 +175,17 @@ describe('tool policy allowlisting', () => {
       git: false as const,
     };
     const allowed = await applyToolPolicy(
-      solo.registry,
-      solo.conversation,
+      lane.registry,
+      lane.conversation,
       classes,
       BACKGROUND_CONTEXT,
     );
     expect(allowed.sort()).toEqual(['find', 'grep', 'ls', 'read'].sort());
-    expect([...(await offered(solo))].sort()).toEqual(allowed.sort());
+    expect([...(await offered(lane))].sort()).toEqual(allowed.sort());
   });
 
   it('refuses classes that demand a tool the registry does not carry', async () => {
-    const solo = await booted();
+    const lane = await booted();
     // The mock registry carries the full set; a policy that demands git
     // tools on a registry without them is the refused half. Drop the git
     // registrations by constructing a registry with only read tools.
@@ -197,7 +197,7 @@ describe('tool policy allowlisting', () => {
     await expect(
       applyToolPolicy(
         onlyRead as never,
-        solo.conversation,
+        lane.conversation,
         DEFAULT_PERMISSIONS,
         BACKGROUND_CONTEXT,
       ),

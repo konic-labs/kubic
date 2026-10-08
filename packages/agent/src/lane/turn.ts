@@ -105,13 +105,13 @@ export interface RunTurnOptions {
 // One turn, settled. Never throws for a refusal, a failed run or a cancelled
 // guard: every way a durable run can end is one `TurnOutcome`.
 export async function runTurn(
-  solo: Lane,
+  lane: Lane,
   prompt: string,
   options: RunTurnOptions,
 ): Promise<TurnOutcome> {
   let submission: Submission;
   try {
-    submission = await solo.conversation.submit(
+    submission = await lane.conversation.submit(
       {
         type: 'input',
         content: promptContent(prompt, options.images),
@@ -273,7 +273,7 @@ const OVERFLOW_RECOVERY_FOCUS =
   'The context overflowed mid-run; keep what a single retry of the current task needs.';
 
 export async function recoverOverflowTurn(
-  solo: Lane,
+  lane: Lane,
   prompt: string,
   failed: { reason: TurnFailureReason; error?: string },
   options: RunTurnOptions,
@@ -304,7 +304,7 @@ export async function recoverOverflowTurn(
   // still retries — the overflow was already absorbed (background cut) and
   // the context now fits.
   const compaction = await runManualCompaction(
-    solo,
+    lane,
     OVERFLOW_RECOVERY_FOCUS,
     options.context,
   );
@@ -313,7 +313,7 @@ export async function recoverOverflowTurn(
   }
   // A fresh request id: re-submitting the original would find the SAME
   // submission (per-invocation idempotency, above), never a new turn.
-  const retried = await runTurn(solo, prompt, {
+  const retried = await runTurn(lane, prompt, {
     ...options,
     requestId: `${options.requestId}:overflow-retry`,
   });
@@ -323,15 +323,15 @@ export async function recoverOverflowTurn(
 // One turn with overflow recovery: a completed or non-overflow outcome
 // passes through exactly as `runTurn` reports it.
 export async function runTurnWithOverflowRecovery(
-  solo: Lane,
+  lane: Lane,
   prompt: string,
   options: RunTurnOptions & OverflowRecoveryOptions,
 ): Promise<OverflowRecovery> {
-  const outcome = await runTurn(solo, prompt, options);
+  const outcome = await runTurn(lane, prompt, options);
   if (outcome.kind !== 'failed' || outcome.reason !== 'context_overflow')
     return { outcome, retried: false };
   const { retryBudget, onRetryDecision } = options;
-  return recoverOverflowTurn(solo, prompt, outcome, options, {
+  return recoverOverflowTurn(lane, prompt, outcome, options, {
     ...(retryBudget === undefined ? {} : { retryBudget }),
     ...(onRetryDecision === undefined ? {} : { onRetryDecision }),
   });

@@ -71,7 +71,7 @@ function textTokens(message: { readonly content?: unknown }): number {
 
 /** The verbatim history after the summary head: the kept window. */
 async function keptTokens(lane: FauxLane): Promise<number> {
-  const view = await lane.solo.conversation.context(BACKGROUND_CONTEXT);
+  const view = await lane.lane.conversation.context(BACKGROUND_CONTEXT);
   return view.contributions
     .slice(view.head === undefined ? 0 : 1)
     .flat()
@@ -87,7 +87,7 @@ async function compactionCount(lane: FauxLane): Promise<number> {
 describe('solo overflow recovery', () => {
   it('a completed turn passes through with no retry and no decision', async () => {
     const lane = await open();
-    const result = await runTurnWithOverflowRecovery(lane.solo, 'hi', {
+    const result = await runTurnWithOverflowRecovery(lane.lane, 'hi', {
       requestId: 'req-1',
       context: BACKGROUND_CONTEXT,
     });
@@ -100,7 +100,7 @@ describe('solo overflow recovery', () => {
   it('a non-overflow failure passes through with no retry', async () => {
     const lane = await open();
     const failed = { reason: 'tool_failed' as const, error: 'boom' };
-    const recovered = await recoverOverflowTurn(lane.solo, 'hi', failed, {
+    const recovered = await recoverOverflowTurn(lane.lane, 'hi', failed, {
       requestId: 'req-1',
       context: BACKGROUND_CONTEXT,
     });
@@ -117,7 +117,7 @@ describe('solo overflow recovery', () => {
     ]);
     const seen: RetryDecision[] = [];
     const recovered = await recoverOverflowTurn(
-      lane.solo,
+      lane.lane,
       'do the thing',
       { reason: 'context_overflow', error: 'too many tokens' },
       { requestId: 'req-1', context: BACKGROUND_CONTEXT },
@@ -146,7 +146,7 @@ describe('solo overflow recovery', () => {
       );
     }
     const recovered = await recoverOverflowTurn(
-      lane.solo,
+      lane.lane,
       'do the thing',
       { reason: 'context_overflow', error: 'prompt is too long' },
       { requestId: 'req-1', context: BACKGROUND_CONTEXT },
@@ -175,7 +175,7 @@ describe('solo overflow recovery', () => {
       );
     }
     const recovered = await recoverOverflowTurn(
-      lane.solo,
+      lane.lane,
       'do the thing',
       { reason: 'context_overflow', error: 'prompt is too long' },
       { requestId: 'req-1', context: BACKGROUND_CONTEXT },
@@ -191,7 +191,7 @@ describe('solo overflow recovery', () => {
     const lane = await open();
     const failed = { reason: 'context_overflow' as const, error: 'full' };
     const recovered = await recoverOverflowTurn(
-      lane.solo,
+      lane.lane,
       'do the thing',
       failed,
       { requestId: 'req-1', context: BACKGROUND_CONTEXT },

@@ -46,7 +46,7 @@ describe('session resume', () => {
       // reply, exactly like a crash between admission and the response.
       responses: [() => new Promise<never>(() => undefined)],
     });
-    await dying.solo.conversation.submit(
+    await dying.lane.conversation.submit(
       { type: 'input', content: 'finish this' },
       BACKGROUND_CONTEXT,
     );
@@ -75,9 +75,9 @@ describe('session resume', () => {
       responses: [fauxAssistantMessage('done')],
     });
     openLanes.push(resumed);
-    const settlement = await settlePending(resumed.solo, 'resume', {
+    const settlement = await settlePending(resumed.lane, 'resume', {
       context: BACKGROUND_CONTEXT,
-      kills: resumed.solo.kills,
+      kills: resumed.lane.kills,
     });
     expect(settlement.outcome).toBe('resumed');
     // The durable settlement is the answer the resumed run produced.

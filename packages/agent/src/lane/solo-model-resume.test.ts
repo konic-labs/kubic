@@ -65,12 +65,12 @@ vi.mock('./tools-adapter.js', async () => {
 });
 
 const DIRS: string[] = [];
-const SOLOS: Lane[] = [];
+const LANES: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const solo of SOLOS.splice(0)) {
-    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  for (const lane of LANES.splice(0)) {
+    await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
   for (const dir of DIRS.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -135,8 +135,8 @@ async function sessionOnBig(id = 'resume'): Promise<Storage> {
   return openNodeJsonlStorage(dir, BACKGROUND_CONTEXT);
 }
 
-async function promptOf(solo: Lane): Promise<string> {
-  const page = await solo.conversation.entries(
+async function promptOf(lane: Lane): Promise<string> {
+  const page = await lane.conversation.entries(
     {},
     200,
     undefined,
@@ -151,9 +151,9 @@ async function promptOf(solo: Lane): Promise<string> {
   return message?.sections?.[PROMPT_SECTION] ?? '';
 }
 
-async function driveOneTurn(solo: Lane): Promise<void> {
+async function driveOneTurn(lane: Lane): Promise<void> {
   const settled = await (
-    await solo.conversation.submit(
+    await lane.conversation.submit(
       { type: 'input', content: 'hi' },
       BACKGROUND_CONTEXT,
     )
@@ -161,8 +161,8 @@ async function driveOneTurn(solo: Lane): Promise<void> {
   expect(settled.status).toBe('done');
 }
 
-function liveModel(solo: Lane): Promise<string | undefined> {
-  return solo.conversation
+function liveModel(lane: Lane): Promise<string | undefined> {
+  return lane.conversation
     .agent(BACKGROUND_CONTEXT)
     .then((agent) =>
       agent.model === undefined
@@ -177,7 +177,7 @@ describe('resumed session model identity', () => {
     const { faux, models, small } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: small,
@@ -187,9 +187,9 @@ describe('resumed session model identity', () => {
       sessionId: 'resume',
       agentId: 'root',
     });
-    SOLOS.push(solo);
-    expect(await liveModel(solo)).toBe('faux/small');
-    expect(`${solo.model.provider}/${solo.model.id}`).toBe('faux/small');
+    LANES.push(lane);
+    expect(await liveModel(lane)).toBe('faux/small');
+    expect(`${lane.model.provider}/${lane.model.id}`).toBe('faux/small');
     expect(notices).toEqual([
       "model: session model 'faux/big' switched to 'faux/small' (explicit selection)",
     ]);
@@ -200,7 +200,7 @@ describe('resumed session model identity', () => {
     const { faux, models, small } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: small,
@@ -209,12 +209,12 @@ describe('resumed session model identity', () => {
       sessionId: 'resume',
       agentId: 'root',
     });
-    SOLOS.push(solo);
-    expect(await liveModel(solo)).toBe('faux/big');
-    expect(`${solo.model.provider}/${solo.model.id}`).toBe('faux/big');
+    LANES.push(lane);
+    expect(await liveModel(lane)).toBe('faux/big');
+    expect(`${lane.model.provider}/${lane.model.id}`).toBe('faux/big');
     // The prompt metadata names the model the conversation actually runs.
-    await driveOneTurn(solo);
-    const prompt = await promptOf(solo);
+    await driveOneTurn(lane);
+    const prompt = await promptOf(lane);
     expect(prompt).toContain('model=faux/big');
     expect(prompt).not.toContain('faux/small');
     expect(notices).toEqual([
@@ -227,7 +227,7 @@ describe('resumed session model identity', () => {
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: big,
@@ -237,8 +237,8 @@ describe('resumed session model identity', () => {
       sessionId: 'resume',
       agentId: 'root',
     });
-    SOLOS.push(solo);
-    expect(`${solo.model.provider}/${solo.model.id}`).toBe('faux/big');
+    LANES.push(lane);
+    expect(`${lane.model.provider}/${lane.model.id}`).toBe('faux/big');
     expect(notices).toEqual([]);
   });
 
@@ -292,7 +292,7 @@ describe('resumed session model identity', () => {
       sessionId: 'resume',
       agentId: 'root',
     });
-    SOLOS.push(kept);
+    LANES.push(kept);
     expect(kept.model.id).toBe('big');
   });
 });
@@ -304,7 +304,7 @@ describe('a resumed session never keeps a model the enterprise gate refuses', ()
     faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
     const asked: string[] = [];
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: small,
@@ -319,9 +319,9 @@ describe('a resumed session never keeps a model the enterprise gate refuses', ()
       sessionId: 'resume',
       agentId: 'root',
     });
-    SOLOS.push(solo);
-    expect(await liveModel(solo)).toBe('faux/small');
-    expect(`${solo.model.provider}/${solo.model.id}`).toBe('faux/small');
+    LANES.push(lane);
+    expect(await liveModel(lane)).toBe('faux/small');
+    expect(`${lane.model.provider}/${lane.model.id}`).toBe('faux/small');
     // The gate is asked about the STORED model, and only that one.
     expect(asked).toEqual(['faux/big']);
     expect(notices).toHaveLength(1);
@@ -334,7 +334,7 @@ describe('a resumed session never keeps a model the enterprise gate refuses', ()
     const storage = await sessionOnBig();
     const { faux, models, small } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: small,
@@ -343,7 +343,7 @@ describe('a resumed session never keeps a model the enterprise gate refuses', ()
       sessionId: 'resume',
       agentId: 'root',
     });
-    SOLOS.push(solo);
-    expect(await liveModel(solo)).toBe('faux/big');
+    LANES.push(lane);
+    expect(await liveModel(lane)).toBe('faux/big');
   });
 });

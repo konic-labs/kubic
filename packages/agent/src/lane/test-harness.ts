@@ -152,12 +152,12 @@ export interface RunPromptOptions {
  * time defense in depth.
  */
 export async function invokeRegisteredTool(
-  lane: Pick<FauxLane, 'solo'>,
+  lane: Pick<FauxLane, 'lane'>,
   name: string,
   args: Record<string, unknown>,
   options: { callId?: string; context?: Context } = {},
 ): Promise<unknown> {
-  const tool = lane.solo.registry
+  const tool = lane.lane.registry
     .snapshot()
     .tools()
     .find(({ tool: candidate }) => candidate.name === name)?.tool;
@@ -167,7 +167,7 @@ export async function invokeRegisteredTool(
   const api = {
     callId: options.callId ?? 'call-1',
     taskId: 'task-1',
-    conversationId: lane.solo.conversation.id,
+    conversationId: lane.lane.conversation.id,
     output: () => undefined,
     diagnostic: () => undefined,
     details: async () => undefined,
@@ -184,12 +184,12 @@ export async function invokeRegisteredTool(
 
 /** One turn: admit the input durably, then wait for its settlement. */
 export async function runPrompt(
-  solo: Pick<Lane, 'conversation'>,
+  lane: Pick<Lane, 'conversation'>,
   prompt: string,
   options: RunPromptOptions = {},
 ): Promise<PromptResult> {
   const context = options.context ?? BACKGROUND_CONTEXT;
-  const submission = await solo.conversation.submit(
+  const submission = await lane.conversation.submit(
     {
       type: 'input',
       content: prompt,
@@ -213,19 +213,19 @@ export async function runPrompt(
 
 /** The conversation's active transcript, oldest first. */
 export async function laneEntries(
-  solo: Pick<Lane, 'conversation'>,
+  lane: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<EntryRecord[]> {
-  const page = await solo.conversation.entries({}, 1000, undefined, context);
+  const page = await lane.conversation.entries({}, 1000, undefined, context);
   return [...page.items].reverse();
 }
 
 /** The tool results of a conversation, oldest first. */
 export async function laneToolResults(
-  solo: Pick<Lane, 'conversation'>,
+  lane: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<HarnessToolResult[]> {
-  const entries = await laneEntries(solo, context);
+  const entries = await laneEntries(lane, context);
   const out: HarnessToolResult[] = [];
   for (const entry of entries) {
     if (!ToolResultEntry.is(entry)) continue;
@@ -247,10 +247,10 @@ export async function laneToolResults(
 
 /** The committed solo prompt (its one `kubic` section), newest entry first. */
 export async function laneSystemPrompt(
-  solo: Pick<Lane, 'conversation'>,
+  lane: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<string> {
-  const page = await solo.conversation.entries({}, 500, undefined, context);
+  const page = await lane.conversation.entries({}, 500, undefined, context);
   for (const entry of page.items) {
     if (!SystemEntry.is(entry)) continue;
     const messages = entry.model as unknown as
@@ -264,10 +264,10 @@ export async function laneSystemPrompt(
 
 /** The tool names the conversation offers right now. */
 export async function laneActiveTools(
-  solo: Pick<Lane, 'conversation'>,
+  lane: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<string[]> {
-  const agent = await solo.conversation.agent(context);
+  const agent = await lane.conversation.agent(context);
   return agent.tools.map((tool) => tool.name);
 }
 
@@ -281,7 +281,7 @@ export function promptToolsLine(prompt: string): string[] {
 }
 
 export interface FauxLane {
-  readonly solo: Lane;
+  readonly lane: Lane;
   readonly faux: Faux;
   readonly models: Models;
   readonly env: FakeExecutionEnv;
@@ -383,7 +383,7 @@ export async function bootFauxLane(
   // Hand the storage to the harness before booting: `release()` then gives
   // the Kubic lock back without closing a storage the harness owns.
   session.adopt();
-  const solo = await bootLane({
+  const lane = await bootLane({
     ...bootOptions,
     session,
     models,
@@ -396,7 +396,7 @@ export async function bootFauxLane(
 
   let cleaned = false;
   return {
-    solo,
+    lane,
     faux,
     models,
     env,
@@ -404,22 +404,22 @@ export async function bootFauxLane(
     sessionId,
     ...(store === undefined ? {} : { store }),
     ...(root === undefined ? {} : { root }),
-    run: (prompt, runOptions) => runPrompt(solo, prompt, runOptions),
-    entries: () => laneEntries(solo, context),
-    toolResults: () => laneToolResults(solo, context),
-    systemPrompt: () => laneSystemPrompt(solo, context),
-    activeTools: () => laneActiveTools(solo, context),
+    run: (prompt, runOptions) => runPrompt(lane, prompt, runOptions),
+    entries: () => laneEntries(lane, context),
+    toolResults: () => laneToolResults(lane, context),
+    systemPrompt: () => laneSystemPrompt(lane, context),
+    activeTools: () => laneActiveTools(lane, context),
     registeredTool: (name) =>
-      solo.registry
+      lane.registry
         .snapshot()
         .tools()
         .find(({ tool }) => tool.name === name)?.tool,
     subscribe: (sink) =>
-      subscribeLaneEvents(solo.harness, solo.conversation.id, sink, context),
+      subscribeLaneEvents(lane.harness, lane.conversation.id, sink, context),
     cleanup: async () => {
       if (cleaned) return;
       cleaned = true;
-      await solo.close(context);
+      await lane.close(context);
       await session.release(context);
     },
   };

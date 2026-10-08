@@ -31,13 +31,13 @@ import {
   turnLaneRecord,
 } from './turn.js';
 
-const SOLOS: Lane[] = [];
+const LANES: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const solo of SOLOS.splice(0)) {
-    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
-    await solo.kills.drain(String(solo.conversation.id));
+  for (const lane of LANES.splice(0)) {
+    await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
+    await lane.kills.drain(String(lane.conversation.id));
   }
 });
 
@@ -75,11 +75,11 @@ async function boot(
   responses: Parameters<Faux['setResponses']>[0],
   env: ExecutionEnv = new FakeExecutionEnv({}),
   extra: Partial<Parameters<typeof bootLane>[0]> = {},
-): Promise<{ solo: Lane; faux: Faux }> {
+): Promise<{ lane: Lane; faux: Faux }> {
   const { faux, models } = catalog();
   faux.setResponses(responses);
   const session = handle();
-  const solo = await bootLane({
+  const lane = await bootLane({
     session: session as never,
     models,
     model: faux.getModel(),
@@ -88,8 +88,8 @@ async function boot(
     agentId: 'root',
     ...extra,
   });
-  SOLOS.push(solo);
-  return { solo, faux };
+  LANES.push(lane);
+  return { lane, faux };
 }
 
 function userTexts(entries: readonly unknown[]): string[] {
@@ -115,8 +115,8 @@ function userTexts(entries: readonly unknown[]): string[] {
   return texts;
 }
 
-async function transcript(solo: Lane): Promise<unknown[]> {
-  const page = await solo.conversation.entries(
+async function transcript(lane: Lane): Promise<unknown[]> {
+  const page = await lane.conversation.entries(
     {},
     200,
     undefined,
@@ -129,7 +129,7 @@ describe('runTurn on pi-durable', () => {
   it('settles one tool-call turn completed and reports its submission id', async () => {
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'turn reads this\n');
-    const { solo } = await boot(
+    const { lane } = await boot(
       [
         fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
           stopReason: 'toolUse',
@@ -139,7 +139,7 @@ describe('runTurn on pi-durable', () => {
       env,
     );
     const admissions: string[] = [];
-    const outcome = await runTurn(solo, 'read the file', {
+    const outcome = await runTurn(lane, 'read the file', {
       requestId: 'req-1',
       context: BACKGROUND_CONTEXT,
       onSubmitted: (_id, state) => admissions.push(state),
@@ -149,7 +149,7 @@ describe('runTurn on pi-durable', () => {
     expect(outcome.kind).toBe('completed');
     if (outcome.kind !== 'completed') throw new Error('unreachable');
     expect(outcome.submissionId).not.toBe('');
-    const entries = await transcript(solo);
+    const entries = await transcript(lane);
     expect(JSON.stringify(entries)).toContain('turn reads this');
     // ONE user entry for the prompt — submit writes pi.user itself.
     expect(
@@ -158,8 +158,8 @@ describe('runTurn on pi-durable', () => {
   });
 
   it('maps a failed generation to its failure code and human message', async () => {
-    const { solo } = await boot([]);
-    const outcome = await runTurn(solo, 'go', {
+    const { lane } = await boot([]);
+    const outcome = await runTurn(lane, 'go', {
       requestId: 'req-fail',
       context: BACKGROUND_CONTEXT,
     });
@@ -171,18 +171,18 @@ describe('runTurn on pi-durable', () => {
   });
 
   it('refuses a busy conversation locally with whenBusy reject', async () => {
-    const { solo } = await boot([() => new Promise<never>(() => undefined)]);
-    const first = runTurn(solo, 'long turn', {
+    const { lane } = await boot([() => new Promise<never>(() => undefined)]);
+    const first = runTurn(lane, 'long turn', {
       requestId: 'req-long',
       context: BACKGROUND_CONTEXT,
     });
     // The first turn is admitted and placed; the second is refused by the
     // conversation, not queued.
     await vi.waitFor(async () => {
-      const inspection = await solo.harness.inspect(BACKGROUND_CONTEXT);
+      const inspection = await lane.harness.inspect(BACKGROUND_CONTEXT);
       expect(inspection.submissions.length).toBeGreaterThan(0);
     });
-    const busy = await runTurn(solo, 'second', {
+    const busy = await runTurn(lane, 'second', {
       requestId: 'req-busy',
       context: BACKGROUND_CONTEXT,
       whenBusy: 'reject',
@@ -193,7 +193,7 @@ describe('runTurn on pi-durable', () => {
     });
     if (busy.kind !== 'failed') throw new Error('unreachable');
     expect(busy.error).toMatch(/busy/i);
-    await abortLane(solo, BACKGROUND_CONTEXT);
+    await abortLane(lane, BACKGROUND_CONTEXT);
     await first.catch(() => undefined);
   });
 
@@ -206,7 +206,7 @@ describe('runTurn on pi-durable', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const { solo } = await boot([
+    const { lane } = await boot([
       async () => {
         admitted();
         await gate;
@@ -214,14 +214,14 @@ describe('runTurn on pi-durable', () => {
       },
       fauxAssistantMessage('second answer'),
     ]);
-    const first = runTurn(solo, 'first prompt', {
+    const first = runTurn(lane, 'first prompt', {
       requestId: 'req-first',
       context: BACKGROUND_CONTEXT,
     });
     await landed;
     const ids: string[] = [];
     const admissions: string[] = [];
-    const second = runTurn(solo, 'second prompt', {
+    const second = runTurn(lane, 'second prompt', {
       requestId: 'req-second',
       context: BACKGROUND_CONTEXT,
       whenBusy: 'followUp',
@@ -239,24 +239,24 @@ describe('runTurn on pi-durable', () => {
     // The admission answer is what the TUI's busy latch reads: a queued
     // follow-up is not placed work.
     expect(admissions).toEqual(['queued']);
-    const queued = await solo.harness.inspect(BACKGROUND_CONTEXT);
+    const queued = await lane.harness.inspect(BACKGROUND_CONTEXT);
     expect(
       queued.submissions.find((row) => String(row.id) === ids[0]),
     ).toMatchObject({ status: 'queued' });
-    const inbox = await solo.conversation.viewState(BACKGROUND_CONTEXT);
+    const inbox = await lane.conversation.viewState(BACKGROUND_CONTEXT);
     expect(JSON.stringify(inbox.value.docs['pi.inbox'])).toContain(
       '"mode":"followUp"',
     );
     // Nothing of the queued prompt is in the transcript yet.
-    expect(userTexts(await transcript(solo))).toEqual(['first prompt']);
+    expect(userTexts(await transcript(lane))).toEqual(['first prompt']);
     release();
     await expect(first).resolves.toMatchObject({ kind: 'completed' });
     // The harness places the follow-up when the run answers and starts the
     // next run with it: the same settlement path as any other submit.
     await expect(second).resolves.toMatchObject({ kind: 'completed' });
-    const texts = userTexts([...(await transcript(solo))].reverse());
+    const texts = userTexts([...(await transcript(lane))].reverse());
     expect(texts).toEqual(['first prompt', 'second prompt']);
-    expect(JSON.stringify(await transcript(solo))).toContain('second answer');
+    expect(JSON.stringify(await transcript(lane))).toContain('second answer');
   });
 
   it('places a busy steer on the running operation, never as a queued turn', async () => {
@@ -295,7 +295,7 @@ describe('runTurn on pi-durable', () => {
       withProvenance: (next) => ({ ...env, provenance: next }),
     };
     const seen: string[] = [];
-    const { solo } = await boot(
+    const { lane } = await boot(
       [
         fauxAssistantMessage([fauxToolCall('bash', { command: 'echo hi' })], {
           stopReason: 'toolUse',
@@ -307,20 +307,20 @@ describe('runTurn on pi-durable', () => {
       ],
       env,
     );
-    const first = runTurn(solo, 'first prompt', {
+    const first = runTurn(lane, 'first prompt', {
       requestId: 'req-first',
       context: BACKGROUND_CONTEXT,
     });
     await started;
     const ids: string[] = [];
-    const steered = runTurn(solo, 'prefer pnpm', {
+    const steered = runTurn(lane, 'prefer pnpm', {
       requestId: 'req-steer',
       context: BACKGROUND_CONTEXT,
       whenBusy: 'steer',
       onSubmitted: (id) => ids.push(id),
     });
     await vi.waitFor(() => expect(ids).toHaveLength(1));
-    const inbox = await solo.conversation.viewState(BACKGROUND_CONTEXT);
+    const inbox = await lane.conversation.viewState(BACKGROUND_CONTEXT);
     expect(JSON.stringify(inbox.value.docs['pi.inbox'])).toContain(
       '"mode":"steer"',
     );
@@ -334,9 +334,9 @@ describe('runTurn on pi-durable', () => {
   });
 
   it('maps a cancelled guard to aborted/guard', async () => {
-    const { solo } = await boot([() => new Promise<never>(() => undefined)]);
+    const { lane } = await boot([() => new Promise<never>(() => undefined)]);
     const controller = new AbortController();
-    const pending = runTurn(solo, 'never answers', {
+    const pending = runTurn(lane, 'never answers', {
       requestId: 'req-guard',
       context: withAbortSignal(controller.signal, BACKGROUND_CONTEXT),
     });
@@ -345,45 +345,45 @@ describe('runTurn on pi-durable', () => {
       kind: 'aborted',
       reason: 'guard',
     });
-    await abortLane(solo, BACKGROUND_CONTEXT);
+    await abortLane(lane, BACKGROUND_CONTEXT);
   });
 
   it('maps a conversation abort to aborted/user and keeps the abort reason', async () => {
-    const { solo } = await boot([() => new Promise<never>(() => undefined)]);
-    const pending = runTurn(solo, 'never answers', {
+    const { lane } = await boot([() => new Promise<never>(() => undefined)]);
+    const pending = runTurn(lane, 'never answers', {
       requestId: 'req-user',
       context: BACKGROUND_CONTEXT,
     });
     await vi.waitFor(async () => {
       expect(
-        (await solo.harness.inspect(BACKGROUND_CONTEXT)).submissions.length,
+        (await lane.harness.inspect(BACKGROUND_CONTEXT)).submissions.length,
       ).toBeGreaterThan(0);
     });
-    await abortLane(solo, BACKGROUND_CONTEXT);
+    await abortLane(lane, BACKGROUND_CONTEXT);
     await expect(pending).resolves.toEqual({ kind: 'aborted', reason: 'user' });
   });
 
   it('submits once for one requestId (idempotent retry)', async () => {
-    const { solo } = await boot([
+    const { lane } = await boot([
       fauxAssistantMessage('first answer'),
       fauxAssistantMessage('second answer'),
     ]);
-    const first = await runTurn(solo, 'same prompt', {
+    const first = await runTurn(lane, 'same prompt', {
       requestId: 'stable-id',
       context: BACKGROUND_CONTEXT,
     });
-    const second = await runTurn(solo, 'same prompt', {
+    const second = await runTurn(lane, 'same prompt', {
       requestId: 'stable-id',
       context: BACKGROUND_CONTEXT,
     });
     expect(first).toEqual(second);
-    expect(userTexts(await transcript(solo))).toHaveLength(1);
+    expect(userTexts(await transcript(lane))).toHaveLength(1);
   });
 });
 
 describe('durable retry', () => {
   it('retries a transient provider error inside the harness, with no Kubic sleep', async () => {
-    const { solo, faux } = await boot(
+    const { lane, faux } = await boot(
       [
         fauxAssistantMessage('failed attempt', {
           stopReason: 'error',
@@ -398,13 +398,13 @@ describe('durable retry', () => {
     );
     const events: KubicLaneEvent[] = [];
     const stop = await subscribeLaneEvents(
-      solo.harness,
-      solo.conversation.id,
+      lane.harness,
+      lane.conversation.id,
       (event) => events.push(event),
       BACKGROUND_CONTEXT,
     );
     try {
-      const outcome = await runTurn(solo, 'try again', {
+      const outcome = await runTurn(lane, 'try again', {
         requestId: 'retry-1',
         context: BACKGROUND_CONTEXT,
       });
@@ -421,7 +421,7 @@ describe('durable retry', () => {
       ).toContain('500');
       const assistant = (
         await entriesToTranscript(
-          await readConversationEntries(solo.conversation, BACKGROUND_CONTEXT),
+          await readConversationEntries(lane.conversation, BACKGROUND_CONTEXT),
         )
       ).filter((item) => item.kind === 'assistant');
       // The failed attempt is committed (it spent tokens) and the answer is

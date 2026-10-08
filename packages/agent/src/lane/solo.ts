@@ -343,7 +343,7 @@ export function splitModelId(id: string): {
 // a malformed id, or a configure rejection burns no escalation budget,
 // emits no event, and leaves affinity untouched.
 export async function escalateLaneModel(
-  solo: Lane,
+  lane: Lane,
   ladder: EscalationLadder,
   to: string,
   reason: string,
@@ -353,14 +353,14 @@ export async function escalateLaneModel(
   affinity: TaskAffinity;
   event: ModelEscalationEvent;
 }> {
-  if (solo.affinity === undefined) {
+  if (lane.affinity === undefined) {
     throw new PromptCacheError(
       'no pinned affinity: boot with taskId before escalating',
     );
   }
   // The per-turn model read goes through the affinity helper,
   // so the helper has a lane-level caller (not a test-only export).
-  const from = taskModelForTurn(solo.affinity);
+  const from = taskModelForTurn(lane.affinity);
   if (to === from) {
     throw new PromptCacheError(
       `refusing no-op escalation: already on '${to}' (same-model step)`,
@@ -371,9 +371,9 @@ export async function escalateLaneModel(
   // The reserve follows the live model through soloCompactionSettings'
   // `currentWindow` getter (which reads affinity first), so no explicit
   // re-clamp is needed.
-  await solo.conversation.configure({ model: parsed }, context);
-  const result = escalatePinnedModel(solo.affinity, ladder, to, reason, sink);
-  solo.affinity = result.affinity;
+  await lane.conversation.configure({ model: parsed }, context);
+  const result = escalatePinnedModel(lane.affinity, ladder, to, reason, sink);
+  lane.affinity = result.affinity;
   return result;
 }
 
@@ -463,7 +463,7 @@ export async function bootLane(
   const windowOf = (provider: string, modelId: string) =>
     options.models.getModels(provider).find((model) => model.id === modelId)
       ?.contextWindow;
-  let soloRef: Lane | undefined;
+  let laneRef: Lane | undefined;
   // Minimal structural view of the attached `pi.agent` document state: its
   // committed `model` and its dispose(), so this module needs no extra
   // pi-boundary type for it.
@@ -483,7 +483,7 @@ export async function bootLane(
     if (live !== undefined) {
       return windowOf(live.provider, live.modelId);
     }
-    const id = soloRef?.affinity?.modelId ?? currentModelId;
+    const id = laneRef?.affinity?.modelId ?? currentModelId;
     try {
       const parsed = splitModelId(id);
       return windowOf(parsed.provider, parsed.modelId);
@@ -710,7 +710,7 @@ export async function bootLane(
     await conversation.configure({ tools: null }, context);
   }
 
-  const solo: Lane = {
+  const lane: Lane = {
     harness,
     conversation,
     registry,
@@ -731,6 +731,6 @@ export async function bootLane(
           affinity: pinModelForTask(options.taskId, effectiveId),
         }),
   };
-  soloRef = solo;
-  return solo;
+  laneRef = lane;
+  return lane;
 }

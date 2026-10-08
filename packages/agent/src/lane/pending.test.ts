@@ -128,7 +128,7 @@ async function openLane(
     harness,
     conversation,
     kills,
-    solo: { harness, conversation, kills },
+    lane: { harness, conversation, kills },
   };
 }
 
@@ -179,7 +179,7 @@ describe('inspectPending', () => {
   it('reports nothing on a fresh session and does not start the scheduler', async () => {
     const fixture = laneFixture();
     const lane = await openLane(fixture, scratch());
-    expect(await inspectPending(lane.solo, BACKGROUND_CONTEXT)).toEqual({
+    expect(await inspectPending(lane.lane, BACKGROUND_CONTEXT)).toEqual({
       pending: false,
     });
     expect((await lane.harness.inspect(BACKGROUND_CONTEXT)).scheduling).toBe(
@@ -203,7 +203,7 @@ describe('inspectPending', () => {
     // `first` is abandoned, never closed: the process died mid-turn.
 
     const second = await openLane(fixture, dir);
-    const report = await inspectPending(second.solo, BACKGROUND_CONTEXT);
+    const report = await inspectPending(second.lane, BACKGROUND_CONTEXT);
     expect(report.pending).toBe(true);
     expect(report.summary).toContain('pending work:');
     expect(report.summary).toContain('pi.tool');
@@ -235,7 +235,7 @@ describe('settlePending', () => {
     const submission = await blockTurn(first, work);
     const second = await openLane(fixture, dir);
 
-    const settled = await settlePending(second.solo, 'resume', {
+    const settled = await settlePending(second.lane, 'resume', {
       context: BACKGROUND_CONTEXT,
       kills: second.kills,
     });
@@ -283,7 +283,7 @@ describe('settlePending', () => {
       fauxAssistantMessage('second reply'),
     ]);
 
-    const settled = await settlePending(second.solo, 'resume', {
+    const settled = await settlePending(second.lane, 'resume', {
       context: BACKGROUND_CONTEXT,
       kills: second.kills,
     });
@@ -323,7 +323,7 @@ describe('settlePending', () => {
     const kill = vi.fn();
     second.kills.track(String(second.conversation.id), kill);
 
-    const settled = await settlePending(second.solo, 'abort', {
+    const settled = await settlePending(second.lane, 'abort', {
       context: BACKGROUND_CONTEXT,
       kills: second.kills,
     });
@@ -360,7 +360,7 @@ describe('settlePending', () => {
     const kill = vi.fn();
     lane.kills.track(String(lane.conversation.id), kill);
 
-    const settled = await settlePending(lane.solo, 'abort', {
+    const settled = await settlePending(lane.lane, 'abort', {
       context: BACKGROUND_CONTEXT,
       kills: lane.kills,
     });
@@ -399,7 +399,7 @@ describe('settlePending', () => {
     bound.cancel();
     const resume = vi.spyOn(second.harness, 'resume');
 
-    const settled = await settlePending(second.solo, 'resume', {
+    const settled = await settlePending(second.lane, 'resume', {
       context: BACKGROUND_CONTEXT,
       kills: second.kills,
       guard: bound.context,
@@ -448,7 +448,7 @@ describe('settlePending', () => {
 
     // guard === opts.context, already cancelled: pi-durable rejects a commit
     // on this context, so the abort must run on its own live context.
-    const settled = await settlePending(second.solo, 'resume', {
+    const settled = await settlePending(second.lane, 'resume', {
       context: bound.context,
       kills: second.kills,
       guard: bound.context,
@@ -486,7 +486,7 @@ describe('settlePending', () => {
     const kill = vi.fn();
     lane.kills.track(String(lane.conversation.id), kill);
 
-    const settling = settlePending(lane.solo, 'resume', {
+    const settling = settlePending(lane.lane, 'resume', {
       context: BACKGROUND_CONTEXT,
       kills: lane.kills,
       guard: bound.context,
@@ -546,7 +546,7 @@ describe('settlePending', () => {
     second.kills.track(String(second.conversation.id), kill);
     const requests = fixture.faux.state.callCount;
 
-    const settled = await settlePending(second.solo, 'resume', {
+    const settled = await settlePending(second.lane, 'resume', {
       context: BACKGROUND_CONTEXT,
       kills: second.kills,
     });
@@ -567,7 +567,7 @@ describe('settlePending', () => {
     const lane = await openLane(fixture, scratch());
     for (const policy of ['resume', 'abort'] as const) {
       expect(
-        await settlePending(lane.solo, policy, {
+        await settlePending(lane.lane, policy, {
           context: BACKGROUND_CONTEXT,
           kills: lane.kills,
         }),
@@ -591,7 +591,7 @@ describe('pendingInputText', () => {
     const first = await openLane(fixture, dir);
     await blockTurn(first, work, 'the interrupted prompt');
     const second = await openLane(fixture, dir);
-    expect(await pendingInputText(second.solo, BACKGROUND_CONTEXT)).toBe(
+    expect(await pendingInputText(second.lane, BACKGROUND_CONTEXT)).toBe(
       'the interrupted prompt',
     );
   });
@@ -608,7 +608,7 @@ describe('pendingInputText', () => {
     ]);
     const lane = await openLane(fixture, scratch());
     expect(
-      await pendingInputText(lane.solo, BACKGROUND_CONTEXT),
+      await pendingInputText(lane.lane, BACKGROUND_CONTEXT),
     ).toBeUndefined();
     lane.harness.resume();
     await lane.conversation.submit(
@@ -623,7 +623,7 @@ describe('pendingInputText', () => {
       BACKGROUND_CONTEXT,
     );
     await work.started;
-    expect(await pendingInputText(lane.solo, BACKGROUND_CONTEXT)).toBe(
+    expect(await pendingInputText(lane.lane, BACKGROUND_CONTEXT)).toBe(
       'new prompt',
     );
   });
@@ -639,7 +639,7 @@ function stubLane(options: {
 }): {
   calls: string[];
   kills: OperationKillRegistry;
-  solo: {
+  lane: {
     harness: Harness;
     conversation: Conversation;
     kills: OperationKillRegistry;
@@ -670,7 +670,7 @@ function stubLane(options: {
   return {
     calls,
     kills,
-    solo: {
+    lane: {
       harness: harness as unknown as Harness,
       conversation: conversation as unknown as Conversation,
       kills,
@@ -711,7 +711,7 @@ describe('settlePending decision paths', () => {
       wait,
     });
     expect(
-      await settlePending(lane.solo, 'resume', {
+      await settlePending(lane.lane, 'resume', {
         context: BACKGROUND_CONTEXT,
         kills: lane.kills,
       }),
@@ -734,7 +734,7 @@ describe('settlePending decision paths', () => {
     });
     lane.kills.track('7', kill);
     expect(
-      await settlePending(lane.solo, 'resume', {
+      await settlePending(lane.lane, 'resume', {
         context: BACKGROUND_CONTEXT,
         kills: lane.kills,
       }),
@@ -759,7 +759,7 @@ describe('settlePending decision paths', () => {
       },
     });
     expect(
-      await settlePending(lane.solo, 'resume', {
+      await settlePending(lane.lane, 'resume', {
         context: BACKGROUND_CONTEXT,
         kills: lane.kills,
       }),
@@ -784,7 +784,7 @@ describe('settlePending decision paths', () => {
       },
     });
     expect(
-      await settlePending(lane.solo, 'resume', {
+      await settlePending(lane.lane, 'resume', {
         context: BACKGROUND_CONTEXT,
         kills: lane.kills,
       }),
@@ -803,7 +803,7 @@ describe('settlePending decision paths', () => {
       idle,
     });
     expect(
-      await settlePending(lane.solo, 'abort', {
+      await settlePending(lane.lane, 'abort', {
         context: BACKGROUND_CONTEXT,
         kills: lane.kills,
       }),
@@ -827,7 +827,7 @@ describe('settlePending decision paths', () => {
     lane.kills.track('7', first);
     lane.kills.track('7', second);
     await expect(
-      settlePending(lane.solo, 'abort', {
+      settlePending(lane.lane, 'abort', {
         context: BACKGROUND_CONTEXT,
         kills: lane.kills,
       }),
@@ -845,7 +845,7 @@ describe('settlePending decision paths', () => {
       },
     });
     (
-      lane.solo.conversation as unknown as {
+      lane.lane.conversation as unknown as {
         abort: () => Promise<void>;
       }
     ).abort = async () => {
@@ -858,7 +858,7 @@ describe('settlePending decision paths', () => {
       }),
     );
     await expect(
-      settlePending(lane.solo, 'abort', {
+      settlePending(lane.lane, 'abort', {
         context: BACKGROUND_CONTEXT,
         kills: lane.kills,
       }),
@@ -876,7 +876,7 @@ describe('settlePending decision paths', () => {
     const stale = vi.fn();
     lane.kills.track('12', stale);
     lane.kills.track('c1', stale);
-    await settlePending(lane.solo, 'abort', {
+    await settlePending(lane.lane, 'abort', {
       context: BACKGROUND_CONTEXT,
       kills: lane.kills,
     });

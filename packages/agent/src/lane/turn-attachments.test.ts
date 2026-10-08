@@ -39,7 +39,7 @@ describe('runTurn prompt images', () => {
     });
     lanes.push(lane);
 
-    const outcome = await runTurn(lane.solo, 'what is this?', {
+    const outcome = await runTurn(lane.lane, 'what is this?', {
       requestId: 'req-image',
       context: BACKGROUND_CONTEXT,
       images: [
@@ -70,7 +70,7 @@ describe('runTurn prompt images', () => {
     });
     lanes.push(lane);
 
-    await runTurn(lane.solo, 'look', {
+    await runTurn(lane.lane, 'look', {
       requestId: 'req-image-2',
       context: BACKGROUND_CONTEXT,
       images: [{ mimeType: 'image/png', data: PNG, filename: 'shot.png' }],
@@ -100,7 +100,7 @@ describe('runTurn prompt images', () => {
     });
     lanes.push(lane);
 
-    await runTurn(lane.solo, 'plain', {
+    await runTurn(lane.lane, 'plain', {
       requestId: 'req-plain',
       context: BACKGROUND_CONTEXT,
     });

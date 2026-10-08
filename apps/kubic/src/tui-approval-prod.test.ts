@@ -100,7 +100,7 @@ function fauxLaneBoot(
       sessionDir: join(root, id),
       ...(answer === undefined ? {} : { answer }),
     });
-    const solo = await bootLane({
+    const lane = await bootLane({
       session,
       models,
       model,
@@ -117,9 +117,9 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
-      loop: tuiLoop(solo),
+      loop: tuiLoop(lane),
       close: async () => {
-        await solo.close(context);
+        await lane.close(context);
         await session.release(context);
       },
     };

@@ -116,7 +116,7 @@ function fauxLaneBoot(
     settings?: Parameters<typeof bootLane>[0]['settings'];
     // The booted lane, for tests that read its transcript (the /compact
     // acceptance counts pi.compaction entries).
-    onBoot?: (solo: Lane) => void;
+    onBoot?: (lane: Lane) => void;
     // Hand the session journal to the TUI (its panels and the
     // turn receipt read it).
     exposeJournal?: boolean;
@@ -134,7 +134,7 @@ function fauxLaneBoot(
     const model = models.getModels(provider.id)[0];
     if (model === undefined) throw new Error('no model registered');
     const journal = new FileJournalStore(join(root, id, 'journal'));
-    const solo = await bootLane({
+    const lane = await bootLane({
       session,
       models,
       model,
@@ -147,14 +147,14 @@ function fauxLaneBoot(
         : { compaction: options.compaction }),
       ...(options.settings === undefined ? {} : { settings: options.settings }),
     });
-    options.onBoot?.(solo);
+    options.onBoot?.(lane);
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
       ...(options.exposeJournal === true ? { journal } : {}),
-      loop: tuiLoop(solo),
+      loop: tuiLoop(lane),
       close: async () => {
-        await solo.close(context);
+        await lane.close(context);
         await session.release(context);
       },
     };
@@ -1408,7 +1408,7 @@ describe('kubic tui prompt loop', () => {
       } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
       const runner = new TuiTurnRunner(
         app,
-        tuiLoop(lane.solo),
+        tuiLoop(lane.lane),
         'faux/faux-1',
       );
       const first = lane.run('first prompt');
@@ -1422,7 +1422,7 @@ describe('kubic tui prompt loop', () => {
       // pi-durable, not queued (lane/turn.ts's mapping of it is pinned
       // by lane/turn.test.ts).
       await expect(
-        lane.solo.conversation.submit(
+        lane.lane.conversation.submit(
           { type: 'input', content: 'second prompt', whenBusy: 'reject' },
           BACKGROUND_CONTEXT,
         ),

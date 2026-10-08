@@ -90,15 +90,15 @@ vi.mock('./tools-adapter.js', async () => {
   };
 });
 
-const SOLOS: Lane[] = [];
+const LANES: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
   captured.interceptorCalls = 0;
   captured.interceptorOptions = undefined;
   captured.compactionOptions = [];
-  for (const solo of SOLOS.splice(0)) {
-    await solo.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  for (const lane of LANES.splice(0)) {
+    await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
 });
 
@@ -145,7 +145,7 @@ async function boot(
 ): Promise<Lane> {
   const { faux, models } = catalog();
   faux.setResponses([fauxAssistantMessage('hi'), fauxAssistantMessage('hi')]);
-  const solo = await bootLane({
+  const lane = await bootLane({
     session: handle() as never,
     models,
     model: faux.getModel('big'),
@@ -154,19 +154,19 @@ async function boot(
     agentId: 'root',
     ...extra,
   } as Parameters<typeof bootLane>[0]);
-  SOLOS.push(solo);
-  return solo;
+  LANES.push(lane);
+  return lane;
 }
 
-async function committedPrompt(solo: Lane): Promise<string> {
+async function committedPrompt(lane: Lane): Promise<string> {
   const settled = await (
-    await solo.conversation.submit(
+    await lane.conversation.submit(
       { type: 'input', content: 'hi' },
       BACKGROUND_CONTEXT,
     )
   ).wait(BACKGROUND_CONTEXT);
   expect(settled.status).toBe('done');
-  const page = await solo.conversation.entries(
+  const page = await lane.conversation.entries(
     {},
     200,
     undefined,
@@ -184,7 +184,7 @@ async function committedPrompt(solo: Lane): Promise<string> {
 describe('solo boot installs the extension stack in hook order', () => {
   it('policy → spans → kubic, and nothing else', async () => {
     const span = hook(ToolTask, { beforeTool: () => undefined });
-    const solo = await boot({
+    const lane = await boot({
       policy: {
         interceptors: { workspace: '/ws', readRoots: ['/skills-a'] },
         spanHooks: () => [span],
@@ -192,16 +192,16 @@ describe('solo boot installs the extension stack in hook order', () => {
       skillReadRoots: ['/skills-b'],
     });
     expect(
-      solo.registry
+      lane.registry
         .snapshot()
         .installed()
         .map((extension) => extension.name),
     ).toEqual(['kubic.policy', 'kubic.spans', 'kubic']);
     expect(
-      solo.registry.snapshot().extension('kubic.policy')?.hooks,
+      lane.registry.snapshot().extension('kubic.policy')?.hooks,
     ).toHaveLength(1);
     expect(
-      solo.registry.snapshot().extension('kubic.spans')?.hooks,
+      lane.registry.snapshot().extension('kubic.spans')?.hooks,
     ).toHaveLength(1);
     // The skill read roots extend the interceptor options, never replace them.
     expect(captured.interceptorOptions?.workspace).toBe('/ws');
@@ -210,7 +210,7 @@ describe('solo boot installs the extension stack in hook order', () => {
       '/skills-b',
     ]);
     // The Kubic extension carries tools and the prompt section.
-    const kubic = solo.registry.snapshot().extension('kubic');
+    const kubic = lane.registry.snapshot().extension('kubic');
     expect(kubic?.tools).toHaveLength(18);
     expect(kubic?.sections?.map((section) => section.key)).toEqual([
       PROMPT_SECTION,
@@ -225,9 +225,9 @@ describe('solo boot installs the extension stack in hook order', () => {
   });
 
   it('installs only the Kubic extension when no policy hooks are given', async () => {
-    const solo = await boot({});
+    const lane = await boot({});
     expect(
-      solo.registry
+      lane.registry
         .snapshot()
         .installed()
         .map((extension) => extension.name),
@@ -237,8 +237,8 @@ describe('solo boot installs the extension stack in hook order', () => {
 
 describe('solo boot prompt sections', () => {
   it('a role prompt replaces the SOLO_ROLE seed, prefix rules intact', async () => {
-    const solo = await boot({ rolePrompt: 'ROLE TEXT' });
-    const prompt = await committedPrompt(solo);
+    const lane = await boot({ rolePrompt: 'ROLE TEXT' });
+    const prompt = await committedPrompt(lane);
     expect(prompt).toBe(
       assemblePrompt({
         role: 'ROLE TEXT',
@@ -251,8 +251,8 @@ describe('solo boot prompt sections', () => {
   });
 
   it('appends context blocks as a suffix, never rewriting the prefix', async () => {
-    const solo = await boot({ promptSections: ['## Skills', 'skill-a'] });
-    const prompt = await committedPrompt(solo);
+    const lane = await boot({ promptSections: ['## Skills', 'skill-a'] });
+    const prompt = await committedPrompt(lane);
     expect(prompt).toBe(
       assemblePrompt({
         role: [
@@ -276,7 +276,7 @@ describe('solo boot hands HarnessSettings compaction to', () => {
   it('passes the configured reserve and a live current-window getter', async () => {
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: handle() as never,
       models,
       model: big,
@@ -289,7 +289,7 @@ describe('solo boot hands HarnessSettings compaction to', () => {
         keepRecentTokens: 1_111,
       },
     });
-    SOLOS.push(solo);
+    LANES.push(lane);
     expect(captured.compactionOptions).toHaveLength(1);
     const options = captured.compactionOptions[0];
     expect(options?.enabled).toBe(false);
@@ -301,7 +301,7 @@ describe('solo boot hands HarnessSettings compaction to', () => {
   it('the current-window getter follows an escalation', async () => {
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootLane({
+    const lane = await bootLane({
       session: handle() as never,
       models,
       model: big,
@@ -310,11 +310,11 @@ describe('solo boot hands HarnessSettings compaction to', () => {
       agentId: 'root',
       taskId: 'task-1',
     });
-    SOLOS.push(solo);
+    LANES.push(lane);
     expect(captured.compactionOptions[0]?.currentWindow()).toBe(200_000);
     const { escalateLaneModel } = await import('./solo.js');
     await escalateLaneModel(
-      solo,
+      lane,
       {
         steps: ['faux/big', 'faux/small'],
         maxEscalations: 1,

@@ -66,7 +66,7 @@ async function crashAfterAccept(
   // The dead process's generation never answers: the durable work stays
   // unfinished, exactly what a crash leaves behind.
   faux.setResponses([() => new Promise(() => {})]);
-  const solo = await bootLane({
+  const lane = await bootLane({
     session,
     models,
     model: faux.getModel(),
@@ -74,7 +74,7 @@ async function crashAfterAccept(
     sessionId: session.id,
     agentId: 'root',
   });
-  const submission = await solo.conversation.submit(
+  const submission = await lane.conversation.submit(
     { type: 'input', content: 'crashed turn', requestId: 'crashed-turn' },
     BACKGROUND_CONTEXT,
   );

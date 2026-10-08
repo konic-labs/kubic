@@ -89,7 +89,6 @@ describe('kubic tui writes a trajectory per settled turn', () => {
       expect(first.provenance).toMatchObject({
         sessionId: boot.sessionId,
         pid: process.pid,
-        generation: 0,
         worktree: ws,
         model: boot.model,
       });

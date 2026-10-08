@@ -155,7 +155,7 @@ function ledger(overrides: Partial<OrgAuditRecord> = {}): OrgAuditRecord {
     when: new Date(STARTED + 12).toISOString(),
     agent: { session: 'sess-1', role: 'solo' },
     model: { provider: 'faux', id: 'echo', thinking: 'off' },
-    worker: { pid: 1, generation: 0, role: 'solo' },
+    worker: { pid: 1, role: 'solo' },
     workspace: { path: '/ws', base: 'abc' },
     permission: { permission: 'shell', approval: 'ask' },
     credential: { sentinel: '' },
@@ -178,7 +178,6 @@ function input(
     entries: ENTRIES,
     model: { provider: 'faux', id: 'echo', thinking: null },
     pid: 4242,
-    generation: 0,
     cwd: '/ws',
     baseRevision: 'abc123',
     branch: 'main',
@@ -199,7 +198,7 @@ describe('assembleRunTrajectory', () => {
     expect(() =>
       parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
     ).not.toThrow();
-    expect(exported.schema_version).toBe('1.3');
+    expect(exported.schema_version).toBe('1.0');
   });
 
   it('carries the lane escalation record into model.escalations', () => {
@@ -229,13 +228,12 @@ describe('assembleRunTrajectory', () => {
     ).not.toThrow();
   });
 
-  it('records the run provenance: session, agent, pid, generation, worktree, model', () => {
-    const exported = assembleRunTrajectory(input({ generation: 3, pid: 7 }));
+  it('records the run provenance: session, agent, pid, worktree, model', () => {
+    const exported = assembleRunTrajectory(input({ pid: 7 }));
     expect(exported.provenance).toEqual({
       sessionId: 'sess-1',
       agentId: 'root',
       pid: 7,
-      generation: 3,
       worktree: '/ws',
       model: 'faux/echo',
     });
@@ -253,11 +251,6 @@ describe('assembleRunTrajectory', () => {
     expect(exported.identity).toEqual({
       sessionId: 'sess-1',
       agentId: 'root',
-      workerId: null,
-      // 1.1: solo runs have no parent; the agent role
-      // falls back to the task's own role.
-      parentSessionId: null,
-      role: 'solo',
     });
   });
 
@@ -327,24 +320,18 @@ describe('assembleRunTrajectory', () => {
         capability: 'shell',
         verdict: 'approved',
         by: 'user',
-        requested: null,
-        justification: null,
       },
       {
         approvalId: 'sess-1:2',
         capability: 'shell',
         verdict: 'denied',
         by: 'user',
-        requested: null,
-        justification: null,
       },
       {
         approvalId: 'sess-1:3',
         capability: 'shell',
         verdict: 'timed-out',
         by: 'user',
-        requested: null,
-        justification: null,
       },
     ]);
   });
@@ -381,13 +368,8 @@ describe('assembleRunTrajectory', () => {
     expect(a.task.taskId).toBe(taskIdForPrompt('read a.txt'));
     expect(taskIdForPrompt('read b.txt')).not.toBe(a.task.taskId);
     expect(a.task).toMatchObject({ objective: 'read a.txt', role: 'solo' });
-    expect(a.transfer).toEqual({
-      taskId: a.task.taskId,
-      worktree: '/ws',
-      grantRef: 'role:solo',
-    });
-    expect(a.resources).toEqual({ skills: ['review'], promptTemplates: [] });
-    expect(a.prompt).toEqual({ text: 'read a.txt', constraints: [] });
+    expect(a.resources).toEqual({ skills: ['review'] });
+    expect(a.prompt).toEqual({ text: 'read a.txt' });
   });
 
   it('keeps the run timestamps', () => {
@@ -664,12 +646,7 @@ describe('assembleRunTrajectory reads real entries defensively', () => {
   it('records the task id as a 16-hex prompt digest and the terminal state', () => {
     const exported = assembleRunTrajectory(input());
     expect(exported.task.taskId).toMatch(/^prompt:[0-9a-f]{16}$/);
-    expect(exported.state).toEqual({
-      phase: 'completed',
-      snapshot: null,
-      operations: [],
-      memos: [],
-    });
+    expect(exported.state).toEqual({ phase: 'completed' });
   });
 });
 

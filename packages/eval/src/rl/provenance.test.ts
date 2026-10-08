@@ -1,5 +1,5 @@
 // Provenance + failure-label policy tests.
-// Every RL record embeds provenance (proc/gen/worktree/model/base) and
+// Every RL record embeds provenance (proc/worktree/model/base) and
 // the failure category; stripped fields are validation errors.
 import { describe, expect, it } from 'vitest';
 import { makeExport } from '../test-support/fixtures.js';
@@ -11,11 +11,10 @@ import {
 } from './types.js';
 
 describe('extractProvenance', () => {
-  it('embeds proc/gen/worktree/model/base from the trajectory export', () => {
+  it('embeds proc/worktree/model/base from the trajectory export', () => {
     const provenance = extractProvenance(makeExport({}));
     expect(provenance).toEqual({
       proc: null,
-      gen: 3,
       worktree: '/wt/agent-1',
       model: 'acme/m1',
       base: 'abc123',

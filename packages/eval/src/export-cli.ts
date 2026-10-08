@@ -216,7 +216,6 @@ function describeJson(exported: TrajectoryExport): unknown {
     model: modelIdOf(exported),
     provenance: {
       proc: exported.provenance.pid,
-      gen: exported.provenance.generation,
       worktree: exported.provenance.worktree,
       model: exported.provenance.model,
       base: exported.worktree.baseRevision,

@@ -1697,6 +1697,11 @@ suite name.
   printed. The size is not part of an export, so `--size` stays
   mandatory; the determinism tier is derived from the path.
 
+Exports written by earlier builds (schema 1.0 to 1.3) still parse, for
+`replay`, `eval` and `export` alike. Keys the 1.0 contract no longer defines
+are carried through unread, and an escalation recorded without its model
+endpoints reads them as `null`.
+
 Every record carries `suite`, `caseId`, `success`, `costUsd`, `tokens`,
 `latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`, `size` and
 `determinism`. `determinism` is the tier,
@@ -1848,11 +1853,11 @@ A pair ranks two answers to one prompt. A pair is excluded when:
 - either side is an env failure (`env-failure-excluded`)
 - the verifier does not prefer chosen over rejected
   (`no-preference-signal-excluded`)
-- the runs cross a worktree or grant boundary (`cross-boundary-excluded`)
+- the runs cross a worktree or task-role boundary (`cross-boundary-excluded`)
 
 An excluded pair prints `excluded: <tag> — <reason>` and exits 0; it
 never produces a training record. A DPO record carries both sides'
-`taskRef`, and a hand-built record whose task refs differ fails
+`taskRef` and `roleRef`, and a hand-built record whose task refs differ fails
 validation. `grpo` refuses with exit 2 when its candidates answer
 different prompts or tasks. Stripped provenance or failure labels also
 refuse with exit 2.

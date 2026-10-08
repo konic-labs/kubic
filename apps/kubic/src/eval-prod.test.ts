@@ -239,24 +239,22 @@ describe('the live suite runner runs the built-in suites', () => {
       JSON.stringify(
         buildTrajectoryExport({
           task: { taskId: 'task-1', objective: 'fix', role: 'writer' },
-          identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
+          identity: { sessionId: 'sess-1', agentId: 'agent-1' },
           model: {
             provider: 'faux',
             model: 'echo',
             thinking: null,
             escalations: [],
           },
-          prompt: { text: 'fix', constraints: [] },
-          resources: { skills: [], promptTemplates: [] },
-          transfer: null,
+          prompt: { text: 'fix' },
+          resources: { skills: [] },
           actions: [],
           observations: [],
-          state: { phase: 'done', snapshot: null },
+          state: { phase: 'done' },
           provenance: {
             sessionId: 'sess-1',
             agentId: 'agent-1',
             pid: null,
-            generation: 0,
             worktree: workspace,
             model: 'faux/echo',
           },

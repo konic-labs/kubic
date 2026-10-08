@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseTrajectoryExport } from '../../trajectory/src/schema.js';
 import { EvalRunnerError, runEvalTask, runEvalTrajectory } from './runner.js';
 import type { EvalSignals } from './signals.js';
 import { makeExport } from './test-support/fixtures.js';
@@ -339,24 +340,22 @@ describe('runEvalTrajectory', () => {
       trajectory: {
         schema_version: '1.0',
         task: { taskId: 't', objective: 'fix', role: 'writer' },
-        identity: { sessionId: 's', agentId: 'a', workerId: 'w' },
+        identity: { sessionId: 's', agentId: 'a' },
         model: {
           provider: 'acme',
           model: 'm1',
           thinking: null,
           escalations: [],
         },
-        prompt: { text: 'fix', constraints: [] },
-        resources: { skills: [], promptTemplates: [] },
-        transfer: null,
+        prompt: { text: 'fix' },
+        resources: { skills: [] },
         actions: [{ seq: 1, tool: 'exec', args: null }],
         observations: [],
-        state: { phase: 'done', snapshot: null },
+        state: { phase: 'done' },
         provenance: {
           sessionId: 's',
           agentId: 'a',
           pid: null,
-          generation: 3,
           worktree: '/wt/agent-1',
           model: 'acme/m1',
         },
@@ -383,7 +382,7 @@ describe('runEvalTrajectory', () => {
           failureCategory: null,
           error: null,
         },
-        eval: { suite: null, caseId: null, labels: {} },
+        eval: { labels: {} },
       },
       model: 'acme/m1',
       thinking: null,
@@ -402,24 +401,22 @@ describe('runEvalTrajectory', () => {
       trajectory: {
         schema_version: '1.0',
         task: { taskId: 't', objective: 'fix', role: 'writer' },
-        identity: { sessionId: 's', agentId: 'a', workerId: 'w' },
+        identity: { sessionId: 's', agentId: 'a' },
         model: {
           provider: 'acme',
           model: 'm1',
           thinking: null,
           escalations: [],
         },
-        prompt: { text: 'fix', constraints: [] },
-        resources: { skills: [], promptTemplates: [] },
-        transfer: null,
+        prompt: { text: 'fix' },
+        resources: { skills: [] },
         actions: [{ seq: 1, tool: 'exec', args: null }],
         observations: [],
-        state: { phase: 'done', snapshot: null },
+        state: { phase: 'done' },
         provenance: {
           sessionId: 's',
           agentId: 'a',
           pid: null,
-          generation: 3,
           worktree: '/wt/agent-1',
           model: 'acme/m1',
         },
@@ -479,6 +476,28 @@ describe('runEvalTrajectory provenance comes from the export', () => {
     expect(record.caseId).toBe('swe-bench-mini');
   });
 
+  it('scores an export parsed by the caller, whose escalation has no endpoints', async () => {
+    // The CLI parses the file before the runner does. The first read fills the
+    // escalation's endpoints with null, and the runner's read must accept that.
+    const exported = makeExport();
+    const parsed = parseTrajectoryExport({
+      ...exported,
+      model: {
+        ...exported.model,
+        escalations: [
+          { reason: 'context overflow', at: '2026-10-04T10:00:30.000Z' },
+        ],
+      },
+    });
+    const record = await runEvalTrajectory({
+      suite: 'swe-bench-mini',
+      trajectory: parsed,
+      size: 'standard',
+    });
+    expect(record.caseId).toBe('swe-bench-mini');
+    expect(record.model).toBe('acme/m1');
+  });
+
   it('takes thinking from exported.model.thinking', async () => {
     const exported = makeExport();
     exported.model.thinking = 'high';
@@ -520,7 +539,7 @@ describe('runEvalTrajectory provenance comes from the export', () => {
     async (_name, flags, pattern) => {
       const error = await runEvalTrajectory({
         suite: 'swe-bench-mini',
-        trajectory: makeExport({ model: 'acme/m1', generation: 3 }),
+        trajectory: makeExport({ model: 'acme/m1' }),
         size: 'standard',
         ...flags,
       }).catch((caught: unknown) => caught);

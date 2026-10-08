@@ -165,13 +165,8 @@ describe('buildPreferencePair', () => {
     expect(built.excluded?.tag).toBe('cross-boundary-excluded');
   });
 
-  it('emits no pair across capability grants (tagged cross-boundary)', () => {
-    const other = failing({});
-    other.transfer = {
-      taskId: 'task-1',
-      worktree: '/wt/agent-1',
-      grantRef: 'worktree:write',
-    };
+  it('emits no pair across task roles (tagged cross-boundary)', () => {
+    const other = failing({ role: 'reviewer' });
     const built = buildPreferencePair(passing({}), other);
     expect(built.pair).toBeNull();
     expect(built.excluded?.tag).toBe('cross-boundary-excluded');
@@ -248,13 +243,13 @@ describe('buildDpoRecord', () => {
     }
   });
 
-  it('rejects a hand-crafted cross-grant DPO at validation', () => {
+  it('rejects a hand-crafted cross-role DPO at validation', () => {
     const built = buildDpoRecord(passing({}), failing({}));
     const crossed = structuredClone(built.record);
     expect(crossed).not.toBeNull();
     if (crossed !== null) {
       crossed.boundary = 'within';
-      crossed.grantRef = { chosen: 'solo:exec', rejected: 'worktree:write' };
+      crossed.roleRef = { chosen: 'implementer', rejected: 'reviewer' };
       expect(validateDpoRecord(crossed).valid).toBe(false);
     }
   });

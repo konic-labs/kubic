@@ -141,19 +141,17 @@ describe('eval command', () => {
     const trajectory = JSON.stringify({
       schema_version: '1.0',
       task: { taskId: 't', objective: 'fix', role: 'writer' },
-      identity: { sessionId: 's', agentId: 'a', workerId: 'w' },
+      identity: { sessionId: 's', agentId: 'a' },
       model: { provider: 'acme', model: 'm1', thinking: null, escalations: [] },
-      prompt: { text: 'fix', constraints: [] },
-      resources: { skills: [], promptTemplates: [] },
-      transfer: null,
+      prompt: { text: 'fix' },
+      resources: { skills: [] },
       actions: [],
       observations: [],
-      state: { phase: 'done', snapshot: null },
+      state: { phase: 'done' },
       provenance: {
         sessionId: 's',
         agentId: 'a',
         pid: null,
-        generation: 3,
         worktree: '/wt/a',
         model: 'acme/m1',
       },
@@ -180,7 +178,7 @@ describe('eval command', () => {
         failureCategory: null,
         error: null,
       },
-      eval: { suite: null, caseId: null, labels: {} },
+      eval: { labels: {} },
     });
     const exit = (
       await runEvalCommand(
@@ -209,9 +207,7 @@ describe('eval command', () => {
 });
 
 describe('eval --trajectory provenance', () => {
-  const exported = JSON.stringify(
-    makeExport({ model: 'acme/m1', generation: 3 }),
-  );
+  const exported = JSON.stringify(makeExport({ model: 'acme/m1' }));
 
   it('records the export provenance when no provenance flags are given', async () => {
     const o = out();
@@ -248,7 +244,6 @@ describe('eval --trajectory provenance', () => {
     const red = JSON.stringify(
       makeExport({
         model: 'acme/m1',
-        generation: 3,
         evalLabels: { 'signal:tests': 'fail' },
       }),
     );
@@ -593,6 +588,33 @@ describe('eval/benchmark semantics over parsed options', () => {
     ).exitCode;
     expect(exit).toBe(0);
     expect(o.lines.join('\n')).toMatch(/determinism=recorded/);
+  });
+
+  it('scores a --trajectory FILE whose escalation was recorded without endpoints', async () => {
+    const o = out();
+    const exported = makeExport({ worktree: '/wt/a' });
+    const earlier = {
+      ...exported,
+      model: {
+        ...exported.model,
+        escalations: [
+          { reason: 'context overflow', at: '2026-10-04T10:00:30.000Z' },
+        ],
+      },
+    };
+    const exit = (
+      await runEvalCommand(
+        { suite: 'swe-bench-mini', trajectory: 'run.json', ...PROVENANCE },
+        {
+          ...deps,
+          readFile: () => JSON.stringify(earlier),
+          out: o.write,
+          err: o.err,
+        },
+      )
+    ).exitCode;
+    expect(o.errs).toEqual([]);
+    expect(exit).toBe(0);
   });
 
   it('reads --trajectory - from stdin', async () => {

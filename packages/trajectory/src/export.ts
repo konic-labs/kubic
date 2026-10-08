@@ -28,7 +28,6 @@ import {
   type TrajectoryResultError,
   type TrajectoryTask,
   type TrajectoryTimestamps,
-  type TrajectoryTransfer,
   type TrajectoryUsage,
   type TrajectoryWorktree,
 } from './schema.js';
@@ -81,7 +80,6 @@ export interface BuildTrajectoryInput {
   model: TrajectoryModel;
   prompt: TrajectoryPrompt;
   resources: TrajectoryResources;
-  transfer?: TrajectoryTransfer | null;
   actions: TrajectoryAction[];
   observations: RawObservation[];
   state: TrajectoryDurableState;
@@ -109,7 +107,7 @@ function checkProvenance(input: BuildTrajectoryInput): TrajectoryProvenance {
   if (!isRecord(provenance)) {
     throw new TrajectoryExportError(
       'missing-provenance',
-      'trajectory export blocked: provenance is required (pid/generation/worktree/model) — refusing to emit a run that cannot be attributed',
+      'trajectory export blocked: provenance is required (pid/worktree/model) — refusing to emit a run that cannot be attributed',
     );
   }
   const p = provenance as unknown as Record<string, unknown>;
@@ -117,12 +115,6 @@ function checkProvenance(input: BuildTrajectoryInput): TrajectoryProvenance {
     throw new TrajectoryExportError(
       'invalid-provenance',
       'trajectory export blocked: provenance.sessionId and provenance.agentId must be non-empty strings',
-    );
-  }
-  if (typeof p.generation !== 'number' || !(p.generation >= 0)) {
-    throw new TrajectoryExportError(
-      'invalid-provenance',
-      'trajectory export blocked: provenance.generation must be a non-negative number',
     );
   }
   if (!nonEmpty(p.worktree) || !(p.worktree as string).startsWith('/')) {
@@ -402,47 +394,42 @@ export function buildTrajectoryExport(
     schema_version: SCHEMA_VERSION,
     task: input.task,
     identity: {
-      ...input.identity,
-      // 1.1: ancestry + agent role. An absent parent is an
-      // explicit null and an absent role falls back to the task's own —
-      // a 1.1 write never omits the fields.
-      parentSessionId: input.identity.parentSessionId ?? null,
-      role: input.identity.role ?? input.task.role,
+      sessionId: input.identity.sessionId,
+      agentId: input.identity.agentId,
     },
     model: {
       ...input.model,
       escalations: checkEscalations(input.model.escalations),
     },
-    prompt: input.prompt,
-    resources: input.resources,
-    transfer: input.transfer ?? null,
+    prompt: { text: input.prompt.text },
+    resources: { skills: input.resources.skills },
     actions: input.actions,
     observations: truncateObservations(input.observations),
-    state: {
-      ...input.state,
-      // 1.1: no leaf/memo recorded is an empty list, never a missing key.
-      operations: input.state.operations ?? [],
-      memos: input.state.memos ?? [],
+    state: { phase: input.state.phase },
+    provenance: {
+      sessionId: provenance.sessionId,
+      agentId: provenance.agentId,
+      pid: provenance.pid,
+      worktree: provenance.worktree,
+      model: provenance.model,
     },
-    provenance,
     environment,
     worktree: input.worktree,
     diff: input.diff,
     approvals: input.approvals.map((approval) => ({
-      ...approval,
-      // 1.1: null means not recorded — never an invented justification.
-      requested: approval.requested ?? null,
-      justification: approval.justification ?? null,
+      approvalId: approval.approvalId,
+      capability: approval.capability,
+      verdict: approval.verdict,
+      by: approval.by,
     })),
     timestamps,
     usage,
     result: {
-      ...result,
+      status: result.status,
+      summary: result.summary,
+      failureCategory: result.failureCategory ?? null,
       error,
-      // 1.1: refs only; no evidence recorded is an empty list.
-      tests: result.tests ?? [],
-      artifacts: result.artifacts ?? [],
     },
-    eval: input.eval ?? { suite: null, caseId: null, labels: {} },
+    eval: { labels: { ...(input.eval?.labels ?? {}) } },
   };
 }

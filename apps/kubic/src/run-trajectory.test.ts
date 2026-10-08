@@ -65,10 +65,13 @@ describe('persistRunTrajectory', () => {
     };
   }
 
-  it('records no worker identity and generation 0', () => {
+  it('records the identity as the session and agent only', () => {
     const { exported } = persist({});
-    expect(exported.identity.workerId).toBeNull();
-    expect(exported.provenance.generation).toBe(0);
+    expect(Object.keys(exported.identity).sort()).toEqual([
+      'agentId',
+      'sessionId',
+    ]);
+    expect(exported.provenance).not.toHaveProperty('generation');
   });
 
   it('records the injected pid, the thinking level, no-vcs outside git and no model as none/none', () => {

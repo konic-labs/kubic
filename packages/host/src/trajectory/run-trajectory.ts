@@ -73,7 +73,6 @@ export interface RunTrajectoryInput {
   entries: readonly unknown[];
   model: { provider: string; id: string; thinking: string | null };
   pid: number | null;
-  generation: number;
   // The workspace the run executed in, absolute.
   cwd: string;
   baseRevision: string;
@@ -378,7 +377,6 @@ export function assembleRunTrajectory(
     identity: {
       sessionId: input.sessionId,
       agentId: input.agentId,
-      workerId: null,
     },
     model: {
       provider: input.model.provider,
@@ -388,17 +386,15 @@ export function assembleRunTrajectory(
       thinking: input.model.thinking ?? thinkingLevelOf(items),
       escalations: input.escalations ?? [],
     },
-    prompt: { text: input.prompt, constraints: [] },
-    resources: { skills: input.skills, promptTemplates: [] },
-    transfer: { taskId, worktree: input.cwd, grantRef: `role:${input.role}` },
+    prompt: { text: input.prompt },
+    resources: { skills: input.skills },
     actions,
     observations,
-    state: { phase: input.outcome.terminus, snapshot: null },
+    state: { phase: input.outcome.terminus },
     provenance: {
       sessionId: input.sessionId,
       agentId: input.agentId,
       pid: input.pid,
-      generation: input.generation,
       worktree: input.cwd,
       model: modelRef,
     },
@@ -416,11 +412,7 @@ export function assembleRunTrajectory(
     },
     usage: usageOf(items),
     result,
-    eval: {
-      suite: null,
-      caseId: null,
-      labels: { ...(input.evalLabels ?? {}) },
-    },
+    eval: { labels: { ...(input.evalLabels ?? {}) } },
   });
 }
 

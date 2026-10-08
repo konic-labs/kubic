@@ -10,19 +10,17 @@ import { createProdReplayRun } from './run-prod.js';
 function fixtureTrajectory(objective = 'Fix the widget'): TrajectoryExport {
   return buildTrajectoryExport({
     task: { taskId: 'task-1', objective, role: 'writer' },
-    identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
+    identity: { sessionId: 'sess-1', agentId: 'agent-1' },
     model: { provider: 'acme', model: 'm1', thinking: null, escalations: [] },
-    prompt: { text: 'Fix the widget', constraints: [] },
-    resources: { skills: [], promptTemplates: [] },
-    transfer: null,
+    prompt: { text: 'Fix the widget' },
+    resources: { skills: [] },
     actions: [],
     observations: [],
-    state: { phase: 'done', snapshot: null },
+    state: { phase: 'done' },
     provenance: {
       sessionId: 'sess-1',
       agentId: 'agent-1',
       pid: null,
-      generation: 1,
       worktree: '/repo',
       model: 'acme/m1',
     },

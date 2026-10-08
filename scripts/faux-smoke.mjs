@@ -67,14 +67,13 @@ function trajectoryAt(label, path, readFile, problems) {
   }
   try {
     const parsed = JSON.parse(readFile(path));
-    // The reader supports major 1; the 1.1 additions are optional on
-    // read, so pin the major, not the minor.
+    // The binary writes schema 1.0, and the smoke pins that exact version.
     if (
       typeof parsed?.schema_version !== 'string' ||
-      !parsed.schema_version.startsWith('1.') ||
+      parsed.schema_version !== '1.0' ||
       parsed?.provenance === undefined
     ) {
-      problems.push(`${label}: ${path} is not a trajectory export`);
+      problems.push(`${label}: ${path} is not a 1.0 trajectory export`);
       return undefined;
     }
     return parsed;

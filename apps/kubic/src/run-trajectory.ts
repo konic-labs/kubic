@@ -139,7 +139,6 @@ export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
       thinking: input.thinking ?? null,
     },
     pid: input.pid ?? process.pid,
-    generation: 0,
     cwd: input.cwd,
     ...gitBase(input.cwd, input.base),
     env: toolSpawnEnv(processEnv),

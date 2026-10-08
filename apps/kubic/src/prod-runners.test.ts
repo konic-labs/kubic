@@ -744,7 +744,6 @@ describe('kubic replay lane projection (prod wiring)', () => {
           identity: {
             sessionId: 'sess-1',
             agentId: 'agent-1',
-            workerId: null,
           },
           model: {
             provider: 'faux',
@@ -752,17 +751,15 @@ describe('kubic replay lane projection (prod wiring)', () => {
             thinking: null,
             escalations: [],
           },
-          prompt: { text: 'touch the marker', constraints: [] },
-          resources: { skills: [], promptTemplates: [] },
-          transfer: null,
+          prompt: { text: 'touch the marker' },
+          resources: { skills: [] },
           actions: [],
           observations: [],
-          state: { phase: 'done', snapshot: null },
+          state: { phase: 'done' },
           provenance: {
             sessionId: 'sess-1',
             agentId: 'agent-1',
             pid: null,
-            generation: 1,
             worktree: '/repo',
             model: 'faux/echo',
           },

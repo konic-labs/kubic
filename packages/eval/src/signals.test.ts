@@ -8,19 +8,17 @@ function trajectory(
   return {
     schema_version: '1.0',
     task: { taskId: 'task-1', objective: 'fix', role: 'writer' },
-    identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: 'w-1' },
+    identity: { sessionId: 'sess-1', agentId: 'agent-1' },
     model: { provider: 'acme', model: 'm1', thinking: null, escalations: [] },
-    prompt: { text: 'fix', constraints: [] },
-    resources: { skills: [], promptTemplates: [] },
-    transfer: null,
+    prompt: { text: 'fix' },
+    resources: { skills: [] },
     actions: [],
     observations: [],
-    state: { phase: 'done', snapshot: null },
+    state: { phase: 'done' },
     provenance: {
       sessionId: 'sess-1',
       agentId: 'agent-1',
       pid: null,
-      generation: 3,
       worktree: '/wt/agent-1',
       model: 'acme/m1',
     },
@@ -47,7 +45,7 @@ function trajectory(
       failureCategory: null,
       error: null,
     },
-    eval: { suite: null, caseId: null, labels: {} },
+    eval: { labels: {} },
     ...overrides,
   };
 }
@@ -57,7 +55,7 @@ function labelled(
   status: TrajectoryExport['result']['status'] = 'completed',
 ): TrajectoryExport {
   return trajectory({
-    eval: { suite: null, caseId: null, labels },
+    eval: { labels },
     ...(status === 'completed'
       ? {}
       : {
@@ -166,7 +164,15 @@ describe('computeSignals', () => {
           provider: 'acme',
           model: 'm1',
           thinking: 'high',
-          escalations: [{ reason: 'risk', at: '2026-09-23T10:00:30.000Z' }],
+          escalations: [
+            {
+              reason: 'risk',
+              at: '2026-09-23T10:00:30.000Z',
+              fromModel: 'acme/m1',
+              toModel: 'acme/m2',
+              thinking: 'high',
+            },
+          ],
         },
       }),
     );
@@ -198,11 +204,7 @@ describe('computeSignals', () => {
   it('gates quality and regression-freedom on red signals, not completion alone', () => {
     const red = computeSignals(
       trajectory({
-        eval: {
-          suite: 'swe-bench-mini',
-          caseId: 'case-1',
-          labels: { 'signal:tests': 'fail' },
-        },
+        eval: { labels: { 'signal:tests': 'fail' } },
       }),
     );
     expect(red.completion).toBe(true);
@@ -221,8 +223,6 @@ describe('computeSignals', () => {
     const labelled = computeSignals(
       trajectory({
         eval: {
-          suite: 'swe-bench-mini',
-          caseId: 'case-1',
           labels: { 'signal:tests': 'pass', 'signal:build': 'fail' },
         },
       }),
@@ -270,8 +270,6 @@ describe('gatesPass exact veto', () => {
     const odd = computeSignals(
       trajectory({
         eval: {
-          suite: 'swe-bench-mini',
-          caseId: 'case-1',
           labels: { 'signal:tests': 'PASS', 'signal:build': '' },
         },
       }),

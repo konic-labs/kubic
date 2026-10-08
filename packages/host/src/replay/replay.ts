@@ -36,6 +36,15 @@
 import { createHash } from 'node:crypto';
 import type { PermissionClasses } from '../../../agents/src/policy.js';
 import {
+  type CommandResult,
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_PROVIDER,
+  EXIT_USAGE,
+  EXIT_WORKSPACE,
+  type ExitCode,
+} from '../../../core/src/cli/exit-codes.js';
+import {
   type CliLogger,
   createLineLogger,
 } from '../../../core/src/cli/logger.js';
@@ -52,13 +61,6 @@ import type { SoloCompactionOptions } from '../../../worker/src/lane/solo.js';
 import type { SoloApprovalConfig } from '../approvals.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from '../roles/resolver.js';
-import {
-  RUN_EXIT_FAILED,
-  RUN_EXIT_OK,
-  RUN_EXIT_PROVIDER_PROBE_FAILED,
-  RUN_EXIT_USAGE,
-  RUN_EXIT_WORKSPACE_UNAVAILABLE,
-} from '../run-cli.js';
 
 type ReplayTier = 'recorded' | 'deterministic' | 'live';
 
@@ -165,7 +167,7 @@ interface ReplayError {
 
 export interface ReplayEnvelope {
   ok: boolean;
-  exitCode: number;
+  exitCode: ExitCode;
   tier: ReplayTier | 'unknown';
   invocation: ReplayInvocation | null;
   trajectory: string | null;
@@ -227,7 +229,7 @@ const PLAIN = createCliTheme('none');
 export function refusedReplayEnvelope(message: string): ReplayEnvelope {
   return {
     ok: false,
-    exitCode: RUN_EXIT_FAILED,
+    exitCode: EXIT_FAILED,
     tier: 'unknown',
     invocation: null,
     trajectory: null,
@@ -240,10 +242,10 @@ function fail(
   deps: ReplayCommandDeps,
   options: { json: boolean; tier: ReplayTier | 'unknown'; log: CliLogger },
   trajectory: string | null,
-  exitCode: number,
+  exitCode: ExitCode,
   code: string,
   message: string,
-): number {
+): ExitCode {
   const envelope: ReplayEnvelope = {
     ok: false,
     exitCode,
@@ -269,7 +271,7 @@ function loadTrajectory(
   path: string,
 ):
   | { trajectory: TrajectoryExport }
-  | { code: string; message: string; exit: number } {
+  | { code: string; message: string; exit: ExitCode } {
   let raw: string;
   try {
     raw = readFile(path);
@@ -277,7 +279,7 @@ function loadTrajectory(
     return {
       code: 'trajectory-unreadable',
       message: `cannot read trajectory ${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`,
-      exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+      exit: EXIT_WORKSPACE,
     };
   }
   try {
@@ -293,13 +295,13 @@ function loadTrajectory(
       return {
         code: 'unknown-major',
         message: error.message,
-        exit: RUN_EXIT_USAGE,
+        exit: EXIT_USAGE,
       };
     }
     return {
       code: 'trajectory-malformed',
       message: error instanceof Error ? error.message : String(error),
-      exit: RUN_EXIT_USAGE,
+      exit: EXIT_USAGE,
     };
   }
 }
@@ -349,7 +351,7 @@ function recordedToolsDigest(trajectory: TrajectoryExport): string {
 interface ReplayRefusal {
   code: string;
   message: string;
-  exit: number;
+  exit: ExitCode;
 }
 
 function checkDigestPin(
@@ -364,14 +366,14 @@ function checkDigestPin(
     return {
       code: 'lockfile-invalid',
       message: `lockfile ${JSON.stringify(path)} ${key} pin must be an object with a "digest" string`,
-      exit: RUN_EXIT_USAGE,
+      exit: EXIT_USAGE,
     };
   }
   if (entry.digest !== actual) {
     return {
       code: 'lockfile-mismatch',
       message: `lockfile ${JSON.stringify(path)} ${key} pin ${entry.digest} does not match the recorded ${key} (${actual}) — refusing a deterministic replay whose ${key} differs from its pin`,
-      exit: RUN_EXIT_USAGE,
+      exit: EXIT_USAGE,
     };
   }
   return null;
@@ -389,7 +391,7 @@ function checkLockfile(
     return {
       code: 'lockfile-unreadable',
       message: `cannot read lockfile ${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`,
-      exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+      exit: EXIT_WORKSPACE,
     };
   }
   let parsed: unknown;
@@ -399,7 +401,7 @@ function checkLockfile(
     return {
       code: 'lockfile-invalid',
       message: `lockfile ${JSON.stringify(path)} is not valid JSON — deterministic replay needs a pinned models record`,
-      exit: RUN_EXIT_USAGE,
+      exit: EXIT_USAGE,
     };
   }
   if (
@@ -410,14 +412,14 @@ function checkLockfile(
     return {
       code: 'lockfile-invalid',
       message: `lockfile ${JSON.stringify(path)} must be a JSON object with a non-empty "models" record — deterministic replay needs pinned models`,
-      exit: RUN_EXIT_USAGE,
+      exit: EXIT_USAGE,
     };
   }
   if (!isPinnedModel(parsed.models, model)) {
     return {
       code: 'lockfile-mismatch',
       message: `lockfile ${JSON.stringify(path)} does not pin model ${JSON.stringify(model)} — refusing a deterministic replay at an unpinned model`,
-      exit: RUN_EXIT_USAGE,
+      exit: EXIT_USAGE,
     };
   }
   const promptPin = checkDigestPin(
@@ -439,7 +441,7 @@ function checkLockfile(
 
 function checkWorktreeOverride(
   path: string,
-): { ok: true } | { code: string; message: string; exit: number } {
+): { ok: true } | { code: string; message: string; exit: ExitCode } {
   let exists = false;
   try {
     exists = createNodeFileBridge(process.cwd()).exists(path);
@@ -450,7 +452,7 @@ function checkWorktreeOverride(
     return {
       code: 'worktree-unavailable',
       message: `worktree override ${JSON.stringify(path)} does not exist — refusing a replay against a missing worktree`,
-      exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+      exit: EXIT_WORKSPACE,
     };
   }
   return { ok: true };
@@ -460,18 +462,18 @@ function checkWorktreeOverride(
 // injected runner's terminus: a contract-violating runner (a run-cli
 // terminus outside replay's subset, or garbage) fail-closes to exit 2 —
 // never 3/4/undefined.
-function replayTerminusToExitCode(terminus: unknown): number {
+function replayTerminusToExitCode(terminus: unknown): ExitCode {
   switch (terminus) {
     case 'completed':
-      return RUN_EXIT_OK;
+      return EXIT_OK;
     case 'failed':
-      return RUN_EXIT_FAILED;
+      return EXIT_FAILED;
     case 'workspace_unavailable':
-      return RUN_EXIT_WORKSPACE_UNAVAILABLE;
+      return EXIT_WORKSPACE;
     case 'provider_probe_failed':
-      return RUN_EXIT_PROVIDER_PROBE_FAILED;
+      return EXIT_PROVIDER;
     default:
-      return RUN_EXIT_USAGE;
+      return EXIT_USAGE;
   }
 }
 
@@ -490,7 +492,7 @@ async function executeTierRun(
     changed: string[];
     experimental: string[];
   },
-): Promise<number> {
+): Promise<ExitCode> {
   const rerun = await deps.run(
     {
       tier: params.tier,
@@ -507,7 +509,7 @@ async function executeTierRun(
   const status = typeof terminus === 'string' ? terminus : 'unknown';
   const exitCode = replayTerminusToExitCode(terminus);
   const envelope: ReplayEnvelope = {
-    ok: exitCode === RUN_EXIT_OK,
+    ok: exitCode === EXIT_OK,
     exitCode,
     tier: params.tier,
     invocation: params.invocation,
@@ -539,7 +541,7 @@ function resolveWorktreeOverride(
   recordedPath: string,
 ):
   | { worktree: string; changed: string[]; experimental: string[] }
-  | { exit: number } {
+  | { exit: ExitCode } {
   if (options.worktree === undefined) {
     return { worktree: recordedPath, changed: [], experimental: [] };
   }
@@ -577,7 +579,7 @@ function checkRoleConfig(
     return {
       code: 'role-config-unreadable',
       message: `cannot read role config ${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`,
-      exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+      exit: EXIT_WORKSPACE,
     };
   }
   let parsed: unknown;
@@ -587,7 +589,7 @@ function checkRoleConfig(
     return {
       code: 'role-config-invalid',
       message: `role config ${JSON.stringify(path)} is not valid JSON — live replay needs {"role": "<name>"}`,
-      exit: RUN_EXIT_USAGE,
+      exit: EXIT_USAGE,
     };
   }
   const role = isRecord(parsed) ? parsed.role : undefined;
@@ -595,7 +597,7 @@ function checkRoleConfig(
     return {
       code: 'role-config-invalid',
       message: `role config ${JSON.stringify(path)} must be a JSON object with a non-empty "role" name — live replay needs the pinned role`,
-      exit: RUN_EXIT_USAGE,
+      exit: EXIT_USAGE,
     };
   }
   return { ok: true, role: role.trim() };
@@ -628,7 +630,7 @@ function loadOtherTrajectory(
   path: string,
 ):
   | { trajectory: TrajectoryExport }
-  | { code: string; message: string; exit: number } {
+  | { code: string; message: string; exit: ExitCode } {
   let raw: string;
   try {
     raw = readFile(path);
@@ -636,7 +638,7 @@ function loadOtherTrajectory(
     return {
       code: 'diff-against-unreadable',
       message: `cannot read --diff-against ${JSON.stringify(path)}: ${error instanceof Error ? error.message : String(error)}`,
-      exit: RUN_EXIT_WORKSPACE_UNAVAILABLE,
+      exit: EXIT_WORKSPACE,
     };
   }
   try {
@@ -649,13 +651,13 @@ function loadOtherTrajectory(
       return {
         code: 'unknown-major',
         message: error.message,
-        exit: RUN_EXIT_USAGE,
+        exit: EXIT_USAGE,
       };
     }
     return {
       code: 'diff-against-malformed',
       message: error instanceof Error ? error.message : String(error),
-      exit: RUN_EXIT_USAGE,
+      exit: EXIT_USAGE,
     };
   }
 }
@@ -683,21 +685,23 @@ export async function runReplayCommand(
   // Absent means the documented defaults (runtimeRunDeps' own empty
   // answer) — never an invented policy.
   runtime: ReplayRuntimeDeps = { policySource: 'default' },
-): Promise<number> {
+): Promise<CommandResult> {
   const json = parsed.json === true;
   const log = createLineLogger(deps.err, {
     theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
   });
   const tier = resolveTier(parsed.tier);
   if (parsed.trajectory === undefined) {
-    return fail(
-      deps,
-      { json, tier, log },
-      null,
-      RUN_EXIT_USAGE,
-      'missing-trajectory',
-      'missing required argument <trajectory.json>',
-    );
+    return {
+      exitCode: fail(
+        deps,
+        { json, tier, log },
+        null,
+        EXIT_USAGE,
+        'missing-trajectory',
+        'missing required argument <trajectory.json>',
+      ),
+    };
   }
   const options: ReplayOptions = {
     trajectory: parsed.trajectory,
@@ -713,14 +717,16 @@ export async function runReplayCommand(
   };
 
   if (options.tier === 'unknown') {
-    return fail(
-      deps,
-      options,
-      null,
-      RUN_EXIT_USAGE,
-      'invalid-tier',
-      `invalid --tier ${JSON.stringify(options.tierRaw)} (want recorded|deterministic|live)`,
-    );
+    return {
+      exitCode: fail(
+        deps,
+        options,
+        null,
+        EXIT_USAGE,
+        'invalid-tier',
+        `invalid --tier ${JSON.stringify(options.tierRaw)} (want recorded|deterministic|live)`,
+      ),
+    };
   }
 
   // Honesty gates: a tier that needs pins refuses without them
@@ -732,34 +738,38 @@ export async function runReplayCommand(
     if (options.roleConfig !== undefined) extras.push('--role-config');
     if (options.worktree !== undefined) extras.push('--worktree');
     if (extras.length > 0) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        RUN_EXIT_USAGE,
-        'recorded-takes-trajectory-alone',
-        `tier recorded replays the trajectory alone — remove ${extras.join(', ')} or declare --tier deterministic|live`,
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          EXIT_USAGE,
+          'recorded-takes-trajectory-alone',
+          `tier recorded replays the trajectory alone — remove ${extras.join(', ')} or declare --tier deterministic|live`,
+        ),
+      };
     }
   }
 
   const loaded = loadTrajectory(options.trajectory);
   if ('exit' in loaded) {
-    return fail(
-      deps,
-      options,
-      options.trajectory,
-      loaded.exit,
-      loaded.code,
-      loaded.message,
-    );
+    return {
+      exitCode: fail(
+        deps,
+        options,
+        options.trajectory,
+        loaded.exit,
+        loaded.code,
+        loaded.message,
+      ),
+    };
   }
   const trajectory = loaded.trajectory;
 
   if (options.tier === 'recorded' && options.diffAgainst === undefined) {
     const envelope: ReplayEnvelope = {
       ok: true,
-      exitCode: RUN_EXIT_OK,
+      exitCode: EXIT_OK,
       tier: 'recorded',
       invocation: 'exact',
       trajectory: options.trajectory,
@@ -771,63 +781,73 @@ export async function runReplayCommand(
     };
     if (options.json) {
       deps.out(formatJson(envelope));
-      return RUN_EXIT_OK;
+      return { exitCode: EXIT_OK };
     }
     for (const line of describeRecorded(trajectory)) deps.out(line);
-    return RUN_EXIT_OK;
+    return { exitCode: EXIT_OK };
   }
 
   if (options.tier === 'deterministic') {
     if (options.model === undefined || options.lockfile === undefined) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        RUN_EXIT_USAGE,
-        'deterministic-needs-pins',
-        'tier deterministic needs a pinned --model <provider/id> plus a --lockfile — refusing to re-execute unpinned',
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          EXIT_USAGE,
+          'deterministic-needs-pins',
+          'tier deterministic needs a pinned --model <provider/id> plus a --lockfile — refusing to re-execute unpinned',
+        ),
+      };
     }
     if (options.roleConfig !== undefined) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        RUN_EXIT_USAGE,
-        'unexpected-flag-for-tier',
-        'tier deterministic takes pins from --model/--lockfile — --role-config belongs to --tier live',
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          EXIT_USAGE,
+          'unexpected-flag-for-tier',
+          'tier deterministic takes pins from --model/--lockfile — --role-config belongs to --tier live',
+        ),
+      };
     }
     if (options.diffAgainst !== undefined) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        RUN_EXIT_USAGE,
-        'unexpected-flag-for-tier',
-        '--diff-against compare is a recorded-tier invocation — re-execution tiers replay one trajectory',
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          EXIT_USAGE,
+          'unexpected-flag-for-tier',
+          '--diff-against compare is a recorded-tier invocation — re-execution tiers replay one trajectory',
+        ),
+      };
     }
     if (!isModelPin(options.model)) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        RUN_EXIT_USAGE,
-        'invalid-model-pin',
-        `invalid-model-pin ${JSON.stringify(options.model)} (want 'provider/id') — deterministic replay needs an exact model pin`,
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          EXIT_USAGE,
+          'invalid-model-pin',
+          `invalid-model-pin ${JSON.stringify(options.model)} (want 'provider/id') — deterministic replay needs an exact model pin`,
+        ),
+      };
     }
     const lock = checkLockfile(options.lockfile, options.model, trajectory);
     if ('exit' in lock) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        lock.exit,
-        lock.code,
-        lock.message,
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          lock.exit,
+          lock.code,
+          lock.message,
+        ),
+      };
     }
     let worktree = trajectory.worktree.path;
     const changed: string[] = [];
@@ -838,106 +858,120 @@ export async function runReplayCommand(
         options,
         trajectory.worktree.path,
       );
-      if ('exit' in resolved) return resolved.exit;
+      if ('exit' in resolved) return { exitCode: resolved.exit };
       worktree = resolved.worktree;
       changed.push(...resolved.changed);
       experimental.push(...resolved.experimental);
     }
     const invocation: ReplayInvocation =
       options.worktree !== undefined ? 'different-worktree' : 'different-model';
-    return executeTierRun(deps, runtime, options, {
-      tier: 'deterministic',
-      invocation,
-      model: options.model,
-      worktree,
-      lockfile: options.lockfile,
-      roleConfig: null,
-      role: null,
-      changed,
-      experimental,
-    });
+    return {
+      exitCode: await executeTierRun(deps, runtime, options, {
+        tier: 'deterministic',
+        invocation,
+        model: options.model,
+        worktree,
+        lockfile: options.lockfile,
+        roleConfig: null,
+        role: null,
+        changed,
+        experimental,
+      }),
+    };
   }
 
   if (options.tier === 'live') {
     if (options.roleConfig === undefined) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        RUN_EXIT_USAGE,
-        'live-needs-role-config',
-        'tier live needs a pinned --role-config — refusing to re-execute without the role that owns the run',
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          EXIT_USAGE,
+          'live-needs-role-config',
+          'tier live needs a pinned --role-config — refusing to re-execute without the role that owns the run',
+        ),
+      };
     }
     if (options.model !== undefined || options.lockfile !== undefined) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        RUN_EXIT_USAGE,
-        'unexpected-flag-for-tier',
-        'tier live takes pins from --role-config — --model/--lockfile belong to --tier deterministic',
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          EXIT_USAGE,
+          'unexpected-flag-for-tier',
+          'tier live takes pins from --role-config — --model/--lockfile belong to --tier deterministic',
+        ),
+      };
     }
     if (options.diffAgainst !== undefined) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        RUN_EXIT_USAGE,
-        'unexpected-flag-for-tier',
-        '--diff-against compare is a recorded-tier invocation — re-execution tiers replay one trajectory',
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          EXIT_USAGE,
+          'unexpected-flag-for-tier',
+          '--diff-against compare is a recorded-tier invocation — re-execution tiers replay one trajectory',
+        ),
+      };
     }
     const role = checkRoleConfig(options.roleConfig);
     if ('exit' in role) {
-      return fail(
-        deps,
-        options,
-        options.trajectory,
-        role.exit,
-        role.code,
-        role.message,
-      );
+      return {
+        exitCode: fail(
+          deps,
+          options,
+          options.trajectory,
+          role.exit,
+          role.code,
+          role.message,
+        ),
+      };
     }
     const resolved = resolveWorktreeOverride(
       deps,
       options,
       trajectory.worktree.path,
     );
-    if ('exit' in resolved) return resolved.exit;
-    return executeTierRun(deps, runtime, options, {
-      tier: 'live',
-      invocation:
-        options.worktree !== undefined ? 'different-worktree' : 'live-exact',
-      // The role config is the pin artifact: the model re-executes at the
-      // trajectory's recorded model under the role's pinned config.
-      model: modelIdOf(trajectory),
-      worktree: resolved.worktree,
-      lockfile: null,
-      roleConfig: options.roleConfig,
-      role: role.role,
-      changed: resolved.changed,
-      experimental: resolved.experimental,
-    });
+    if ('exit' in resolved) return { exitCode: resolved.exit };
+    return {
+      exitCode: await executeTierRun(deps, runtime, options, {
+        tier: 'live',
+        invocation:
+          options.worktree !== undefined ? 'different-worktree' : 'live-exact',
+        // The role config is the pin artifact: the model re-executes at the
+        // trajectory's recorded model under the role's pinned config.
+        model: modelIdOf(trajectory),
+        worktree: resolved.worktree,
+        lockfile: null,
+        roleConfig: options.roleConfig,
+        role: role.role,
+        changed: resolved.changed,
+        experimental: resolved.experimental,
+      }),
+    };
   }
 
   // Later slices: none — every tier is implemented. Compare closes the
   // four invocations.
   const other = loadOtherTrajectory(options.diffAgainst as string);
   if ('exit' in other) {
-    return fail(
-      deps,
-      options,
-      options.trajectory,
-      other.exit,
-      other.code,
-      other.message,
-    );
+    return {
+      exitCode: fail(
+        deps,
+        options,
+        options.trajectory,
+        other.exit,
+        other.code,
+        other.message,
+      ),
+    };
   }
   const changed = compareTrajectories(trajectory, other.trajectory);
   const regression = changed.length > 0;
-  const exitCode = regression ? RUN_EXIT_FAILED : RUN_EXIT_OK;
+  const exitCode = regression ? EXIT_FAILED : EXIT_OK;
   const envelope: ReplayEnvelope = {
     ok: !regression,
     exitCode,
@@ -953,11 +987,11 @@ export async function runReplayCommand(
   };
   if (options.json) {
     deps.out(formatJson(envelope));
-    return exitCode;
+    return { exitCode };
   }
   deps.out('tier: recorded');
   deps.out('invocation: compare');
   deps.out(`changed: ${regression ? changed.join(', ') : 'none (identical)'}`);
   deps.out(`regression: ${regression}`);
-  return exitCode;
+  return { exitCode };
 }

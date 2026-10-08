@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { ExitCode } from '../../../../packages/core/src/cli/exit-codes.js';
 import { FileJournalStore } from '../../../../packages/exec/src/journal.js';
 import type { GitRequest } from '../../../../packages/host/src/git-cli.js';
 import {
@@ -49,29 +50,32 @@ async function kubic(
     versionLine: 'kubic 0.0.0',
     rootHelp: 'usage: kubic <x>',
   });
-  let exit = 0;
+  let exit: ExitCode = 0;
+  let finished = false;
   const ctx: CommandContext = {
     config: CONFIG,
     runners: {
       journal: (request, config) => {
         journal.push(request);
-        return runners.journal?.(request, config) ?? 0;
+        return runners.journal?.(request, config) ?? { exitCode: 0 };
       },
       git: (request, config) => {
         git.push(request);
-        return runners.git?.(request, config) ?? 0;
+        return runners.git?.(request, config) ?? { exitCode: 0 };
       },
     } as DispatchRunners,
     rest: argv.slice(1),
     out: channels.out,
     err: channels.err,
-    setExitCode: (code) => {
-      exit = code;
+    finish: (result) => {
+      exit = result.exitCode;
+      finished = true;
     },
   };
   registerJournalCommands(program, ctx);
   const code = await runKubicProgram(program, argv, channels, {
     code: () => exit,
+    finished: () => finished,
   });
   return { code, out, err, journal, git };
 }
@@ -322,7 +326,7 @@ describe('journal commands: parsed requests reach the runner', () => {
   });
 
   it("the runner's exit code flows back (undo skips exit 1)", async () => {
-    const r = await kubic(['undo'], { journal: () => 1 });
+    const r = await kubic(['undo'], { journal: () => ({ exitCode: 1 }) });
     expect(r.code).toBe(1);
   });
 
@@ -352,7 +356,7 @@ describe('journal commands: parsed requests reach the runner', () => {
   });
 
   it("git's runner exit code flows back", async () => {
-    const r = await kubic(['git', 'status'], { git: () => 1 });
+    const r = await kubic(['git', 'status'], { git: () => ({ exitCode: 1 }) });
     expect(r.code).toBe(1);
   });
 });

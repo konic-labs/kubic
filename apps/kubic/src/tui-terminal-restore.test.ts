@@ -133,7 +133,7 @@ describe('terminal restore on every exit path', () => {
     const run = start(viewerBoot(events));
     await waitFor(() => run.fake.counts.started === 1);
     run.signals.emit('SIGTERM', 'SIGTERM');
-    expect(await run.exit).toBe(143);
+    expect((await run.exit).exitCode).toBe(143);
     expect(run.log.join('')).toContain('\x1b[?1049l');
     expect(run.fake.counts.stopped).toBe(1);
     expect(events).toEqual(['close']);
@@ -147,7 +147,7 @@ describe('terminal restore on every exit path', () => {
     await waitFor(() => run.fake.counts.started === 1);
     run.signals.emit('SIGINT', 'SIGINT');
     run.signals.emit('SIGTERM', 'SIGTERM');
-    expect(await run.exit).toBe(130);
+    expect((await run.exit).exitCode).toBe(130);
     expect(run.fake.counts.stopped).toBe(1);
     expect(run.fake.counts.drained).toBe(1);
     expect(events).toEqual(['close']);
@@ -214,7 +214,7 @@ describe('terminal restore on every exit path', () => {
       events.push('kill');
     });
     run.signals.emit('SIGHUP', 'SIGHUP');
-    expect(await run.exit).toBe(129);
+    expect((await run.exit).exitCode).toBe(129);
     expect(events).toEqual(['kill', 'close']);
     expect(run.log.join('')).toContain('\x1b[?1049l');
   });
@@ -249,7 +249,7 @@ describe('terminal restore on every exit path', () => {
     // Enter submits: the submit path paints synchronously, and that paint
     // throws inside the input listener.
     run.fake.feed('\r');
-    expect(await run.exit).toBe(1);
+    expect((await run.exit).exitCode).toBe(1);
     expect(accepted).toBe(false);
     const restoredAt = run.log.findIndex((entry) => entry.includes('?1049l'));
     expect(restoredAt).toBeGreaterThanOrEqual(0);
@@ -268,7 +268,7 @@ describe('terminal restore on every exit path', () => {
       new Error('late promise'),
       Promise.resolve(),
     );
-    expect(await run.exit).toBe(1);
+    expect((await run.exit).exitCode).toBe(1);
     expect(run.log.join('')).toContain('\x1b[?1049l');
     expect(run.fake.counts.stopped).toBe(1);
     expect(run.errors.join('\n')).toContain('late promise');
@@ -279,7 +279,7 @@ describe('terminal restore on every exit path', () => {
     const run = start(viewerBoot([]));
     await waitFor(() => run.fake.counts.started === 1);
     run.signals.emit('uncaughtException', new Error('boom'), 'uncaught');
-    expect(await run.exit).toBe(1);
+    expect((await run.exit).exitCode).toBe(1);
     expect(run.fake.counts.stopped).toBe(1);
     expect(run.errors.join('\n')).toContain('boom');
   });
@@ -288,7 +288,7 @@ describe('terminal restore on every exit path', () => {
     const run = start(viewerBoot([]));
     await waitFor(() => run.fake.counts.started === 1);
     run.fake.feed('\x04');
-    expect(await run.exit).toBe(0);
+    expect((await run.exit).exitCode).toBe(0);
     const drain = run.log.indexOf('DRAIN');
     expect(drain).toBeGreaterThanOrEqual(0);
     expect(drain).toBeLessThan(run.log.indexOf('TERM-STOP'));
@@ -313,7 +313,7 @@ describe('terminal restore on every exit path', () => {
     expect(process.listenerCount('SIGTERM')).toBe((before[1] ?? 0) + 1);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(names.map((name) => process.listenerCount(name))).toEqual(before);
   });
 });
@@ -360,7 +360,7 @@ describe('the final document reaches the main screen', () => {
     // Let the settlement paint land before quitting.
     await new Promise((resolve) => setTimeout(resolve, 20));
     run.fake.feed('\x04');
-    expect(await run.exit).toBe(0);
+    expect((await run.exit).exitCode).toBe(0);
     const exitAlt = run.log.findIndex(
       (entry) => entry.startsWith('TERM:') && entry.includes('?1049l'),
     );

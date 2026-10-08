@@ -58,10 +58,12 @@ describe('kubic policy names unsupported levels', () => {
 
   it('warns on stderr once per unsupported level; stdout stays the decision', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: 'bash' },
-      { resolvePolicy: allowBash, unsupported: () => unsupported, ...cap },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: 'bash' },
+        { resolvePolicy: allowBash, unsupported: () => unsupported, ...cap },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['allow bash (enterprise)']);
     expect(cap.errs).toEqual([
@@ -90,21 +92,23 @@ describe('kubic policy names unsupported levels', () => {
 describe('kubic policy names the deciding layer', () => {
   it('reports deny (enterprise) under an enterprise deny', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: 'bash' },
-      {
-        resolvePolicy: () =>
-          resolveEffectivePolicy([
-            { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
-            {
-              layer: 'session',
-              policy: { tools: { allow: ['read', 'bash'] } },
-            },
-          ]).policy,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: 'bash' },
+        {
+          resolvePolicy: () =>
+            resolveEffectivePolicy([
+              { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+              {
+                layer: 'session',
+                policy: { tools: { allow: ['read', 'bash'] } },
+              },
+            ]).policy,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['deny bash (enterprise)']);
   });
@@ -179,60 +183,68 @@ describe('policyWithInstalledAllowlist', () => {
 describe('kubic policy tool query', () => {
   it('denies by default with no enterprise allow', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: 'bash' },
-      {
-        resolvePolicy: emptyPolicy,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: 'bash' },
+        {
+          resolvePolicy: emptyPolicy,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['deny bash (defaults)']);
   });
 
   it('offers allow for an allowlisted tool', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: 'bash' },
-      {
-        resolvePolicy: allowBash,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: 'bash' },
+        {
+          resolvePolicy: allowBash,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['allow bash (enterprise)']);
   });
 
   it('holds the enterprise denial against a lower-layer allow', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: 'bash' },
-      {
-        resolvePolicy: () =>
-          resolveEffectivePolicy([
-            { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
-            { layer: 'project', policy: { tools: { allow: ['bash'] } } },
-          ]).policy,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: 'bash' },
+        {
+          resolvePolicy: () =>
+            resolveEffectivePolicy([
+              { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
+              { layer: 'project', policy: { tools: { allow: ['bash'] } } },
+            ]).policy,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['deny bash (enterprise)']);
   });
 
   it('matches tool names case- and whitespace-insensitively', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: ' Bash ' },
-      {
-        resolvePolicy: allowBash,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: ' Bash ' },
+        {
+          resolvePolicy: allowBash,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['allow Bash (enterprise)']);
   });
@@ -241,14 +253,16 @@ describe('kubic policy tool query', () => {
 describe('kubic policy --json', () => {
   it('emits the tool decision as JSON', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: 'bash', json: true },
-      {
-        resolvePolicy: allowBash,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: 'bash', json: true },
+        {
+          resolvePolicy: allowBash,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(JSON.parse(cap.lines.join('\n'))).toEqual({
       tool: 'bash',
@@ -263,10 +277,12 @@ describe('kubic policy --json', () => {
 describe('kubic policy usage', () => {
   it('exits 2 without --tool (direct callers; commander requires it)', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      {},
-      { resolvePolicy: emptyPolicy, out: cap.out, err: cap.err },
-    );
+    const code = (
+      await runPolicyCommand(
+        {},
+        { resolvePolicy: emptyPolicy, out: cap.out, err: cap.err },
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(cap.lines).toEqual([]);
     expect(cap.errs).toEqual([
@@ -276,10 +292,12 @@ describe('kubic policy usage', () => {
 
   it('exits 2 on an empty (whitespace-only) tool name', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: '   ' },
-      { resolvePolicy: emptyPolicy, out: cap.out, err: cap.err },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: '   ' },
+        { resolvePolicy: emptyPolicy, out: cap.out, err: cap.err },
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(cap.lines).toEqual([]);
     expect(cap.errs).toEqual(['error: --tool needs a non-empty value']);
@@ -310,14 +328,16 @@ describe('kubic policy secret backstop', () => {
 
   it('redacts a secret-shaped tool name in the text offer', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: SHAPED_TOOL },
-      {
-        resolvePolicy: emptyPolicy,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: SHAPED_TOOL },
+        {
+          resolvePolicy: emptyPolicy,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = cap.lines.join('\n');
     expect(text).not.toContain(SHAPED_TOOL);
@@ -327,14 +347,16 @@ describe('kubic policy secret backstop', () => {
 
   it('redacts a secret-shaped tool name under --json', async () => {
     const cap = capture();
-    const code = await runPolicyCommand(
-      { tool: SHAPED_TOOL, json: true },
-      {
-        resolvePolicy: emptyPolicy,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runPolicyCommand(
+        { tool: SHAPED_TOOL, json: true },
+        {
+          resolvePolicy: emptyPolicy,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = cap.lines.join('\n');
     expect(text).not.toContain(SHAPED_TOOL);

@@ -5,7 +5,11 @@
 
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { EXIT_PROVIDER } from '../../../packages/core/src/cli/exit-codes.js';
+import {
+  type CommandResult,
+  EXIT_CANCELLED,
+  EXIT_PROVIDER,
+} from '../../../packages/core/src/cli/exit-codes.js';
 import { createLineLogger } from '../../../packages/core/src/cli/logger.js';
 import {
   promptConfirm,
@@ -17,7 +21,6 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   runSetupCommand,
-  SETUP_EXIT_CANCELLED,
   type SetupDeps,
   type SetupProviderChoice,
   type SetupUi,
@@ -155,16 +158,16 @@ const SKIPPED_NOTE =
  */
 export async function prodFirstRunSetup(
   options: ProdSetupOptions,
-): Promise<number | undefined> {
+): Promise<CommandResult | undefined> {
   const env = options.env ?? process.env;
   const home = options.home ?? homedir();
   if (!needsFirstRunSetup(env, home)) return undefined;
   const deps = await prodSetupDeps({ ...options, env, home });
   if (!deps.interactive) return undefined;
-  const code = await runSetupCommand({}, deps);
-  if (code === EXIT_PROVIDER) return code;
+  const result = await runSetupCommand({}, deps);
+  if (result.exitCode === EXIT_PROVIDER) return result;
   if (
-    code === SETUP_EXIT_CANCELLED &&
+    result.exitCode === EXIT_CANCELLED &&
     !createNodeFileBridge('/').exists(deps.configPath)
   ) {
     writeConfigFile(deps.configPath, SKIPPED_NOTE);

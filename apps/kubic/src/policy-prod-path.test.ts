@@ -359,10 +359,12 @@ describe('doctor reports the installed policy', () => {
   it('prints the installed classes, guards, and source', async () => {
     const lines: string[] = [];
     const installed = installSoloPolicy({ workspace: '/fake' });
-    const code = await runDoctorCommand(
-      {},
-      doctorDeps(lines, () => installed.posture),
-    );
+    const code = (
+      await runDoctorCommand(
+        {},
+        doctorDeps(lines, () => installed.posture),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const printed = lines.join('\n');
     expect(printed).toContain('PASS policy:installed');
@@ -398,14 +400,16 @@ describe('doctor reports the installed policy', () => {
 
   it('fails the matrix with policy-mismatch when the installed policy contradicts itself', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      {},
-      doctorDeps(lines, () => {
-        throw new Error(
-          'installed policy contradicts itself: shell disabled but bash',
-        );
-      }),
-    );
+    const code = (
+      await runDoctorCommand(
+        {},
+        doctorDeps(lines, () => {
+          throw new Error(
+            'installed policy contradicts itself: shell disabled but bash',
+          );
+        }),
+      )
+    ).exitCode;
     expect(code).toBe(1);
     const printed = lines.join('\n');
     expect(printed).toContain('FAIL policy:installed (policy-mismatch)');

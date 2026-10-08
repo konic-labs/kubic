@@ -221,7 +221,7 @@ describe('kubic tui /skill: over a stub lane', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('refuses an unknown skill locally, by name', async () => {
@@ -239,7 +239,7 @@ describe('kubic tui /skill: over a stub lane', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('reports the usage for a bare /skill', async () => {
@@ -255,7 +255,7 @@ describe('kubic tui /skill: over a stub lane', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 });
 
@@ -322,7 +322,7 @@ describe('kubic tui /skill: over the real lane', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 });
 

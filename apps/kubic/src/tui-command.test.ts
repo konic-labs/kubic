@@ -68,7 +68,7 @@ describe('kubic tui', () => {
     input('\x03');
     input('\x03');
     input('\x03');
-    const code = await pending;
+    const code = (await pending).exitCode;
     expect(code).toBe(0);
     const frames = terminal.writes.join('');
     // Alt-screen entered, at least one atomic frame drawn, then restored.
@@ -106,7 +106,7 @@ describe('kubic tui', () => {
     await waitFor(() => terminal.started === 1);
     input('\x03');
     input('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(seen).toEqual(['abc']);
   });
 
@@ -123,7 +123,7 @@ describe('kubic tui', () => {
     await waitFor(() => terminal.started === 1);
     input('\x03');
     input('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
     expect(doc).not.toMatch(/[✓●◌] solo/);
     expect(doc).toContain('approvals on');
@@ -133,15 +133,17 @@ describe('kubic tui', () => {
   it('rejects path-unsafe --session ids before the lane boots', async () => {
     let booted = 0;
     const terminal = fakeTerminal(100);
-    const code = await runTuiCommand(
-      { session: '../evil' },
-      deps(terminal, {
-        bootLane: async (sessionId?: string) => {
-          booted++;
-          return { sessionId: sessionId ?? 's1', model: 'faux/test' };
-        },
-      }),
-    );
+    const code = (
+      await runTuiCommand(
+        { session: '../evil' },
+        deps(terminal, {
+          bootLane: async (sessionId?: string) => {
+            booted++;
+            return { sessionId: sessionId ?? 's1', model: 'faux/test' };
+          },
+        }),
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(booted).toBe(0);
     expect(terminal.started).toBe(0);
@@ -154,15 +156,17 @@ describe('kubic tui', () => {
   it('reports lane boot failure without opening the screen', async () => {
     const lines: string[] = [];
     const terminal = fakeTerminal(100);
-    const code = await runTuiCommand(
-      {},
-      deps(terminal, {
-        out: (l) => lines.push(l),
-        bootLane: async () => {
-          throw new Error('nope');
-        },
-      }),
-    );
+    const code = (
+      await runTuiCommand(
+        {},
+        deps(terminal, {
+          out: (l) => lines.push(l),
+          bootLane: async () => {
+            throw new Error('nope');
+          },
+        }),
+      )
+    ).exitCode;
     expect(code).toBe(1);
     expect(terminal.started).toBe(0);
     expect(lines.join('\n')).toContain('error: nope');
@@ -175,20 +179,24 @@ describe('kubic tui', () => {
       out: (l: string) => out.push(l),
       err: (l: string) => err.push(l),
     };
-    const boom = await runTuiCommand(
-      {},
-      deps(fakeTerminal(100), {
-        ...channels,
-        bootLane: async () => {
-          throw new Error('unknown session: nope');
-        },
-      }),
-    );
+    const boom = (
+      await runTuiCommand(
+        {},
+        deps(fakeTerminal(100), {
+          ...channels,
+          bootLane: async () => {
+            throw new Error('unknown session: nope');
+          },
+        }),
+      )
+    ).exitCode;
     expect(boom).toBe(1);
-    const bad = await runTuiCommand(
-      { session: '../evil' },
-      deps(fakeTerminal(100), channels),
-    );
+    const bad = (
+      await runTuiCommand(
+        { session: '../evil' },
+        deps(fakeTerminal(100), channels),
+      )
+    ).exitCode;
     expect(bad).toBe(2);
     expect(out).toEqual([]);
     expect(err).toEqual([
@@ -240,7 +248,7 @@ describe('kubic tui colour isolation', () => {
     await waitFor(() => terminal.started === 1);
     input('\x03');
     input('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(lines.join('\n')).toContain('approvals on');
     // No Konic palette colour reached the document (truecolor SGR 38;2).
     expect(lines.join('\n')).not.toContain('38;2;');
@@ -259,7 +267,7 @@ describe('kubic tui colour isolation', () => {
     expect(tuiTheme().level).toBe('truecolor');
     input('\x03');
     input('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(tuiTheme().level).toBe('none');
   });
 });
@@ -299,7 +307,7 @@ describe('kubic tui keybindings file', () => {
     await waitFor(() => terminal.started === 1);
     input('\x03');
     input('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(errors).toContain(
       'warning: keybinding conflict: ctrl+y is bound to both panel.diff and panel.journal — panel.diff keeps it',
     );
@@ -308,13 +316,15 @@ describe('kubic tui keybindings file', () => {
   it('refuses a keybindings file with an unknown action (exit 2, nothing opens)', async () => {
     const errors: string[] = [];
     const terminal = fakeTerminal(100);
-    const code = await runTuiCommand(
-      {},
-      deps(terminal, {
-        err: (line) => errors.push(line),
-        keybindingsFile: keybindingsFile('{"panel.dif": "ctrl+g"}'),
-      }),
-    );
+    const code = (
+      await runTuiCommand(
+        {},
+        deps(terminal, {
+          err: (line) => errors.push(line),
+          keybindingsFile: keybindingsFile('{"panel.dif": "ctrl+g"}'),
+        }),
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(terminal.started).toBe(0);
     expect(errors.join('\n')).toMatch(

@@ -5,6 +5,13 @@
 
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import {
+  type CommandResult,
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+  type ExitCode,
+} from '../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -112,7 +119,7 @@ async function runPruneCommand(
   parsed: Extract<SessionsInvocation, { command: 'prune' }>,
   deps: SessionsCommandDeps,
   root: string,
-): Promise<number> {
+): Promise<ExitCode> {
   const log = diagnosticsOf(deps);
   // commander refuses the pair first (.conflicts); kept as the handler's
   // own guard so a direct call cannot delete under --dry-run.
@@ -120,16 +127,16 @@ async function runPruneCommand(
     log.error(
       '--yes and --dry-run contradict — deletion is explicit, pass one',
     );
-    return 2;
+    return EXIT_USAGE;
   }
   const keepDays = parsed.keepDays ?? deps.retentionDays;
   if (keepDays === undefined) {
     log.error(PRUNE_WINDOW_ERROR);
-    return 1;
+    return EXIT_FAILED;
   }
   if (keepDays === 0) {
     deps.out('session retention is off (keep-days 0) — nothing is pruned');
-    return 0;
+    return EXIT_OK;
   }
   const bridge = createNodeFileBridge(root);
   let plan: SessionPrunePlan;
@@ -144,7 +151,7 @@ async function runPruneCommand(
   } catch (error) {
     if (error instanceof SessionsRootError) {
       log.error(error.message);
-      return 1;
+      return EXIT_FAILED;
     }
     throw error;
   }
@@ -157,7 +164,7 @@ async function runPruneCommand(
   for (const id of plan.unreadable) deps.out(`unreadable: ${id} — skipped`);
   if (plan.candidates.length === 0) {
     deps.out('nothing to prune');
-    return 0;
+    return EXIT_OK;
   }
   if (parsed.yes !== true) {
     for (const candidate of plan.candidates) {
@@ -175,7 +182,7 @@ async function runPruneCommand(
       deps.out(
         `dry run: ${plan.candidates.length} session(s) would be pruned (${plan.totalBytes}B) — pass --yes to delete`,
       );
-      return 0;
+      return EXIT_OK;
     }
   }
   const outcomes = deleteSessionPruneCandidates({
@@ -212,13 +219,13 @@ async function runPruneCommand(
 export async function runSessionsCommand(
   invocation: SessionsInvocation,
   deps: SessionsCommandDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const log = diagnosticsOf(deps);
   const root = deps.sessionsRoot ?? defaultSessionsRoot();
   // prune never opens the session repo (it reads the root's dirs directly,
   // reading no transcript at all).
   if (invocation.command === 'prune') {
-    return runPruneCommand(invocation, deps, root);
+    return { exitCode: await runPruneCommand(invocation, deps, root) };
   }
   const store = openSessionStore(root, createNodeFileBridge(root));
   if (invocation.command === 'create') {
@@ -240,7 +247,7 @@ export async function runSessionsCommand(
     }
     if (!isDirectory) {
       log.error(`kubic sessions create: --cwd ${cwd}: no such directory`);
-      return 1;
+      return { exitCode: EXIT_FAILED };
     }
     const session = await createSession(store, { cwd }, BACKGROUND_CONTEXT);
     const id = session.id;
@@ -262,7 +269,7 @@ export async function runSessionsCommand(
       });
       log.warn(grant.warning);
     }
-    return 0;
+    return { exitCode: EXIT_OK };
   }
   if (invocation.command === 'list') {
     const sessions = await listSessions(store, BACKGROUND_CONTEXT);
@@ -277,11 +284,11 @@ export async function runSessionsCommand(
           })),
         ),
       );
-      return 0;
+      return { exitCode: EXIT_OK };
     }
     if (sessions.length === 0) {
       log.info(`no sessions recorded under ${root}`);
-      return 0;
+      return { exitCode: EXIT_OK };
     }
     const theme = themeOf(deps);
     deps.out(
@@ -299,10 +306,10 @@ export async function runSessionsCommand(
         { fancy: deps.fancy === true, theme },
       ),
     );
-    return 0;
+    return { exitCode: EXIT_OK };
   }
   if (invocation.command === 'fork') {
-    return runForkCommand(invocation, deps, store);
+    return { exitCode: await runForkCommand(invocation, deps, store) };
   }
   // attach
   const { id } = invocation;
@@ -311,7 +318,7 @@ export async function runSessionsCommand(
   // becomes a path segment under the sessions root.
   if (!SESSION_ID_PATTERN.test(id)) {
     log.error('invalid session id');
-    return 2;
+    return { exitCode: EXIT_USAGE };
   }
   try {
     const session = await attachSession(store, id, BACKGROUND_CONTEXT);
@@ -371,11 +378,11 @@ export async function runSessionsCommand(
       error instanceof SessionFormatError
     ) {
       log.error(error.message);
-      return 1;
+      return { exitCode: EXIT_FAILED };
     }
     throw error;
   }
-  return 0;
+  return { exitCode: EXIT_OK };
 }
 
 // One attach line per transcript item: role + text, one line each.
@@ -427,15 +434,15 @@ async function runForkCommand(
   invocation: Extract<SessionsInvocation, { command: 'fork' }>,
   deps: SessionsCommandDeps,
   store: ReturnType<typeof openSessionStore>,
-): Promise<number> {
+): Promise<ExitCode> {
   const log = diagnosticsOf(deps);
   if (!SESSION_ID_PATTERN.test(invocation.id)) {
     log.error('invalid session id');
-    return 2;
+    return EXIT_USAGE;
   }
   if (invocation.tree === true && invocation.at !== undefined) {
     log.error('sessions fork: --at and --tree are mutually exclusive');
-    return 2;
+    return EXIT_USAGE;
   }
   try {
     const fork = await forkSession(
@@ -452,7 +459,7 @@ async function runForkCommand(
         ? formatJson({ id: fork.id, source: fork.source, at: fork.at ?? null })
         : fork.id,
     );
-    return 0;
+    return EXIT_OK;
   } catch (error) {
     if (
       error instanceof SessionLockError ||
@@ -461,7 +468,7 @@ async function runForkCommand(
       error instanceof SessionForkError
     ) {
       log.error(error.message);
-      return 1;
+      return EXIT_FAILED;
     }
     throw error;
   }

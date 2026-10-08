@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CommandResult } from '../../../packages/core/src/cli/exit-codes.js';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   createModels,
@@ -110,7 +111,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
 
 interface Session {
   readonly fake: ReturnType<typeof recordingTerminal>;
-  readonly exit: Promise<number>;
+  readonly exit: Promise<CommandResult>;
   readonly boots: TuiLaneBoot[];
 }
 
@@ -227,7 +228,7 @@ describe('kubic tui /image', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('attaches an image the terminal pastes inline (iTerm2 OSC 1337)', async () => {
@@ -257,7 +258,7 @@ describe('kubic tui /image', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('refuses the attachment when the model takes no image input', async () => {
@@ -287,7 +288,7 @@ describe('kubic tui /image', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('refuses a file that is not an image, by name', async () => {
@@ -311,7 +312,7 @@ describe('kubic tui /image', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // The editor dropped a blank draft before onSubmit, so
@@ -343,7 +344,7 @@ describe('kubic tui /image', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // `allowEmptySubmit` must read the UNSUBMITTED
@@ -380,7 +381,7 @@ describe('kubic tui /image', () => {
     expect(admitted).toHaveLength(1);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('drops pending attachments when /model switches to a text-only model', async () => {
@@ -424,7 +425,7 @@ describe('kubic tui /image', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // `readFileRange` → `openSync` blocks the event loop
@@ -471,7 +472,7 @@ describe('kubic tui /image', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // An unterminated sequence past the reassembly cap is dropped by the
@@ -510,7 +511,7 @@ describe('kubic tui /image', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // An unterminated sequence that never completes
@@ -531,7 +532,7 @@ describe('kubic tui /image', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // The discard state needs the same valve as the
@@ -562,7 +563,7 @@ describe('kubic tui /image', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // A >4 KB paste arrives in chunks (the pty splits it and
@@ -593,6 +594,6 @@ describe('kubic tui /image', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 });

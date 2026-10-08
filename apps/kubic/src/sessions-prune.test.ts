@@ -109,7 +109,7 @@ function prune(
       out: o.write,
       ...extra,
     },
-  ).then((code) => ({ code, lines: o.lines }));
+  ).then((result) => ({ code: result.exitCode, lines: o.lines }));
 }
 
 describe('sessions prune, dry-run default', () => {
@@ -163,10 +163,12 @@ describe('sessions prune, dry-run default', () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-a', 40 * DAY_MS);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', keepDays: 30, yes: true, dryRun: true },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', keepDays: 30, yes: true, dryRun: true },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(o.lines.join('\n')).toContain('--dry-run');
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
@@ -265,10 +267,12 @@ describe('sessions prune, age window', () => {
     utimesSync(join(dir, 'spans.jsonl'), old, old);
     utimesSync(join(dir, 'journal'), old, old);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', keepDays: 30, yes: true },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', keepDays: 30, yes: true },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(dir)).toBe(true);
     expect(o.lines.join('\n')).toContain('nothing to prune');
@@ -277,13 +281,15 @@ describe('sessions prune, age window', () => {
   it('a missing sessions root is a fresh machine: nothing to prune, exit 0', async () => {
     const root = join(tmpRoot(), 'not-created-yet');
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', keepDays: 30 },
-      {
-        sessionsRoot: root,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', keepDays: 30 },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(o.lines.join('\n')).toContain('nothing to prune');
   });
@@ -293,13 +299,15 @@ describe('sessions prune, age window', () => {
     const notADir = join(root, 'sessions');
     writeFileSync(notADir, 'not a directory');
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', keepDays: 30 },
-      {
-        sessionsRoot: notADir,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', keepDays: 30 },
+        {
+          sessionsRoot: notADir,
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(1);
     expect(o.lines.join('\n')).toContain(notADir);
     expect(o.lines.join('\n')).toContain('error:');
@@ -345,10 +353,12 @@ describe('sessions prune, protection rails', () => {
     const kill = stubKill(true);
     try {
       const o = out();
-      const code = await runSessionsCommand(
-        { command: 'prune', keepDays: 30, yes: true },
-        { sessionsRoot: root, out: o.write },
-      );
+      const code = (
+        await runSessionsCommand(
+          { command: 'prune', keepDays: 30, yes: true },
+          { sessionsRoot: root, out: o.write },
+        )
+      ).exitCode;
       expect(code).toBe(0);
       expect(existsSync(dir)).toBe(true);
       const text = o.lines.join('\n');
@@ -369,10 +379,12 @@ describe('sessions prune, protection rails', () => {
     const kill = stubKill(false);
     try {
       const o = out();
-      const code = await runSessionsCommand(
-        { command: 'prune', keepDays: 30, yes: true },
-        { sessionsRoot: root, out: o.write },
-      );
+      const code = (
+        await runSessionsCommand(
+          { command: 'prune', keepDays: 30, yes: true },
+          { sessionsRoot: root, out: o.write },
+        )
+      ).exitCode;
       expect(code).toBe(0);
       expect(existsSync(dir)).toBe(false);
       expect(o.lines.join('\n')).toContain('pruned held-dead');
@@ -386,10 +398,12 @@ describe('sessions prune, protection rails', () => {
     sessionDir(root, 'keep-me', 90 * DAY_MS);
     sessionDir(root, 'prune-me', 90 * DAY_MS);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', keepDays: 30, keepSession: ['keep-me'], yes: true },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', keepDays: 30, keepSession: ['keep-me'], yes: true },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(root, 'keep-me'))).toBe(true);
     expect(existsSync(join(root, 'prune-me'))).toBe(false);
@@ -412,10 +426,12 @@ describe('sessions prune, protection rails', () => {
     utimesSync(join(root, 'stray.txt'), old, old);
     utimesSync(join(root, 'not a session'), old, old);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', keepDays: 30, yes: true },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', keepDays: 30, yes: true },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(root, 'stray.txt'))).toBe(true);
     expect(existsSync(join(root, 'lock.json'))).toBe(true);
@@ -485,10 +501,12 @@ describe('sessions prune, the plan→delete window', () => {
     const kill = stubKillAliveFromCall(new Map([[FLIP_PID, 2]]));
     try {
       const o = out();
-      const code = await runSessionsCommand(
-        { command: 'prune', keepDays: 30, yes: true },
-        { sessionsRoot: root, out: o.write },
-      );
+      const code = (
+        await runSessionsCommand(
+          { command: 'prune', keepDays: 30, yes: true },
+          { sessionsRoot: root, out: o.write },
+        )
+      ).exitCode;
       expect(code).toBe(0);
       const text = o.lines.join('\n');
       // The candidate whose lock went live is not removed...
@@ -514,13 +532,15 @@ describe('sessions prune, keep-window resolution', () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune' },
-      {
-        sessionsRoot: root,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune' },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(1);
     expect(o.lines.join('\n')).toContain('--keep-days');
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
@@ -530,10 +550,12 @@ describe('sessions prune, keep-window resolution', () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', keepDays: 0, yes: true },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', keepDays: 0, yes: true },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
     expect(o.lines.join('\n')).toContain('off');
@@ -544,14 +566,16 @@ describe('sessions prune, keep-window resolution', () => {
     sessionDir(root, 'aged-31d', 31 * DAY_MS);
     sessionDir(root, 'aged-29d', 29 * DAY_MS);
     const viaConfig = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', yes: true },
-      {
-        sessionsRoot: root,
-        out: viaConfig.write,
-        retentionDays: 30,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', yes: true },
+        {
+          sessionsRoot: root,
+          out: viaConfig.write,
+          retentionDays: 30,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(root, 'aged-31d'))).toBe(false);
     expect(existsSync(join(root, 'aged-29d'))).toBe(true);
@@ -561,10 +585,12 @@ describe('sessions prune, keep-window resolution', () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-31d', 31 * DAY_MS);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', keepDays: 100, yes: true },
-      { sessionsRoot: root, out: o.write, retentionDays: 30 },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', keepDays: 100, yes: true },
+        { sessionsRoot: root, out: o.write, retentionDays: 30 },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(root, 'aged-31d'))).toBe(true);
   });
@@ -573,14 +599,16 @@ describe('sessions prune, keep-window resolution', () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', yes: true },
-      {
-        sessionsRoot: root,
-        out: o.write,
-        retentionDays: 0,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', yes: true },
+        {
+          sessionsRoot: root,
+          out: o.write,
+          retentionDays: 0,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
     expect(o.lines.join('\n')).toContain('off');
@@ -613,14 +641,16 @@ describe('sessions prune, config flow', () => {
     });
     expect(loaded.error).toBeUndefined();
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', yes: true },
-      {
-        sessionsRoot: root,
-        out: o.write,
-        retentionDays: sessionRetentionDays(loaded),
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', yes: true },
+        {
+          sessionsRoot: root,
+          out: o.write,
+          retentionDays: sessionRetentionDays(loaded),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(root, 'aged-31d'))).toBe(false);
     expect(existsSync(join(root, 'aged-29d'))).toBe(true);
@@ -652,14 +682,16 @@ describe('sessions prune, config flow', () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', yes: true },
-      {
-        sessionsRoot: root,
-        out: o.write,
-        retentionDays: sessionRetentionDays(loaded),
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', yes: true },
+        {
+          sessionsRoot: root,
+          out: o.write,
+          retentionDays: sessionRetentionDays(loaded),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(1);
     expect(o.lines.join('\n')).toContain('--keep-days');
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
@@ -685,14 +717,16 @@ describe('sessions prune, config flow', () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', yes: true },
-      {
-        sessionsRoot: root,
-        out: o.write,
-        retentionDays: sessionRetentionDays(loaded),
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', yes: true },
+        {
+          sessionsRoot: root,
+          out: o.write,
+          retentionDays: sessionRetentionDays(loaded),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(1);
     expect(o.lines.join('\n')).toContain('--keep-days');
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
@@ -708,14 +742,16 @@ describe('sessions prune, config flow', () => {
     const root = tmpRoot();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'prune', yes: true },
-      {
-        sessionsRoot: root,
-        out: o.write,
-        retentionDays: sessionRetentionDays(loaded),
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'prune', yes: true },
+        {
+          sessionsRoot: root,
+          out: o.write,
+          retentionDays: sessionRetentionDays(loaded),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(root, 'aged-a'))).toBe(true);
     expect(o.lines.join('\n')).toContain('off');

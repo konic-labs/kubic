@@ -102,7 +102,7 @@ async function copyAnswer(): Promise<{ written: string; frame: string }> {
   await waitFor(() => fake.since(mark).includes('cop'));
   const written = fake.since(mark);
   fake.feed('\u0004');
-  expect(await pending).toBe(0);
+  expect((await pending).exitCode).toBe(0);
   return { written, frame: fake.frame };
 }
 

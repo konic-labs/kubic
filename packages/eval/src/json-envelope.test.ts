@@ -8,18 +8,20 @@ import { runExportCommand } from './export-cli.js';
 describe('export --json envelope', () => {
   it('prints one indented document', async () => {
     const out: string[] = [];
-    const code = await runExportCommand(
-      { trajectory: ['nope.json'], json: true } as unknown as Parameters<
-        typeof runExportCommand
-      >[0],
-      {
-        out: (line: string) => out.push(line),
-        err: () => {},
-        readFile: () => {
-          throw new Error('ENOENT');
-        },
-      } as unknown as Parameters<typeof runExportCommand>[1],
-    );
+    const code = (
+      await runExportCommand(
+        { trajectory: ['nope.json'], json: true } as unknown as Parameters<
+          typeof runExportCommand
+        >[0],
+        {
+          out: (line: string) => out.push(line),
+          err: () => {},
+          readFile: () => {
+            throw new Error('ENOENT');
+          },
+        } as unknown as Parameters<typeof runExportCommand>[1],
+      )
+    ).exitCode;
     expect(code).not.toBe(0);
     expect(out).toHaveLength(1);
     expect(out[0]).toBe(formatJson(JSON.parse(out[0] ?? '')));

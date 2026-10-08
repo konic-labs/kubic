@@ -22,6 +22,7 @@ import {
   it,
   vi,
 } from 'vitest';
+import type { CommandResult } from '../../../packages/core/src/cli/exit-codes.js';
 import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
 import { RUNTIME_EXCLUDE_ENTRIES } from '../../../packages/exec/src/runtime-exclude.js';
 import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
@@ -128,7 +129,7 @@ const PARSED: Readonly<Record<string, unknown>> = {
 type AnyRunner = (
   input: unknown,
   config: CliConfigResult,
-) => number | Promise<number>;
+) => CommandResult | Promise<CommandResult>;
 
 interface RunnerCall {
   readonly key: RunnerKey;
@@ -178,7 +179,7 @@ function harness(
         rest: Array.isArray(rest) ? [...(rest as string[])] : rest,
         config,
       });
-      return override === undefined ? 0 : override(rest, config);
+      return override === undefined ? { exitCode: 0 } : override(rest, config);
     };
   }
   const deps: DispatchDeps = {
@@ -268,8 +269,8 @@ describe('dispatch routing', () => {
   });
 
   it('returns the runner exit code verbatim', async () => {
-    const h = harness({ runners: { sessions: () => 42 } });
-    expect(await dispatchCommand('sessions', ['list'], h.deps)).toBe(42);
+    const h = harness({ runners: { sessions: () => ({ exitCode: 5 }) } });
+    expect(await dispatchCommand('sessions', ['list'], h.deps)).toBe(5);
   });
 
   it('hands the runner the process-wide config load', async () => {
@@ -491,9 +492,9 @@ describe('front door', () => {
 
   it('runs the first-run setup only for a bare interactive kubic', async () => {
     let asked = 0;
-    const firstRunSetup = async (): Promise<number | undefined> => {
+    const firstRunSetup = async (): Promise<CommandResult | undefined> => {
       asked += 1;
-      return 6;
+      return { exitCode: 6 };
     };
     const bare = harness({ interactive: true });
     expect(
@@ -867,15 +868,17 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     try {
       const cap = capture();
       const runners = createProdRunners(cap.io);
-      const code = await runners.eval(
-        {
-          task: 'do it',
-          suite: 'swe-bench-mini',
-          worktree: workspace,
-          size: 'smoke',
-        },
-        loadedConfig(),
-      );
+      const code = (
+        await runners.eval(
+          {
+            task: 'do it',
+            suite: 'swe-bench-mini',
+            worktree: workspace,
+            size: 'smoke',
+          },
+          loadedConfig(),
+        )
+      ).exitCode;
       expect(code).toBe(0);
       expect(cap.lines).toHaveLength(1);
       expect(cap.lines[0]).toMatch(
@@ -893,10 +896,12 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     const previousHome = process.env.HOME;
     process.env.HOME = FIXTURE;
     try {
-      const code = await createProdRunners(cap.io).cost(
-        { session: 'no-such-session' },
-        loadedConfig(),
-      );
+      const code = (
+        await createProdRunners(cap.io).cost(
+          { session: 'no-such-session' },
+          loadedConfig(),
+        )
+      ).exitCode;
       expect(code).toBe(1);
       expect(cap.lines).toEqual([]);
       expect(cap.errs).toEqual(['error: unknown session: no-such-session']);
@@ -915,7 +920,8 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     const scratch = mkdtempSync(join(FIXTURE, 'audit-cwd-'));
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(scratch);
     try {
-      const code = await createProdRunners(cap.io).audit({}, loadedConfig());
+      const code = (await createProdRunners(cap.io).audit({}, loadedConfig()))
+        .exitCode;
       expect(code).toBe(0);
       expect(cap.lines).toEqual(['no audit records']);
     } finally {
@@ -925,10 +931,12 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
 
   it('export receives { readFile, out } (a missing trajectory is a named failure)', async () => {
     const cap = capture();
-    const code = await createProdRunners(cap.io).export(
-      { trajectory: '/definitely/missing.json', type: 'sft' },
-      loadedConfig(),
-    );
+    const code = (
+      await createProdRunners(cap.io).export(
+        { trajectory: '/definitely/missing.json', type: 'sft' },
+        loadedConfig(),
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(cap.lines).toEqual([]);
     expect(cap.errs).toHaveLength(1);

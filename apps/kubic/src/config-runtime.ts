@@ -17,6 +17,10 @@
 
 import { homedir } from 'node:os';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
+import {
+  EXIT_FAILED,
+  type ExitCode,
+} from '../../../packages/core/src/cli/exit-codes.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../packages/exec/src/journal.js';
 import { gitSync } from '../../../packages/exec/src/runtime-exclude.js';
@@ -355,16 +359,16 @@ export const CONFIG_CONSUMING_COMMANDS: ReadonlySet<string> = new Set([
 
 // Exit code for a refused config on the given command, or undefined when the
 // command may proceed. Kept beside the load so the policy lives in one place:
-// the caller prints `result.error` and returns this code (1 = `failed`, the
+// the caller prints `result.error` and returns this code (EXIT_FAILED, the
 // same code doctor uses for a config-shaped failure).
 export function configRefusalExit(
   result: CliConfigResult,
   command: string | undefined,
-): number | undefined {
+): ExitCode | undefined {
   if (result.runtime !== undefined) return undefined;
   if (command === undefined) return undefined;
   if (CONFIG_REPORTING_COMMANDS.has(command)) return undefined;
-  return CONFIG_CONSUMING_COMMANDS.has(command) ? 1 : undefined;
+  return CONFIG_CONSUMING_COMMANDS.has(command) ? EXIT_FAILED : undefined;
 }
 
 // `kubic config` loader: the command renders exactly what this returns.

@@ -6,6 +6,7 @@
 // or listed-secret inventory values — credentials stay sentinel-only.
 
 import {
+  type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
@@ -121,7 +122,7 @@ function auditTable(
 export async function runAuditCommand(
   options: AuditOptions,
   deps: AuditCommandDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const json = options.json === true;
   const theme = json ? PLAIN : (deps.theme ?? PLAIN);
   const log = createLineLogger(deps.err, {
@@ -135,7 +136,7 @@ export async function runAuditCommand(
           `unknown result ${JSON.stringify(options.result)} (want ok|deny|error)`,
         ),
       );
-      return EXIT_USAGE;
+      return { exitCode: EXIT_USAGE };
     }
     result = options.result;
   }
@@ -149,7 +150,7 @@ export async function runAuditCommand(
         `unknown session ${JSON.stringify(options.session)} (want a session id)`,
       ),
     );
-    return EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   // An unreadable ledger is a failure naming the file, never
   // an empty trail: "no audit records" would be a false all-clear.
@@ -162,7 +163,7 @@ export async function runAuditCommand(
         error instanceof Error ? error.message : String(error),
       ),
     );
-    return EXIT_FAILED;
+    return { exitCode: EXIT_FAILED };
   }
   // Union of both inventory channels: an explicit list plus whatever the
   // injected loader returns — either source alone redacts.
@@ -178,12 +179,12 @@ export async function runAuditCommand(
   const redacted = filtered.map((record) => redactAuditRecord(record, secrets));
   if (json) {
     deps.out(formatJson(redacted));
-    return EXIT_OK;
+    return { exitCode: EXIT_OK };
   }
   if (redacted.length === 0) {
     deps.out('no audit records');
-    return EXIT_OK;
+    return { exitCode: EXIT_OK };
   }
   deps.out(auditTable(redacted, deps, theme));
-  return EXIT_OK;
+  return { exitCode: EXIT_OK };
 }

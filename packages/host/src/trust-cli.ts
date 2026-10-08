@@ -12,6 +12,7 @@
 import { join, resolve } from 'node:path';
 import {
   CliUsageError,
+  type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
 } from '../../core/src/cli/exit-codes.js';
@@ -67,7 +68,7 @@ function requireDirectory(dir: string): void {
 export function runTrustCommand(
   options: TrustCommandOptions,
   deps: TrustCommandDeps,
-): number {
+): CommandResult {
   const diagnose = diagnosticsOf(deps);
   try {
     if (options.list === true) {
@@ -81,12 +82,12 @@ export function runTrustCommand(
         deps.out(
           `no project trust decisions recorded (store: ${deps.store.file})`,
         );
-        return EXIT_OK;
+        return { exitCode: EXIT_OK };
       }
       for (const entry of entries) {
         deps.out(`${entry.decision ? 'trusted ' : 'declined'} ${entry.path}`);
       }
-      return EXIT_OK;
+      return { exitCode: EXIT_OK };
     }
     const target = options.path ?? deps.cwd;
     requireDirectory(target);
@@ -99,7 +100,7 @@ export function runTrustCommand(
       deps.out(
         "the project layer there is refused again until you run 'kubic trust'",
       );
-      return EXIT_OK;
+      return { exitCode: EXIT_OK };
     }
     deps.store.set(target, true);
     deps.out(`trusted project ${key} (store: ${deps.store.file})`);
@@ -113,10 +114,10 @@ export function runTrustCommand(
     deps.out(
       "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills",
     );
-    return EXIT_OK;
+    return { exitCode: EXIT_OK };
   } catch (error) {
     if (error instanceof CliUsageError) throw error;
     diagnose.error(error instanceof Error ? error.message : String(error));
-    return EXIT_FAILED;
+    return { exitCode: EXIT_FAILED };
   }
 }

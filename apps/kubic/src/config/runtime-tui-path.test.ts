@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EXIT_PROVIDER } from '../../../../packages/core/src/cli/exit-codes.js';
 import { NodeExecutionEnv } from '../../../../packages/exec/src/env.js';
 import { FileJournalStore } from '../../../../packages/exec/src/journal.js';
 import {
@@ -23,7 +24,6 @@ import {
   auditLedgerDir,
   readAuditLedger,
 } from '../../../../packages/host/src/policy/audit-ledger.js';
-import { RUN_EXIT_PROVIDER_PROBE_FAILED } from '../../../../packages/host/src/run-cli.js';
 import { fauxToolUse } from '../../../../packages/worker/src/lane/test-harness.js';
 import {
   createModels,
@@ -199,10 +199,12 @@ describe('tuiDepsWithDefaults forwards the lane projection', () => {
     ]);
     const named: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff', session: boot.sessionId },
-        { root: workspace, sessionsRoot, out: (line) => named.push(line) },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', session: boot.sessionId },
+          { root: workspace, sessionsRoot, out: (line) => named.push(line) },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(named.join('\n')).toContain('note.txt');
   });
@@ -317,7 +319,7 @@ describe('the TUI selects the pinned model', () => {
     const exit = runTuiCommand({}, deps);
     await waitFor(() => fake.writes.join('').includes('fx/b'));
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     const doc = lines.join('\n');
     // The first screen's provider row and the status line both name the
     // pinned model.
@@ -337,7 +339,7 @@ describe('the TUI selects the pinned model', () => {
     const exit = runTuiCommand({}, deps);
     await waitFor(() => fake.counts.started === 1);
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(lines.join('\n')).toContain('fx/b');
     expect(lines.join('\n')).not.toContain('fx/a');
   });
@@ -386,8 +388,8 @@ describe('the TUI selects the pinned model', () => {
       workspace,
       '[model]\nprovider = "fx"\nid = "zzz"\n',
     );
-    expect(RUN_EXIT_PROVIDER_PROBE_FAILED).toBe(6);
-    expect(await runTuiCommand({}, deps)).toBe(6);
+    expect(EXIT_PROVIDER).toBe(6);
+    expect((await runTuiCommand({}, deps)).exitCode).toBe(6);
     expect(errs.join('\n')).toContain("unknown model 'zzz'");
     expect(fake.counts.started).toBe(0);
   });

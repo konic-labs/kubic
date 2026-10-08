@@ -217,23 +217,25 @@ describe('skills reach the live solo prompt', () => {
   it('parses --no-skills and a repeatable --skill on the run command', async () => {
     const seen: Array<Record<string, unknown>> = [];
     const out: string[] = [];
-    const exit = await runRunCommand(
-      { prompt: 'hi', noSkills: true, skills: ['/tmp/one', '/tmp/two'] },
-      {
-        out: (line) => out.push(line),
-        run: (prompt, options) => {
-          seen.push({ prompt, ...options });
-          return Promise.resolve({
-            terminus: 'completed',
-            summary: 'ok',
-            sessionId: 's',
-            journalRef: 'journal:s',
-            usageRef: 'usage:s',
-            trajectoryRef: 'trajectory:s',
-          });
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hi', noSkills: true, skills: ['/tmp/one', '/tmp/two'] },
+        {
+          out: (line) => out.push(line),
+          run: (prompt, options) => {
+            seen.push({ prompt, ...options });
+            return Promise.resolve({
+              terminus: 'completed',
+              summary: 'ok',
+              sessionId: 's',
+              journalRef: 'journal:s',
+              usageRef: 'usage:s',
+              trajectoryRef: 'trajectory:s',
+            });
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(seen[0]?.noSkills).toBe(true);
     expect(seen[0]?.skills).toEqual(['/tmp/one', '/tmp/two']);

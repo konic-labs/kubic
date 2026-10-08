@@ -118,17 +118,19 @@ describe('the live suite runner runs the built-in suites', () => {
   }, async () => {
     const workspace = tmp('kubic-eval-ws-');
     const { r, lines, errs } = runners(workspace);
-    const code = await r.eval(
-      {
-        task: 'fix it',
-        suite: 'swe-bench-mini',
-        model: 'faux/echo',
-        worktree: workspace,
-        size: 'smoke',
-        json: true,
-      },
-      cliConfig(),
-    );
+    const code = (
+      await r.eval(
+        {
+          task: 'fix it',
+          suite: 'swe-bench-mini',
+          model: 'faux/echo',
+          worktree: workspace,
+          size: 'smoke',
+          json: true,
+        },
+        cliConfig(),
+      )
+    ).exitCode;
     expect(errs).toEqual([]);
     expect(code).toBe(0);
     const envelope = JSON.parse(lines.join('\n')) as {
@@ -178,15 +180,17 @@ describe('the live suite runner runs the built-in suites', () => {
   }, async () => {
     const workspace = tmp('kubic-eval-ws-');
     const { r, lines } = runners(workspace);
-    const code = await r.benchmark(
-      {
-        model: 'faux/echo',
-        worktree: workspace,
-        size: 'smoke',
-        json: true,
-      },
-      cliConfig(),
-    );
+    const code = (
+      await r.benchmark(
+        {
+          model: 'faux/echo',
+          worktree: workspace,
+          size: 'smoke',
+          json: true,
+        },
+        cliConfig(),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const envelope = JSON.parse(lines.join('\n')) as {
       ok: boolean;
@@ -284,16 +288,18 @@ describe('the live suite runner runs the built-in suites', () => {
       ),
     );
     const { r, lines, errs } = runners(workspace);
-    const code = await r.eval(
-      {
-        suite: 'swe-bench-mini',
-        trajectory: path,
-        worktree: workspace,
-        size: 'smoke',
-        json: true,
-      },
-      cliConfig(),
-    );
+    const code = (
+      await r.eval(
+        {
+          suite: 'swe-bench-mini',
+          trajectory: path,
+          worktree: workspace,
+          size: 'smoke',
+          json: true,
+        },
+        cliConfig(),
+      )
+    ).exitCode;
     expect(errs).toEqual([]);
     expect(code).toBe(0);
     const envelope = JSON.parse(lines.join('\n')) as {
@@ -310,16 +316,18 @@ describe('the live suite runner runs the built-in suites', () => {
   }, async () => {
     const workspace = tmp('kubic-eval-ws-');
     const { r, lines } = runners(workspace);
-    const code = await r.eval(
-      {
-        suite: 'swe-bench-mini',
-        trajectory: join(workspace, 'missing.json'),
-        worktree: workspace,
-        size: 'smoke',
-        json: true,
-      },
-      cliConfig(),
-    );
+    const code = (
+      await r.eval(
+        {
+          suite: 'swe-bench-mini',
+          trajectory: join(workspace, 'missing.json'),
+          worktree: workspace,
+          size: 'smoke',
+          json: true,
+        },
+        cliConfig(),
+      )
+    ).exitCode;
     expect(code).toBe(2);
     const envelope = JSON.parse(lines.join('\n')) as {
       ok: boolean;
@@ -334,16 +342,18 @@ describe('the live suite runner runs the built-in suites', () => {
   }, async () => {
     const workspace = tmp('kubic-eval-ws-');
     const { r, lines } = runners(workspace);
-    const code = await r.benchmark(
-      {
-        suite: 'swe',
-        model: 'faux/echo',
-        worktree: workspace,
-        size: 'smoke',
-        json: true,
-      },
-      cliConfig(),
-    );
+    const code = (
+      await r.benchmark(
+        {
+          suite: 'swe',
+          model: 'faux/echo',
+          worktree: workspace,
+          size: 'smoke',
+          json: true,
+        },
+        cliConfig(),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const envelope = JSON.parse(lines.join('\n')) as {
       results: Array<{ suite: string }>;
@@ -358,17 +368,19 @@ describe('the live suite runner runs the built-in suites', () => {
   }, async () => {
     const repo = fixtureRepo();
     const { r } = runners(repo);
-    const code = await r.benchmark(
-      {
-        suite: 'swe-bench-mini',
-        model: 'faux/echo',
-        worktree: repo,
-        size: 'smoke',
-        workspace: 'worktree',
-        json: true,
-      },
-      cliConfig(),
-    );
+    const code = (
+      await r.benchmark(
+        {
+          suite: 'swe-bench-mini',
+          model: 'faux/echo',
+          worktree: repo,
+          size: 'smoke',
+          workspace: 'worktree',
+          json: true,
+        },
+        cliConfig(),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     // The throwaway checkout is gone: only the fixture's own worktree.
     const list = ensureDriver().git(['worktree', 'list', '--porcelain'], {
@@ -385,17 +397,19 @@ describe('the live suite runner runs the built-in suites', () => {
     const repo = fixtureRepo();
     writeFileSync(join(repo, 'untracked.txt'), 'dirty\n');
     const { r, lines, errs } = runners(repo);
-    const code = await r.benchmark(
-      {
-        suite: 'swe-bench-mini',
-        model: 'faux/echo',
-        worktree: repo,
-        size: 'smoke',
-        workspace: 'worktree',
-        json: true,
-      },
-      cliConfig(),
-    );
+    const code = (
+      await r.benchmark(
+        {
+          suite: 'swe-bench-mini',
+          model: 'faux/echo',
+          worktree: repo,
+          size: 'smoke',
+          workspace: 'worktree',
+          json: true,
+        },
+        cliConfig(),
+      )
+    ).exitCode;
     expect(code).toBe(2);
     const envelope = JSON.parse(lines.join('\n')) as {
       ok: boolean;

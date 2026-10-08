@@ -132,23 +132,25 @@ describe('run -p exit-code contract', () => {
     ];
     for (const { terminus, code, signal } of cases) {
       const o = out();
-      const exit = await runRunCommand(
-        { prompt: 'hello' },
-        {
-          out: o.write,
-          run: stubRun(
-            completedResult({
-              terminus,
-              summary: terminus,
-              ...(signal === undefined ? {} : { signal }),
-              error:
-                terminus === 'completed'
-                  ? undefined
-                  : { kind: terminus, message: terminus },
-            }),
-          ),
-        },
-      );
+      const exit = (
+        await runRunCommand(
+          { prompt: 'hello' },
+          {
+            out: o.write,
+            run: stubRun(
+              completedResult({
+                terminus,
+                summary: terminus,
+                ...(signal === undefined ? {} : { signal }),
+                error:
+                  terminus === 'completed'
+                    ? undefined
+                    : { kind: terminus, message: terminus },
+              }),
+            ),
+          },
+        )
+      ).exitCode;
       expect(exit, `${terminus} ${signal ?? ''}`).toBe(code);
     }
   });
@@ -156,19 +158,21 @@ describe('run -p exit-code contract', () => {
   it('pins both approval labels to exit 4 while the status keeps them distinct', async () => {
     for (const status of ['approval_denied', 'approval_timed_out'] as const) {
       const o = out();
-      const exit = await runRunCommand(
-        { prompt: 'hello', json: true },
-        {
-          out: o.write,
-          run: stubRun(
-            completedResult({
-              terminus: status,
-              summary: `${status} summary`,
-              error: { kind: status, message: `${status} summary` },
-            }),
-          ),
-        },
-      );
+      const exit = (
+        await runRunCommand(
+          { prompt: 'hello', json: true },
+          {
+            out: o.write,
+            run: stubRun(
+              completedResult({
+                terminus: status,
+                summary: `${status} summary`,
+                error: { kind: status, message: `${status} summary` },
+              }),
+            ),
+          },
+        )
+      ).exitCode;
       expect(exit).toBe(4);
       expect(o.lines.length).toBe(1);
       const envelope = JSON.parse(o.lines[0] as string) as Record<
@@ -183,13 +187,15 @@ describe('run -p exit-code contract', () => {
 
   it('exits 2 on an empty prompt without running', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: '  ' },
-      {
-        out: o.write,
-        run: stubRun(completedResult()),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: '  ' },
+        {
+          out: o.write,
+          run: stubRun(completedResult()),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(2);
     expect(o.lines.join('\n')).toMatch(/-p needs a value/);
   });
@@ -199,16 +205,18 @@ describe('run -p --session validation', () => {
   it('rejects a --session id outside [A-Za-z0-9_-] with exit 2 without calling run', async () => {
     const o = out();
     let called = false;
-    const exit = await runRunCommand(
-      { prompt: 'hello', session: '../evil' },
-      {
-        out: o.write,
-        run: async () => {
-          called = true;
-          return completedResult();
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello', session: '../evil' },
+        {
+          out: o.write,
+          run: async () => {
+            called = true;
+            return completedResult();
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(2);
     expect(called).toBe(false);
     expect(o.lines.join('\n')).toMatch(/session/i);
@@ -366,34 +374,38 @@ describe('failureForTerminus', () => {
 describe('run -p failure mapping', () => {
   it('maps a workspace-flavored run rejection to exit 5', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello' },
-      {
-        out: o.write,
-        run: async () => {
-          throw Object.assign(new Error('unknown session: sess-nope'), {
-            name: 'SessionAttachError',
-          });
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello' },
+        {
+          out: o.write,
+          run: async () => {
+            throw Object.assign(new Error('unknown session: sess-nope'), {
+              name: 'SessionAttachError',
+            });
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(5);
     expect(o.lines.join('\n')).toMatch(/unknown session/);
   });
 
   it('emits the mapped failure as a jq-able --json envelope', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello', json: true },
-      {
-        out: o.write,
-        run: async () => {
-          throw Object.assign(new Error('unknown session: sess-nope'), {
-            name: 'SessionAttachError',
-          });
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello', json: true },
+        {
+          out: o.write,
+          run: async () => {
+            throw Object.assign(new Error('unknown session: sess-nope'), {
+              name: 'SessionAttachError',
+            });
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(5);
     expect(o.lines.length).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as Record<
@@ -407,31 +419,35 @@ describe('run -p failure mapping', () => {
 
   it('maps a generic run rejection to exit 1', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello' },
-      {
-        out: o.write,
-        run: async () => {
-          throw new Error('lane exploded');
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello' },
+        {
+          out: o.write,
+          run: async () => {
+            throw new Error('lane exploded');
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     expect(o.lines.join('\n')).toMatch(/lane exploded/);
   });
 
   it('maps a persist rejection instead of throwing past the CLI', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello' },
-      {
-        out: o.write,
-        run: stubRun(completedResult()),
-        persist: async () => {
-          throw new Error('persist hook blew up');
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello' },
+        {
+          out: o.write,
+          run: stubRun(completedResult()),
+          persist: async () => {
+            throw new Error('persist hook blew up');
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     expect(o.lines.join('\n')).toMatch(/persist hook blew up/);
   });
@@ -588,13 +604,15 @@ describe('run -p headless behavior', () => {
   it('exits 0 and prints the result through the injected sink alone (no terminal)', async () => {
     const o = out();
     const seen: { prompt?: string } = {};
-    const exit = await runRunCommand(
-      { prompt: 'fix the bug' },
-      {
-        out: o.write,
-        run: stubRun(completedResult({ summary: 'fixed' }), seen),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'fix the bug' },
+        {
+          out: o.write,
+          run: stubRun(completedResult({ summary: 'fixed' }), seen),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(seen.prompt).toBe('fix the bug');
     expect(o.lines.join('\n')).toMatch(/fixed/);
@@ -602,21 +620,23 @@ describe('run -p headless behavior', () => {
 
   it('emits a jq-able --json envelope with session/result/journal-usage pointers', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello', json: true },
-      {
-        out: o.write,
-        run: stubRun(
-          completedResult({
-            sessionId: 'sess-json',
-            summary: 'json ok',
-            journalRef: 'journal:sess-json',
-            usageRef: 'usage:sess-json',
-            trajectoryRef: 'trajectory:sess-json',
-          }),
-        ),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello', json: true },
+        {
+          out: o.write,
+          run: stubRun(
+            completedResult({
+              sessionId: 'sess-json',
+              summary: 'json ok',
+              journalRef: 'journal:sess-json',
+              usageRef: 'usage:sess-json',
+              trajectoryRef: 'trajectory:sess-json',
+            }),
+          ),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(o.lines.length).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as Record<
@@ -680,16 +700,18 @@ describe('run -p headless behavior', () => {
     expect(source).not.toMatch(/@kubic\/tui/);
     let mounted = false;
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello' },
-      {
-        out: o.write,
-        run: stubRun(completedResult()),
-        onScreenMount: () => {
-          mounted = true;
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello' },
+        {
+          out: o.write,
+          run: stubRun(completedResult()),
+          onScreenMount: () => {
+            mounted = true;
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(mounted).toBe(false);
   });
@@ -699,50 +721,52 @@ describe('run -p headless behavior', () => {
     const store = openSessionStore(root, createNodeFileBridge(root));
     const o = out();
     let createdId: string | undefined;
-    const exit = await runRunCommand(
-      { prompt: 'headless hello' },
-      {
-        out: o.write,
-        run: async (prompt: string) => {
-          const session = await createSession(
-            store,
-            { cwd: '/work' },
-            BACKGROUND_CONTEXT,
-          );
-          const id = session.id;
-          createdId = id;
-          const harness = await Harness.open(
-            session.adopt(),
-            { models: createModels(), registry: createRegistry() },
-            BACKGROUND_CONTEXT,
-          );
-          try {
-            const conversation = await harness.root(BACKGROUND_CONTEXT);
-            await conversation.commit(async (tx) => {
-              await tx.appendEntry(UserEntry, conversation.id, {
-                model: [
-                  {
-                    role: 'user',
-                    content: prompt,
-                    timestamp: Date.now(),
-                  },
-                ],
-              });
-            }, BACKGROUND_CONTEXT);
-          } finally {
-            await harness.close(BACKGROUND_CONTEXT);
-            await session.release(BACKGROUND_CONTEXT);
-          }
-          return completedResult({
-            summary: 'ok',
-            sessionId: id,
-            journalRef: `journal:${id}`,
-            usageRef: `usage:${id}`,
-            trajectoryRef: `trajectory:${id}`,
-          });
+    const exit = (
+      await runRunCommand(
+        { prompt: 'headless hello' },
+        {
+          out: o.write,
+          run: async (prompt: string) => {
+            const session = await createSession(
+              store,
+              { cwd: '/work' },
+              BACKGROUND_CONTEXT,
+            );
+            const id = session.id;
+            createdId = id;
+            const harness = await Harness.open(
+              session.adopt(),
+              { models: createModels(), registry: createRegistry() },
+              BACKGROUND_CONTEXT,
+            );
+            try {
+              const conversation = await harness.root(BACKGROUND_CONTEXT);
+              await conversation.commit(async (tx) => {
+                await tx.appendEntry(UserEntry, conversation.id, {
+                  model: [
+                    {
+                      role: 'user',
+                      content: prompt,
+                      timestamp: Date.now(),
+                    },
+                  ],
+                });
+              }, BACKGROUND_CONTEXT);
+            } finally {
+              await harness.close(BACKGROUND_CONTEXT);
+              await session.release(BACKGROUND_CONTEXT);
+            }
+            return completedResult({
+              summary: 'ok',
+              sessionId: id,
+              journalRef: `journal:${id}`,
+              usageRef: `usage:${id}`,
+              trajectoryRef: `trajectory:${id}`,
+            });
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     // The id an operator reads off the `session:` line is the id the run
     // created — and it is the handle attach reopens.
@@ -780,13 +804,15 @@ describe('run -p argument handling (mutation hardening)', () => {
   it('accepts the --prompt long form like -p', async () => {
     const o = out();
     const seen: { prompt?: string; sessionId?: string } = {};
-    const exit = await runRunCommand(
-      { prompt: 'hi there' },
-      {
-        out: o.write,
-        run: stubRun(completedResult(), seen),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hi there' },
+        {
+          out: o.write,
+          run: stubRun(completedResult(), seen),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(seen.prompt).toBe('hi there');
   });
@@ -794,16 +820,18 @@ describe('run -p argument handling (mutation hardening)', () => {
   it('passes --debug through to the runner without gating the run', async () => {
     const o = out();
     const seen: { debug?: boolean } = {};
-    const exit = await runRunCommand(
-      { prompt: 'hi', debug: true },
-      {
-        out: o.write,
-        run: async (_prompt, options) => {
-          seen.debug = (options as { debug?: boolean }).debug;
-          return completedResult();
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hi', debug: true },
+        {
+          out: o.write,
+          run: async (_prompt, options) => {
+            seen.debug = (options as { debug?: boolean }).debug;
+            return completedResult();
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(seen.debug).toBe(true);
     // The text block is unchanged: --debug adds stderr, never stdout lines.
@@ -819,16 +847,18 @@ describe('run -p argument handling (mutation hardening)', () => {
   it('leaves debug unset when --debug is absent', async () => {
     const o = out();
     const seen: { debug?: boolean } = {};
-    const exit = await runRunCommand(
-      { prompt: 'hi' },
-      {
-        out: o.write,
-        run: async (_prompt, options) => {
-          seen.debug = (options as { debug?: boolean }).debug;
-          return completedResult();
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hi' },
+        {
+          out: o.write,
+          run: async (_prompt, options) => {
+            seen.debug = (options as { debug?: boolean }).debug;
+            return completedResult();
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(seen.debug).toBeUndefined();
   });
@@ -836,26 +866,30 @@ describe('run -p argument handling (mutation hardening)', () => {
   it('passes a valid --session id through to the runner', async () => {
     const o = out();
     const seen: { prompt?: string; sessionId?: string } = {};
-    const exit = await runRunCommand(
-      { prompt: 'hi', session: 'sess-ok' },
-      {
-        out: o.write,
-        run: stubRun(completedResult(), seen),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hi', session: 'sess-ok' },
+        {
+          out: o.write,
+          run: stubRun(completedResult(), seen),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(seen.sessionId).toBe('sess-ok');
   });
 
   it('prints the full text result block line-for-line', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello' },
-      {
-        out: o.write,
-        run: stubRun(completedResult()),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello' },
+        {
+          out: o.write,
+          run: stubRun(completedResult()),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(o.lines).toEqual([
       'result: did the thing',
@@ -868,13 +902,15 @@ describe('run -p argument handling (mutation hardening)', () => {
 
   it('marks the success envelope ok:true with no error key', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello', json: true },
-      {
-        out: o.write,
-        run: stubRun(completedResult()),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello', json: true },
+        {
+          out: o.write,
+          run: stubRun(completedResult()),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(o.lines.length).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as Record<
@@ -888,19 +924,21 @@ describe('run -p argument handling (mutation hardening)', () => {
 
   it('passes the lane error object through the failure envelope', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello', json: true },
-      {
-        out: o.write,
-        run: stubRun(
-          completedResult({
-            terminus: 'failed',
-            summary: 'm',
-            error: { kind: 'failed', message: 'm' },
-          }),
-        ),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello', json: true },
+        {
+          out: o.write,
+          run: stubRun(
+            completedResult({
+              terminus: 'failed',
+              summary: 'm',
+              error: { kind: 'failed', message: 'm' },
+            }),
+          ),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as Record<
       string,
@@ -912,24 +950,26 @@ describe('run -p argument handling (mutation hardening)', () => {
 
   it('carries the failure (code/remedy/strategy) in the failure envelope', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello', json: true },
-      {
-        out: o.write,
-        run: stubRun(
-          completedResult({
-            terminus: 'failed',
-            summary: 'tool_failed: exit 1',
-            failure: {
-              code: 'tool_failed',
-              remedy: 'inspect stderr',
-              strategy: 'retry_same',
-            },
-            error: { kind: 'failed', message: 'exit 1' },
-          }),
-        ),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello', json: true },
+        {
+          out: o.write,
+          run: stubRun(
+            completedResult({
+              terminus: 'failed',
+              summary: 'tool_failed: exit 1',
+              failure: {
+                code: 'tool_failed',
+                remedy: 'inspect stderr',
+                strategy: 'retry_same',
+              },
+              error: { kind: 'failed', message: 'exit 1' },
+            }),
+          ),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as Record<
       string,
@@ -944,19 +984,21 @@ describe('run -p argument handling (mutation hardening)', () => {
 
   it('synthesizes the failure for a terminus whose failure code is implied', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello', json: true },
-      {
-        out: o.write,
-        run: stubRun(
-          completedResult({
-            terminus: 'turn_limit',
-            summary: 'turn limit reached after 3 turns',
-            error: { kind: 'turn_limit', message: 'turn limit' },
-          }),
-        ),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello', json: true },
+        {
+          out: o.write,
+          run: stubRun(
+            completedResult({
+              terminus: 'turn_limit',
+              summary: 'turn limit reached after 3 turns',
+              error: { kind: 'turn_limit', message: 'turn limit' },
+            }),
+          ),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(3);
     const envelope = JSON.parse(o.lines[0] as string) as {
       failure?: { code: string; strategy: string };
@@ -969,19 +1011,21 @@ describe('run -p argument handling (mutation hardening)', () => {
     const o = out();
     const message =
       "session model 'faux/small' is unavailable: provider 'faux' is not registered (pin a model to switch this session)";
-    const exit = await runRunCommand(
-      { prompt: 'hello', json: true },
-      {
-        out: o.write,
-        run: stubRun(
-          completedResult({
-            terminus: 'provider_probe_failed',
-            summary: message,
-            error: { kind: 'provider_probe_failed', message },
-          }),
-        ),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello', json: true },
+        {
+          out: o.write,
+          run: stubRun(
+            completedResult({
+              terminus: 'provider_probe_failed',
+              summary: message,
+              error: { kind: 'provider_probe_failed', message },
+            }),
+          ),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(6);
     const envelope = JSON.parse(o.lines[0] as string) as {
       failure?: { code: string; strategy: string };
@@ -995,18 +1039,20 @@ describe('run -p argument handling (mutation hardening)', () => {
   it('maps a non-Error run rejection to unassigned refs in text', async () => {
     const o = out();
     const e = out();
-    const exit = await runRunCommand(
-      { prompt: 'hello' },
-      {
-        out: o.write,
-        // A separate stderr channel: the `error:` diagnostic must not
-        // land in the stdout report.
-        logger: createLineLogger(e.write),
-        run: async () => {
-          throw 'kaput';
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello' },
+        {
+          out: o.write,
+          // A separate stderr channel: the `error:` diagnostic must not
+          // land in the stdout report.
+          logger: createLineLogger(e.write),
+          run: async () => {
+            throw 'kaput';
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     expect(e.lines).toEqual(['error: kaput']);
     expect(o.lines).toEqual([
@@ -1045,10 +1091,12 @@ describe('run progress sink', () => {
   it('hands the sink to the runner and prints only the answer on stdout', async () => {
     const s = sink();
     const o = out();
-    const code = await runRunCommand(
-      { prompt: 'do it' },
-      { out: o.write, run: s.run, progress: s.factory },
-    );
+    const code = (
+      await runRunCommand(
+        { prompt: 'do it' },
+        { out: o.write, run: s.run, progress: s.factory },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(s.progressSeen()).toBeDefined();
     expect(o.lines).toEqual(['', 'did the thing', '']);

@@ -2,7 +2,7 @@
 // the preflight from the boot's facts, the recent sessions read after the
 // screen opens, and the no-key block printed before exit 6.
 import { describe, expect, it } from 'vitest';
-import { RUN_EXIT_PROVIDER_PROBE_FAILED } from '../../../packages/host/src/run-cli.js';
+import { EXIT_PROVIDER } from '../../../packages/core/src/cli/exit-codes.js';
 import { NoModelAvailableError } from '../../../packages/worker/src/model-select.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runTuiCommand } from './tui-run.js';
@@ -52,33 +52,35 @@ describe('the first screen on kubic tui', () => {
     expect(frame).toContain('trust        .kubic/config.toml loaded');
     expect(frame).toMatch(/2m ago {3}fix the cart +4 turns · \$0\.03/u);
     fake.feed('\x04');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('prints the no-key block and exits 6 without opening the screen', async () => {
     const errors: string[] = [];
     let created = 0;
-    const exit = await runTuiCommand(
-      {},
-      {
-        out: () => {},
-        err: (line: string) => errors.push(line),
-        createTerminal: () => {
-          created += 1;
-          return terminalRig().terminal;
+    const exit = (
+      await runTuiCommand(
+        {},
+        {
+          out: () => {},
+          err: (line: string) => errors.push(line),
+          createTerminal: () => {
+            created += 1;
+            return terminalRig().terminal;
+          },
+          colorLevel: 'none',
+          readWorkspace: async () => ({
+            project: 'proj',
+            branch: 'main',
+            dirty: 0,
+          }),
+          bootLane: async () => {
+            throw new NoModelAvailableError('no models available');
+          },
         },
-        colorLevel: 'none',
-        readWorkspace: async () => ({
-          project: 'proj',
-          branch: 'main',
-          dirty: 0,
-        }),
-        bootLane: async () => {
-          throw new NoModelAvailableError('no models available');
-        },
-      },
-    );
-    expect(exit).toBe(RUN_EXIT_PROVIDER_PROBE_FAILED);
+      )
+    ).exitCode;
+    expect(exit).toBe(EXIT_PROVIDER);
     expect(exit).toBe(6);
     expect(created).toBe(0);
     const text = errors.join('\n');

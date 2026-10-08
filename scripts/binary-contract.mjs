@@ -57,6 +57,7 @@ export const PROVIDER_DOWN_LINE =
   'FAIL limit:provider-availability (provider-down)';
 export const RUN_PROVIDER_MESSAGE =
   'no models available: register a provider first';
+// Literal exit pins are deliberate: this contract stays independent of the source's constants.
 export const RUN_PROVIDER_EXIT = 6;
 export const DOCTOR_PROVIDER_EXIT = 6;
 

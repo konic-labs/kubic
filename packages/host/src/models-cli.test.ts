@@ -30,7 +30,12 @@ describe('kubic models', () => {
     models.setProvider(fauxProvider().provider);
     const lines: string[] = [];
     expect(
-      await runModelsCommand({}, { models, out: (l: string) => lines.push(l) }),
+      (
+        await runModelsCommand(
+          {},
+          { models, out: (l: string) => lines.push(l) },
+        )
+      ).exitCode,
     ).toBe(0);
     // A plain (non-TTY) table: header row, then one row per model.
     expect(lines).toHaveLength(1);
@@ -57,19 +62,21 @@ describe('kubic models', () => {
   it('reports an empty catalog on the diagnostics channel, not stdout', async () => {
     const out: string[] = [];
     const info: string[] = [];
-    const code = await runModelsCommand(
-      {},
-      {
-        models: createModels(),
-        out: (l: string) => out.push(l),
-        logger: {
-          error: () => undefined,
-          warn: () => undefined,
-          success: () => undefined,
-          info: (message: string) => info.push(message),
+    const code = (
+      await runModelsCommand(
+        {},
+        {
+          models: createModels(),
+          out: (l: string) => out.push(l),
+          logger: {
+            error: () => undefined,
+            warn: () => undefined,
+            success: () => undefined,
+            info: (message: string) => info.push(message),
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(out).toEqual([]);
     expect(info.join('\n')).toContain('no usable providers');
@@ -81,24 +88,28 @@ describe('kubic models', () => {
     const fauxId = models.getModels('faux')[0]?.id ?? 'x';
     const lines: string[] = [];
     expect(
-      await runModelsCommand(
-        { resolve: `faux/${fauxId}` },
-        {
-          models,
-          out: (l: string) => lines.push(l),
-        },
-      ),
+      (
+        await runModelsCommand(
+          { resolve: `faux/${fauxId}` },
+          {
+            models,
+            out: (l: string) => lines.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(lines.join('\n')).toContain(`selected faux/${fauxId}`);
     const bad: string[] = [];
     expect(
-      await runModelsCommand(
-        { resolve: 'nope/x' },
-        {
-          models,
-          out: (l: string) => bad.push(l),
-        },
-      ),
+      (
+        await runModelsCommand(
+          { resolve: 'nope/x' },
+          {
+            models,
+            out: (l: string) => bad.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(1);
     expect(bad.join('\n')).toContain('unknown provider');
   });
@@ -108,13 +119,15 @@ describe('kubic models', () => {
     models.setProvider(fauxProvider().provider);
     const lines: string[] = [];
     expect(
-      await runModelsCommand(
-        { json: true },
-        {
-          models,
-          out: (l: string) => lines.push(l),
-        },
-      ),
+      (
+        await runModelsCommand(
+          { json: true },
+          {
+            models,
+            out: (l: string) => lines.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     const parsed = JSON.parse(lines.join('\n')) as Array<{ id: string }>;
     expect(parsed[0]?.id).toBe('faux');
@@ -164,20 +177,24 @@ describe('kubic models provider filter', () => {
 
   it('refuses an unknown provider as a usage error naming the known ones', async () => {
     const lines: string[] = [];
-    const code = await runModelsCommand(
-      { provider: 'nope' },
-      { models: registry(), out: (l: string) => lines.push(l) },
-    );
+    const code = (
+      await runModelsCommand(
+        { provider: 'nope' },
+        { models: registry(), out: (l: string) => lines.push(l) },
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(lines.join('\n')).toMatch(/unknown provider "nope" \(known: faux/);
   });
 
   it('lists only the named provider, in the plain table off a terminal', async () => {
     const lines: string[] = [];
-    const code = await runModelsCommand(
-      { provider: 'faux' },
-      { models: registry(), out: (l: string) => lines.push(l) },
-    );
+    const code = (
+      await runModelsCommand(
+        { provider: 'faux' },
+        { models: registry(), out: (l: string) => lines.push(l) },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines[0]).toMatch(/^PROVIDER\s+MODEL/);
     expect(lines.slice(1).every((line) => line.startsWith('faux'))).toBe(true);

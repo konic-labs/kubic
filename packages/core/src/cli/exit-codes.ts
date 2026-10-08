@@ -1,5 +1,6 @@
-// The exit-code table (docs/cli/exit-codes.md) as named constants, plus
-// the one mapping from a commander parse failure to a Kubic exit code.
+// The exit-code vocabulary (docs/cli/exit-codes.md) as named constants, the
+// `ExitCode` union every command handler returns, and the one mapping from a
+// commander parse failure to a Kubic exit code.
 //
 // Lives in core so every command handler (host, eval, the app root) names
 // the same numbers. Pure: no commander import — the mapper takes commander's
@@ -13,11 +14,56 @@ export const EXIT_APPROVAL = 4;
 export const EXIT_WORKSPACE = 5;
 export const EXIT_PROVIDER = 6;
 
+// A signalled exit is 128 + signo, the shell convention, for the interrupts
+// Kubic handles: SIGHUP (1), SIGINT (2) and SIGTERM (15).
+// Those signal numbers are POSIX: the same on macOS and Linux.
+const EXIT_SIGHUP = 129;
+const EXIT_SIGINT = 130;
+const EXIT_SIGTERM = 143;
+
+// `kubic setup` quit at a prompt with nothing written: the SIGINT code, which
+// is what a shell reports for Ctrl-C.
+export const EXIT_CANCELLED = EXIT_SIGINT;
+
+// Every code a command can end with. A handler cannot return a number outside
+// this union, and each member is documented in docs/cli/exit-codes.md.
+export type ExitCode =
+  | typeof EXIT_OK
+  | typeof EXIT_FAILED
+  | typeof EXIT_USAGE
+  | typeof EXIT_TURN_LIMIT
+  | typeof EXIT_APPROVAL
+  | typeof EXIT_WORKSPACE
+  | typeof EXIT_PROVIDER
+  | typeof EXIT_SIGHUP
+  | typeof EXIT_SIGINT
+  | typeof EXIT_SIGTERM;
+
+// What a command handler returns. The handler prints its own output on the
+// out/err channels as it runs; the dispatcher sets the process exit code from
+// the result in one place (apps/kubic/src/dispatch.ts).
+export interface CommandResult {
+  readonly exitCode: ExitCode;
+}
+
+// The exit code each interrupt a run or the TUI settles with.
+export const INTERRUPT_EXIT_CODES = {
+  SIGHUP: EXIT_SIGHUP,
+  SIGINT: EXIT_SIGINT,
+  SIGTERM: EXIT_SIGTERM,
+} as const;
+
+type InterruptSignal = keyof typeof INTERRUPT_EXIT_CODES;
+
+export function isInterruptSignal(name: string): name is InterruptSignal {
+  return Object.hasOwn(INTERRUPT_EXIT_CODES, name);
+}
+
 // A bad invocation a command detects itself (after commander parsed argv):
 // throw it from an action and the program prints `error: <message>` and
 // exits EXIT_USAGE instead of the catch-all EXIT_FAILED.
 export class CliUsageError extends Error {
-  readonly exitCode: number = EXIT_USAGE;
+  readonly exitCode: ExitCode = EXIT_USAGE;
   constructor(message: string) {
     super(message);
     this.name = 'CliUsageError';
@@ -27,8 +73,8 @@ export class CliUsageError extends Error {
 // A command failure with a specific exit code and a one-line message
 // (`error: <message>`, no stack unless KUBIC_DEBUG=1).
 export class CliExitError extends Error {
-  readonly exitCode: number;
-  constructor(exitCode: number, message: string) {
+  readonly exitCode: ExitCode;
+  constructor(exitCode: ExitCode, message: string) {
     super(message);
     this.name = 'CliExitError';
     this.exitCode = exitCode;
@@ -56,7 +102,7 @@ const PARSE_ERROR_CODES = new Set([
 export function exitCodeForParseError(
   commanderCode: string,
   commanderExitCode: number,
-): number {
+): ExitCode {
   if (SUCCESS_CODES.has(commanderCode)) return EXIT_OK;
   // `cmd.help({ error: true })` (a group invoked without a subcommand)
   // carries exit 1; a plain `cmd.help()` carries 0.

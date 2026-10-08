@@ -12,6 +12,8 @@
 // - actions throwing CliUsageError / CliExitError print `error: <message>`
 //   and exit with the carried code; anything else propagates to the
 //   root's catch-all in ../main.ts (stack only under KUBIC_DEBUG=1).
+// - an action that runs must report its result (CommandContext.finish); one
+//   that returns without it is an internal error (exit 1), never a silent 0.
 // - no "(Did you mean …?)" line: a usage error is exactly one stderr line.
 // - a value option never swallows a following `--flag` (or the `--`
 //   terminator) as its value: `--session --json` is a missing value
@@ -28,6 +30,8 @@ import {
 import {
   CliExitError,
   CliUsageError,
+  EXIT_FAILED,
+  type ExitCode,
   exitCodeForParseError,
 } from '../../../../packages/core/src/cli/exit-codes.js';
 import { errorBlock } from '../../../../packages/core/src/cli/kit.js';
@@ -164,17 +168,35 @@ function swallowedFlag(
   return undefined;
 }
 
+// What an invocation reports once it has run: its exit code, and whether the
+// command that ran reported a result through CommandContext.finish.
+interface ProgramExit {
+  readonly code: () => ExitCode;
+  readonly finished: () => boolean;
+}
+
 // Runs the program over `argv` (the arguments after `node kubic`) and
 // resolves the invocation's exit code.
 export async function runKubicProgram(
   program: KubicProgram,
   argv: readonly string[],
   io: ProgramIo,
-  exit: { readonly code: () => number },
-): Promise<number> {
+  exit: ProgramExit,
+): Promise<ExitCode> {
   program.hook('preAction', (_root, action) => {
     const problem = swallowedFlag(action, argv);
     if (problem !== undefined) throw new CliUsageError(problem);
+  });
+  // Runs only after an action returned normally, so an action that threw
+  // never reaches it. A command that returned without a result is a bug in
+  // its registrar: report it rather than exit 0.
+  program.hook('postAction', (_root, action) => {
+    if (!exit.finished()) {
+      throw new CliExitError(
+        EXIT_FAILED,
+        `internal error: command '${action.name()}' finished without a result`,
+      );
+    }
   });
   try {
     await program.parseAsync([...argv], { from: 'user' });

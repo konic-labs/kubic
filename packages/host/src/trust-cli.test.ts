@@ -59,7 +59,7 @@ describe('kubic trust command', () => {
     const project = projectWithConfig();
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const h = harness(store, project);
-    expect(runTrustCommand({}, h.deps)).toBe(0);
+    expect(runTrustCommand({}, h.deps).exitCode).toBe(0);
     expect(store.get(project)).toBe(true);
     expect(h.lines.join('\n')).toContain('trusted project');
     expect(h.lines.join('\n')).toContain('.kubic/config.toml will load');
@@ -74,12 +74,12 @@ describe('kubic trust command', () => {
     const project = projectWithConfig();
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const granted = harness(store, project);
-    expect(runTrustCommand({}, granted.deps)).toBe(0);
+    expect(runTrustCommand({}, granted.deps).exitCode).toBe(0);
     expect(granted.lines).toContain(
       "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills",
     );
     const revoked = harness(store, project);
-    expect(runTrustCommand({ revoke: true }, revoked.deps)).toBe(0);
+    expect(runTrustCommand({ revoke: true }, revoked.deps).exitCode).toBe(0);
     expect(revoked.lines.join('\n')).not.toContain('models.json');
   });
 
@@ -89,7 +89,7 @@ describe('kubic trust command', () => {
     const other = projectWithConfig();
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const h = harness(store, project);
-    expect(runTrustCommand({ path: other }, h.deps)).toBe(0);
+    expect(runTrustCommand({ path: other }, h.deps).exitCode).toBe(0);
     expect(store.get(other)).toBe(true);
     expect(store.get(project)).toBe(null);
   });
@@ -100,7 +100,7 @@ describe('kubic trust command', () => {
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const h = harness(store, tmpDir('kubic-trust-cli-'));
     const rel = relative(process.cwd(), project);
-    expect(runTrustCommand({ path: rel }, h.deps)).toBe(0);
+    expect(runTrustCommand({ path: rel }, h.deps).exitCode).toBe(0);
     expect(store.get(project)).toBe(true);
   });
 
@@ -109,7 +109,7 @@ describe('kubic trust command', () => {
     const project = tmpDir('kubic-trust-cli-');
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const h = harness(store, project);
-    expect(runTrustCommand({}, h.deps)).toBe(0);
+    expect(runTrustCommand({}, h.deps).exitCode).toBe(0);
     expect(store.get(project)).toBe(true);
     expect(h.lines.join('\n')).toContain('no project config at');
   });
@@ -120,7 +120,7 @@ describe('kubic trust command', () => {
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     store.set(project, true);
     const h = harness(store, project);
-    expect(runTrustCommand({ revoke: true }, h.deps)).toBe(0);
+    expect(runTrustCommand({ revoke: true }, h.deps).exitCode).toBe(0);
     expect(store.get(project)).toBe(null);
     expect(h.lines.join('\n')).toContain('revoked project trust');
     expect(h.lines.join('\n')).toContain('refused again');
@@ -136,7 +136,7 @@ describe('kubic trust command', () => {
     store.set(z, false);
     store.set(a, true);
     const h = harness(store, join(home, 'elsewhere'));
-    expect(runTrustCommand({ list: true }, h.deps)).toBe(0);
+    expect(runTrustCommand({ list: true }, h.deps).exitCode).toBe(0);
     expect(h.lines).toHaveLength(2);
     expect(h.lines[0]).toMatch(/^trusted /);
     expect(h.lines[0]).toContain(a);
@@ -148,7 +148,7 @@ describe('kubic trust command', () => {
     const home = tmpDir('kubic-trust-home-');
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const h = harness(store, home);
-    expect(runTrustCommand({ list: true }, h.deps)).toBe(0);
+    expect(runTrustCommand({ list: true }, h.deps).exitCode).toBe(0);
     expect(h.lines.join('\n')).toContain('no project trust decisions recorded');
   });
 
@@ -189,7 +189,7 @@ describe('kubic trust command', () => {
       symlinkSync(project, link, 'dir');
       const store = new ProjectTrustStore(projectTrustStorePath(home));
       const h = harness(store, home);
-      expect(runTrustCommand({ path: link }, h.deps)).toBe(0);
+      expect(runTrustCommand({ path: link }, h.deps).exitCode).toBe(0);
       expect(store.get(project)).toBe(true);
       expect(store.get(link)).toBe(true);
       expect(store.entries().map((entry) => entry.path)).toEqual([
@@ -208,7 +208,9 @@ describe('kubic trust command', () => {
       const store = new ProjectTrustStore(projectTrustStorePath(home));
       store.set(project, true);
       const h = harness(store, home);
-      expect(runTrustCommand({ path: link, revoke: true }, h.deps)).toBe(0);
+      expect(
+        runTrustCommand({ path: link, revoke: true }, h.deps).exitCode,
+      ).toBe(0);
       expect(store.get(project)).toBe(null);
     });
 
@@ -247,7 +249,7 @@ describe('kubic trust command', () => {
     writeFileSync(path, 'garbage');
     const store = new ProjectTrustStore(path);
     const h = harness(store, project);
-    expect(runTrustCommand({}, h.deps)).toBe(1);
+    expect(runTrustCommand({}, h.deps).exitCode).toBe(1);
     expect(h.lines.join('\n')).toContain(path);
     expect(store.get(project)).toBe(null);
   });

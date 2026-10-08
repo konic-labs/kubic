@@ -3,6 +3,7 @@
 // every command module's `register*Commands(program, ctx)` receives.
 
 import type { Command } from '@commander-js/extra-typings';
+import type { CommandResult } from '../../../../packages/core/src/cli/exit-codes.js';
 import type { ConfigCommandOptions } from '../../../../packages/host/src/config/config-cli.js';
 import type { DoctorCommandOptions } from '../../../../packages/host/src/doctor.js';
 import type { GitRequest } from '../../../../packages/host/src/git-cli.js';
@@ -19,11 +20,12 @@ import type { TuiCommandOptions } from '../tui-run.js';
 
 // A command's runner takes the options commander parsed (the `Input`
 // parameter). `config` is the one process-wide config load, so every runner
-// reads the same result the refusal gate saw.
+// reads the same result the refusal gate saw. It returns the command's
+// result; the dispatcher turns its exit code into the process exit code.
 type CommandRunner<Input> = (
   rest: Input,
   config: CliConfigResult,
-) => number | Promise<number>;
+) => CommandResult | Promise<CommandResult>;
 
 // Migrated command groups may declare their typed runners in their own
 // module (the analysis group's `AnalysisRunners`).
@@ -55,8 +57,9 @@ export interface CommandContext {
   // stdout (data) and stderr (diagnostics) line channels.
   readonly out: (line: string) => void;
   readonly err: (line: string) => void;
-  // The process exit code of this invocation; an action sets it once.
-  readonly setExitCode: (code: number) => void;
+  // Records the result of this invocation's command. The dispatcher reads the
+  // process exit code from it; an action calls this once.
+  readonly finish: (result: CommandResult) => void;
 }
 
 export type CommandRegistrar = (

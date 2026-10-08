@@ -58,14 +58,16 @@ describe('journal CLI unattributed count', () => {
   it('status names the unattributed count on its own line', async () => {
     const { journalDir, root } = seedUnattributed();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'status' },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'status' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('entries: 2 (reversible: 1, non-reversible: 1)');
@@ -75,14 +77,16 @@ describe('journal CLI unattributed count', () => {
   it('log closes the timeline with the unattributed summary', async () => {
     const { journalDir, root } = seedUnattributed();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'log' },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     // Header, two entry rows, the summary.
     expect(lines).toHaveLength(4);
@@ -99,14 +103,16 @@ describe('journal CLI unattributed count', () => {
     const journalDir = mkTmp('j-');
     const root = mkTmp('ws-');
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'log' },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines).toEqual([
       'journal is empty',
@@ -117,14 +123,16 @@ describe('journal CLI unattributed count', () => {
   it('diff marks a sweep find unattributed and non-reversible', async () => {
     const { journalDir, root } = seedUnattributed();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff' },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('b.txt');

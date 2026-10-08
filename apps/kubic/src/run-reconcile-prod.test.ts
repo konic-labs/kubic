@@ -120,14 +120,16 @@ describe('end-of-run reconciliation, prod path', () => {
     // (c) `kubic diff --session <id>` shows it as unattributed.
     const diffOut: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff', session: id },
-        {
-          root: workspace,
-          sessionsRoot,
-          out: (line) => diffOut.push(line),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', session: id },
+          {
+            root: workspace,
+            sessionsRoot,
+            out: (line) => diffOut.push(line),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(diffOut.join('\n')).toContain('mutated.txt');
     expect(diffOut.join('\n')).toContain('unattributed');
@@ -135,14 +137,16 @@ describe('end-of-run reconciliation, prod path', () => {
     // (d) `kubic status --session <id>` surfaces the count too.
     const statusOut: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'status', session: id },
-        {
-          root: workspace,
-          sessionsRoot,
-          out: (line) => statusOut.push(line),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'status', session: id },
+          {
+            root: workspace,
+            sessionsRoot,
+            out: (line) => statusOut.push(line),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(statusOut.join('\n')).toContain('unattributed: 1 of 1');
 
@@ -151,14 +155,16 @@ describe('end-of-run reconciliation, prod path', () => {
     // writes nothing.
     const undoOut: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'undo', session: id },
-        {
-          root: workspace,
-          sessionsRoot,
-          out: (line) => undoOut.push(line),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo', session: id },
+          {
+            root: workspace,
+            sessionsRoot,
+            out: (line) => undoOut.push(line),
+          },
+        )
+      ).exitCode,
     ).toBe(1);
     // The exact documented skip line, plus the summary: the entry is named,
     // and the exit code says the run could not be fully reversed.

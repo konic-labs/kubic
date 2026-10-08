@@ -82,7 +82,7 @@ describe('the --model flag feeds the one config load', () => {
         config: (_options: ConfigCommandOptions, config: CliConfigResult) => {
           const pin = runtimeModelPin(config);
           seen = pin === undefined ? undefined : `${pin.provider}/${pin.id}`;
-          return 0;
+          return { exitCode: 0 };
         },
       } as unknown as DispatchRunners,
     };
@@ -125,7 +125,7 @@ describe('the bare `kubic --model` form feeds the one config load', () => {
         tui: (_options: unknown, config: CliConfigResult) => {
           const pin = runtimeModelPin(config);
           seen = pin === undefined ? undefined : `${pin.provider}/${pin.id}`;
-          return 0;
+          return { exitCode: 0 };
         },
       } as unknown as DispatchRunners,
     };

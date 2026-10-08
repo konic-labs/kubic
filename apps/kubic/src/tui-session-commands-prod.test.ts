@@ -124,7 +124,7 @@ describe('/new, /resume and /undo on the kubic tui path', () => {
     await waitFor(() => fake.frame.includes('from the new session'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     // The layout at quit is the NEW session's: the old transcript is gone.
     const doc = lines.join('\n');
@@ -182,7 +182,7 @@ describe('/new, /resume and /undo on the kubic tui path', () => {
     // The chosen session's transcript is what the screen now shows.
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
     expect(doc).toContain('▌ the first session prompt');
     expect(doc).toContain('first answer');
@@ -227,7 +227,7 @@ describe('/new, /resume and /undo on the kubic tui path', () => {
     expect(readFileSync(join(workspace, 'a.txt'), 'utf8')).toBe('before\n');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(lines.join('\n')).toContain('undo: 1 restored, 0 skipped');
   });
 });

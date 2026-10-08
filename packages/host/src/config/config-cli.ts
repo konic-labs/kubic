@@ -9,7 +9,11 @@
 // too — the operator sees the named reason, not a silent default); a usage
 // error is commander's (exit 2, apps/kubic/src/commands/solo.ts).
 
-import { EXIT_FAILED, EXIT_OK } from '../../../core/src/cli/exit-codes.js';
+import {
+  type CommandResult,
+  EXIT_FAILED,
+  EXIT_OK,
+} from '../../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../../core/src/cli/output.js';
 import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import { type CliIo, diagnosticsOf } from '../cli-io.js';
@@ -18,9 +22,6 @@ import {
   type RuntimeConfig,
   renderEffectiveConfig,
 } from './runtime.js';
-
-export const CONFIG_EXIT_OK = EXIT_OK;
-export const CONFIG_EXIT_FAIL = EXIT_FAILED;
 
 export interface ConfigCommandDeps extends CliIo {
   // One load, injected by the composition root: the CLI never re-derives
@@ -35,7 +36,7 @@ export interface ConfigCommandOptions {
 export function runConfigCommand(
   options: ConfigCommandOptions,
   deps: ConfigCommandDeps,
-): number {
+): CommandResult {
   let runtime: RuntimeConfig;
   try {
     runtime = deps.load();
@@ -47,13 +48,13 @@ export function runConfigCommand(
         error instanceof Error ? error.message : String(error),
       ),
     );
-    return CONFIG_EXIT_FAIL;
+    return { exitCode: EXIT_FAILED };
   }
   const view = effectiveConfigView(runtime);
   if (options.json === true) {
     deps.out(formatJson(view));
-    return CONFIG_EXIT_OK;
+    return { exitCode: EXIT_OK };
   }
   for (const line of renderEffectiveConfig(view)) deps.out(line);
-  return CONFIG_EXIT_OK;
+  return { exitCode: EXIT_OK };
 }

@@ -14,7 +14,11 @@ import {
 // License identity: constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
-import { EXIT_OK, EXIT_USAGE } from '../../core/src/cli/exit-codes.js';
+import {
+  type CommandResult,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
 import {
@@ -35,9 +39,6 @@ import {
   providerAvailabilityCheck,
   staticLimitChecks,
 } from './limits/doctor-limits.js';
-
-const DOCTOR_EXIT_OK = EXIT_OK;
-const DOCTOR_EXIT_USAGE = EXIT_USAGE;
 
 // warn is informational only: it is
 // rendered, counted, and never exit-flipping — only fail flips the exit.
@@ -870,7 +871,7 @@ export interface DoctorCommandOptions {
 export async function runDoctorCommand(
   options: DoctorCommandOptions,
   deps: DoctorDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const skip = (options.skip ?? [])
     .flatMap((value) => value.split(','))
     .map((part) => part.trim())
@@ -880,13 +881,13 @@ export async function runDoctorCommand(
   const unknownSkip = skip.find((id) => !known.has(id));
   if (unknownSkip !== undefined) {
     diagnosticsOf(deps).error(`unknown check ${JSON.stringify(unknownSkip)}`);
-    return DOCTOR_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   const exitCode = limitsDoctorExit(checks);
-  const failed = exitCode !== DOCTOR_EXIT_OK;
+  const failed = exitCode !== EXIT_OK;
   if (options.json === true) {
     deps.out(formatJson({ ok: !failed, exitCode, checks }));
-    return exitCode;
+    return { exitCode };
   }
   const theme = themeOf(deps);
   if (deps.fancy === true && options.verbose !== true) {
@@ -896,7 +897,7 @@ export async function runDoctorCommand(
     })) {
       deps.out(line);
     }
-    return exitCode;
+    return { exitCode };
   }
   const paint: Record<DoctorStatus, (text: string) => string> = {
     pass: theme.success,
@@ -911,5 +912,5 @@ export async function runDoctorCommand(
   }
   const summary = summarize(checks);
   deps.out(failed ? theme.error(summary) : theme.success(summary));
-  return exitCode;
+  return { exitCode };
 }

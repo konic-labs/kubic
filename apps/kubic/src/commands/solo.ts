@@ -238,7 +238,7 @@ function registerRun(program: Command, ctx: CommandContext): void {
       // The two selection forms are
       // mutually exclusive; both at once is a usage error naming both.
       const selection = toolSelectionOf(opts.tools, ctx.rest);
-      ctx.setExitCode(
+      ctx.finish(
         await ctx.runners.run(
           {
             prompt,
@@ -310,7 +310,7 @@ function registerTui(program: Command, ctx: CommandContext): void {
       // Both selection forms at once is a
       // usage error naming both (the boot re-validates names/agreement).
       const selection = toolSelectionOf(opts.tools, ctx.rest);
-      ctx.setExitCode(
+      ctx.finish(
         await ctx.runners.tui(
           {
             ...(opts.session === undefined ? {} : { session: opts.session }),
@@ -358,7 +358,7 @@ function registerDoctor(program: Command, ctx: CommandContext): void {
       ]),
     )
     .action(async (opts) => {
-      ctx.setExitCode(
+      ctx.finish(
         await ctx.runners.doctor(
           {
             skip: opts.skip,
@@ -383,7 +383,7 @@ function registerSkills(program: Command, ctx: CommandContext): void {
       examples(['kubic skills', 'kubic skills --role reviewer --json']),
     )
     .action(async (opts) => {
-      ctx.setExitCode(
+      ctx.finish(
         await ctx.runners.skills(
           {
             ...(opts.role === undefined ? {} : { role: opts.role }),
@@ -416,7 +416,7 @@ function registerModels(program: Command, ctx: CommandContext): void {
       ]),
     )
     .action(async (provider, opts) => {
-      ctx.setExitCode(
+      ctx.finish(
         await ctx.runners.models(
           {
             ...(provider === undefined ? {} : { provider }),
@@ -440,7 +440,7 @@ function registerSetup(program: Command, ctx: CommandContext): void {
     )
     .addHelpText('after', examples(['kubic setup']))
     .action(async () => {
-      ctx.setExitCode(await ctx.runners.setup({}, ctx.config));
+      ctx.finish(await ctx.runners.setup({}, ctx.config));
     });
 }
 
@@ -462,7 +462,7 @@ function registerConfig(program: Command, ctx: CommandContext): void {
       rule(parseThinkingFlag),
     )
     .action(async (opts) => {
-      ctx.setExitCode(
+      ctx.finish(
         await ctx.runners.config(
           opts.json === true ? { json: true } : {},
           ctx.config,
@@ -496,7 +496,7 @@ function registerTrust(program: Command, ctx: CommandContext): void {
       ]),
     )
     .action(async (path, opts) => {
-      ctx.setExitCode(
+      ctx.finish(
         await ctx.runners.trust(
           {
             ...(path === undefined ? {} : { path }),
@@ -524,7 +524,7 @@ function registerSessions(program: Command, ctx: CommandContext): void {
   const run = async (
     invocation: Parameters<CommandContext['runners']['sessions']>[0],
   ): Promise<void> => {
-    ctx.setExitCode(await ctx.runners.sessions(invocation, ctx.config));
+    ctx.finish(await ctx.runners.sessions(invocation, ctx.config));
   };
   // `kubic sessions --json` is the documented list form. The
   // group action also keeps the two usage errors named: no
@@ -709,7 +709,7 @@ function registerReattach(program: Command, ctx: CommandContext): void {
         ]),
       )
       .action(async (id: string) => {
-        ctx.setExitCode(await ctx.runners.tui({ session: id }, ctx.config));
+        ctx.finish(await ctx.runners.tui({ session: id }, ctx.config));
       });
   };
   reattach('attach');

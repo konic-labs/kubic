@@ -18,9 +18,11 @@
 import { basename, dirname, join, sep } from 'node:path';
 import {
   CliUsageError,
+  type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
+  type ExitCode,
 } from '../../core/src/cli/exit-codes.js';
 import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
@@ -361,7 +363,7 @@ function loggerFor(deps: JournalCommandDeps): CliLogger {
 export async function runJournalCommand(
   request: JournalRequest,
   deps: JournalCommandDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const root = deps.root ?? process.cwd();
   if (
     request.command === 'diff' &&
@@ -408,7 +410,7 @@ export async function runJournalCommand(
     const refusal = workspaceRefusal(resolved.sessionId, resolved.workspace);
     if (refusal !== undefined) {
       log.error(refusal);
-      return EXIT_USAGE;
+      return { exitCode: EXIT_USAGE };
     }
   }
   const run: JournalRun = {
@@ -425,15 +427,15 @@ export async function runJournalCommand(
   };
   switch (request.command) {
     case 'diff':
-      return journalDiff(run, request);
+      return { exitCode: journalDiff(run, request) };
     case 'undo':
-      return journalUndo(run, request);
+      return { exitCode: journalUndo(run, request) };
     case 'log':
-      return journalLog(run, request);
+      return { exitCode: journalLog(run, request) };
     case 'status':
-      return journalStatusCommand(run, request);
+      return { exitCode: journalStatusCommand(run, request) };
     case 'prune':
-      return journalPrune(run, request);
+      return { exitCode: journalPrune(run, request) };
   }
 }
 
@@ -464,7 +466,7 @@ export function colorizeDiffLine(line: string, theme: CliTheme): string {
   return line;
 }
 
-function journalDiff(run: JournalRun, request: JournalDiffOptions): number {
+function journalDiff(run: JournalRun, request: JournalDiffOptions): ExitCode {
   const { deps, store } = run;
   const filter = {
     ...(request.path === undefined ? {} : { path: request.path }),
@@ -528,7 +530,7 @@ function skipKindOf(reason: string): SkipKind {
   return 'non-reversible';
 }
 
-function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
+function journalUndo(run: JournalRun, request: JournalUndoOptions): ExitCode {
   const { deps, store, root, theme } = run;
   const dryRun = request.dryRun === true;
   // A live run on this session is writing the workspace this undo
@@ -685,7 +687,7 @@ function keepWindowRefusal(configError: string | undefined): string {
   return `${PRUNE_WINDOW_ERROR}; the config did not load: ${redactSecretShapes(configError)}`;
 }
 
-function journalPrune(run: JournalRun, request: JournalPruneOptions): number {
+function journalPrune(run: JournalRun, request: JournalPruneOptions): ExitCode {
   const { deps, store, resolved } = run;
   const json = request.json === true;
   const yes = request.yes === true;
@@ -740,7 +742,7 @@ function journalPrune(run: JournalRun, request: JournalPruneOptions): number {
     .sort((a, b) => a.timestamp - b.timestamp);
   let pruned = 0;
   let reclaimed = 0;
-  let exit = EXIT_OK;
+  let exit: ExitCode = EXIT_OK;
   if (yes && candidates.length > 0) {
     // The store's own pass applies the same age bound, so it drops what the
     // dry run listed, unless the journal changed under it (a concurrent writer
@@ -808,7 +810,7 @@ const LOG_COLUMNS = [
   { header: 'NOTE' },
 ] as const;
 
-function journalLog(run: JournalRun, request: JournalSelection): number {
+function journalLog(run: JournalRun, request: JournalSelection): ExitCode {
   const { deps, store, resolved } = run;
   // With `session.retentionDays` set, a
   // SESSION journal drops entries older than the window as it is read —
@@ -889,7 +891,7 @@ function journalLog(run: JournalRun, request: JournalSelection): number {
 function journalStatusCommand(
   run: JournalRun,
   request: JournalSelection,
-): number {
+): ExitCode {
   const { deps, theme } = run;
   const status = journalStatus(run.store, run.root);
   if (request.json === true) {

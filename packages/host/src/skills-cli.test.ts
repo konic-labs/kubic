@@ -91,7 +91,7 @@ describe('runSkillsCommand', () => {
         ...deps,
         base: { ...deps.base, settingsSkills: [settingsDir] },
       },
-    );
+    ).exitCode;
     expect(code).toBe(0);
     const text = captured.out.join('\n');
     expect(text).toContain('lint');
@@ -111,7 +111,7 @@ describe('runSkillsCommand', () => {
       'name: quiet\ndescription: Helper\ndisable-model-invocation: true',
     );
     const { deps, captured } = depsOver(cwd, home, false);
-    expect(runSkillsCommand({}, deps)).toBe(0);
+    expect(runSkillsCommand({}, deps).exitCode).toBe(0);
     expect(captured.out.join('\n')).toContain('hidden');
   });
 
@@ -123,7 +123,7 @@ describe('runSkillsCommand', () => {
       'name: gem\ndescription: Left out',
     );
     const { deps, captured } = depsOver(cwd, home, false);
-    expect(runSkillsCommand({}, deps)).toBe(0);
+    expect(runSkillsCommand({}, deps).exitCode).toBe(0);
     const text = captured.out.join('\n');
     expect(text).toContain('gem');
     expect(text).toContain('excluded');
@@ -144,7 +144,7 @@ describe('runSkillsCommand', () => {
         ...deps,
         resolveRole: (name: string) => ({ name }),
       },
-    );
+    ).exitCode;
     expect(code).toBe(0);
     const text = captured.out.join('\n');
     expect(text).toContain('deploy');
@@ -164,7 +164,7 @@ describe('runSkillsCommand', () => {
       'name: gem\ndescription: Left out',
     );
     const { deps, captured } = depsOver(cwd, home, false);
-    expect(runSkillsCommand({ json: true }, deps)).toBe(0);
+    expect(runSkillsCommand({ json: true }, deps).exitCode).toBe(0);
     const parsed: unknown = JSON.parse(captured.out.join('\n'));
     expect(parsed).toEqual([
       {
@@ -195,7 +195,7 @@ describe('runSkillsCommand', () => {
           throw new Error("unknown role 'nope'");
         },
       },
-    );
+    ).exitCode;
     expect(code).toBe(1);
     expect(captured.error.join('\n')).toContain("unknown role 'nope'");
   });
@@ -229,7 +229,7 @@ describe('runSkillsCommand', () => {
           };
         },
       },
-    );
+    ).exitCode;
     expect(code).toBe(0);
     const text = captured.out.join('\n');
     expect(text).toContain('deploy');
@@ -240,7 +240,7 @@ describe('runSkillsCommand', () => {
     const home = tmpRoot('kubic-238-home-');
     const cwd = tmpRoot('kubic-238-cwd-');
     const { deps, captured } = depsOver(cwd, home, false);
-    expect(runSkillsCommand({}, deps)).toBe(0);
+    expect(runSkillsCommand({}, deps).exitCode).toBe(0);
     expect(captured.info.join('\n')).toContain('no skills discovered');
   });
 });

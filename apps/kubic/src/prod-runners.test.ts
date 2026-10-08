@@ -9,6 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EXIT_OK } from '../../../packages/core/src/cli/exit-codes.js';
 import { makeExport } from '../../../packages/eval/src/test-support/fixtures.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import {
@@ -81,7 +82,9 @@ describe('kubic export (prod wiring)', () => {
     writeFileSync(join(dir, 'rel.json'), JSON.stringify(makeExport()));
     vi.spyOn(process, 'cwd').mockReturnValue(dir);
     const { lines, errs, r } = runners();
-    expect(await r.export({ trajectory: 'rel.json' }, noConfig)).toBe(0);
+    expect(
+      (await r.export({ trajectory: 'rel.json' }, noConfig)).exitCode,
+    ).toBe(0);
     expect(errs).toEqual([]);
     expect(lines.join('\n')).toMatch(/^schema: /);
   });
@@ -103,15 +106,17 @@ describe('kubic policy (prod wiring)', () => {
 
   it('fails closed with the named reason when the config load was refused', async () => {
     const { lines, errs, r } = runners();
-    const code = await r.policy(
-      { tool: 'bash' },
-      {
-        runtime: undefined,
-        error: "layer 'enterprise': unknown key 'bogus_key'",
-        ignoreSplit: { missing: [], checked: [], applicable: false },
-        trust: NO_PROJECT_TRUST,
-      },
-    );
+    const code = (
+      await r.policy(
+        { tool: 'bash' },
+        {
+          runtime: undefined,
+          error: "layer 'enterprise': unknown key 'bogus_key'",
+          ignoreSplit: { missing: [], checked: [], applicable: false },
+          trust: NO_PROJECT_TRUST,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(1);
     expect(lines).toEqual([]);
     expect(errs).toEqual([
@@ -209,7 +214,7 @@ describe('kubic doctor: enterprise policy and detection-only', () => {
       },
     });
     const { lines, r } = runners();
-    const code = await r.doctor({ json: true }, config);
+    const code = (await r.doctor({ json: true }, config)).exitCode;
     const report = JSON.parse(lines.join('\n')) as {
       checks: Array<{ id: string; status: string; detail: string }>;
     };
@@ -249,7 +254,7 @@ describe('kubic doctor: enterprise policy and detection-only', () => {
       },
     });
     const { lines, r } = runners();
-    const code = await r.doctor({ json: true }, config);
+    const code = (await r.doctor({ json: true }, config)).exitCode;
     const report = JSON.parse(lines.join('\n')) as {
       checks: Array<{
         id: string;
@@ -275,7 +280,7 @@ describe('kubic doctor: enterprise policy and detection-only', () => {
 describe('kubic doctor --session (prod wiring)', () => {
   it('refuses a session id that cannot name a session directory', async () => {
     const { errs, r } = runners();
-    expect(await r.doctor({ session: '../evil' }, noConfig)).toBe(2);
+    expect((await r.doctor({ session: '../evil' }, noConfig)).exitCode).toBe(2);
     expect(errs.join('\n')).toContain('invalid --session id');
   });
 });
@@ -324,7 +329,9 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
     mkdirSync(sroot, { recursive: true });
     agedSession(sroot, 'aged-381', 31 * DAY_MS);
     const { lines, r } = runners();
-    expect(await r.sessions({ command: 'prune', yes: true }, config)).toBe(0);
+    expect(
+      (await r.sessions({ command: 'prune', yes: true }, config)).exitCode,
+    ).toBe(0);
     expect(existsSync(join(sroot, 'aged-381'))).toBe(false);
     expect(lines.join('\n')).toContain('pruned aged-381');
   });
@@ -358,7 +365,8 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
     });
     const { lines, r } = runners();
     expect(
-      await r.journal({ command: 'log', session: 'sess-381' }, config),
+      (await r.journal({ command: 'log', session: 'sess-381' }, config))
+        .exitCode,
     ).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('fresh.txt');
@@ -398,15 +406,18 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
     // No --yes: the window is applied, the dry run lists the aged entry, and
     // nothing is deleted.
     expect(
-      await r.journal({ command: 'prune', session: 'sess-382' }, config),
+      (await r.journal({ command: 'prune', session: 'sess-382' }, config))
+        .exitCode,
     ).toBe(0);
     expect(lines.join('\n')).toContain('dry run: 1 entry would be pruned');
     expect(new FileJournalStore(journalDir).entries()).toHaveLength(2);
     expect(
-      await r.journal(
-        { command: 'prune', session: 'sess-382', yes: true },
-        config,
-      ),
+      (
+        await r.journal(
+          { command: 'prune', session: 'sess-382', yes: true },
+          config,
+        )
+      ).exitCode,
     ).toBe(0);
     expect(
       new FileJournalStore(journalDir).entries().map((entry) => entry.path),
@@ -432,7 +443,7 @@ describe('kubic models/doctor (prod wiring)', () => {
     });
     expect(config.error).toBeUndefined();
     const { lines, errs, r } = runners();
-    expect(await r.models({}, config)).toBe(0);
+    expect((await r.models({}, config)).exitCode).toBe(0);
     const notes = [...lines, ...errs].filter((line) =>
       line.includes('models.json ignored:'),
     );
@@ -459,7 +470,7 @@ describe('kubic models/doctor (prod wiring)', () => {
     const { lines, r } = runners();
     // A failing probe flips the exit code: the wiring carries the
     // refusal all the way to the process result, not just the report.
-    expect(await r.doctor({ json: true }, config)).toBe(6);
+    expect((await r.doctor({ json: true }, config)).exitCode).toBe(6);
     const report = JSON.parse(lines.join('\n')) as {
       checks: Array<{ id: string; status: string; detail?: string }>;
     };
@@ -524,14 +535,16 @@ describe('kubic run projections (prod wiring)', () => {
     vi.stubEnv('KUBIC_NO_NOTICE', '1');
     vi.spyOn(process, 'cwd').mockReturnValue(project);
     const { lines, r } = runners();
-    const code = await r.run(
-      {
-        prompt:
-          'faux:tool bash {"command":"echo v2 > in-scope.txt && echo gen > vendor/out.js"}',
-        json: true,
-      },
-      config,
-    );
+    const code = (
+      await r.run(
+        {
+          prompt:
+            'faux:tool bash {"command":"echo v2 > in-scope.txt && echo gen > vendor/out.js"}',
+          json: true,
+        },
+        config,
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(project, 'in-scope.txt'))).toBe(true);
     expect(existsSync(join(project, 'vendor', 'out.js'))).toBe(true);
@@ -549,13 +562,15 @@ describe('kubic run projections (prod wiring)', () => {
     vi.stubEnv('KUBIC_NO_NOTICE', '1');
     vi.spyOn(process, 'cwd').mockReturnValue(project);
     const { lines, r } = runners();
-    const code = await r.run(
-      {
-        prompt: 'faux:tool bash {"command":"touch marker"}',
-        json: true,
-      },
-      config,
-    );
+    const code = (
+      await r.run(
+        {
+          prompt: 'faux:tool bash {"command":"touch marker"}',
+          json: true,
+        },
+        config,
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const entries = journalEntries(journalIdOf(lines));
     expect(entries.length).toBeGreaterThan(0);
@@ -634,7 +649,7 @@ describe('remaining runners (prod wiring smokes)', () => {
     sandbox.git(['commit', '-qm', 'base']);
     vi.spyOn(process, 'cwd').mockReturnValue(sandbox.path);
     const { lines, r } = runners();
-    expect(await r.git({ command: 'status' }, noConfig)).toBe(0);
+    expect((await r.git({ command: 'status' }, noConfig)).exitCode).toBe(0);
     expect(lines.join('\n')).toContain('branch main');
   });
 
@@ -644,7 +659,7 @@ describe('remaining runners (prod wiring smokes)', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(bare);
     // The empty-discovery note is diagnostics (log.info), not stdout.
     const { lines, errs, r } = runners();
-    expect(await r.skills({}, noConfig)).toBe(0);
+    expect((await r.skills({}, noConfig)).exitCode).toBe(0);
     expect([...lines, ...errs].join('\n')).toContain('no skills discovered');
   });
 
@@ -654,7 +669,7 @@ describe('remaining runners (prod wiring smokes)', () => {
     const loaded = loadCliConfig({ cwd: empty, home: empty, env: {} });
     expect(loaded.error).toBeUndefined();
     const { lines, r } = runners();
-    expect(await r.config({ json: true }, loaded)).toBe(0);
+    expect((await r.config({ json: true }, loaded)).exitCode).toBe(0);
     const parsed = JSON.parse(lines.join('\n')) as { layers?: unknown };
     expect(parsed).toHaveProperty('layers');
   });
@@ -664,10 +679,12 @@ describe('remaining runners (prod wiring smokes)', () => {
     roots.push(home);
     const { lines, r } = runners();
     expect(
-      await r.trust(
-        { list: true },
-        { ...noConfig, trust: { ...NO_PROJECT_TRUST, home } },
-      ),
+      (
+        await r.trust(
+          { list: true },
+          { ...noConfig, trust: { ...NO_PROJECT_TRUST, home } },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(lines.join('\n')).toContain('no project trust decisions recorded');
   });
@@ -677,7 +694,7 @@ describe('remaining runners (prod wiring smokes)', () => {
     roots.push(ws);
     vi.spyOn(process, 'cwd').mockReturnValue(ws);
     const { lines, r } = runners();
-    expect(await r.cost({}, noConfig)).toBe(0);
+    expect((await r.cost({}, noConfig)).exitCode).toBe(EXIT_OK);
     expect(lines.join('\n')).toContain('no cost rows');
   });
 });
@@ -789,10 +806,12 @@ describe('kubic replay lane projection (prod wiring)', () => {
     vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
     vi.spyOn(process, 'cwd').mockReturnValue(project);
     const { lines, errs, r } = runners();
-    const code = await r.replay(
-      { trajectory, tier: 'deterministic', model: 'faux/echo', lockfile },
-      config,
-    );
+    const code = (
+      await r.replay(
+        { trajectory, tier: 'deterministic', model: 'faux/echo', lockfile },
+        config,
+      )
+    ).exitCode;
     expect(code, [...lines, ...errs].join('\n')).toBe(0);
     expect(existsSync(join(project, 'replay-marker'))).toBe(true);
     // The re-executed lane journaled under the config's agent id — scan

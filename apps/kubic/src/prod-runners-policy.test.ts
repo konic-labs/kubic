@@ -187,12 +187,14 @@ describe('`kubic run` through the prod runner enforces the config', () => {
 
   it('refuses a model outside allowed_models with the named policy refusal (exit 6)', async () => {
     const { r, lines } = runners(tmpRoot());
-    const code = await r.run(
-      { prompt: 'hello', json: true },
-      cliConfig({
-        [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
-      }),
-    );
+    const code = (
+      await r.run(
+        { prompt: 'hello', json: true },
+        cliConfig({
+          [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
+        }),
+      )
+    ).exitCode;
     expect(code).toBe(6);
     expect(lines.join('\n')).toContain(
       "model 'faux/echo' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
@@ -201,10 +203,12 @@ describe('`kubic run` through the prod runner enforces the config', () => {
 
   it('runs a model the policy allows (control)', async () => {
     const { r, lines } = runners(tmpRoot());
-    const code = await r.run(
-      { prompt: 'hello', json: true },
-      cliConfig({ [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*"]\n' }),
-    );
+    const code = (
+      await r.run(
+        { prompt: 'hello', json: true },
+        cliConfig({ [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*"]\n' }),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('faux echo: hello');
   });
@@ -212,13 +216,15 @@ describe('`kubic run` through the prod runner enforces the config', () => {
   it('installs the config approvals route: route = "deny" refuses a challenged call by policy', async () => {
     const workspace = tmpRoot();
     const { r, lines } = runners(workspace);
-    const code = await r.run(
-      {
-        prompt: 'faux:tool bash {"command":"rm -rf gone"}',
-        json: true,
-      },
-      cliConfig({ [PROJECT]: '[approvals]\nroute = "deny"\n' }),
-    );
+    const code = (
+      await r.run(
+        {
+          prompt: 'faux:tool bash {"command":"rm -rf gone"}',
+          json: true,
+        },
+        cliConfig({ [PROJECT]: '[approvals]\nroute = "deny"\n' }),
+      )
+    ).exitCode;
     expect(lines.join('\n')).toContain('denied by policy route');
     expect(code).toBe(4);
   });
@@ -253,10 +259,12 @@ describe('explicit skill invocation reaches hidden skills', () => {
   it('invokes a hidden skill: the faux provider sees the skill content', async () => {
     const { workspace, marker } = hiddenSkillWorkspace();
     const { r } = runners(workspace);
-    const code = await r.run(
-      { prompt: 'do x', invokeSkill: 'secret', json: true },
-      cliConfig({}, { trust: TRUSTED }),
-    );
+    const code = (
+      await r.run(
+        { prompt: 'do x', invokeSkill: 'secret', json: true },
+        cliConfig({}, { trust: TRUSTED }),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(marker)).toBe(true);
   });
@@ -264,10 +272,12 @@ describe('explicit skill invocation reaches hidden skills', () => {
   it('an unknown skill name fails the run with the named error', async () => {
     const { workspace } = hiddenSkillWorkspace();
     const { r, lines } = runners(workspace);
-    const code = await r.run(
-      { prompt: 'do x', invokeSkill: 'ghost', json: true },
-      cliConfig({}, { trust: TRUSTED }),
-    );
+    const code = (
+      await r.run(
+        { prompt: 'do x', invokeSkill: 'ghost', json: true },
+        cliConfig({}, { trust: TRUSTED }),
+      )
+    ).exitCode;
     expect(code).not.toBe(0);
     expect(lines.join('\n')).toContain("unknown skill 'ghost'");
   });
@@ -280,10 +290,12 @@ describe('explicit skill invocation reaches hidden skills', () => {
       '---\nrole: narrow\ntools: [read, ls]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\nskills: [open]\n---\n# Narrow\n\n## Prompt\n\nBe narrow.\n',
     );
     const { r, lines } = runners(workspace);
-    const code = await r.run(
-      { prompt: 'do x', invokeSkill: 'secret', role: 'narrow', json: true },
-      cliConfig({}, { trust: TRUSTED }),
-    );
+    const code = (
+      await r.run(
+        { prompt: 'do x', invokeSkill: 'secret', role: 'narrow', json: true },
+        cliConfig({}, { trust: TRUSTED }),
+      )
+    ).exitCode;
     expect(code).not.toBe(0);
     expect(lines.join('\n')).toContain("unknown skill 'secret'");
     expect(existsSync(marker)).toBe(false);
@@ -313,20 +325,22 @@ describe('role classes and approval requires reach the installed policy', () => 
   it('a role declaring network:none runs under it even when config allows full', async () => {
     const workspace = reviewerWorkspace('none');
     const { r, lines } = runners(workspace);
-    const code = await r.run(
-      {
-        prompt: 'faux:tool bash {"command":"curl https://example.com"}',
-        role: 'reviewer',
-        json: true,
-      },
-      cliConfig(
+    const code = (
+      await r.run(
         {
-          [PROJECT]:
-            '[permissions]\nnetwork = "full"\n[approvals]\nroute = "deny"\n',
+          prompt: 'faux:tool bash {"command":"curl https://example.com"}',
+          role: 'reviewer',
+          json: true,
         },
-        { trust: TRUSTED },
-      ),
-    );
+        cliConfig(
+          {
+            [PROJECT]:
+              '[permissions]\nnetwork = "full"\n[approvals]\nroute = "deny"\n',
+          },
+          { trust: TRUSTED },
+        ),
+      )
+    ).exitCode;
     expect(lines.join('\n')).toContain('denied by policy route');
     expect(code).toBe(4);
   });
@@ -334,20 +348,22 @@ describe('role classes and approval requires reach the installed policy', () => 
   it('a config declaring network:none holds even when the role allows full', async () => {
     const workspace = reviewerWorkspace('full');
     const { r, lines } = runners(workspace);
-    const code = await r.run(
-      {
-        prompt: 'faux:tool bash {"command":"curl https://example.com"}',
-        role: 'reviewer',
-        json: true,
-      },
-      cliConfig(
+    const code = (
+      await r.run(
         {
-          [PROJECT]:
-            '[permissions]\nnetwork = "none"\n[approvals]\nroute = "deny"\n',
+          prompt: 'faux:tool bash {"command":"curl https://example.com"}',
+          role: 'reviewer',
+          json: true,
         },
-        { trust: TRUSTED },
-      ),
-    );
+        cliConfig(
+          {
+            [PROJECT]:
+              '[permissions]\nnetwork = "none"\n[approvals]\nroute = "deny"\n',
+          },
+          { trust: TRUSTED },
+        ),
+      )
+    ).exitCode;
     expect(lines.join('\n')).toContain('denied by policy route');
     expect(code).toBe(4);
   });
@@ -360,17 +376,19 @@ describe('role classes and approval requires reach the installed policy', () => 
       '---\nrole: reviewer\ntools: [read, write]\nfilesystem: workspace-write\nshell: false\nnetwork: none\ngit: false\ncredentials: none\nrequires: [write]\n---\n\n# reviewer\n\n## Prompt\n\nReview.\n',
     );
     const { r, lines } = runners(workspace);
-    const code = await r.run(
-      {
-        prompt: `faux:tool write {"path":${JSON.stringify(join(workspace, 'note'))},"content":"hi"}`,
-        role: 'reviewer',
-        json: true,
-      },
-      cliConfig(
-        { [PROJECT]: '[approvals]\nroute = "deny"\n' },
-        { trust: TRUSTED },
-      ),
-    );
+    const code = (
+      await r.run(
+        {
+          prompt: `faux:tool write {"path":${JSON.stringify(join(workspace, 'note'))},"content":"hi"}`,
+          role: 'reviewer',
+          json: true,
+        },
+        cliConfig(
+          { [PROJECT]: '[approvals]\nroute = "deny"\n' },
+          { trust: TRUSTED },
+        ),
+      )
+    ).exitCode;
     expect(lines.join('\n')).toContain('denied by policy route');
     expect(code).toBe(4);
   });
@@ -383,20 +401,22 @@ describe('role classes and approval requires reach the installed policy', () => 
       '---\nrole: reviewer\ntools: [read, write]\nfilesystem: workspace-write\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# reviewer\n\n## Prompt\n\nReview.\n',
     );
     const { r, lines } = runners(workspace);
-    const code = await r.run(
-      {
-        prompt: `faux:tool write {"path":${JSON.stringify(join(workspace, 'note'))},"content":"hi"}`,
-        role: 'reviewer',
-        json: true,
-      },
-      cliConfig(
+    const code = (
+      await r.run(
         {
-          [PROJECT]:
-            '[approvals]\nroute = "deny"\n[roles.reviewer]\nrequires = ["write"]\n',
+          prompt: `faux:tool write {"path":${JSON.stringify(join(workspace, 'note'))},"content":"hi"}`,
+          role: 'reviewer',
+          json: true,
         },
-        { trust: TRUSTED },
-      ),
-    );
+        cliConfig(
+          {
+            [PROJECT]:
+              '[approvals]\nroute = "deny"\n[roles.reviewer]\nrequires = ["write"]\n',
+          },
+          { trust: TRUSTED },
+        ),
+      )
+    ).exitCode;
     expect(lines.join('\n')).toContain('denied by policy route');
     expect(code).toBe(4);
   });
@@ -415,13 +435,15 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
 
   it('kubic run: one stderr note naming the ignored --model, stdout untouched', async () => {
     const { r, lines, errs } = runners(tmpRoot());
-    const code = await r.run(
-      { prompt: 'hello', json: true },
-      cliConfig(
-        { [ENTERPRISE]: FROZEN },
-        { cliModel: { provider: 'evil', id: 'other' } },
-      ),
-    );
+    const code = (
+      await r.run(
+        { prompt: 'hello', json: true },
+        cliConfig(
+          { [ENTERPRISE]: FROZEN },
+          { cliModel: { provider: 'evil', id: 'other' } },
+        ),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(errs.filter((line) => line.startsWith('note:'))).toEqual([NOTE_CLI]);
     // The --json envelope stays exactly one valid document.
@@ -491,13 +513,15 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
     // The frozen pin names a provider this catalog lacks, so the boot stops
     // at model selection — before any terminal opens.
     vi.stubEnv('KUBIC_PROVIDER', '');
-    const code = await r.tui(
-      {},
-      cliConfig(
-        { [ENTERPRISE]: FROZEN },
-        { cliModel: { provider: 'evil', id: 'other' } },
-      ),
-    );
+    const code = (
+      await r.tui(
+        {},
+        cliConfig(
+          { [ENTERPRISE]: FROZEN },
+          { cliModel: { provider: 'evil', id: 'other' } },
+        ),
+      )
+    ).exitCode;
     expect(code).toBe(6);
     expect(errs.filter((line) => line.startsWith('note:'))).toEqual([NOTE_CLI]);
   });
@@ -682,18 +706,20 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
   it('refuses a re-execution model the enterprise policy disallows (exit 6, named refusal)', async () => {
     const { trajectory, lockfile } = replayFixture();
     const { r, lines, errs } = runners(tmpRoot());
-    const code = await r.replay(
-      {
-        trajectory,
-        tier: 'deterministic',
-        model: 'faux/echo',
-        lockfile,
-        json: true,
-      },
-      cliConfig({
-        [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
-      }),
-    );
+    const code = (
+      await r.replay(
+        {
+          trajectory,
+          tier: 'deterministic',
+          model: 'faux/echo',
+          lockfile,
+          json: true,
+        },
+        cliConfig({
+          [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
+        }),
+      )
+    ).exitCode;
     const text = [...lines, ...errs].join('\n');
     expect(text).toContain(
       "model 'faux/echo' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
@@ -714,15 +740,17 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
       '---\nrole: writer\ntools: [read]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# writer\n\n## Prompt\n\nWrite.\n',
     );
     const { r, lines, errs } = runners(workspace);
-    const code = await r.replay(
-      { trajectory, tier: 'live', roleConfig, json: true },
-      cliConfig(
-        {
-          [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
-        },
-        { trust: TRUSTED },
-      ),
-    );
+    const code = (
+      await r.replay(
+        { trajectory, tier: 'live', roleConfig, json: true },
+        cliConfig(
+          {
+            [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
+          },
+          { trust: TRUSTED },
+        ),
+      )
+    ).exitCode;
     expect([...lines, ...errs].join('\n')).toContain(
       "model 'faux/echo' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
     );
@@ -793,16 +821,18 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
   it('re-executes a model the policy allows (control)', async () => {
     const { trajectory, lockfile } = replayFixture();
     const { r, lines } = runners(tmpRoot());
-    const code = await r.replay(
-      {
-        trajectory,
-        tier: 'deterministic',
-        model: 'faux/echo',
-        lockfile,
-        json: true,
-      },
-      cliConfig({ [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*"]\n' }),
-    );
+    const code = (
+      await r.replay(
+        {
+          trajectory,
+          tier: 'deterministic',
+          model: 'faux/echo',
+          lockfile,
+          json: true,
+        },
+        cliConfig({ [ENTERPRISE]: '[policy]\nallowed_models = ["faux/*"]\n' }),
+      )
+    ).exitCode;
     expect(lines.join('\n')).toContain('faux echo: say hi');
     expect(code).toBe(0);
   });
@@ -816,12 +846,14 @@ describe('`kubic tui` through the prod runner enforces the enterprise model gate
     // alt-screen (no terminal is created in this test).
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
     const { r, errs } = runners(tmpRoot());
-    const code = await r.tui(
-      {},
-      cliConfig({
-        [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
-      }),
-    );
+    const code = (
+      await r.tui(
+        {},
+        cliConfig({
+          [ENTERPRISE]: '[policy]\nallowed_models = ["corp/approved"]\n',
+        }),
+      )
+    ).exitCode;
     expect(code).toBe(6);
     expect(errs.join('\n')).toContain(
       "model 'faux/echo' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made",
@@ -852,10 +884,12 @@ describe('role documents under the enterprise tool policy on the doctor runner',
   it('kubic doctor shows a role declaring a denied tool red, and the innocuous one green', async () => {
     const workspace = workspaceWithRoles();
     const { r, lines } = runners(workspace);
-    const code = await r.doctor(
-      { json: true },
-      cliConfig({ [ENTERPRISE]: DENY_BASH }, { trust: TRUSTED }),
-    );
+    const code = (
+      await r.doctor(
+        { json: true },
+        cliConfig({ [ENTERPRISE]: DENY_BASH }, { trust: TRUSTED }),
+      )
+    ).exitCode;
     const report = JSON.parse(lines.join('\n')) as {
       checks: { id: string; status: string; detail: string }[];
     };

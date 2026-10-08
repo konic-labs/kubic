@@ -68,7 +68,7 @@ describe('resumed prompt history', () => {
     first.fake.feed('\r');
     await waitFor(() => first.fake.frame.includes('noted'));
     first.fake.feed('\x04');
-    expect(await first.exit).toBe(0);
+    expect((await first.exit).exitCode).toBe(0);
     const [sessionId] = readdirSync(sessionsRoot).filter(
       (entry) => !entry.startsWith('.'),
     );
@@ -93,6 +93,6 @@ describe('resumed prompt history', () => {
     second.fake.feed('\x03');
     second.fake.feed('\x03');
     second.fake.feed('\x03');
-    expect(await second.exit).toBe(0);
+    expect((await second.exit).exitCode).toBe(0);
   });
 });

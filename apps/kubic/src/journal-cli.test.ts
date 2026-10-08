@@ -83,29 +83,35 @@ describe('journal CLI', () => {
   it('diffs with attribution and filters, --json parses', async () => {
     const { journalDir, root, out } = setup();
     const deps = { journalDir, root, out: out.write };
-    expect(await runJournalCommand({ command: 'diff' }, deps)).toBe(0);
+    expect((await runJournalCommand({ command: 'diff' }, deps)).exitCode).toBe(
+      0,
+    );
     expect(out.lines.join('\n')).toContain('toolCall=call-1');
     expect(out.lines.join('\n')).not.toContain('agent=');
     const none: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff', path: 'no-such-file.txt' },
-        {
-          ...deps,
-          out: (l: string) => none.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', path: 'no-such-file.txt' },
+          {
+            ...deps,
+            out: (l: string) => none.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(none).toEqual(['no changes']);
     const json: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff', json: true },
-        {
-          ...deps,
-          out: (l) => json.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', json: true },
+          {
+            ...deps,
+            out: (l) => json.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     const parsed = JSON.parse(json.join('\n')) as {
       session: string | null;
@@ -123,33 +129,41 @@ describe('journal CLI', () => {
     const deps = { journalDir, root, out: out.write };
     const dry: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'undo', dryRun: true },
-        {
-          ...deps,
-          out: (l) => dry.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo', dryRun: true },
+          {
+            ...deps,
+            out: (l) => dry.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(dry.join('\n')).toContain('would restore');
-    expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(0);
+    expect((await runJournalCommand({ command: 'undo' }, deps)).exitCode).toBe(
+      0,
+    );
     const log: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'log' },
-        { ...deps, out: (l) => log.push(l) },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'log' },
+          { ...deps, out: (l) => log.push(l) },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(log.join('\n')).toContain('a.txt');
     const status: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'status' },
-        {
-          ...deps,
-          out: (l) => status.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'status' },
+          {
+            ...deps,
+            out: (l) => status.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(status.join('\n')).toContain('non-repo');
   });
@@ -158,10 +172,13 @@ describe('journal CLI', () => {
     const { journalDir, root, out } = setup();
     const deps = { journalDir, root, out: out.write };
     expect(
-      await runJournalCommand({ command: 'undo', dryRun: true }, deps),
+      (await runJournalCommand({ command: 'undo', dryRun: true }, deps))
+        .exitCode,
     ).toBe(0);
     expect(readAuditLedger(auditLedgerDirFor(root))).toEqual([]);
-    expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(0);
+    expect((await runJournalCommand({ command: 'undo' }, deps)).exitCode).toBe(
+      0,
+    );
     const rows = readAuditLedger(auditLedgerDirFor(root));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.what).toBe('undo-restore');
@@ -191,7 +208,9 @@ describe('journal CLI', () => {
       mkdirSync(ledgerDir, { recursive: true });
       chmodSync(ledgerDir, 0o555);
       try {
-        expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(0);
+        expect(
+          (await runJournalCommand({ command: 'undo' }, deps)).exitCode,
+        ).toBe(0);
       } finally {
         chmodSync(ledgerDir, 0o755);
       }
@@ -218,7 +237,9 @@ describe('journal CLI', () => {
     });
     const lines: string[] = [];
     const deps = { journalDir, root, out: (l: string) => lines.push(l) };
-    expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(1);
+    expect((await runJournalCommand({ command: 'undo' }, deps)).exitCode).toBe(
+      1,
+    );
     expect(lines.join('\n')).toContain('non-reversible');
     void out;
   });
@@ -252,14 +273,16 @@ describe('journal CLI undo staleness', () => {
   it('skips stale steps with a named reason and exits 1, disk untouched', async () => {
     const { journalDir, root } = seedStale();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'undo' },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'undo' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(1);
     const text = lines.join('\n');
     expect(text).toContain('stale (skipped): stale.txt');
@@ -270,14 +293,16 @@ describe('journal CLI undo staleness', () => {
   it('--force restores past the staleness refusal', async () => {
     const { journalDir, root } = seedStale();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'undo', force: true },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'undo', force: true },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('restored stale.txt');
     expect(readFileSync(join(root, 'stale.txt'), 'utf8')).toBe('v1\n');
@@ -286,14 +311,16 @@ describe('journal CLI undo staleness', () => {
   it('--dry-run reports the stale split without writing', async () => {
     const { journalDir, root } = seedStale();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'undo', dryRun: true },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'undo', dryRun: true },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('would restore 0 step(s)');
@@ -330,14 +357,16 @@ describe('journal CLI corrupt content', () => {
     // Today: uncaught SyntaxError kills `kubic diff` with a raw stack.
     const { journalDir, root } = seedTornDelta();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff' },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('# [corrupt journal content]');
   });
@@ -345,14 +374,16 @@ describe('journal CLI corrupt content', () => {
   it('status counts a corrupt: line', async () => {
     const { journalDir, root } = seedTornDelta();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'status' },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'status' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('corrupt: 1');
   });
@@ -385,10 +416,12 @@ describe('journal CLI corrupt index lines', () => {
   it('status counts the dropped index lines', async () => {
     const { journalDir, root } = seed(true);
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'status' },
-      { journalDir, root, out: (l) => lines.push(l) },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'status' },
+        { journalDir, root, out: (l) => lines.push(l) },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('corrupt index lines: 1');
     // The dropped line is not content corruption: the two counts are
@@ -465,16 +498,18 @@ describe('journal CLI default store fallback', () => {
     const { root, sessionsRoot, newId } = seedSessions();
     const lines: string[] = [];
     const errs: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff' },
-      {
-        root,
-        sessionsRoot,
-        sessionWorkspaces: recordedAt(root),
-        out: (l) => lines.push(l),
-        err: (l) => errs.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff' },
+        {
+          root,
+          sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
+          out: (l) => lines.push(l),
+          err: (l) => errs.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     // The note is a diagnostic: stderr, before any report line.
     expect(errs).toEqual([
@@ -491,16 +526,18 @@ describe('journal CLI default store fallback', () => {
     const log: string[] = [];
     const errs: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'log' },
-        {
-          root,
-          sessionsRoot,
-          sessionWorkspaces: recordedAt(root),
-          out: (l) => log.push(l),
-          err: (l) => errs.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'log' },
+          {
+            root,
+            sessionsRoot,
+            sessionWorkspaces: recordedAt(root),
+            out: (l) => log.push(l),
+            err: (l) => errs.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(errs).toEqual([
       `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
@@ -509,16 +546,18 @@ describe('journal CLI default store fallback', () => {
     const status: string[] = [];
     errs.length = 0;
     expect(
-      await runJournalCommand(
-        { command: 'status' },
-        {
-          root,
-          sessionsRoot,
-          sessionWorkspaces: recordedAt(root),
-          out: (l) => status.push(l),
-          err: (l) => errs.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'status' },
+          {
+            root,
+            sessionsRoot,
+            sessionWorkspaces: recordedAt(root),
+            out: (l) => status.push(l),
+            err: (l) => errs.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(errs).toEqual([
       `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
@@ -530,16 +569,18 @@ describe('journal CLI default store fallback', () => {
   it('--json keeps the parseable envelope and prints no session line', async () => {
     const { root, sessionsRoot } = seedSessions();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff', json: true },
-      {
-        root,
-        sessionsRoot,
-        sessionWorkspaces: recordedAt(root),
-        out: (l) => lines.push(l),
-        err: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff', json: true },
+        {
+          root,
+          sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
+          out: (l) => lines.push(l),
+          err: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const parsed = JSON.parse(lines.join('\n')) as {
       session: string;
@@ -564,15 +605,17 @@ describe('journal CLI default store fallback', () => {
       timestamp: 1700000000000,
     });
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff' },
-      {
-        root,
-        sessionsRoot,
-        sessionWorkspaces: recordedAt(root),
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff' },
+        {
+          root,
+          sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
     const text = lines.join('\n');
@@ -601,15 +644,17 @@ describe('journal CLI default store fallback', () => {
     ] as const) {
       const lines: string[] = [];
       expect(
-        await runJournalCommand(
-          { command: 'diff', session: ref },
-          {
-            root,
-            sessionsRoot,
-            sessionWorkspaces: recordedAt(root),
-            out: (l) => lines.push(l),
-          },
-        ),
+        (
+          await runJournalCommand(
+            { command: 'diff', session: ref },
+            {
+              root,
+              sessionsRoot,
+              sessionWorkspaces: recordedAt(root),
+              out: (l) => lines.push(l),
+            },
+          )
+        ).exitCode,
       ).toBe(0);
       expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
       const text = lines.join('\n');
@@ -626,16 +671,18 @@ describe('journal CLI default store fallback', () => {
     writeFileSync(join(root, 'new.txt'), 'n2\n');
     const lines: string[] = [];
     const errs: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'undo', dryRun: true },
-      {
-        root,
-        sessionsRoot,
-        sessionWorkspaces: recordedAt(root),
-        out: (l) => lines.push(l),
-        err: (l) => errs.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'undo', dryRun: true },
+        {
+          root,
+          sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
+          out: (l) => lines.push(l),
+          err: (l) => errs.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(errs).toEqual([
       `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
@@ -649,16 +696,18 @@ describe('journal CLI default store fallback', () => {
     const root = mkTmp('ws-');
     const lines: string[] = [];
     const errs: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff' },
-      {
-        root,
-        sessionsRoot,
-        sessionWorkspaces: recordedAt(root),
-        out: (l) => lines.push(l),
-        err: (l) => errs.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff' },
+        {
+          root,
+          sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
+          out: (l) => lines.push(l),
+          err: (l) => errs.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines).toEqual(['no changes']);
     expect(errs).toEqual([
@@ -667,15 +716,17 @@ describe('journal CLI default store fallback', () => {
     // --json stays one parseable envelope, hint included nowhere.
     const json: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff', json: true },
-        {
-          root,
-          sessionsRoot,
-          out: (l) => json.push(l),
-          err: (l) => json.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', json: true },
+          {
+            root,
+            sessionsRoot,
+            out: (l) => json.push(l),
+            err: (l) => json.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(JSON.parse(json.join('\n'))).toEqual({
       session: null,
@@ -689,15 +740,17 @@ describe('journal CLI default store fallback', () => {
     const root = mkTmp('ws-');
     const lines: string[] = [];
     const errs: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff' },
-      {
-        root,
-        sessionsRoot,
-        out: (l) => lines.push(l),
-        err: (l) => errs.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff' },
+        {
+          root,
+          sessionsRoot,
+          out: (l) => lines.push(l),
+          err: (l) => errs.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines).toEqual(['no changes']);
     expect(errs).toEqual([
@@ -714,21 +767,25 @@ describe('journal CLI undo record + redo', () => {
   it('diff shows the undo as the latest change, attributed to kubic-undo', async () => {
     const { journalDir, root } = setup();
     expect(
-      await runJournalCommand(
-        { command: 'undo' },
-        { journalDir, root, out: () => {} },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo' },
+          { journalDir, root, out: () => {} },
+        )
+      ).exitCode,
     ).toBe(0);
     const lines: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff' },
-        {
-          journalDir,
-          root,
-          out: (l) => lines.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff' },
+          {
+            journalDir,
+            root,
+            out: (l) => lines.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     // The undo is the newest entry for the path, so its tool-call attribution
     // is the one the diff reports.
@@ -738,21 +795,25 @@ describe('journal CLI undo record + redo', () => {
   it('log prints the undo record with no reconciled marker', async () => {
     const { journalDir, root } = setup();
     expect(
-      await runJournalCommand(
-        { command: 'undo' },
-        { journalDir, root, out: () => {} },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo' },
+          { journalDir, root, out: () => {} },
+        )
+      ).exitCode,
     ).toBe(0);
     const lines: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'log' },
-        {
-          journalDir,
-          root,
-          out: (l) => lines.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'log' },
+          {
+            journalDir,
+            root,
+            out: (l) => lines.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     const undoLine = lines.find((l) => /\bnone\s+write\s+a\.txt\s/.test(l));
     expect(undoLine).toBeDefined();
@@ -766,21 +827,25 @@ describe('journal CLI undo record + redo', () => {
   it('redo: undo --step immediately after an undo restores the pre-undo content', async () => {
     const { journalDir, root } = setup();
     expect(
-      await runJournalCommand(
-        { command: 'undo' },
-        { journalDir, root, out: () => {} },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo' },
+          { journalDir, root, out: () => {} },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'undo', step: true },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'undo', step: true },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('restored a.txt');
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v2\n');
@@ -789,25 +854,29 @@ describe('journal CLI undo record + redo', () => {
   it('undo --dry-run appends no record', async () => {
     const { journalDir, root } = setup();
     expect(
-      await runJournalCommand(
-        { command: 'undo', dryRun: true },
-        {
-          journalDir,
-          root,
-          out: () => {},
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo', dryRun: true },
+          {
+            journalDir,
+            root,
+            out: () => {},
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     const lines: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'log' },
-        {
-          journalDir,
-          root,
-          out: (l) => lines.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'log' },
+          {
+            journalDir,
+            root,
+            out: (l) => lines.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(lines.join('\n')).not.toContain('kubic-undo');
     expect(new FileJournalStore(journalDir).entries()).toHaveLength(1);
@@ -817,23 +886,27 @@ describe('journal CLI undo record + redo', () => {
   it('plain undo twice is idempotent: the second run reports already-undone and appends nothing', async () => {
     const { journalDir, root } = setup();
     expect(
-      await runJournalCommand(
-        { command: 'undo' },
-        { journalDir, root, out: () => {} },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo' },
+          { journalDir, root, out: () => {} },
+        )
+      ).exitCode,
     ).toBe(0);
     const second: string[] = [];
     // Already-undone skips exit 1 (the documented partial-undo code, never
     // the usage code) — and write nothing.
     expect(
-      await runJournalCommand(
-        { command: 'undo' },
-        {
-          journalDir,
-          root,
-          out: (l) => second.push(l),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo' },
+          {
+            journalDir,
+            root,
+            out: (l) => second.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(1);
     expect(second.join('\n')).toContain('already undone (skipped): a.txt');
     expect(second.join('\n')).not.toContain('restored a.txt');
@@ -853,14 +926,16 @@ describe('journal CLI worktree status', () => {
     writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/wt-feature\n');
     writeFileSync(join(root, '.git'), `gitdir: ${gitdir}\n`);
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'status' },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'status' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('repo: branch wt-feature');
   });
@@ -878,10 +953,12 @@ describe('journal CLI worktree status', () => {
     repo.git(['add', '--', 'a.txt']);
     repo.git(['commit', '-qm', 'first']);
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'status' },
-      { journalDir, root: repo.path, out: (l) => lines.push(l) },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'status' },
+        { journalDir, root: repo.path, out: (l) => lines.push(l) },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain(
       `repo: branch main, dirty: no, root ${repo.path}`,
@@ -916,10 +993,12 @@ describe('journal CLI worktree status', () => {
     // A conflicting merge exits 1: the non-throwing variant.
     repo.gitResult(['merge', 'feature']);
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'status' },
-      { journalDir, root: repo.path, out: (l) => lines.push(l) },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'status' },
+        { journalDir, root: repo.path, out: (l) => lines.push(l) },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = lines.join('\n');
     // Three main-side commits past the push: second, base file, ours.
@@ -975,13 +1054,15 @@ describe('journal CLI diff --json content bounds', () => {
     deps: { journalDir: string; root: string },
   ): Promise<JsonChange[]> {
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff', json: true, maxContentBytes },
-      {
-        ...deps,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff', json: true, maxContentBytes },
+        {
+          ...deps,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     return (JSON.parse(lines.join('\n')) as { changes: JsonChange[] }).changes;
   }
@@ -1041,14 +1122,16 @@ describe('journal CLI diff --json content bounds', () => {
   it('the human diff is never clipped', async () => {
     const { journalDir, root, before, after } = seedBig();
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff' },
-      {
-        journalDir,
-        root,
-        out: (l) => lines.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain(`-${before.split('\n')[0] ?? ''}`);
@@ -1086,10 +1169,12 @@ describe('journal CLI --json parity', () => {
     deps: { journalDir: string; root: string },
   ): Promise<{ code: number; doc: unknown }> {
     const lines: string[] = [];
-    const code = await runJournalCommand(request, {
-      ...deps,
-      out: (l: string) => lines.push(l),
-    });
+    const code = (
+      await runJournalCommand(request, {
+        ...deps,
+        out: (l: string) => lines.push(l),
+      })
+    ).exitCode;
     return { code, doc: JSON.parse(lines.join('\n')) };
   }
 
@@ -1222,10 +1307,12 @@ describe('journal CLI presentation (themes, tables)', () => {
     const { journalDir, root } = setup();
     const lines: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'undo' },
-        { journalDir, root, theme: COLOR, out: (l) => lines.push(l) },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo' },
+          { journalDir, root, theme: COLOR, out: (l) => lines.push(l) },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(lines[0]).toBe(`${COLOR.success('restored')} a.txt`);
   });
@@ -1326,15 +1413,17 @@ describe('journal CLI default session workspaces over the durable store', () => 
     // session's recorded cwd out of the durable store.
     const lines: string[] = [];
     const errs: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff' },
-      {
-        root,
-        sessionsRoot,
-        out: (line) => lines.push(line),
-        err: (line) => errs.push(line),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff' },
+        {
+          root,
+          sessionsRoot,
+          out: (line) => lines.push(line),
+          err: (line) => errs.push(line),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(errs[0]).toContain(`session: ${session.id}`);
     expect(lines.join('\n')).toContain('durable.txt');
@@ -1389,7 +1478,9 @@ describe('journal CLI HEAD moves', () => {
       root,
       out: (l: string) => lines.push(l),
     };
-    expect(await runJournalCommand({ command: 'undo' }, deps)).toBe(1);
+    expect((await runJournalCommand({ command: 'undo' }, deps)).exitCode).toBe(
+      1,
+    );
     const text = lines.join('\n');
     expect(text).toContain('head-moved (skipped):');
     expect(text).toContain('a.txt');
@@ -1406,7 +1497,8 @@ describe('journal CLI HEAD moves', () => {
       out: (l: string) => lines.push(l),
     };
     expect(
-      await runJournalCommand({ command: 'undo', force: true }, deps),
+      (await runJournalCommand({ command: 'undo', force: true }, deps))
+        .exitCode,
     ).toBe(0);
     expect(lines.join('\n')).toContain('restored a.txt');
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('v1\n');
@@ -1419,14 +1511,18 @@ describe('journal CLI HEAD moves', () => {
       root,
       out: (l: string) => lines.push(l),
     };
-    expect(await runJournalCommand({ command: 'status' }, deps)).toBe(0);
+    expect(
+      (await runJournalCommand({ command: 'status' }, deps)).exitCode,
+    ).toBe(0);
     expect(lines.join('\n')).toContain('head-moved:');
     const json: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'status', json: true },
-        { ...deps, out: (l: string) => json.push(l) },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'status', json: true },
+          { ...deps, out: (l: string) => json.push(l) },
+        )
+      ).exitCode,
     ).toBe(0);
     const parsed = JSON.parse(json.join('\n')) as {
       headMoves: Array<{ from: unknown; to: unknown }>;
@@ -1437,10 +1533,12 @@ describe('journal CLI HEAD moves', () => {
   it('log renders the marker as a head-moved line', async () => {
     const { journalDir, root, lines } = movedSetup();
     expect(
-      await runJournalCommand(
-        { command: 'log' },
-        { journalDir, root, out: (l: string) => lines.push(l) },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'log' },
+          { journalDir, root, out: (l: string) => lines.push(l) },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(lines.join('\n')).toContain('head-moved');
   });
@@ -1463,10 +1561,12 @@ describe('journal CLI diff path scope', () => {
     });
     const lines: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff', path: 'b.txt' },
-        { journalDir, root, out: (l: string) => lines.push(l) },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', path: 'b.txt' },
+          { journalDir, root, out: (l: string) => lines.push(l) },
+        )
+      ).exitCode,
     ).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('b.txt');
@@ -1499,10 +1599,12 @@ describe('journal CLI diff --stat', () => {
     const { journalDir, root } = statSetup();
     const lines: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff', stat: true },
-        { journalDir, root, out: (l: string) => lines.push(l) },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', stat: true },
+          { journalDir, root, out: (l: string) => lines.push(l) },
+        )
+      ).exitCode,
     ).toBe(0);
     // before v1\n vs after v2\ntail\n: -v1 +v2 +tail.
     expect(lines).toEqual(['a.txt +2 -1 edit, turn 3']);

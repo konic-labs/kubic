@@ -313,13 +313,15 @@ describe('prod run path, empty summary honesty', () => {
   it('prints the named non-answer instead of echoing the prompt (text)', async () => {
     const root = tmpRoot();
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: PROMPT_FIXTURE },
-      {
-        out: o.write,
-        run: emptySummaryRun(root),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: PROMPT_FIXTURE },
+        {
+          out: o.write,
+          run: emptySummaryRun(root),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     const text = o.lines.join('\n');
     expect(text).toContain(`result: ${NON_ANSWER}`);
@@ -330,13 +332,15 @@ describe('prod run path, empty summary honesty', () => {
   it('carries the same named non-answer in the --json envelope', async () => {
     const root = tmpRoot();
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: PROMPT_FIXTURE, json: true },
-      {
-        out: o.write,
-        run: emptySummaryRun(root),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: PROMPT_FIXTURE, json: true },
+        {
+          out: o.write,
+          run: emptySummaryRun(root),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(o.lines.length).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as {
@@ -623,18 +627,20 @@ describe('prod run path, failure code in the envelope', () => {
     // shape (the rate-limit family): the harness settles immediately instead
     // of sleeping through three backoffs, and the failure code is still the
     // provider one.
-    const exit = await runRunCommand(
-      { prompt: 'rate limited', json: true },
-      {
-        out: o.write,
-        run: envelopeRun(tmpRoot(), [
-          fauxAssistantMessage('refused', {
-            stopReason: 'error',
-            errorMessage: 'provider capacity exhausted',
-          }),
-        ]),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'rate limited', json: true },
+        {
+          out: o.write,
+          run: envelopeRun(tmpRoot(), [
+            fauxAssistantMessage('refused', {
+              stopReason: 'error',
+              errorMessage: 'provider capacity exhausted',
+            }),
+          ]),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as {
       status: string;
@@ -649,18 +655,20 @@ describe('prod run path, failure code in the envelope', () => {
 
   it('reports a faux tool failure as tool_failed', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'tool fails', json: true },
-      {
-        out: o.write,
-        run: envelopeRun(tmpRoot(), [
-          fauxAssistantMessage('failed', {
-            stopReason: 'error',
-            errorMessage: "tool 'read' failed: ENOENT",
-          }),
-        ]),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'tool fails', json: true },
+        {
+          out: o.write,
+          run: envelopeRun(tmpRoot(), [
+            fauxAssistantMessage('failed', {
+              stopReason: 'error',
+              errorMessage: "tool 'read' failed: ENOENT",
+            }),
+          ]),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as {
       status: string;
@@ -673,18 +681,20 @@ describe('prod run path, failure code in the envelope', () => {
 
   it('reports a plain faux model error as model_failed', async () => {
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'model fails', json: true },
-      {
-        out: o.write,
-        run: envelopeRun(tmpRoot(), [
-          fauxAssistantMessage('failed', {
-            stopReason: 'error',
-            errorMessage: 'the model produced nothing',
-          }),
-        ]),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'model fails', json: true },
+        {
+          out: o.write,
+          run: envelopeRun(tmpRoot(), [
+            fauxAssistantMessage('failed', {
+              stopReason: 'error',
+              errorMessage: 'the model produced nothing',
+            }),
+          ]),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     const envelope = JSON.parse(o.lines[0] as string) as {
       status: string;

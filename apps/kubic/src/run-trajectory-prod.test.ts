@@ -151,19 +151,21 @@ describe('kubic run writes a trajectory', () => {
     const root = tmp('traj-root-');
     const ws = tmp('traj-ws-');
     const lines: string[] = [];
-    const exit = await runRunCommand(
-      { prompt: 'hello', json: true },
-      {
-        out: (line) => lines.push(line),
-        run: (prompt, options) =>
-          runHeadlessPrompt(prompt, options, {
-            sessionsRoot: root,
-            env: new NodeExecutionEnv(ws),
-            modelsCwd: ws,
-            warn: () => undefined,
-          }),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hello', json: true },
+        {
+          out: (line) => lines.push(line),
+          run: (prompt, options) =>
+            runHeadlessPrompt(prompt, options, {
+              sessionsRoot: root,
+              env: new NodeExecutionEnv(ws),
+              modelsCwd: ws,
+              warn: () => undefined,
+            }),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     const envelope = JSON.parse(lines.join('\n')) as {
       sessionId: string;

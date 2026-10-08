@@ -225,23 +225,25 @@ describe('role documents drive a live solo lane', () => {
 
   it('parses --role on the run command and passes it to the runner', async () => {
     const seen: Array<Record<string, unknown>> = [];
-    const exit = await runRunCommand(
-      { prompt: 'hi', role: 'reviewer' },
-      {
-        out: () => undefined,
-        run: (prompt, options) => {
-          seen.push({ prompt, ...options });
-          return Promise.resolve({
-            terminus: 'completed',
-            summary: 'ok',
-            sessionId: 's',
-            journalRef: 'journal:s',
-            usageRef: 'usage:s',
-            trajectoryRef: 'trajectory:s',
-          });
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hi', role: 'reviewer' },
+        {
+          out: () => undefined,
+          run: (prompt, options) => {
+            seen.push({ prompt, ...options });
+            return Promise.resolve({
+              terminus: 'completed',
+              summary: 'ok',
+              sessionId: 's',
+              journalRef: 'journal:s',
+              usageRef: 'usage:s',
+              trajectoryRef: 'trajectory:s',
+            });
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(seen[0]?.role).toBe('reviewer');
   });
@@ -279,7 +281,7 @@ describe('kubic doctor reports every role document', () => {
         loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
         probeRoles: () => probe,
       },
-    ).then((code) => {
+    ).then(({ exitCode: code }) => {
       const report = JSON.parse(lines.join('\n')) as {
         ok: boolean;
         checks: Array<{
@@ -387,7 +389,7 @@ describe('project roles are trust-gated on the live path', () => {
         loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
         probeRoles: () => probe,
       },
-    ).then((code) => {
+    ).then(({ exitCode: code }) => {
       const report = JSON.parse(lines.join('\n')) as {
         ok: boolean;
         checks: Array<{

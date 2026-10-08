@@ -17,7 +17,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CliUsageError } from '../../../packages/core/src/cli/exit-codes.js';
+import {
+  CliUsageError,
+  EXIT_FAILED,
+  EXIT_OK,
+} from '../../../packages/core/src/cli/exit-codes.js';
 import {
   FileJournalStore,
   sha256Hex,
@@ -126,11 +130,13 @@ describe('journal prune', () => {
     const { sessionsRoot, root, journalDir } = seededSession();
     const before = indexLines(journalDir);
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', keepDays: 7 },
-      { root, sessionsRoot, out: c.out, err: c.err },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', keepDays: 7 },
+        { root, sessionsRoot, out: c.out, err: c.err },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(indexLines(journalDir)).toEqual(before);
     const text = c.lines.join('\n');
     expect(text).toContain('would prune');
@@ -144,11 +150,13 @@ describe('journal prune', () => {
   it('--yes deletes the aged entry, keeps the fresh one, and reports the count', async () => {
     const { sessionsRoot, root, journalDir } = seededSession();
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
-      { root, sessionsRoot, out: c.out, err: c.err },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
+        { root, sessionsRoot, out: c.out, err: c.err },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     const lines = indexLines(journalDir);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('fresh.txt');
@@ -159,17 +167,19 @@ describe('journal prune', () => {
     const { sessionsRoot, root, journalDir } = seededSession();
     const loaded = loadedWithJournalRetention('7');
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', yes: true },
-      {
-        root,
-        sessionsRoot,
-        journalRetentionDays: journalRetentionDays(loaded),
-        out: c.out,
-        err: c.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', yes: true },
+        {
+          root,
+          sessionsRoot,
+          journalRetentionDays: journalRetentionDays(loaded),
+          out: c.out,
+          err: c.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     const lines = indexLines(journalDir);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('fresh.txt');
@@ -180,17 +190,19 @@ describe('journal prune', () => {
     const before = indexLines(journalDir);
     const loaded = loadedWithJournalRetention(undefined);
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', yes: true },
-      {
-        root,
-        sessionsRoot,
-        journalRetentionDays: journalRetentionDays(loaded),
-        out: c.out,
-        err: c.err,
-      },
-    );
-    expect(code).toBe(1);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', yes: true },
+        {
+          root,
+          sessionsRoot,
+          journalRetentionDays: journalRetentionDays(loaded),
+          out: c.out,
+          err: c.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     expect(c.errs.join('\n')).toContain('journal prune needs a keep window');
     expect(indexLines(journalDir)).toEqual(before);
   });
@@ -199,11 +211,13 @@ describe('journal prune', () => {
     const { sessionsRoot, root, journalDir } = seededSession();
     const before = indexLines(journalDir);
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', keepDays: 0, yes: true },
-      { root, sessionsRoot, out: c.out, err: c.err },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', keepDays: 0, yes: true },
+        { root, sessionsRoot, out: c.out, err: c.err },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(c.lines.join('\n')).toContain(
       'journal retention is off (keep-days 0) — nothing is pruned',
     );
@@ -214,17 +228,19 @@ describe('journal prune', () => {
     const { sessionsRoot, root, journalDir } = seededSession();
     const before = indexLines(journalDir);
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
-      {
-        root,
-        sessionsRoot,
-        sessionLockHolder: () => ({ pid: 4242 }),
-        out: c.out,
-        err: c.err,
-      },
-    );
-    expect(code).toBe(1);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
+        {
+          root,
+          sessionsRoot,
+          sessionLockHolder: () => ({ pid: 4242 }),
+          out: c.out,
+          err: c.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     expect(c.errs.join('\n')).toContain(
       "session 'sess-1' is attached by pid 4242 — refusing to prune under a live run",
     );
@@ -235,11 +251,13 @@ describe('journal prune', () => {
     const { sessionsRoot, root, journalDir } = seededSession();
     const before = indexLines(journalDir);
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', keepDays: 60, yes: true },
-      { root, sessionsRoot, out: c.out, err: c.err },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', keepDays: 60, yes: true },
+        { root, sessionsRoot, out: c.out, err: c.err },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(c.lines).toEqual(['nothing to prune']);
     expect(indexLines(journalDir)).toEqual(before);
   });
@@ -249,17 +267,19 @@ describe('journal prune', () => {
     const journalDir = join(root, '.kubic', 'journal');
     seed(journalDir, 'ws-session');
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', keepDays: 7, yes: true },
-      {
-        root,
-        journalDir,
-        sessionLockHolder: () => ({ pid: 1 }),
-        out: c.out,
-        err: c.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', keepDays: 7, yes: true },
+        {
+          root,
+          journalDir,
+          sessionLockHolder: () => ({ pid: 1 }),
+          out: c.out,
+          err: c.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     const lines = indexLines(journalDir);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('fresh.txt');
@@ -269,11 +289,13 @@ describe('journal prune', () => {
     const { sessionsRoot, root } = seededSession();
     const dry = channel();
     expect(
-      await runJournalCommand(
-        { command: 'prune', session: 'sess-1', keepDays: 7, json: true },
-        { root, sessionsRoot, out: dry.out, err: dry.err },
-      ),
-    ).toBe(0);
+      (
+        await runJournalCommand(
+          { command: 'prune', session: 'sess-1', keepDays: 7, json: true },
+          { root, sessionsRoot, out: dry.out, err: dry.err },
+        )
+      ).exitCode,
+    ).toBe(EXIT_OK);
     expect(dry.errs).toEqual([]);
     const dryDoc = JSON.parse(dry.lines.join('\n')) as {
       dryRun: boolean;
@@ -288,17 +310,19 @@ describe('journal prune', () => {
 
     const done = channel();
     expect(
-      await runJournalCommand(
-        {
-          command: 'prune',
-          session: 'sess-1',
-          keepDays: 7,
-          yes: true,
-          json: true,
-        },
-        { root, sessionsRoot, out: done.out, err: done.err },
-      ),
-    ).toBe(0);
+      (
+        await runJournalCommand(
+          {
+            command: 'prune',
+            session: 'sess-1',
+            keepDays: 7,
+            yes: true,
+            json: true,
+          },
+          { root, sessionsRoot, out: done.out, err: done.err },
+        )
+      ).exitCode,
+    ).toBe(EXIT_OK);
     const doneDoc = JSON.parse(done.lines.join('\n')) as {
       dryRun: boolean;
       pruned: number;
@@ -318,17 +342,19 @@ describe('journal prune: the keep window resolves like the runtime', () => {
     expect(loaded.error).toBeUndefined();
     expect(journalRetentionDays(loaded)).toBe(7);
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', yes: true },
-      {
-        root,
-        sessionsRoot,
-        journalRetentionDays: journalRetentionDays(loaded),
-        out: c.out,
-        err: c.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', yes: true },
+        {
+          root,
+          sessionsRoot,
+          journalRetentionDays: journalRetentionDays(loaded),
+          out: c.out,
+          err: c.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     const lines = indexLines(journalDir);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('fresh.txt');
@@ -356,20 +382,24 @@ describe('journal prune: the keep window resolves like the runtime', () => {
     // A 60-day flag keeps the 30-day-old entry, whatever the env says.
     const flagged = channel();
     expect(
-      await runJournalCommand(
-        { command: 'prune', session: 'sess-1', keepDays: 60, yes: true },
-        { ...deps, out: flagged.out, err: flagged.err },
-      ),
-    ).toBe(0);
+      (
+        await runJournalCommand(
+          { command: 'prune', session: 'sess-1', keepDays: 60, yes: true },
+          { ...deps, out: flagged.out, err: flagged.err },
+        )
+      ).exitCode,
+    ).toBe(EXIT_OK);
     expect(indexLines(journalDir)).toHaveLength(2);
     // With no flag, the env window (7 days) is the one that prunes.
     const envWindow = channel();
     expect(
-      await runJournalCommand(
-        { command: 'prune', session: 'sess-1', yes: true },
-        { ...deps, out: envWindow.out, err: envWindow.err },
-      ),
-    ).toBe(0);
+      (
+        await runJournalCommand(
+          { command: 'prune', session: 'sess-1', yes: true },
+          { ...deps, out: envWindow.out, err: envWindow.err },
+        )
+      ).exitCode,
+    ).toBe(EXIT_OK);
     expect(indexLines(journalDir)).toHaveLength(1);
   });
 
@@ -403,18 +433,20 @@ describe('journal prune: the keep window resolves like the runtime', () => {
     expect(loaded.error).toBeDefined();
     const { sessionsRoot, root, journalDir } = seededSession();
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', yes: true },
-      {
-        root,
-        sessionsRoot,
-        journalRetentionDays: journalRetentionDays(loaded),
-        journalConfigError: loaded.error,
-        out: c.out,
-        err: c.err,
-      },
-    );
-    expect(code).toBe(1);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', yes: true },
+        {
+          root,
+          sessionsRoot,
+          journalRetentionDays: journalRetentionDays(loaded),
+          journalConfigError: loaded.error,
+          out: c.out,
+          err: c.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     const text = c.errs.join('\n');
     expect(text).toContain('set [journal] retentionDays');
     expect(text).toContain(`the config did not load: ${loaded.error}`);
@@ -427,11 +459,13 @@ describe('journal prune: refusals come before any deletion', () => {
     const sessionsRoot = tmpRoot('sess-root-');
     const root = tmpRoot('ws-');
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'nope', keepDays: 7, yes: true },
-      { root, sessionsRoot, out: c.out, err: c.err },
-    );
-    expect(code).toBe(1);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'nope', keepDays: 7, yes: true },
+        { root, sessionsRoot, out: c.out, err: c.err },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     expect(c.errs.join('\n')).toContain('unknown session: nope');
     expect(c.lines).toEqual([]);
     expect(existsSync(join(sessionsRoot, 'nope'))).toBe(false);
@@ -442,21 +476,23 @@ describe('journal prune: refusals come before any deletion', () => {
     const before = indexLines(journalDir);
     for (const keepDays of [7, 0, undefined]) {
       const c = channel();
-      const code = await runJournalCommand(
-        {
-          command: 'prune',
-          session: 'sess-1',
-          ...(keepDays === undefined ? {} : { keepDays }),
-        },
-        {
-          root,
-          sessionsRoot,
-          sessionLockHolder: () => ({ pid: 4242 }),
-          out: c.out,
-          err: c.err,
-        },
-      );
-      expect(code, String(keepDays)).toBe(1);
+      const code = (
+        await runJournalCommand(
+          {
+            command: 'prune',
+            session: 'sess-1',
+            ...(keepDays === undefined ? {} : { keepDays }),
+          },
+          {
+            root,
+            sessionsRoot,
+            sessionLockHolder: () => ({ pid: 4242 }),
+            out: c.out,
+            err: c.err,
+          },
+        )
+      ).exitCode;
+      expect(code, String(keepDays)).toBe(EXIT_FAILED);
       expect(c.errs.join('\n'), String(keepDays)).toContain(
         "session 'sess-1' is attached by pid 4242 — refusing to prune under a live run",
       );
@@ -483,11 +519,18 @@ describe('journal prune: swept orphan blobs', () => {
     plantOrphan(withOrphan.journalDir);
     const reclaimed = async (s: ReturnType<typeof seededSession>) => {
       const c = channel();
-      const code = await runJournalCommand(
-        { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
-        { root: s.root, sessionsRoot: s.sessionsRoot, out: c.out, err: c.err },
-      );
-      expect(code).toBe(0);
+      const code = (
+        await runJournalCommand(
+          { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
+          {
+            root: s.root,
+            sessionsRoot: s.sessionsRoot,
+            out: c.out,
+            err: c.err,
+          },
+        )
+      ).exitCode;
+      expect(code).toBe(EXIT_OK);
       const match = /^pruned 1 entry, (\d+)B reclaimed$/m.exec(
         c.lines.join('\n'),
       );
@@ -516,11 +559,13 @@ describe('journal prune: swept orphan blobs', () => {
     });
     const orphan = plantOrphan(journalDir);
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
-      { root, sessionsRoot, out: c.out, err: c.err },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
+        { root, sessionsRoot, out: c.out, err: c.err },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(c.lines).toEqual(['nothing to prune']);
     expect(existsSync(orphan)).toBe(true);
   });
@@ -580,18 +625,20 @@ describe('journal prune: the order of the checks and the window exits', () => {
     });
     expect(fromEnv.error).toContain('KUBIC_JOURNAL_RETENTION_DAYS');
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', yes: true },
-      {
-        root,
-        sessionsRoot,
-        journalRetentionDays: journalRetentionDays(fromEnv),
-        journalConfigError: fromEnv.error,
-        out: c.out,
-        err: c.err,
-      },
-    );
-    expect(code).toBe(1);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', yes: true },
+        {
+          root,
+          sessionsRoot,
+          journalRetentionDays: journalRetentionDays(fromEnv),
+          journalConfigError: fromEnv.error,
+          out: c.out,
+          err: c.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     expect(c.errs.join('\n')).toContain('the config did not load');
     expect(c.errs.join('\n')).toContain('KUBIC_JOURNAL_RETENTION_DAYS');
   });
@@ -643,11 +690,13 @@ describe('journal prune reports what the pass actually removed', () => {
     seedTwoAged(journalDir);
     concurrentPrunerRemovesFirst(journalDir);
     const c = channel();
-    const code = await runJournalCommand(
-      { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
-      { root, sessionsRoot, out: c.out, err: c.err },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
+        { root, sessionsRoot, out: c.out, err: c.err },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     // The session note (an info line on stderr) is expected; no error is.
     expect(c.errs.join('\n')).not.toMatch(/^error:/m);
     expect(c.lines.join('\n')).toMatch(
@@ -665,17 +714,19 @@ describe('journal prune reports what the pass actually removed', () => {
     seedTwoAged(journalDir);
     concurrentPrunerRemovesFirst(journalDir);
     const c = channel();
-    const code = await runJournalCommand(
-      {
-        command: 'prune',
-        session: 'sess-1',
-        keepDays: 7,
-        yes: true,
-        json: true,
-      },
-      { root, sessionsRoot, out: c.out, err: c.err },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runJournalCommand(
+        {
+          command: 'prune',
+          session: 'sess-1',
+          keepDays: 7,
+          yes: true,
+          json: true,
+        },
+        { root, sessionsRoot, out: c.out, err: c.err },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     const doc = JSON.parse(c.lines.join('\n')) as {
       dryRun: boolean;
       pruned: number;
@@ -698,28 +749,32 @@ describe('journal prune reports what the pass actually removed', () => {
     });
     const text = channel();
     expect(
-      await runJournalCommand(
-        { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
-        { root, sessionsRoot, out: text.out, err: text.err },
-      ),
-    ).toBe(1);
+      (
+        await runJournalCommand(
+          { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
+          { root, sessionsRoot, out: text.out, err: text.err },
+        )
+      ).exitCode,
+    ).toBe(EXIT_FAILED);
     expect(text.errs.join('\n')).toContain(
       'the journal changed while pruning and this run removed nothing',
     );
     expect(text.lines).toEqual([]);
     const json = channel();
     expect(
-      await runJournalCommand(
-        {
-          command: 'prune',
-          session: 'sess-1',
-          keepDays: 7,
-          yes: true,
-          json: true,
-        },
-        { root, sessionsRoot, out: json.out, err: json.err },
-      ),
-    ).toBe(1);
+      (
+        await runJournalCommand(
+          {
+            command: 'prune',
+            session: 'sess-1',
+            keepDays: 7,
+            yes: true,
+            json: true,
+          },
+          { root, sessionsRoot, out: json.out, err: json.err },
+        )
+      ).exitCode,
+    ).toBe(EXIT_FAILED);
     expect(JSON.parse(json.lines.join('\n'))).toMatchObject({
       dryRun: false,
       pruned: 0,

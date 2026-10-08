@@ -11,6 +11,7 @@
 import {
   CliExitError,
   CliUsageError,
+  type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
 } from '../../core/src/cli/exit-codes.js';
@@ -77,7 +78,7 @@ const LOG_COLUMNS = [
 export async function runGitCommand(
   request: GitRequest,
   deps: GitCommandDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const json = request.json === true;
   const theme = json ? PLAIN : (deps.theme ?? PLAIN);
   const memos = new MemoryMemoStore();
@@ -99,7 +100,7 @@ export async function runGitCommand(
       const s = out.result;
       if (json) {
         deps.out(formatJson(s));
-        return EXIT_OK;
+        return { exitCode: EXIT_OK };
       }
       deps.out(
         `branch ${theme.bold(s.branch ?? '(detached HEAD)')}${s.ahead > 0 ? ` (ahead ${s.ahead})` : ''}${s.behind > 0 ? ` (behind ${s.behind})` : ''}`,
@@ -115,7 +116,7 @@ export async function runGitCommand(
       for (const p of s.conflicts)
         deps.out(`${theme.error('conflicts:')} ${p}`);
       if (s.clean) deps.out(theme.success('clean'));
-      return EXIT_OK;
+      return { exitCode: EXIT_OK };
     }
     case 'log': {
       const max = request.max;
@@ -135,11 +136,11 @@ export async function runGitCommand(
       const entries = out.ok ? out.result.entries : [];
       if (json) {
         deps.out(formatJson(entries));
-        return EXIT_OK;
+        return { exitCode: EXIT_OK };
       }
       if (entries.length === 0) {
         deps.out('no commits');
-        return EXIT_OK;
+        return { exitCode: EXIT_OK };
       }
       const rows = entries.map((e) => [
         theme.warning(e.sha.slice(0, 8)),
@@ -152,7 +153,7 @@ export async function runGitCommand(
         theme,
       });
       for (const line of table.split('\n')) deps.out(line);
-      return EXIT_OK;
+      return { exitCode: EXIT_OK };
     }
     case 'stage': {
       if (request.paths.length === 0) {
@@ -167,12 +168,12 @@ export async function runGitCommand(
       if (!out.ok) return fail(out.error.message);
       if (json) {
         deps.out(formatJson(out.result));
-        return EXIT_OK;
+        return { exitCode: EXIT_OK };
       }
       for (const p of out.result.staged) {
         deps.out(`${theme.success('staged')} ${p}`);
       }
-      return EXIT_OK;
+      return { exitCode: EXIT_OK };
     }
     case 'commit': {
       if (request.message === '') {
@@ -187,12 +188,12 @@ export async function runGitCommand(
       if (!out.ok) return fail(out.error.message);
       if (json) {
         deps.out(formatJson(out.result));
-        return EXIT_OK;
+        return { exitCode: EXIT_OK };
       }
       deps.out(
         `${theme.success('committed')} ${out.result.sha.slice(0, 8)} (${out.result.files.length} file(s))`,
       );
-      return EXIT_OK;
+      return { exitCode: EXIT_OK };
     }
   }
 }

@@ -3,12 +3,9 @@
 // paths, trust, or env overrides of its own, and must fail closed with the
 // named reason instead of printing a default.
 import { describe, expect, it } from 'vitest';
+import { EXIT_FAILED, EXIT_OK } from '../../../core/src/cli/exit-codes.js';
 import { resolveEffectivePolicy } from '../policy/enterprise.js';
-import {
-  CONFIG_EXIT_FAIL,
-  CONFIG_EXIT_OK,
-  runConfigCommand,
-} from './config-cli.js';
+import { runConfigCommand } from './config-cli.js';
 import type { RuntimeConfig } from './runtime.js';
 
 function runtime(): RuntimeConfig {
@@ -75,8 +72,8 @@ function collect(): { lines: string[]; out: (line: string) => void } {
 describe('kubic config', () => {
   it('renders the effective values with their layers, exit 0', () => {
     const { lines, out } = collect();
-    const code = runConfigCommand({}, { load: runtime, out });
-    expect(code).toBe(CONFIG_EXIT_OK);
+    const code = runConfigCommand({}, { load: runtime, out }).exitCode;
+    expect(code).toBe(EXIT_OK);
     const text = lines.join('\n');
     expect(text).toContain('model.provider = "local" (global, consumed)');
     expect(text).toContain('approvals: route=deny (project)');
@@ -92,8 +89,8 @@ describe('kubic config', () => {
       },
     };
     base.sources['roles.reviewer.models'] = 'project';
-    const code = runConfigCommand({}, { load: () => base, out });
-    expect(code).toBe(CONFIG_EXIT_OK);
+    const code = runConfigCommand({}, { load: () => base, out }).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(lines.join('\n')).toContain(
       'roles.reviewer.models = [{"id":"local/*"}, {"id":"acme/big","thinking":"high"}] (project, consumed)',
     );
@@ -101,9 +98,9 @@ describe('kubic config', () => {
 
   it('emits one machine-readable object covering every projection', () => {
     const { lines, out } = collect();
-    expect(runConfigCommand({ json: true }, { load: runtime, out })).toBe(
-      CONFIG_EXIT_OK,
-    );
+    expect(
+      runConfigCommand({ json: true }, { load: runtime, out }).exitCode,
+    ).toBe(EXIT_OK);
     const view = JSON.parse(lines.join('\n')) as Record<string, unknown>;
     expect(view.modelSource).toBe('global');
     expect(view.approvals).toMatchObject({ route: 'deny', source: 'project' });
@@ -123,8 +120,8 @@ describe('kubic config', () => {
         },
         out,
       },
-    );
-    expect(code).toBe(CONFIG_EXIT_FAIL);
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     expect(lines.join('\n')).toMatch(/unknown section '\[telemetry\]'/);
   });
 
@@ -138,8 +135,8 @@ describe('kubic config', () => {
         },
         out,
       },
-    );
-    expect(code).toBe(CONFIG_EXIT_FAIL);
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     // Redacted, not dropped: the reason still reaches the operator.
     expect(lines.join('\n')).toContain('in [ui]');
     expect(lines.join('\n')).not.toContain('sk-live-abcdef1234567890');

@@ -142,7 +142,7 @@ describe('the TUI full-access toggle', () => {
 
     fake.inject('\u0003');
     fake.inject('\u0003');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('a printable letter typed ahead cannot accept the dialog', async () => {
@@ -194,7 +194,7 @@ describe('the TUI full-access toggle', () => {
 
     fake.inject('\u0003');
     fake.inject('\u0003');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('answers /approvals on|off and reports the live posture', async () => {
@@ -286,7 +286,7 @@ describe('the TUI full-access toggle', () => {
     ]);
     fake.inject('\u0003');
     fake.inject('\u0003');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('refuses to open the confirmation over a pending approval', async () => {
@@ -344,6 +344,6 @@ describe('the TUI full-access toggle', () => {
     expect(postureRows(workspace)).toHaveLength(0);
     fake.inject('\u0003');
     fake.inject('\u0003');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 });

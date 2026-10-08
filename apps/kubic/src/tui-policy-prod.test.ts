@@ -365,20 +365,22 @@ describe('`kubic tui --model` cannot bypass the projected pin', () => {
     id: string;
   }): Promise<TuiBootFlags | undefined> {
     let seen: TuiBootFlags | undefined;
-    const code = await runTuiCommand(
-      { model },
-      {
-        out: () => {},
-        err: () => {},
-        createTerminal: () => {
-          throw new Error('the boot stops before a terminal opens');
+    const code = (
+      await runTuiCommand(
+        { model },
+        {
+          out: () => {},
+          err: () => {},
+          createTerminal: () => {
+            throw new Error('the boot stops before a terminal opens');
+          },
+          bootLane: async (_sid, _answer, flags) => {
+            seen = flags;
+            throw new ModelSelectError('stop after capturing the flags');
+          },
         },
-        bootLane: async (_sid, _answer, flags) => {
-          seen = flags;
-          throw new ModelSelectError('stop after capturing the flags');
-        },
-      },
-    );
+      )
+    ).exitCode;
     expect(code).toBe(6);
     return seen;
   }
@@ -678,7 +680,7 @@ describe('a refused /model switch is named in the footer and the lane keeps its 
     expect(other.state.callCount).toBe(0);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 });
 

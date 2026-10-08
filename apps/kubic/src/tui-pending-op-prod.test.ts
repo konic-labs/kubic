@@ -161,6 +161,6 @@ describe('kubic tui --session after a crash', () => {
     );
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 });

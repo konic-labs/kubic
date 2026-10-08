@@ -172,7 +172,7 @@ describe('idle input repaints', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it("Ctrl-O while idle paints the diff panel's 'no changes' row", async () => {
@@ -184,7 +184,7 @@ describe('idle input repaints', () => {
       RENDER_TICK_STEPS,
     );
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('Ctrl-R while idle paints the journal panel', async () => {
@@ -196,7 +196,7 @@ describe('idle input repaints', () => {
       RENDER_TICK_STEPS,
     );
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('Ctrl-T repaints the opened tree and Ctrl-X repaints the expanded output', async () => {
@@ -233,7 +233,7 @@ describe('idle input repaints', () => {
     fake.feed('\x18');
     await waitFor(() => fake.since(mark).includes('row-9'), RENDER_TICK_STEPS);
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('an approval decision key while idle repaints with the card gone', async () => {
@@ -258,7 +258,7 @@ describe('idle input repaints', () => {
     expect(fake.since(mark)).not.toContain('APPROVAL');
     expect(await verdict).toMatchObject({ approved: true });
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 });
 
@@ -293,7 +293,7 @@ describe('Kitty key releases on the live loop', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fake.counts.stopped).toBe(0);
     fake.feed('\x1b[99;5u');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });
 });

@@ -166,20 +166,22 @@ describe('replay re-execution threads compaction and the prompt section', () => 
     writeFileSync(lockfile, JSON.stringify({ models: { faux: ['echo'] } }));
 
     const { r } = runners();
-    const code = await r.replay(
-      {
-        trajectory,
-        tier: 'deterministic',
-        model: 'faux/echo',
-        lockfile,
-        json: true,
-      },
-      cliConfig({
-        [GLOBAL]:
-          '[session]\nreserveTokens = 4000\nkeepRecentTokens = 200\n[agent]\nsystemPromptFile = "PROMPT.md"\n',
-        [PROMPT]: 'Always answer in rhyme.\n',
-      }),
-    );
+    const code = (
+      await r.replay(
+        {
+          trajectory,
+          tier: 'deterministic',
+          model: 'faux/echo',
+          lockfile,
+          json: true,
+        },
+        cliConfig({
+          [GLOBAL]:
+            '[session]\nreserveTokens = 4000\nkeepRecentTokens = 200\n[agent]\nsystemPromptFile = "PROMPT.md"\n',
+          [PROMPT]: 'Always answer in rhyme.\n',
+        }),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const calls = vi.mocked(runHeadlessPrompt).mock.calls;
     expect(calls).toHaveLength(1);

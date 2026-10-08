@@ -80,7 +80,7 @@ describe('the --thinking flag feeds the one config load', () => {
       runners: {
         config: (_options: unknown, cliConfig: CliConfigResult) => {
           seen.push(`thinking=${cliConfig.runtime?.thinking?.level ?? 'none'}`);
-          return 0;
+          return { exitCode: 0 };
         },
       } as unknown as DispatchRunners,
     };

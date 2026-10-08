@@ -242,14 +242,16 @@ describe('config feeds the live run path', () => {
     // `kubic diff --session <id>` on the run shows only in-scope changes.
     const diffOut: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff', session: result.sessionId },
-        {
-          root: workspace,
-          sessionsRoot,
-          out: (line) => diffOut.push(line),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', session: result.sessionId },
+          {
+            root: workspace,
+            sessionsRoot,
+            out: (line) => diffOut.push(line),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(diffOut.join('\n')).toContain('in-scope.txt');
     expect(diffOut.join('\n')).not.toContain('vendor');
@@ -403,10 +405,12 @@ describe('solo-lane projections reach the live path', () => {
     // The session journal names the change, whichever lane wrote it.
     const named: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'diff', session: result.sessionId },
-        { root: workspace, sessionsRoot, out: (line) => named.push(line) },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', session: result.sessionId },
+          { root: workspace, sessionsRoot, out: (line) => named.push(line) },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(named.join('\n')).toContain('note.txt');
 

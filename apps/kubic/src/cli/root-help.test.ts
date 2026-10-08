@@ -75,7 +75,7 @@ function contextFor(): CommandContext {
     rest: [],
     out: () => {},
     err: () => {},
-    setExitCode: () => {},
+    finish: () => {},
   };
 }
 
@@ -93,6 +93,7 @@ async function subcommandHelp(level: 'none' | 'truecolor'): Promise<string> {
   registerSoloCommands(program, contextFor());
   await runKubicProgram(program, ['doctor', '--help'], channels, {
     code: () => 0,
+    finished: () => true,
   });
   return out.join('\n');
 }
@@ -136,7 +137,7 @@ describe('usage errors on a colour terminal', () => {
         program,
         ['doctor', '--bogus'],
         channels,
-        { code: () => 0 },
+        { code: () => 0, finished: () => true },
       );
       return { code, text: err.join('\n') };
     };

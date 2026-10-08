@@ -94,14 +94,16 @@ describe('run --role resolves the global layer', () => {
       roleDoc('read, bash', true, 'Do helper things.'),
     );
     const { r } = runners(ws);
-    const code = await r.run(
-      {
-        prompt: 'faux:tool bash {"command":"touch marker"}',
-        role: 'helper',
-        json: true,
-      },
-      cliConfig(home, ws),
-    );
+    const code = (
+      await r.run(
+        {
+          prompt: 'faux:tool bash {"command":"touch marker"}',
+          role: 'helper',
+          json: true,
+        },
+        cliConfig(home, ws),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(ws, 'marker'))).toBe(true);
   });
@@ -122,14 +124,16 @@ describe('run --role resolves the global layer', () => {
       roleDoc('read', false, 'Do project helper things.'),
     );
     const { r } = runners(ws);
-    const code = await r.run(
-      {
-        prompt: 'faux:tool bash {"command":"touch marker"}',
-        role: 'helper',
-        json: true,
-      },
-      cliConfig(home, ws),
-    );
+    const code = (
+      await r.run(
+        {
+          prompt: 'faux:tool bash {"command":"touch marker"}',
+          role: 'helper',
+          json: true,
+        },
+        cliConfig(home, ws),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(existsSync(join(ws, 'marker'))).toBe(false);
   });

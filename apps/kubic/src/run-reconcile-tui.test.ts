@@ -84,14 +84,16 @@ describe('end-of-run reconciliation, tui path', () => {
     expect(entries[0]?.sessionId).toBe(id);
     const statusOut: string[] = [];
     expect(
-      await runJournalCommand(
-        { command: 'status', session: id },
-        {
-          root: workspace,
-          sessionsRoot,
-          out: (line) => statusOut.push(line),
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'status', session: id },
+          {
+            root: workspace,
+            sessionsRoot,
+            out: (line) => statusOut.push(line),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(statusOut.join('\n')).toContain('unattributed: 1 of 1');
   });

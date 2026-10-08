@@ -106,7 +106,7 @@ const JOURNAL_SUBCOMMANDS = 'prune';
 
 export const registerJournalCommands: CommandRegistrar = (program, ctx) => {
   const journal = async (request: JournalRequest): Promise<void> => {
-    ctx.setExitCode(await ctx.runners.journal(request, ctx.config));
+    ctx.finish(await ctx.runners.journal(request, ctx.config));
   };
 
   program
@@ -192,7 +192,7 @@ function registerJournalGroup(
   ctx: CommandContext,
 ): void {
   const journal = async (request: JournalRequest): Promise<void> => {
-    ctx.setExitCode(await ctx.runners.journal(request, ctx.config));
+    ctx.finish(await ctx.runners.journal(request, ctx.config));
   };
 
   const group = program
@@ -238,7 +238,7 @@ function registerJournalGroup(
 
 function registerGit(program: KubicProgram, ctx: CommandContext): void {
   const git = async (request: GitRequest): Promise<void> => {
-    ctx.setExitCode(await ctx.runners.git(request, ctx.config));
+    ctx.finish(await ctx.runners.git(request, ctx.config));
   };
 
   const group = program

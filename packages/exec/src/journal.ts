@@ -917,6 +917,9 @@ export class FileJournalStore {
 
   enforceRetention(policy: RetentionPolicy): {
     entries: number;
+    // The blob bytes the pass freed: the blobs only dropped entries used, plus
+    // the unreferenced blob files its sweep removed. A pass that dropped no
+    // entry sweeps nothing and frees 0 bytes.
     bytes: number;
     // Bytes the kept set is still over `policy.maxBytes` by,
     // when the newest entry alone cannot fit. 0 means the bound holds.
@@ -1121,6 +1124,10 @@ export class FileJournalStore {
     // blob is a leak, never corruption, so leaving one is always the safe
     // direction.
     const sweepStartedAt = Date.now();
+    // Bytes of the orphans the sweep removes: blob files no entry references
+    // at all. `before - after` counts only the blobs a dropped entry used, so
+    // the orphans are added to the freed figure here.
+    let orphanBytes = 0;
     if (bridge.exists(this.blobsDir)) {
       for (const info of bridge.listDir(this.blobsDir)) {
         if (info.isDirectory || info.isSymbolicLink) continue;
@@ -1132,6 +1139,7 @@ export class FileJournalStore {
         if (referenced.has(info.name)) continue;
         try {
           bridge.remove(join(this.blobsDir, info.name), false, true);
+          if (!every.has(info.name)) orphanBytes += info.size;
         } catch {
           // Best-effort: an orphaned blob is a leak, not corruption.
         }
@@ -1147,7 +1155,7 @@ export class FileJournalStore {
     this.syncTracking(referenced, after);
     this.oldestTimestamp = oldestTimestampOf(kept);
     this.indexBytes = Buffer.byteLength(serialized, 'utf8');
-    return { entries: removed, bytes: before - after, overBound };
+    return { entries: removed, bytes: before - after + orphanBytes, overBound };
   }
 
   // The index file's real size, 0 when it does not exist yet and

@@ -276,13 +276,13 @@ quietly stop configuring anything.
 **Two keys, two windows.** `kubic journal prune` removes journal entries older
 than `[journal] retentionDays`, read from the runtime load: the
 `KUBIC_JOURNAL_RETENTION_DAYS` env var counts and beats the file key, and
-`--keep-days` beats both. The read-time self-heal of `kubic log --session <id>`
-reads `[session] retentionDays` instead, and it deletes (it is not a dry run),
-but only for a session that no live run is attached to. When the two differ,
-each applies its own window: a read deletes past the session window, a prune
-deletes past the journal window, and an append trims past the journal window.
-Because a read deletes, the shorter window decides what survives a read. Set
-both keys to one value to have a single answer.
+`--keep-days` beats both. An append also trims past `[journal] retentionDays`.
+The read-time self-heal of `kubic log --session <id>` deletes (it is not a dry
+run) past `[session] retentionDays`, and only for a session that no live run is
+attached to. A read (`kubic log --session`) applies only `[session]
+retentionDays`, and `kubic journal prune` applies only `[journal]
+retentionDays` (or `--keep-days`). To have one window, set both keys to the
+same value.
 
 ### Settings skills
 

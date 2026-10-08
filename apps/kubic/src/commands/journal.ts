@@ -94,8 +94,9 @@ const JOURNAL_HELP = `
 Prune removes entries older than the keep window from the journal \`kubic log\`
 reads: --session <id>, else this workspace's journal. A dry run unless --yes.
 An unknown session and a session attached to a live run are refused. --yes
-also sweeps blob files that no remaining entry references; the dry run lists
-entries only, and the reclaimed figure counts those bytes.
+also sweeps blob files that no remaining entry references, but only as part of
+a pass that drops entries: with nothing to prune, orphan blobs stay. The dry
+run lists entries only; the reclaimed figure counts the swept bytes.
 
 Examples:
   $ kubic journal prune --keep-days 30

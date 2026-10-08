@@ -11,13 +11,17 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CliUsageError } from '../../../packages/core/src/cli/exit-codes.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import {
+  FileJournalStore,
+  sha256Hex,
+} from '../../../packages/exec/src/journal.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import { journalRetentionDays, loadCliConfig } from './config-runtime.js';
 
@@ -433,7 +437,7 @@ describe('journal prune: refusals come before any deletion', () => {
     expect(existsSync(join(sessionsRoot, 'nope'))).toBe(false);
   });
 
-  it('a live run is refused first: on a dry run, for every window, and with no window at all', async () => {
+  it('a live run is refused before the window is read: on a dry run, for every window, and with no window at all', async () => {
     const { sessionsRoot, root, journalDir } = seededSession();
     const before = indexLines(journalDir);
     for (const keepDays of [7, 0, undefined]) {
@@ -458,6 +462,138 @@ describe('journal prune: refusals come before any deletion', () => {
       );
     }
     expect(indexLines(journalDir)).toEqual(before);
+  });
+});
+
+describe('journal prune: swept orphan blobs', () => {
+  const ORPHAN = 'x'.repeat(19);
+
+  // Writes a blob no entry references, an hour old, so the sweep may take it.
+  function plantOrphan(journalDir: string): string {
+    const path = join(journalDir, 'blobs', sha256Hex('orphan content'));
+    writeFileSync(path, ORPHAN);
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    utimesSync(path, hourAgo, hourAgo);
+    return path;
+  }
+
+  it('the reclaimed figure counts the orphan blob the sweep removes', async () => {
+    const plain = seededSession();
+    const withOrphan = seededSession();
+    plantOrphan(withOrphan.journalDir);
+    const reclaimed = async (s: ReturnType<typeof seededSession>) => {
+      const c = channel();
+      const code = await runJournalCommand(
+        { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
+        { root: s.root, sessionsRoot: s.sessionsRoot, out: c.out, err: c.err },
+      );
+      expect(code).toBe(0);
+      const match = /^pruned 1 entry, (\d+)B reclaimed$/m.exec(
+        c.lines.join('\n'),
+      );
+      expect(match).not.toBeNull();
+      return Number(match?.[1]);
+    };
+    const base = await reclaimed(plain);
+    expect(await reclaimed(withOrphan)).toBe(base + ORPHAN.length);
+    expect(existsSync(join(withOrphan.journalDir, 'blobs'))).toBe(true);
+  });
+
+  it('--yes leaves an orphan in place when nothing is listed', async () => {
+    const sessionsRoot = tmpRoot('sess-root-');
+    const root = tmpRoot('ws-');
+    const journalDir = join(sessionsRoot, 'sess-1', 'journal');
+    new FileJournalStore(journalDir).append({
+      path: 'fresh.txt',
+      op: 'write',
+      before: null,
+      after: 'fresh\n',
+      bytesDelta: 6,
+      sessionId: 'sess-1',
+      agentId: 'root',
+      toolCallId: 'call-fresh',
+      timestamp: Date.now(),
+    });
+    const orphan = plantOrphan(journalDir);
+    const c = channel();
+    const code = await runJournalCommand(
+      { command: 'prune', session: 'sess-1', keepDays: 7, yes: true },
+      { root, sessionsRoot, out: c.out, err: c.err },
+    );
+    expect(code).toBe(0);
+    expect(c.lines).toEqual(['nothing to prune']);
+    expect(existsSync(orphan)).toBe(true);
+  });
+});
+
+describe('journal prune: the order of the checks and the window exits', () => {
+  it('a window that is not a non-negative integer exits 2 before the session and lock checks', async () => {
+    const { sessionsRoot, root, journalDir } = seededSession();
+    // An unknown session and a live run would each exit 1: the window goes first.
+    await expect(
+      runJournalCommand(
+        { command: 'prune', session: 'nope', keepDays: -1 },
+        { root, sessionsRoot, out: () => {} },
+      ),
+    ).rejects.toBeInstanceOf(CliUsageError);
+    await expect(
+      runJournalCommand(
+        { command: 'prune', session: 'sess-1', keepDays: 1.5 },
+        {
+          root,
+          sessionsRoot,
+          sessionLockHolder: () => ({ pid: 4242 }),
+          out: () => {},
+        },
+      ),
+    ).rejects.toBeInstanceOf(CliUsageError);
+    expect(indexLines(journalDir)).toHaveLength(2);
+  });
+
+  it('a file value the loader accepts (0.5) exits 2; an env value it refuses (0.5) exits 1', async () => {
+    const home = tmpRoot('home-');
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(home, '.kubic', 'config.toml'),
+      '[journal]\nretentionDays = 0.5\n',
+    );
+    const fromFile = loadCliConfig({ home, cwd: tmpRoot('cwd-'), env: {} });
+    expect(fromFile.error).toBeUndefined();
+    expect(journalRetentionDays(fromFile)).toBe(0.5);
+    const { sessionsRoot, root } = seededSession();
+    await expect(
+      runJournalCommand(
+        { command: 'prune', session: 'sess-1', yes: true },
+        {
+          root,
+          sessionsRoot,
+          journalRetentionDays: journalRetentionDays(fromFile),
+          out: () => {},
+        },
+      ),
+    ).rejects.toBeInstanceOf(CliUsageError);
+
+    const fromEnv = loadCliConfig({
+      home: tmpRoot('home-'),
+      cwd: tmpRoot('cwd-'),
+      env: { KUBIC_JOURNAL_RETENTION_DAYS: '0.5' },
+    });
+    expect(fromEnv.error).toContain('KUBIC_JOURNAL_RETENTION_DAYS');
+    const c = channel();
+    const code = await runJournalCommand(
+      { command: 'prune', session: 'sess-1', yes: true },
+      {
+        root,
+        sessionsRoot,
+        journalRetentionDays: journalRetentionDays(fromEnv),
+        journalConfigError: fromEnv.error,
+        out: c.out,
+        err: c.err,
+      },
+    );
+    expect(code).toBe(1);
+    expect(c.errs.join('\n')).toContain('the config did not load');
+    expect(c.errs.join('\n')).toContain('KUBIC_JOURNAL_RETENTION_DAYS');
   });
 });
 

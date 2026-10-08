@@ -701,7 +701,8 @@ function journalPrune(run: JournalRun, request: JournalPruneOptions): number {
     run.log.error(`unknown session: ${redactSecretShapes(resolved.sessionId)}`);
     return EXIT_FAILED;
   }
-  // A live run is refused first: for every window, and on a dry run too.
+  // Then a live run: refused before the window is read, for every window and
+  // on a dry run too.
   if (resolved.sessionId !== undefined) {
     const holder = lockHolderOf(deps, resolved);
     if (holder !== undefined) {

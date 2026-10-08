@@ -151,7 +151,8 @@ bound is the whole store: the index's own lines count alongside
 the blob bytes, because content addressing dedupes blobs and a file
 toggling between two contents grows only the lines. The pass reports the
 excess instead — `enforceRetention` returns
-`{ entries, bytes, overBound }`. An entry that could never fit
+`{ entries, bytes, overBound }`, where `bytes` is the blob bytes the pass
+freed, including the unreferenced blob files its sweep removed. An entry that could never fit
 the store is refused before a single blob is written:
 `JournalEntryTooLargeError` (a named error carrying `entryBytes` and
 `maxBytes`) is thrown from `append`, so the tool layer aborts the write as

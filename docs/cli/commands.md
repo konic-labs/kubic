@@ -1490,16 +1490,24 @@ prune <time> <op> <path>`) and deletes nothing.
   given, else the resolved `[journal] retentionDays`: the
   `KUBIC_JOURNAL_RETENTION_DAYS` env var counts and beats the file key, and the
   flag beats both. With neither, the command exits 1 and names both ways to set
-  one, plus the config error when the config did not load. A window that is not
-  a non-negative integer of days exits 2. `0` (either way) means retention is
-  off: nothing is listed or deleted, exit 0.
-- **Refusals come before any deletion.** An explicit `--session` that does not
-  exist exits 1 (`unknown session: <id>`), as `kubic cost --session` does, and
-  creates nothing. A session attached by a live pid (its session lock) is
-  refused with one `error:` line and exit 1 before any other check: on a dry
-  run, for every window, and with `--keep-days 0` too. That is the rule
-  `kubic undo` applies. The workspace journal has no session lock and is pruned
-  directly.
+  one, plus the config error when the config did not load. `0` (either way)
+  means retention is off: nothing is listed or deleted, exit 0. A window that
+  is not a non-negative integer of days exits by where it came from:
+  - `--keep-days 0.5`: exit 2, a usage error from the flag parser.
+  - `retentionDays = 0.5` in a config file: the config loader accepts it, and
+    prune exits 2.
+  - `KUBIC_JOURNAL_RETENTION_DAYS=0.5`: the loader refuses the env value, so the
+    config does not load and prune exits 1 with `the config did not load: …`
+    naming the env var.
+- **The checks run in this order, and the first failing one decides the exit.**
+  (1) A window that is not a non-negative integer of days: exit 2. (2) An
+  explicit `--session` that does not exist: exit 1 (`unknown session: <id>`), as
+  `kubic cost --session` does, and nothing is created. (3) A session attached by
+  a live pid (its session lock): exit 1 with one `error:` line, on a dry run too
+  and for every window, `--keep-days 0` included. This is the rule `kubic undo`
+  applies; the workspace journal has no session lock and is pruned directly.
+  (4) No window at all: exit 1, naming both ways to set one. A zero window
+  exits 0 and deletes nothing, after checks 2 and 3.
 - **Deletion goes through the store's own retention pass**, which rewrites the
   index under its mutation lock. The report is what that pass removed: `pruned
   N entries, B reclaimed`, with `(M listed: the journal changed while pruning)`
@@ -1509,17 +1517,19 @@ prune <time> <op> <path>`) and deletes nothing.
   to see what is left`.
 - **Blob files.** `--yes` also sweeps the blob files no remaining entry
   references: leftovers from earlier passes, and content only the pruned
-  entries used. The sweep is part of the pass, so its bytes count in
+  entries used. The sweep runs only as part of a pass that drops entries, so
+  with nothing to prune an orphan blob stays in place. Its bytes count in
   `reclaimed`; the dry run lists entries only and does not list the blobs.
 - **Output.** Text mode prints the candidate lines and `dry run: N entries
   would be pruned (keep window D day(s)) — pass --yes to delete`, or
   `pruned N entries, B reclaimed` after `--yes`. It prints `nothing to prune`
   when no entry is older than the window.
 - **Exit codes:** 0 for a dry run, a completed prune, or nothing to prune; 1
-  for a missing keep window, a live-run refusal, an unknown session, or a pass
-  that removed nothing; 2 for a usage error (a window that is not a
-  non-negative integer of days, an unknown option, or `kubic journal` without
-  its subcommand).
+  for a missing keep window, a config the loader refused (such as
+  `KUBIC_JOURNAL_RETENTION_DAYS=0.5`), an unknown session, a live-run refusal,
+  or a pass that removed nothing; 2 for a usage error (a `--keep-days` that is
+  not a non-negative integer of days, a file-configured window that is not one,
+  an unknown option, or `kubic journal` without its subcommand).
 
 ```
 kubic journal prune --keep-days 30

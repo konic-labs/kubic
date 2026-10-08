@@ -94,11 +94,13 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   could not be removed.
 - **`kubic journal prune`**: 0 for a dry run, a completed prune and `nothing
   to prune`; 1 for a missing keep window (no `--keep-days`, no
-  `journal.retentionDays`), an unknown `--session`, a live-run refusal (the
-  session is attached by a live pid), or a pass that removed nothing while
-  entries were listed; 2 for usage errors (a window that is not a
-  non-negative integer of days, an unknown option, `kubic journal` without a
-  subcommand).
+  `journal.retentionDays`), a config the loader refused (for example
+  `KUBIC_JOURNAL_RETENTION_DAYS=0.5`), an unknown `--session`, a live-run
+  refusal (the session is attached by a live pid), or a pass that removed
+  nothing while entries were listed; 2 for usage errors (a `--keep-days` that
+  is not a non-negative integer of days, a file-configured
+  `retentionDays = 0.5`-style value that is not one, an unknown option,
+  `kubic journal` without a subcommand).
 - **`kubic trust`**: 0 recorded, revoked or listed; 2 usage errors
   (unknown option, a path that is not a directory, `--list` combined with
   `--revoke` or a path, stray operands); 1 an unreadable or corrupt store

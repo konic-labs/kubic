@@ -24,7 +24,7 @@ export const COMMAND_GROUPS: readonly CommandGroup[] = [
   },
   {
     label: 'changes',
-    commands: ['diff', 'undo', 'log', 'status', 'commit', 'git'],
+    commands: ['diff', 'undo', 'log', 'status', 'commit', 'git', 'journal'],
     summary: 'review and revert what it did',
   },
   {

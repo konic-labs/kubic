@@ -64,7 +64,6 @@ describe('eval command', () => {
         task: 'fix the widget',
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '3',
         size: 'standard',
       },
       { ...deps, out: o.write, err: o.err },
@@ -81,7 +80,6 @@ describe('eval command', () => {
         task: 'fix',
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '3',
         size: 'standard',
         json: true,
       },
@@ -104,7 +102,7 @@ describe('eval command', () => {
     expect(envelope.record.determinism).toBe('live');
   });
 
-  it('exits 2 when worktree/generation/size are missing', async () => {
+  it('exits 2 when worktree/size are missing', async () => {
     const o = out();
     const exit = await runEvalCommand(
       { suite: 'swe-bench-mini', task: 'fix', model: 'acme/m1' },
@@ -112,7 +110,7 @@ describe('eval command', () => {
     );
     expect(exit).toBe(2);
     expect(o.lines).toEqual([]);
-    expect(o.errs.join('\n')).toMatch(/worktree|generation|size/i);
+    expect(o.errs.join('\n')).toMatch(/worktree|size/i);
   });
 
   it('exits 2 on an invalid --workspace instead of coercing to inline', async () => {
@@ -123,7 +121,6 @@ describe('eval command', () => {
         task: 'fix',
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '3',
         size: 'standard',
         workspace: 'worktreee',
       },
@@ -187,7 +184,6 @@ describe('eval command', () => {
         trajectory: trajectory,
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '3',
         size: 'standard',
       },
       {
@@ -283,7 +279,7 @@ describe('eval --trajectory provenance', () => {
     expect(o.errs.join('\n')).toMatch(/\[provenance-mismatch\]/);
   });
 
-  it('still refuses a --task run without --generation', async () => {
+  it('scores --task with no generation flag and records generation 0', async () => {
     const o = out();
     const exit = await runEvalCommand(
       {
@@ -291,13 +287,15 @@ describe('eval --trajectory provenance', () => {
         task: 'fix',
         worktree: '/wt/a',
         size: 'standard',
+        json: true,
       },
       { ...deps, out: o.write, err: o.err },
     );
-    expect(exit).toBe(2);
-    expect(o.errs).toEqual([
-      "error: required option '--generation <n>' not specified",
-    ]);
+    expect(exit).toBe(0);
+    const envelope = JSON.parse(o.lines.join('\n')) as {
+      record: { generation: number };
+    };
+    expect(envelope.record.generation).toBe(0);
   });
 });
 
@@ -308,7 +306,6 @@ describe('benchmark command', () => {
       {
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '3',
         size: 'standard',
         json: true,
       },
@@ -359,7 +356,6 @@ describe('benchmark command', () => {
         suite: 'swe-bench-mini',
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '1',
         size: 'smoke',
         workspace: 'worktree',
       },
@@ -385,7 +381,6 @@ describe('benchmark command', () => {
         suite: 'terminal-live',
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '1',
         size: 'smoke',
         json: true,
       },
@@ -407,7 +402,6 @@ describe('benchmark command', () => {
         suite: 'terminal-live',
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '1',
         size: 'smoke',
       },
       { ...deps, out: text.write, err: text.err },
@@ -429,7 +423,6 @@ describe('benchmark command', () => {
         suite: 'agentic-live',
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '1',
         json: true,
       },
       { ...deps, out: o.write, err: o.err },
@@ -452,7 +445,6 @@ describe('benchmark command', () => {
       {
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '1',
         size: 'smoke',
       },
       { ...deps, out: o.write, err: o.err },
@@ -469,7 +461,6 @@ describe('benchmark command', () => {
       {
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '1',
         size: 'smoke',
         workspace: 'worktreee',
       },
@@ -485,7 +476,6 @@ describe('eval/benchmark semantics over parsed options', () => {
   const PROVENANCE = {
     model: 'acme/m1',
     worktree: '/wt/a',
-    generation: '3',
     size: 'standard',
   };
 
@@ -498,7 +488,7 @@ describe('eval/benchmark semantics over parsed options', () => {
     expect(exit).toBe(0);
     expect(o.lines).toHaveLength(1);
     expect(o.lines[0]).toMatch(
-      /^eval ok: suite swe-bench-mini success=true .* model=acme\/m1 worktree=\/wt\/a generation=3 size=standard determinism=live$/,
+      /^eval ok: suite swe-bench-mini success=true .* model=acme\/m1 worktree=\/wt\/a size=standard determinism=live$/,
     );
     expect(o.errs).toEqual([]);
   });
@@ -511,23 +501,6 @@ describe('eval/benchmark semantics over parsed options', () => {
       { ...deps, out: o.write, err: o.err },
     );
     expect(o.lines[0]).toMatch(/ model=faux\/echo /);
-  });
-
-  it('refuses a non-integer generation (exit 2, stderr only)', async () => {
-    // '' read as 0 and '1e3' as 1000 before the digit check;
-    // '-1' was and stays refused.
-    for (const generation of ['1.5', 'three', ' ', '', '1e3', ' 2 ', '-1']) {
-      const o = out();
-      const exit = await runEvalCommand(
-        { suite: 'swe-bench-mini', task: 'fix', ...PROVENANCE, generation },
-        { ...deps, out: o.write, err: o.err },
-      );
-      expect(exit, generation).toBe(2);
-      expect(o.lines, generation).toEqual([]);
-      expect(o.errs, generation).toEqual([
-        'error: --generation needs an integer',
-      ]);
-    }
   });
 
   it('needs --suite and one of --task/--trajectory', async () => {
@@ -701,7 +674,6 @@ describe('eval/benchmark semantics over parsed options', () => {
       {
         model: 'acme/m1',
         worktree: '/wt/a',
-        generation: '1',
         size: 'smoke',
         json: true,
       },
@@ -780,26 +752,6 @@ describe('eval/benchmark semantics over parsed options', () => {
       exitCode: EVAL_EXIT_FAILED,
       record: expect.objectContaining({ success: false }),
     });
-  });
-
-  it('exits 2 when benchmark runs without --generation, before any suite runs', async () => {
-    const o = out();
-    const exit = await runBenchmarkCommand(
-      { size: 'standard' },
-      {
-        ...deps,
-        runSuite: async () => {
-          throw new Error('a refused benchmark must not run a suite');
-        },
-        out: o.write,
-        err: o.err,
-      },
-    );
-    expect(exit).toBe(EVAL_EXIT_USAGE);
-    expect(o.lines).toEqual([]);
-    expect(o.errs).toEqual([
-      "error: required option '--generation <n>' not specified",
-    ]);
   });
 
   it('wraps a benchmark runner failure in the --json envelope', async () => {

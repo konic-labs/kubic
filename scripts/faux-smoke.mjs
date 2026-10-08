@@ -18,8 +18,8 @@
 //     --trajectory <file>` (the inline-JSON form is also exercised for
 //     back-compat) and `export --trajectory <file> --type
 //     sft` all succeed on it;
-//   - `benchmark --model faux/echo --worktree <scratch> --generation 0
-//     --size smoke --json`: the built-in fixture suites run
+//   - `benchmark --model faux/echo --worktree <scratch> --size smoke
+//     --json`: the built-in fixture suites run
 //     through the real lane in a temp workspace, every executed row is
 //     `success: true` with `determinism: "live"`, and the matrix exits 0.
 //
@@ -210,8 +210,6 @@ export function fauxSmoke({ run, readFile, cwd }) {
       'faux/echo',
       '--worktree',
       cwd,
-      '--generation',
-      '0',
       '--size',
       'smoke',
       '--json',

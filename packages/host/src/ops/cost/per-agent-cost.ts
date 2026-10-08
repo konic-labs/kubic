@@ -34,18 +34,17 @@ export interface AgentCostInput {
   request?: string;
 }
 
-// The level `kubic cost --by` aggregates at — request,
-// agent, session, project. The default is per-agent (role/model rows).
-export type CostGroupBy = 'request' | 'agent' | 'session' | 'project';
+// The level `kubic cost --by` aggregates at — request, session, project.
+// The default is per-session: one row per session and model.
+export type CostGroupBy = 'request' | 'session' | 'project';
 
 export const COST_GROUP_BYS: readonly CostGroupBy[] = [
   'request',
-  'agent',
   'session',
   'project',
 ];
 
-export const DEFAULT_COST_GROUP_BY: CostGroupBy = 'agent';
+export const DEFAULT_COST_GROUP_BY: CostGroupBy = 'session';
 
 export function isCostGroupBy(value: string): value is CostGroupBy {
   return (COST_GROUP_BYS as readonly string[]).includes(value);
@@ -71,9 +70,6 @@ export function groupCostRows(
 ): AgentCostInput[] {
   if (by === 'request') return rows.map((row) => ({ ...row }));
   const keyOf = (row: AgentCostInput): string => {
-    if (by === 'agent') {
-      return `${row.agent ?? row.agentId}\n${row.role ?? ''}\n${row.model}\n${row.project ?? ''}`;
-    }
     if (by === 'session') {
       return `${row.session ?? row.agentId}\n${row.model}`;
     }

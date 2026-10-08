@@ -206,7 +206,7 @@ function describeText(exported: TrajectoryExport): string[] {
     `schema: ${exported.schema_version}`,
     `task: ${exported.task.taskId} — ${exported.task.objective}`,
     `model: ${modelIdOf(exported)}`,
-    `provenance: pid=${String(exported.provenance.pid)} generation=${exported.provenance.generation} worktree=${exported.provenance.worktree} model=${exported.provenance.model}`,
+    `provenance: pid=${String(exported.provenance.pid)} worktree=${exported.provenance.worktree} model=${exported.provenance.model}`,
     `result: ${exported.result.status} — ${exported.result.summary}`,
     `usage: ${tokens} tokens $${exported.usage.costUsd} ${exported.usage.requests} request(s)`,
   ];

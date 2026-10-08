@@ -1,4 +1,4 @@
-// `kubic diff / undo / log / status` commands.
+// `kubic diff / undo / log / status` and `kubic journal prune` commands.
 // Thin over the exec journal core; presentation only. commander (the
 // composition root, apps/kubic/src/commands/journal.ts) owns argv, help and
 // parse errors and hands a typed `JournalRequest` here.
@@ -26,9 +26,10 @@ import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
+import { redactSecretShapes } from '../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { gitHeadOf } from '../../exec/src/git-clean.js';
-import { FileJournalStore } from '../../exec/src/journal.js';
+import { FileJournalStore, type JournalEntry } from '../../exec/src/journal.js';
 import {
   clipChangeContent,
   DEFAULT_MAX_CONTENT_BYTES,
@@ -86,6 +87,15 @@ export interface JournalCommandDeps {
   // pid-based). Injected by tests so a live holder is expressible without a
   // second process.
   sessionLockHolder?: (sessionDir: string) => { pid: number } | undefined;
+  // `journal.retentionDays`, resolved by the runtime load (the env override
+  // included): the default keep window for `journal prune`. Undefined means
+  // nothing sets it, and prune then demands --keep-days.
+  journalRetentionDays?: number;
+  // The config load's refusal reason, when there is one. A prune that has no
+  // window names it, so a broken `[journal]` key is not reported as missing.
+  journalConfigError?: string;
+  // Clock seam for boundary-exact age tests; real runs use Date.now().
+  now?: () => number;
 }
 
 // The store selector every journal command shares.
@@ -97,7 +107,6 @@ export interface JournalSelection {
 
 export interface JournalDiffOptions extends JournalSelection {
   path?: string | undefined;
-  agent?: string | undefined;
   // `--stat` prints the per-file summary (path, added/removed
   // counts, tool, turn) instead of hunks. Human render only — `--json`
   // already carries the fields, so `--json` ignores it.
@@ -114,11 +123,22 @@ export interface JournalUndoOptions extends JournalSelection {
   force?: boolean | undefined;
 }
 
+// `journal prune`: entries older than the keep window leave the store that
+// `log` reads. A dry run unless `yes`.
+export interface JournalPruneOptions extends JournalSelection {
+  // The keep window in days (`--keep-days`); undefined falls back to
+  // `journal.retentionDays`. 0 means retention is off.
+  keepDays?: number | undefined;
+  // Delete the candidates (`--yes`); without it the command only lists them.
+  yes?: boolean | undefined;
+}
+
 export type JournalRequest =
   | ({ command: 'diff' } & JournalDiffOptions)
   | ({ command: 'undo' } & JournalUndoOptions)
   | ({ command: 'log' } & JournalSelection)
-  | ({ command: 'status' } & JournalSelection);
+  | ({ command: 'status' } & JournalSelection)
+  | ({ command: 'prune' } & JournalPruneOptions);
 
 export function defaultJournalDir(root: string): string {
   return join(root, '.kubic', 'journal');
@@ -352,6 +372,14 @@ export async function runJournalCommand(
       '--max-content-bytes needs a non-negative integer (0 = unlimited)',
     );
   }
+  if (request.command === 'prune') {
+    const window = request.keepDays ?? deps.journalRetentionDays;
+    if (window !== undefined && !isKeepDays(window)) {
+      throw new CliUsageError(
+        'keep window needs a non-negative integer of days (--keep-days or [journal] retentionDays)',
+      );
+    }
+  }
   const resolved = await resolveJournalDir(deps, root, request.session);
   const json = request.json === true;
   const log = loggerFor(deps);
@@ -404,6 +432,8 @@ export async function runJournalCommand(
       return journalLog(run, request);
     case 'status':
       return journalStatusCommand(run, request);
+    case 'prune':
+      return journalPrune(run, request);
   }
 }
 
@@ -438,7 +468,6 @@ function journalDiff(run: JournalRun, request: JournalDiffOptions): number {
   const { deps, store } = run;
   const filter = {
     ...(request.path === undefined ? {} : { path: request.path }),
-    ...(request.agent === undefined ? {} : { agent: request.agent }),
   };
   const changes = diffEntries(store, filter);
   if (request.json === true) {
@@ -630,9 +659,148 @@ function journalUndo(run: JournalRun, request: JournalUndoOptions): number {
   return exit;
 }
 
+// `journal prune`: the explicit deleter of the store `log` reads. Entries
+// older than the keep window go; a dry run lists them unless `yes`. The keep
+// window comes from --keep-days or `journal.retentionDays` and is never
+// invented. A session store under a live run is refused, as undo refuses it.
+const PRUNE_WINDOW_ERROR =
+  'journal prune needs a keep window: pass --keep-days <n> or set [journal] retentionDays in config (no default — deletion stays explicit)';
+
+function pruneLine(entry: JournalEntry): string {
+  const path = entry.op === 'marker' ? '(HEAD)' : entry.path;
+  return `${new Date(entry.timestamp).toISOString()} ${entry.op} ${path}`;
+}
+
+// The keep window is whole, non-negative days. A flag is checked by commander's
+// parser; a configured value is checked here, since the config parser does not
+// refuse a fractional `retentionDays`.
+function isKeepDays(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+// The refusal for a prune with no window. A config that did not load is named,
+// so a broken `[journal]` key is not reported as a missing one.
+function keepWindowRefusal(configError: string | undefined): string {
+  if (configError === undefined) return PRUNE_WINDOW_ERROR;
+  return `${PRUNE_WINDOW_ERROR}; the config did not load: ${redactSecretShapes(configError)}`;
+}
+
+function journalPrune(run: JournalRun, request: JournalPruneOptions): number {
+  const { deps, store, resolved } = run;
+  const json = request.json === true;
+  const yes = request.yes === true;
+  // An explicit session must exist, as `kubic cost --session` requires: a
+  // misspelt id is a refusal, never an empty prune that reads as success.
+  if (
+    request.session !== undefined &&
+    resolved.sessionId !== undefined &&
+    !createNodeFileBridge(deps.sessionsRoot ?? defaultSessionsRoot()).exists(
+      resolved.sessionId,
+    )
+  ) {
+    run.log.error(`unknown session: ${redactSecretShapes(resolved.sessionId)}`);
+    return EXIT_FAILED;
+  }
+  // Then a live run: refused before the window is read, for every window and
+  // on a dry run too.
+  if (resolved.sessionId !== undefined) {
+    const holder = lockHolderOf(deps, resolved);
+    if (holder !== undefined) {
+      run.log.error(
+        `session '${resolved.sessionId}' is attached by pid ${holder.pid} — refusing to prune under a live run`,
+      );
+      return EXIT_FAILED;
+    }
+  }
+  const keepDays = request.keepDays ?? deps.journalRetentionDays;
+  if (keepDays === undefined) {
+    run.log.error(keepWindowRefusal(deps.journalConfigError));
+    return EXIT_FAILED;
+  }
+  if (keepDays === 0) {
+    if (json) {
+      deps.out(
+        formatJson({
+          ...run.ref,
+          keepDays,
+          dryRun: !yes,
+          pruned: 0,
+          candidates: [],
+        }),
+      );
+    } else {
+      deps.out('journal retention is off (keep-days 0) — nothing is pruned');
+    }
+    return EXIT_OK;
+  }
+  const now = deps.now?.() ?? Date.now();
+  const maxAgeMs = keepDays * MS_PER_DAY;
+  const candidates = [...store.entries()]
+    .filter((entry) => now - entry.timestamp > maxAgeMs)
+    .sort((a, b) => a.timestamp - b.timestamp);
+  let pruned = 0;
+  let reclaimed = 0;
+  let exit = EXIT_OK;
+  if (yes && candidates.length > 0) {
+    // The store's own pass applies the same age bound, so it drops what the
+    // dry run listed, unless the journal changed under it (a concurrent writer
+    // or pruner). Its actual count is what gets reported. The pass also sweeps
+    // the blob files no remaining entry references: those count in `reclaimed`
+    // and the dry run does not list them. A pass that removed nothing is the
+    // failure, because the request did not happen.
+    const result = store.enforceRetention({ maxAgeMs, now });
+    pruned = result.entries;
+    reclaimed = result.bytes;
+    if (pruned === 0) {
+      run.log.error(
+        'the journal changed while pruning and this run removed nothing — run it again to see what is left',
+      );
+      exit = EXIT_FAILED;
+    }
+  }
+  if (json) {
+    deps.out(
+      formatJson({
+        ...run.ref,
+        keepDays,
+        dryRun: !yes,
+        pruned,
+        candidates: candidates.map((entry) => ({
+          timestamp: entry.timestamp,
+          op: entry.op,
+          path: entry.path,
+        })),
+      }),
+    );
+    return exit;
+  }
+  if (candidates.length === 0) {
+    deps.out('nothing to prune');
+    return exit;
+  }
+  const noun = candidates.length === 1 ? 'entry' : 'entries';
+  if (!yes) {
+    for (const entry of candidates) deps.out(`would prune ${pruneLine(entry)}`);
+    deps.out(
+      `dry run: ${candidates.length} ${noun} would be pruned (keep window ${keepDays} day(s)) — pass --yes to delete`,
+    );
+    return exit;
+  }
+  if (exit === EXIT_OK) {
+    const prunedNoun = pruned === 1 ? 'entry' : 'entries';
+    const listed =
+      pruned === candidates.length
+        ? ''
+        : ` (${candidates.length} listed: the journal changed while pruning)`;
+    deps.out(
+      `pruned ${pruned} ${prunedNoun}, ${reclaimed}B reclaimed${listed}`,
+    );
+  }
+  return exit;
+}
+
 const LOG_COLUMNS = [
   { header: 'TIME' },
-  { header: 'AGENT' },
   { header: 'TOOL CALL' },
   { header: 'OP' },
   { header: 'PATH' },
@@ -694,7 +862,6 @@ function journalLog(run: JournalRun, request: JournalSelection): number {
     // and the NOTE column names the move.
     const rows = entries.map((e) => [
       new Date(e.timestamp).toISOString(),
-      e.agentId,
       e.toolCallId ?? 'none',
       e.op,
       e.op === 'marker' ? '(HEAD)' : e.path,

@@ -239,7 +239,7 @@ export function clipChangeContent(
 export function renderDiff(changes: FileChange[]): string {
   const out: string[] = [];
   for (const c of changes) {
-    const who = `agent=${c.agentId} toolCall=${c.toolCallId ?? 'none'}`;
+    const who = `toolCall=${c.toolCallId ?? 'none'}`;
     const flags = [
       c.unattributed ? 'unattributed' : null,
       c.reversible ? null : 'non-reversible',

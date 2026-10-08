@@ -69,7 +69,8 @@ describe('cost precision and grouping', () => {
 
   it('accepts exactly the four levels', () => {
     expect(isCostGroupBy('request')).toBe(true);
-    expect(isCostGroupBy('agent')).toBe(true);
+    expect(isCostGroupBy('agent')).toBe(false);
+    expect(isCostGroupBy('request')).toBe(true);
     expect(isCostGroupBy('session')).toBe(true);
     expect(isCostGroupBy('project')).toBe(true);
     expect(isCostGroupBy('model')).toBe(false);
@@ -115,22 +116,6 @@ describe('cost precision and grouping', () => {
       output: 30,
     },
   ];
-
-  it('groups by agent and model, summing counters, keeping roles apart', () => {
-    const grouped = groupCostRows(FACTS, 'agent');
-    expect(grouped).toHaveLength(2);
-    const impl = grouped[0];
-    expect(impl?.agent).toBe('aaa');
-    expect(impl?.role).toBe('implementer');
-    expect(impl?.costUsd).toBeCloseTo(0.005);
-    expect(impl?.input).toBe(150);
-    expect(impl?.output).toBe(30);
-    expect(impl?.cacheRead).toBe(50);
-    expect(impl?.cacheWrite).toBe(5);
-    expect(grouped[1]?.agent).toBe('bbb');
-    const total = grouped.reduce((acc, row) => acc + row.costUsd, 0);
-    expect(total).toBeCloseTo(0.011);
-  });
 
   it('groups by session and model (one row per session bucket)', () => {
     const grouped = groupCostRows(FACTS, 'session');

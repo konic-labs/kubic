@@ -205,16 +205,22 @@ describe('faux smoke checker', () => {
       ],
     });
     const { problems } = smoke({
-      'benchmark --model faux/echo --worktree /repo --generation 0 --size smoke --json|faux':
-        { code: 0, stdout: failedRow, stderr: '' },
+      'benchmark --model faux/echo --worktree /repo --size smoke --json|faux': {
+        code: 0,
+        stdout: failedRow,
+        stderr: '',
+      },
     });
     assert.ok(
       problems.some((p) => p.includes('swe-bench-mini: success false')),
     );
 
     const refused = smoke({
-      'benchmark --model faux/echo --worktree /repo --generation 0 --size smoke --json|faux':
-        { code: 2, stdout: '', stderr: 'error: no executable suites' },
+      'benchmark --model faux/echo --worktree /repo --size smoke --json|faux': {
+        code: 2,
+        stdout: '',
+        stderr: 'error: no executable suites',
+      },
     });
     assert.ok(
       refused.problems.some(

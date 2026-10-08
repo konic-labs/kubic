@@ -541,7 +541,7 @@ function registerSessions(program: Command, ctx: CommandContext): void {
       return;
     }
     throw new CliUsageError(
-      `unknown command '${name}' (create | list | attach | prune)`,
+      `unknown command '${name}' (create | list | attach | fork | prune)`,
     );
   });
   sessions

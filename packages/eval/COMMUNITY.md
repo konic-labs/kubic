@@ -33,27 +33,29 @@ Rules:
 ```sh
 # Single eval against a task prompt
 kubic eval --task "fix the widget" --suite my-suite \
-  --model faux/echo --worktree /wt/eval-1 --generation 1 \
+  --model faux/echo --worktree /wt/eval-1 \
   --size smoke --json
 
 # Score an existing trajectory file without re-running it (`-` reads stdin)
 kubic eval --trajectory run.trajectory.json --suite my-suite \
-  --model faux/echo --worktree /wt/eval-1 --generation 1 \
+  --model faux/echo --worktree /wt/eval-1 \
   --size smoke --json
 
 # Full matrix (or one suite) — clean worktree required with
 # --workspace worktree
 kubic benchmark --suite my-suite --workspace worktree \
-  --model faux/echo --worktree /wt/eval-1 --generation 1 \
+  --model faux/echo --worktree /wt/eval-1 \
   --size smoke --json
 ```
 
-`--worktree`, `--generation`, and `--size` are mandatory: records
-missing any of them are rejected (exit 2), never stored. Every record
-carries `success`, `costUsd`, `tokens`, `latencyMs`, `toolCalls`,
-`model`, `thinking`, `worktree`, `generation`, `size`, and
-`determinism` (`recorded` for `--trajectory`, `live` for
-`--task`).
+`--size` is mandatory on every invocation, and `--worktree` is mandatory
+for `--task` and `benchmark` (a `--trajectory` run takes it from the
+export). Records missing a mandatory flag are rejected (exit 2), never
+stored.
+
+Every record carries `success`, `costUsd`, `tokens`, `latencyMs`,
+`toolCalls`, `model`, `thinking`, `worktree`, `generation`, `size`, and
+`determinism` (`recorded` for `--trajectory`, `live` for `--task`).
 
 ## 3. `--json` shapes
 

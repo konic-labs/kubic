@@ -87,7 +87,7 @@ describe('export command', () => {
     expect(exit).toBe(0);
     const text = o.lines.join('\n');
     expect(text).toMatch(/provenance/);
-    expect(text).toMatch(/generation=3/);
+    expect(text).not.toMatch(/generation=/);
     expect(text).toMatch(/completed/);
   });
 

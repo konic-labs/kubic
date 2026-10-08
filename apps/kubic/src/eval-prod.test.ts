@@ -124,7 +124,6 @@ describe('the live suite runner runs the built-in suites', () => {
         suite: 'swe-bench-mini',
         model: 'faux/echo',
         worktree: workspace,
-        generation: '1',
         size: 'smoke',
         json: true,
       },
@@ -156,7 +155,7 @@ describe('the live suite runner runs the built-in suites', () => {
     expect(envelope.record.signals.tests).toBe('pass');
     expect(envelope.record.model).toBe('faux/echo');
     expect(envelope.record.worktree).toBe(workspace);
-    expect(envelope.record.generation).toBe(1);
+    expect(envelope.record.generation).toBe(0);
     expect(envelope.record.toolCalls).toBeGreaterThan(0);
     // The run wrote its trajectory under the sessions root (the score
     // is derived from it).
@@ -183,7 +182,6 @@ describe('the live suite runner runs the built-in suites', () => {
       {
         model: 'faux/echo',
         worktree: workspace,
-        generation: '1',
         size: 'smoke',
         json: true,
       },
@@ -221,7 +219,7 @@ describe('the live suite runner runs the built-in suites', () => {
       // Eval fields on every executed row.
       expect(row.model, row.suite).toBe('faux/echo');
       expect(row.worktree, row.suite).toBe(workspace);
-      expect(row.generation, row.suite).toBe(1);
+      expect(row.generation, row.suite).toBe(0);
       expect(row.toolCalls, row.suite).toBeGreaterThan(0);
     }
     expect(
@@ -291,7 +289,6 @@ describe('the live suite runner runs the built-in suites', () => {
         suite: 'swe-bench-mini',
         trajectory: path,
         worktree: workspace,
-        generation: '0',
         size: 'smoke',
         json: true,
       },
@@ -318,7 +315,6 @@ describe('the live suite runner runs the built-in suites', () => {
         suite: 'swe-bench-mini',
         trajectory: join(workspace, 'missing.json'),
         worktree: workspace,
-        generation: '0',
         size: 'smoke',
         json: true,
       },
@@ -343,7 +339,6 @@ describe('the live suite runner runs the built-in suites', () => {
         suite: 'swe',
         model: 'faux/echo',
         worktree: workspace,
-        generation: '1',
         size: 'smoke',
         json: true,
       },
@@ -368,7 +363,6 @@ describe('the live suite runner runs the built-in suites', () => {
         suite: 'swe-bench-mini',
         model: 'faux/echo',
         worktree: repo,
-        generation: '1',
         size: 'smoke',
         workspace: 'worktree',
         json: true,
@@ -396,7 +390,6 @@ describe('the live suite runner runs the built-in suites', () => {
         suite: 'swe-bench-mini',
         model: 'faux/echo',
         worktree: repo,
-        generation: '1',
         size: 'smoke',
         workspace: 'worktree',
         json: true,

@@ -6,10 +6,12 @@
 // behavior — the retention semantics do not move; only their I/O cost does.
 
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -106,6 +108,83 @@ function referencedBytes(dir: string, store: FileJournalStore): number {
   }
   return total;
 }
+
+describe('swept orphan blobs', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const ORPHAN_BYTES = 19;
+  const orphanHash = sha256Hex('orphan content');
+
+  // A store holding one aged and one fresh entry. `withOrphan` also writes a
+  // blob file no entry references, an hour old, so a sweep may take it.
+  function seeded(
+    now: number,
+    withOrphan: boolean,
+  ): { store: FileJournalStore; dir: string } {
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir, FAST);
+    store.append(
+      entry({
+        path: 'old.txt',
+        after: 'old-content\n',
+        bytesDelta: 12,
+        timestamp: now - 30 * DAY,
+      }),
+    );
+    store.append(
+      entry({
+        path: 'new.txt',
+        after: 'new-content\n',
+        bytesDelta: 12,
+        timestamp: now,
+      }),
+    );
+    if (withOrphan) {
+      const path = join(dir, 'blobs', orphanHash);
+      writeFileSync(path, 'x'.repeat(ORPHAN_BYTES));
+      const hourAgo = new Date(now - 60 * 60 * 1000);
+      utimesSync(path, hourAgo, hourAgo);
+    }
+    return { store, dir };
+  }
+
+  it('the freed bytes include the orphan blob the sweep removes', () => {
+    const now = Date.now();
+    const plain = seeded(now, false).store.enforceRetention({
+      maxAgeMs: 7 * DAY,
+      now,
+    });
+    const { store, dir } = seeded(now, true);
+    const swept = store.enforceRetention({ maxAgeMs: 7 * DAY, now });
+    expect(plain.entries).toBe(1);
+    expect(swept.entries).toBe(1);
+    expect(existsSync(join(dir, 'blobs', orphanHash))).toBe(false);
+    expect(swept.bytes).toBe(plain.bytes + ORPHAN_BYTES);
+  });
+
+  it('a pass that drops nothing sweeps nothing, so an orphan survives it', () => {
+    const now = Date.now();
+    const dir = tmpRoot();
+    const store = new FileJournalStore(dir, FAST);
+    store.append(
+      entry({
+        path: 'new.txt',
+        after: 'new-content\n',
+        bytesDelta: 12,
+        timestamp: now,
+      }),
+    );
+    const path = join(dir, 'blobs', orphanHash);
+    writeFileSync(path, 'x'.repeat(ORPHAN_BYTES));
+    const hourAgo = new Date(now - 60 * 60 * 1000);
+    utimesSync(path, hourAgo, hourAgo);
+    expect(store.enforceRetention({ maxAgeMs: 7 * DAY, now })).toEqual({
+      entries: 0,
+      bytes: 0,
+      overBound: 0,
+    });
+    expect(existsSync(path)).toBe(true);
+  });
+});
 
 describe('blob size cache', () => {
   it('append over 50 entries and 30 unique blobs stats zero times', () => {

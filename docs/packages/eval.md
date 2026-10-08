@@ -15,12 +15,18 @@ trajectory it writes. Suites run faux-only in CI (zero network, zero paid
 tokens); anything needing a capability the binary does not ship (a live
 PTY) stays `stub: true` and reports `skipped`, never passing work.
 
-Quoted from `packages/eval/COMMUNITY.md` (stub-first contribution path):
-append one row to `EVAL_SUITES` in `suites.ts` (`{ id` — unique,
-lowercase, hyphenated; `category` — one of the 8 `EVAL_CATEGORIES`;
-`title`; `stub: true`; `description` — what signal it measures `}`),
-flip `stub` to `false` when it runs faux-only. `--worktree`,
-`--generation`, and `--size` are mandatory on every CLI invocation.
+Quoted from `packages/eval/COMMUNITY.md`:
+
+> Anyone can add a benchmark suite. The path is stub-first: land the suite
+> as `stub: true`, then implement it — the matrix reports stubs as
+> `skipped` (never as passing work), so a stub can never fake a green
+> board.
+
+> `--size` is mandatory on every invocation, and `--worktree` is mandatory
+> for `--task` and `benchmark` (a `--trajectory` run takes it from the
+> export). Records missing a mandatory flag are rejected (exit 2), never
+> stored.
+
 `--json` shapes: eval success `{ ok: true, exitCode: 0, record: {
 suite, success } }`; rejection `{ ok: false, exitCode: 2, error: {
 code, message } }`; benchmark matrix `{ ok: true, exitCode, results: [{

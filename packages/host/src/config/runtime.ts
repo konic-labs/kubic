@@ -130,8 +130,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
       'file whose contents the run, tui and replay lanes append to the assembled system prompt (ahead of the skills block)',
   },
   'agent.name': {
-    effect:
-      'agent id on the solo lane + journal attribution (`kubic diff --agent`)',
+    effect: 'agent id on the solo lane + journal attribution',
   },
   'model.provider': {
     effect: 'provider selection for `kubic run` and `kubic tui` (selectModel)',

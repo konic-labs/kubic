@@ -193,14 +193,7 @@ afterAll(() => {
 const REPLAY_TRAJECTORY = join(FIXTURE_DIR, 't.json');
 writeFileSync(REPLAY_TRAJECTORY, JSON.stringify(makeExport()));
 
-const PROVENANCE_ARGV = [
-  '--worktree',
-  'wt',
-  '--generation',
-  '1',
-  '--size',
-  'smoke',
-];
+const PROVENANCE_ARGV = ['--worktree', 'wt', '--size', 'smoke'];
 
 // A minimal valid invocation per command (required options satisfied).
 const VALID: Readonly<Record<AnalysisName, readonly string[]>> = {
@@ -241,13 +234,12 @@ describe('analysis commands: generated help', () => {
         '--trajectory <file>',
         '--model <id>',
         '--worktree <path>',
-        '--generation <n>',
         '--size <size>',
         '--workspace <kind>',
         '--thinking <level>',
         '--json',
       ],
-      benchmark: ['--suite <id>', '--generation <n>', '--json'],
+      benchmark: ['--suite <id>', '--worktree <path>', '--json'],
       replay: [
         '[trajectory]',
         '--tier <tier>',
@@ -318,8 +310,7 @@ describe('analysis commands: usage errors exit 2', () => {
   it('a missing required option exits 2 naming it', async () => {
     const cases: [readonly string[], string][] = [
       [['policy'], '--tool <name>'],
-      [['eval', '--task', 'x', '--generation', '1'], '--suite <id>'],
-      [['benchmark'], '--generation <n>'],
+      [['eval', '--task', 'x', '--worktree', 'wt'], '--suite <id>'],
     ];
     for (const [argv, option] of cases) {
       const run = await kubic(argv);
@@ -421,8 +412,8 @@ describe('analysis commands: parsed options reach the runners', () => {
         { trajectory: 'a.json', type: 'dpo', against: 'b.json' },
       ],
       [
-        ['benchmark', '--generation', '2', '--workspace', 'worktree'],
-        { generation: '2', workspace: 'worktree', model: 'faux/echo' },
+        ['benchmark', '--workspace', 'worktree'],
+        { workspace: 'worktree', model: 'faux/echo' },
       ],
     ];
     for (const [argv, options] of cases) {
@@ -445,15 +436,53 @@ describe('analysis commands: parsed options reach the runners', () => {
   });
 });
 
+// The multi-agent flags this release removed are usage errors (exit 2), and
+// their runners never start: a script still passing them fails loudly.
+describe('analysis commands: removed multi-agent flags are usage errors', () => {
+  it('eval and benchmark refuse --generation before any suite runs', async () => {
+    const cases: readonly (readonly string[])[] = [
+      [
+        'eval',
+        '--suite',
+        'swe-bench-mini',
+        '--task',
+        'fix',
+        ...PROVENANCE_ARGV,
+        '--generation',
+        '1',
+      ],
+      ['benchmark', ...PROVENANCE_ARGV, '--generation', '1'],
+    ];
+    for (const argv of cases) {
+      const run = await kubic(argv);
+      expect(run.code, argv.join(' ')).toBe(2);
+      expect(run.out, argv.join(' ')).toEqual([]);
+      expect(run.err, argv.join(' ')).toEqual([
+        expect.stringMatching(/^error: unknown option '--generation'/),
+      ]);
+      expect(run.calls, argv.join(' ')).toEqual([]);
+    }
+  });
+
+  it('cost refuses --by agent with the usage exit, naming the three levels', async () => {
+    const run = await kubic(['cost', '--by', 'agent'], true);
+    expect(run.code).toBe(2);
+    expect(run.out).toEqual([]);
+    expect(run.err.join('\n')).toMatch(
+      /^error: invalid --by "agent" \(use request\|session\|project\)$/m,
+    );
+  });
+});
+
 describe('analysis commands: happy paths over the real handlers', () => {
   it('cost prints a table and the task total', async () => {
     const run = await kubic(['cost'], true);
     expect(run.code).toBe(0);
     // Group + role + split counters at sub-cent precision.
     expect(run.out[0]).toMatch(
-      /^AGENT +ROLE +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
+      /^SESSION +ROLE +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
     );
-    expect(run.out[1]).toBe('task total $0.2000 (1 agents)');
+    expect(run.out[1]).toBe('task total $0.2000 (1 sessions)');
     expect(run.err).toEqual([]);
   });
 

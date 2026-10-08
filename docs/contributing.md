@@ -129,7 +129,9 @@ footer.
 
 A behaviour change ships its docs page in the same commit, and
 `npm run docs:check` must pass. The area map lives on the
-[docs index](README.md).
+[docs index](README.md). The docs style rules (present tense, behaviour rather
+than history, no tracker references) are in
+[CONTRIBUTING.md](../CONTRIBUTING.md#docs-style).
 
 ## CI
 

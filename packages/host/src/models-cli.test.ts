@@ -9,7 +9,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LOCAL_MODELS_EXAMPLE } from '../../worker/src/models-config.js';
 import { createModels, fauxProvider } from '../../worker/src/pi-boundary.js';
-import { assembleModels, runModelsCommand } from './models-cli.js';
+import {
+  assembleModels,
+  contextRoomProbeOf,
+  runModelsCommand,
+} from './models-cli.js';
 
 const made: string[] = [];
 
@@ -271,6 +275,52 @@ describe('a later models.json that declares the window replaces the default', ()
       assembled.models.getModels('local').find((model) => model.id === 'llama3')
         ?.contextWindow,
     ).toBe(32768);
+  });
+});
+
+describe('the room probe measures what the user can configure', () => {
+  it('takes the models.json models and the pinned default, never a model outside them', async () => {
+    const dir = tmpDir();
+    writeFileSync(
+      join(dir, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'local',
+            name: 'Local',
+            baseUrl: 'http://localhost:11434/v1',
+            api: 'openai-completions',
+            models: [{ id: 'llama3' }, { id: 'qwen', contextWindow: 32768 }],
+          },
+        ],
+      }),
+    );
+    const assembled = await assembleModels(
+      dir,
+      { KUBIC_TRUST_PROJECT: '1' },
+      { home: tmpDir() },
+    );
+    // A registered model the user cannot resize: it is not in models.json.
+    assembled.models.setProvider(
+      fauxProvider({ models: [{ id: 'small', contextWindow: 8192 }] }).provider,
+    );
+    const probe = contextRoomProbeOf(assembled, {
+      defaultModel: { provider: 'faux', id: 'small' },
+    });
+    expect(probe.customModels).toEqual([
+      { provider: 'local', model: 'llama3', contextWindow: 8192 },
+      { provider: 'local', model: 'qwen', contextWindow: 32768 },
+    ]);
+    expect(probe.defaultModel).toEqual({
+      provider: 'faux',
+      model: 'small',
+      contextWindow: 8192,
+    });
+  });
+
+  it('has no default model when none is pinned, and no custom model without a models.json', async () => {
+    const assembled = await assembleModels(tmpDir(), {}, { home: tmpDir() });
+    expect(contextRoomProbeOf(assembled)).toEqual({ customModels: [] });
   });
 });
 

@@ -64,7 +64,7 @@ import { runGitCommand } from '../../../packages/host/src/git-cli.js';
 import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import {
   assembleModels,
-  contextRoomModelsOf,
+  contextRoomProbeOf,
   modelsSourcesProbe,
   providerProbesOf,
   runModelsCommand,
@@ -694,19 +694,23 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         probeProviders: () => providerProbesOf(assembled),
         // Models on the fallback window: one warning each, naming the key.
         probeModelWindows: () => assembled.defaultedWindows,
-        // The room a compaction leaves for each usable model, from the same
-        // configured keys the lane boots with (absent: the lane defaults).
+        // The room a compaction leaves for the models the user can configure,
+        // from the configured keys the lane boots with (absent: the defaults)
+        // and the default model the configuration pins.
         probeContextRoom: () => {
           const keys = runtimeCompactionDeps(cliConfig);
-          return {
+          const pin = runtimeModelPin(cliConfig);
+          return contextRoomProbeOf(assembled, {
+            ...(pin === undefined
+              ? {}
+              : { defaultModel: { provider: pin.provider, id: pin.id } }),
             ...(keys?.reserveTokens === undefined
               ? {}
               : { reserveTokens: keys.reserveTokens }),
             ...(keys?.keepRecentTokens === undefined
               ? {}
               : { keepRecentTokens: keys.keepRecentTokens }),
-            models: contextRoomModelsOf(assembled),
-          };
+          });
         },
         checkDeps: () => [
           {

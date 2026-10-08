@@ -1,10 +1,9 @@
 // The five built-in role presets, embedded as data. A workspace with no
 // `.kubic/roles/*.md` still has these roles, and a repo document OVERRIDES
 // the embedded preset of the same name (the fail-closed checks apply to the
-// winning document either way). The text below is this repo's own committed
-// `.kubic/roles/*.md` verbatim, and `presets.test.ts` asserts the two copies
-// are identical. It is bundled as data, so the binary never reads a
-// repo-relative path to find a preset.
+// winning document either way). The text below is the source of these roles,
+// and `presets.test.ts` pins each one to its table. It is bundled as data, so
+// the binary never reads a repo-relative path to find a preset.
 
 // The built-in role names.
 export const BUILTIN_ROLE_NAMES = [

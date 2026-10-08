@@ -893,9 +893,9 @@ describe('role documents under the enterprise tool policy on the doctor runner',
       checks: { id: string; status: string; detail: string }[];
     };
     const roles = report.checks.filter((c) => /(^|:)role:/.test(c.id));
-    // Every role declaring `bash` is refused by name — the repo's implementer
+    // Every role declaring `bash` is refused by name — the workspace's implementer
     // override and the four embedded presets that run a shell.
-    // The repo's own planner declares no bash, so it stays green.
+    // The built-in planner declares no bash, so it stays green.
     const failed = roles
       .filter((c) => c.status === 'fail')
       .map((c) => c.id.replace(/^.*role:/, 'role:'));

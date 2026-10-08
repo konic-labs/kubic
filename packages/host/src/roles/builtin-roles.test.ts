@@ -1,12 +1,10 @@
-// Built-in roles as data — loader test. Reads the real `.kubic/roles/*.md`
-// documents through the resolver (read-only) and proves: all five validate,
+// Built-in roles as data — loader test. Reads the built-in presets (the
+// documents the binary ships) through the resolver and proves: all five validate,
 // the tool sets match each role's job, and reviewer read-only-ness holds by
 // tool absence.
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_ROLE_NAMES } from './builtin-presets.js';
+import { BUILTIN_ROLE_NAMES, BUILTIN_ROLE_PRESETS } from './builtin-presets.js';
 import {
   createRoleToolGuard,
   loadRoleDocuments,
@@ -16,17 +14,11 @@ import {
   validateResolvedRole,
 } from './resolver.js';
 
-const ROLES_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  '..',
-  '..',
-  '.kubic',
-  'roles',
-);
+// The presets as an in-memory role directory: the loader reads the exact text
+// the binary ships, with no filesystem access.
+const PRESETS_DIR = '/builtin/roles';
 
-function nodeBridge(): {
+function presetBridge(): {
   listDir: (dir: string) => Array<{
     name: string;
     path: string;
@@ -37,17 +29,29 @@ function nodeBridge(): {
   }>;
   readTextFile: (path: string) => string;
 } {
+  const files = new Map<string, string>(
+    BUILTIN_ROLE_NAMES.map((name): [string, string] => [
+      `${PRESETS_DIR}/${name}.md`,
+      BUILTIN_ROLE_PRESETS[name],
+    ]),
+  );
   return {
     listDir: (dir) =>
-      readdirSync(dir, { withFileTypes: true }).map((entry) => ({
-        name: entry.name,
-        path: join(dir, entry.name),
-        isDirectory: entry.isDirectory(),
-        isSymbolicLink: entry.isSymbolicLink(),
-        size: 0,
-        mtimeMs: 0,
-      })),
-    readTextFile: (path) => readFileSync(path, 'utf8'),
+      [...files.keys()]
+        .filter((path) => dirname(path) === dir)
+        .map((path) => ({
+          name: basename(path),
+          path,
+          isDirectory: false,
+          isSymbolicLink: false,
+          size: 0,
+          mtimeMs: 0,
+        })),
+    readTextFile: (path) => {
+      const text = files.get(path);
+      if (text === undefined) throw new Error(`no preset at ${path}`);
+      return text;
+    },
   };
 }
 
@@ -58,8 +62,8 @@ function docNamed(docs: ParsedRoleDoc[], name: string): ParsedRoleDoc {
 }
 
 describe('built-in role documents', () => {
-  it('loads exactly the five built-in roles from .kubic/roles/*.md', () => {
-    const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
+  it('loads exactly the five built-in roles', () => {
+    const docs = loadRoleDocuments(presetBridge(), PRESETS_DIR);
     // Sorted by filename (loader contract: deterministic), covering the
     // five built-ins exactly once.
     expect(docs.map((doc) => doc.name)).toEqual([
@@ -75,7 +79,7 @@ describe('built-in role documents', () => {
   });
 
   it('every role resolves and validates; doctor passes clean', () => {
-    const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
+    const docs = loadRoleDocuments(presetBridge(), PRESETS_DIR);
     const resolved = docs.map((doc) => resolveRole(doc, []));
     for (const role of resolved) {
       expect(() => validateResolvedRole(role)).not.toThrow();
@@ -90,7 +94,7 @@ describe('built-in role documents', () => {
 
 describe('built-in tool sets', () => {
   it('planner is read-only: no write/edit/git tools, bash only via the read-only shell', () => {
-    const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
+    const docs = loadRoleDocuments(presetBridge(), PRESETS_DIR);
     const planner = resolveRole(docNamed(docs, 'planner'), []);
     expect(planner.tools).toContain('read');
     // Gives the planner read-only inspection commands: bash is present,
@@ -103,7 +107,7 @@ describe('built-in tool sets', () => {
   });
 
   it('reviewer is read-only: no write/edit/commit/git tools, bash only via the read-only shell', () => {
-    const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
+    const docs = loadRoleDocuments(presetBridge(), PRESETS_DIR);
     const reviewer = resolveRole(docNamed(docs, 'reviewer'), []);
     expect(reviewer.tools).toContain('read');
     expect(reviewer.tools).toContain('bash');
@@ -122,7 +126,7 @@ describe('built-in tool sets', () => {
   });
 
   it('implementer, tester, and debugger hold write + bash tools', () => {
-    const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
+    const docs = loadRoleDocuments(presetBridge(), PRESETS_DIR);
     for (const name of ['implementer', 'tester', 'debugger']) {
       const resolved = resolveRole(docNamed(docs, name), []);
       expect(resolved.tools).toContain('write');
@@ -131,7 +135,7 @@ describe('built-in tool sets', () => {
   });
 
   it('reviewer write calls fail tool-absent, never approval-gated', () => {
-    const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
+    const docs = loadRoleDocuments(presetBridge(), PRESETS_DIR);
     const reviewer = resolveRole(docNamed(docs, 'reviewer'), []);
     const guard = createRoleToolGuard(reviewer.name, reviewer.tools);
     const verdict = guard({

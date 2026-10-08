@@ -1,19 +1,17 @@
 // The five shipped role presets, pinned to the table.
 //
-// `.kubic/roles/*.md` is the reviewable source of the presets, so this test
-// loads the REAL documents through the REAL resolver and compares each one's
+// The presets are the documents in `builtin-presets.ts`. This test loads them
+// through the real resolver and compares each one's
 // resolved tool set and permission classes to the table below — a literal
 // fixture, so a preset drifting from the design fails here instead of in a
 // lane at runtime. Deviations are deliberate (the git levels are
 // `false`, `workspace`, `full`; the read-only shell level is the shipped
 // spelling of reviewer/planner `shell: true`; the level itself is the closed
 // allowlist).
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PermissionClasses } from '../../../agents/src/policy.js';
-import { BUILTIN_ROLE_PRESETS } from './builtin-presets.js';
+import { BUILTIN_ROLE_NAMES, BUILTIN_ROLE_PRESETS } from './builtin-presets.js';
 import {
   loadRoleDocuments,
   type ParsedRoleDoc,
@@ -21,17 +19,11 @@ import {
   resolveRole,
 } from './resolver.js';
 
-const ROLES_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  '..',
-  '..',
-  '.kubic',
-  'roles',
-);
+// The presets as an in-memory role directory: the loader reads the exact text
+// the binary ships, with no filesystem access.
+const PRESETS_DIR = '/builtin/roles';
 
-function nodeBridge(): {
+function presetBridge(): {
   listDir: (dir: string) => Array<{
     name: string;
     path: string;
@@ -42,17 +34,29 @@ function nodeBridge(): {
   }>;
   readTextFile: (path: string) => string;
 } {
+  const files = new Map<string, string>(
+    BUILTIN_ROLE_NAMES.map((name): [string, string] => [
+      `${PRESETS_DIR}/${name}.md`,
+      BUILTIN_ROLE_PRESETS[name],
+    ]),
+  );
   return {
     listDir: (dir) =>
-      readdirSync(dir, { withFileTypes: true }).map((entry) => ({
-        name: entry.name,
-        path: join(dir, entry.name),
-        isDirectory: entry.isDirectory(),
-        isSymbolicLink: entry.isSymbolicLink(),
-        size: 0,
-        mtimeMs: 0,
-      })),
-    readTextFile: (path) => readFileSync(path, 'utf8'),
+      [...files.keys()]
+        .filter((path) => dirname(path) === dir)
+        .map((path) => ({
+          name: basename(path),
+          path,
+          isDirectory: false,
+          isSymbolicLink: false,
+          size: 0,
+          mtimeMs: 0,
+        })),
+    readTextFile: (path) => {
+      const text = files.get(path);
+      if (text === undefined) throw new Error(`no preset at ${path}`);
+      return text;
+    },
   };
 }
 
@@ -168,8 +172,8 @@ const TABLE: Record<string, Preset> = {
   },
 };
 
-describe('shipped role presets match /', () => {
-  const docs = loadRoleDocuments(nodeBridge(), ROLES_DIR);
+describe('shipped role presets match the table', () => {
+  const docs = loadRoleDocuments(presetBridge(), PRESETS_DIR);
 
   it('ships exactly the five presets the table names', () => {
     expect(docs.map((doc) => doc.name).sort()).toEqual(
@@ -187,20 +191,9 @@ describe('shipped role presets match /', () => {
     },
   );
 
-  // The SAME pin for the copy that ships inside the binary:
-  // `.kubic/roles/*.md` is the reviewable source, but a workspace with no
-  // roles directory runs `builtin-presets.ts`, so that text must match the
-  // table too — and match the documents byte for byte, or the two copies
-  // drift with every gate green.
+  // The embedded text is what a workspace with no roles directory runs, so the
+  // same table must hold for the parsed text directly as well.
   describe('the copy embedded in the binary', () => {
-    it('is byte-identical to .kubic/roles/*.md', () => {
-      for (const doc of docs) {
-        expect(
-          BUILTIN_ROLE_PRESETS[doc.name as keyof typeof BUILTIN_ROLE_PRESETS],
-        ).toBe(nodeBridge().readTextFile(`${ROLES_DIR}/${doc.name}.md`));
-      }
-    });
-
     it.each(Object.keys(TABLE))(
       "resolves the embedded '%s' to the table's tools and classes",
       (name) => {

@@ -89,15 +89,15 @@ reports/
 .stryker-tmp/
 
 # ---------------------------------------------------------------------------
-# Kubic runtime state.
+# Kubic's own local state. The checkout's `.kubic/` directory holds local
+# project config, role documents and run state, and none of it is committed,
+# so a contributor's config can never leak into a commit. The documented
+# example of a project config is packages/host/src/config/example.toml.
 #
-# `.kubic/` is a MIXED directory: config.toml + roles/*.md are committed
-# (see `git ls-files .kubic`), everything below is per-run state. Only the
-# runtime subpaths are ignored — never `.kubic/` itself, or the committed
-# half would stop being trackable. `kubic run` writes the same rules into a
-# user repo's local exclude file; scripts/runtime-exclude.test.mjs keeps
-# the two lists in step.
+# The runtime subpaths are listed as well: `kubic doctor` checks the ignore
+# file for the same rules `kubic run` writes into a user repo's exclude file.
 # ---------------------------------------------------------------------------
+/.kubic/
 .kubic/sessions/
 .kubic/journal/
 .kubic/artifacts/

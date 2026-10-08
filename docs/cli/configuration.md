@@ -783,9 +783,10 @@ not. The split, exactly as shipped:
   check does not apply. `.kubic/` itself is deliberately **not** ignored: `config.toml` and `roles/*.md`
   stay committable. Outside a git repository the write is a no-op (runtime
   state is local wherever it is written), and the write never fails a run.
-  This repository ships the same four rules in its own `.gitignore` — the
-  rules, the writer, and this page are pinned together by
-  `scripts/runtime-exclude.test.mjs` and the config tests.
+  This repository's own `.gitignore` ignores its whole `.kubic/` directory
+  (`/.kubic/`) and also lists the same four rules, because `kubic doctor` checks
+  for those literal lines. The rules, the writer, and this page are pinned
+  together by `scripts/runtime-exclude.test.mjs` and the config tests.
 - **Models**: Pi's built-in providers (`anthropic`, `openai`, `google`,
   `amazon-bedrock`, …) are always registered; each is usable once its
   documented env key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,

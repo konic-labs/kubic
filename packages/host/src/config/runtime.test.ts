@@ -4,8 +4,7 @@
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
@@ -1408,14 +1407,31 @@ describe('checkWorkspaceIgnoreSplit in linked worktrees', () => {
   });
 });
 
-describe("this repository's own configuration", () => {
-  const REPO_ROOT = join(
-    dirname(fileURLToPath(import.meta.url)),
-    '..',
-    '..',
-    '..',
-    '..',
-  );
+describe('project configuration', () => {
+  // The project layer the test writes into a temp directory, so no test reads a
+  // config file from the checkout.
+  const PROJECT_CONFIG_TOML = `[model]
+provider = "local"
+id = "llama3"
+thinking = "medium"
+
+[approvals]
+route = "ask-user"
+maxPendingMs = 60000
+autoApprove = []
+sessionScoped = true
+requireJustification = false
+
+[permissions]
+filesystem = "workspace-write"
+shell = true
+network = "none"
+git = "workspace"
+credentials = "none"
+
+[journal]
+retentionDays = 30
+`;
 
   it('keeps every key-effect entry meaningful', () => {
     for (const [key, entry] of Object.entries(RUNTIME_KEY_EFFECTS)) {
@@ -1427,13 +1443,14 @@ describe("this repository's own configuration", () => {
     }
   });
 
-  it('loads .kubic/config.toml and maps every key', () => {
-    // The repository dogfoods the feature: its own project layer must parse,
-    // load, and reach each projection — no decoration.
+  it('loads a project .kubic/config.toml and maps every key', () => {
+    const project = tempDir('kubic-project-config-');
+    mkdirSync(join(project, '.kubic'), { recursive: true });
+    writeFileSync(join(project, '.kubic', 'config.toml'), PROJECT_CONFIG_TOML);
     const runtime = loadRuntimeConfig({
-      bridge: createNodeFileBridge(REPO_ROOT),
+      bridge: createNodeFileBridge(project),
       home: '/home/u',
-      cwd: REPO_ROOT,
+      cwd: project,
       enterprisePath: '/nonexistent/config.toml',
       projectTrusted: true,
     });

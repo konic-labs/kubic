@@ -125,7 +125,7 @@ interface JournalUndoOptions extends JournalSelection {
 
 // `journal prune`: entries older than the keep window leave the store that
 // `log` reads. A dry run unless `yes`.
-export interface JournalPruneOptions extends JournalSelection {
+interface JournalPruneOptions extends JournalSelection {
   // The keep window in days (`--keep-days`); undefined falls back to
   // `journal.retentionDays`. 0 means retention is off.
   keepDays?: number | undefined;

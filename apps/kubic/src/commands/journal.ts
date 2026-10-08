@@ -37,7 +37,7 @@ function parsePositiveInt(value: string): number {
 }
 
 // `journal prune --keep-days <n>`: a non-negative integer of days (0 = off).
-export function parseKeepDays(value: string): number {
+function parseKeepDays(value: string): number {
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
     throw new InvalidArgumentError('needs a non-negative integer of days');
   }

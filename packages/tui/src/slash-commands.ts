@@ -29,7 +29,7 @@ export interface SlashCommandSpec {
   /** The usage line (`'/help [command]'`). */
   readonly usage: string;
   /**
-   * The presentation command this issues. Absent for a local action or a local
+   * The presentation command this emits. Absent for a local action or a local
    * read (`/help`, `/session`, `/diff`, `/undo`) — those never reach the lane.
    */
   readonly command?: PresentationCommand;

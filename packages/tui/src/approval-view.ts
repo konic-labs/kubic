@@ -52,7 +52,7 @@ export const APPROVAL_MIN_WIDTH = 80;
 
 // Structural overlay options mirroring Pi's OverlayOptions without
 // importing Pi past the seam: OverlayOptions is not a boundary export and
-// the boundary is frozen for this issue. Field-for-field compatible with
+// the boundary is kept frozen here. Field-for-field compatible with
 // Pi's OverlayOptions (width/maxHeight accept numbers or "N%" strings).
 export interface ApprovalOverlayOptions {
   readonly width?: number | `${number}%`;

@@ -24,8 +24,8 @@ describe('slash-command registry', () => {
       expect(spec.summary.length).toBeGreaterThan(0);
       expect(spec.usage.startsWith(`/${spec.name}`)).toBe(true);
     }
-    // The eight commands this issue ships, plus the three that shipped from
-    // their own issues and are listed so the palette does not hide them.
+    // The eight commands the palette ships, plus the three from other features
+    // that are listed so the palette does not hide them.
     for (const name of [
       'help',
       'session',

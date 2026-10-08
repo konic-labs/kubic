@@ -291,6 +291,53 @@ describe('runDoctorCommand', () => {
     expect(window?.detail).toContain('8192');
   });
 
+  it('warns, naming the models, when a model keeps under 4096 tokens of room after a compaction; exit stays 0', async () => {
+    const lines: string[] = [];
+    const deps: DoctorDeps = {
+      ...cleanDeps((line: string) => lines.push(line)),
+      probeContextRoom: () => ({
+        models: [
+          { provider: 'local', model: 'tiny', contextWindow: 8192 },
+          { provider: 'local', model: 'roomy', contextWindow: 16384 },
+        ],
+      }),
+    };
+    const code = (await runDoctorCommand({ json: true }, deps)).exitCode;
+    expect(code).toBe(0);
+    const report = JSON.parse(lines.join('\n')) as {
+      ok: boolean;
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    expect(report.ok).toBe(true);
+    const room = report.checks.find((check) => check.id === 'context-room');
+    expect(room).toMatchObject({ status: 'warn', reason: 'room-short' });
+    expect(room?.detail).toContain('local/tiny');
+    expect(room?.detail).not.toContain('local/roomy');
+    expect(room?.detail).toContain('every turn or two');
+  });
+
+  it('passes the room check when every model keeps the floor', async () => {
+    const lines: string[] = [];
+    const deps: DoctorDeps = {
+      ...cleanDeps((line: string) => lines.push(line)),
+      probeContextRoom: () => ({
+        models: [{ provider: 'local', model: 'roomy', contextWindow: 16384 }],
+      }),
+    };
+    await runDoctorCommand({ json: true }, deps);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{ id: string; status: string }>;
+    };
+    expect(
+      report.checks.find((check) => check.id === 'context-room')?.status,
+    ).toBe('pass');
+  });
+
   it('policy mismatch fails distinct naming the capability', async () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));

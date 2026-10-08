@@ -19,11 +19,13 @@ import {
   MAX_KEEP_RECENT_FRACTION,
   MAX_RESERVE_FRACTION,
   parseCompactCommand,
+  roomAfterCompaction,
   runCompactCommand,
   runManualCompaction,
   SOLO_BACKGROUND_TOKENS,
   SOLO_KEEP_RECENT_TOKENS,
   type SoloCompactionLane,
+  SYSTEM_ENTRY_ESTIMATE,
   soloCompactionSettings,
 } from './compaction.js';
 import {
@@ -582,6 +584,24 @@ describe('reserve clamp (a reserve never eats more than a quarter of the window)
     expect(effectiveReserveTokens(8192, 1000)).toBe(1000);
     // Unknown window (0): nothing to clamp against.
     expect(effectiveReserveTokens(0)).toBe(16384);
+  });
+});
+
+describe('roomAfterCompaction (the room a compaction leaves)', () => {
+  it('estimates the room with the default reserve, kept window and system entry', () => {
+    expect(SYSTEM_ENTRY_ESTIMATE).toBe(2822);
+    // 8192 - 2048 reserve - 2822 system entry - 1536 kept - 800 summary.
+    expect(roomAfterCompaction(8192)).toBe(986);
+    // 12288 - 3072 reserve - 2822 system entry - 2304 kept - 800 summary.
+    expect(roomAfterCompaction(12288)).toBe(3290);
+    // 16384 - 4096 reserve - 2822 system entry - 3072 kept - 800 summary.
+    expect(roomAfterCompaction(16384)).toBe(5594);
+  });
+
+  it('uses the configured reserve and kept window', () => {
+    expect(roomAfterCompaction(8192, 1000, 500)).toBe(
+      8192 - 1000 - SYSTEM_ENTRY_ESTIMATE - 500 - 800,
+    );
   });
 });
 

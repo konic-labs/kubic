@@ -12,6 +12,7 @@ import {
   runCompactCommand,
   runManualCompaction,
   SOLO_KEEP_RECENT_TOKENS,
+  SYSTEM_ENTRY_ESTIMATE,
 } from '../compaction.js';
 import {
   BACKGROUND_CONTEXT,
@@ -278,6 +279,16 @@ describe('the kept window beside the real system prompt and tool set', () => {
       );
       expect(keep, `window ${window}`).toBeLessThan(blocking - systemTokens);
     }
+  });
+
+  it('pins the system entry estimate to the default boot, within 5 percent', async () => {
+    const lane = await bootFauxLane({});
+    LANES.push(lane);
+    expect((await lane.run('hello')).status).toBe('completed');
+    const tokens = await systemEntryTokens(lane);
+    expect(
+      Math.abs(tokens - SYSTEM_ENTRY_ESTIMATE) / SYSTEM_ENTRY_ESTIMATE,
+    ).toBeLessThan(0.05);
   });
 
   it.each([8192, 16384, 32768, 131072, 200000])(

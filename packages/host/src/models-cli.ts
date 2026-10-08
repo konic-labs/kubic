@@ -32,7 +32,7 @@ import {
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
-import type { DepProbe, ProviderProbe } from './doctor.js';
+import type { ContextRoomProbe, DepProbe, ProviderProbe } from './doctor.js';
 import {
   FAUX_PROVIDER_ID,
   fauxProviderActive,
@@ -364,6 +364,25 @@ export function modelsSourcesProbe(assembled: AssembledModels): DepProbe {
     ok: assembled.sources.every((source) => source.status !== 'invalid'),
     detail: parts.join('; '),
   };
+}
+
+// Doctor's room check: every model of a provider a run could use, with the
+// window the registry gives it (a defaulted window included).
+export function contextRoomModelsOf(
+  assembled: AssembledModels,
+): ContextRoomProbe['models'] {
+  return assembled.models
+    .getProviders()
+    .filter(
+      (provider) => assembled.providers.get(provider.id)?.usable !== false,
+    )
+    .flatMap((provider) =>
+      assembled.models.getModels(provider.id).map((model) => ({
+        provider: provider.id,
+        model: model.id,
+        contextWindow: model.contextWindow,
+      })),
+    );
 }
 
 // Doctor's provider lines: only the providers a run could use

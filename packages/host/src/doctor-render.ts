@@ -42,6 +42,7 @@ export function doctorGroup(id: string): Group {
   if (
     id.startsWith('provider:') ||
     id.startsWith('models-window:') ||
+    id === 'context-room' ||
     id === 'limit:provider-availability'
   ) {
     return 'providers';

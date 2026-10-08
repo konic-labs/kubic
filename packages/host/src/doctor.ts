@@ -22,6 +22,11 @@ import {
 import { formatJson } from '../../core/src/cli/output.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
 import {
+  DEFAULT_RESERVE_TOKENS,
+  roomAfterCompaction,
+  SOLO_KEEP_RECENT_TOKENS,
+} from '../../worker/src/compaction.js';
+import {
   alwaysAskAutoApprove,
   CAPABILITIES,
   validatePolicy,
@@ -54,6 +59,7 @@ type DoctorReason =
   | 'detection-only'
   | 'sink-unreachable'
   | 'window-default'
+  | 'room-short'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -91,12 +97,27 @@ export interface ModelWindowProbe {
   readonly contextWindow: number;
 }
 
+// The room check's inputs: the configured compaction keys (absent: the lane
+// defaults) and the models a run could use. Read-only, nothing is dialled.
+export interface ContextRoomProbe {
+  readonly reserveTokens?: number;
+  readonly keepRecentTokens?: number;
+  readonly models: readonly {
+    readonly provider: string;
+    readonly model: string;
+    readonly contextWindow: number;
+  }[];
+}
+
 export interface DoctorDeps extends CliIo {
   // The terminal width the grouped summary packs into.
   readonly columns?: number;
   probeProviders: () => ProviderProbe[];
   // Models on the fallback context window: one warn each. Absent: no check.
   probeModelWindows?: () => readonly ModelWindowProbe[];
+  // The room a compaction leaves for each model: one warn when a model has
+  // less than the floor. Absent: no check.
+  probeContextRoom?: () => ContextRoomProbe;
   checkDeps: () => DepProbe[];
   loadPolicy: () => unknown;
   // The INSTALLED policy — the same posture object
@@ -434,6 +455,54 @@ function modelWindowChecks(probes: readonly ModelWindowProbe[]): DoctorCheck[] {
   }));
 }
 
+// The room a compaction leaves below this many estimated tokens means the next
+// exchange compacts again: compaction then runs every turn or two.
+const MIN_ROOM_AFTER_COMPACTION = 4096;
+
+// One warn-only check naming the models whose room after a compaction is below
+// the floor. A healthy set is one pass line; no models, no check.
+function roomChecks(probe: ContextRoomProbe): DoctorCheck[] {
+  if (probe.models.length === 0) return [];
+  const label = 'context room after a compaction';
+  const short = probe.models
+    .map((model) => ({
+      name: `${model.provider}/${model.model}`,
+      window: model.contextWindow,
+      room: roomAfterCompaction(
+        model.contextWindow,
+        probe.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+        probe.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+      ),
+    }))
+    .filter((model) => model.room < MIN_ROOM_AFTER_COMPACTION);
+  if (short.length === 0) {
+    return [
+      {
+        id: 'context-room',
+        label,
+        status: 'pass' as DoctorStatus,
+        reason: 'ok' as DoctorReason,
+        detail: `every model keeps at least ${MIN_ROOM_AFTER_COMPACTION} estimated tokens of room after a compaction`,
+      },
+    ];
+  }
+  const names = short
+    .map(
+      (model) =>
+        `${model.name} (window ${model.window}, about ${model.room} tokens of room)`,
+    )
+    .join('; ');
+  return [
+    {
+      id: 'context-room',
+      label,
+      status: 'warn' as DoctorStatus,
+      reason: 'room-short' as DoctorReason,
+      detail: `${names}: below ${MIN_ROOM_AFTER_COMPACTION} tokens, so compaction will run every turn or two; use a larger context window or fewer tools`,
+    },
+  ];
+}
+
 function depChecks(probes: DepProbe[]): DoctorCheck[] {
   return probes.map((probe) => ({
     id: `dep:${probe.id}`,
@@ -545,6 +614,9 @@ export function collectDoctorChecks(
   // the probes (a second call would double-bill expensive probes and let
   // a flaky probe answer differently twice).
   checks.push(...modelWindowChecks(deps.probeModelWindows?.() ?? []));
+  if (deps.probeContextRoom !== undefined) {
+    checks.push(...roomChecks(deps.probeContextRoom()));
+  }
   let providerProbes: ProviderProbe[] | undefined;
   let providerError: unknown;
   try {

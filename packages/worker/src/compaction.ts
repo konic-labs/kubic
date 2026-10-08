@@ -81,6 +81,35 @@ export function effectiveKeepRecentTokens(
   );
 }
 
+// The system entry of Kubic's default boot, in pi-ai's estimate: the solo
+// prompt section plus the 18 default tool declarations (about 2800 tokens).
+// The room estimate below and `kubic doctor` use it; a test pins it to the
+// real boot, so a prompt or tool-set change moves the figure with it.
+export const SYSTEM_ENTRY_ESTIMATE = 2822;
+
+// A planning figure for one summary, in estimated tokens. Pi's own budget for a
+// summary is 0.8 of the reserve; a typical summary is far shorter.
+export const SUMMARY_ESTIMATE = 800;
+
+/**
+ * The room a compaction leaves for the next exchange: the window, less its
+ * reserve, the system entry, the kept window and a typical summary. A room
+ * below about 4k tokens means compaction runs every turn or two.
+ */
+export function roomAfterCompaction(
+  contextWindow: number,
+  reserveTokens: number = DEFAULT_RESERVE_TOKENS,
+  keepRecentTokens: number = SOLO_KEEP_RECENT_TOKENS,
+): number {
+  return (
+    contextWindow -
+    effectiveReserveTokens(contextWindow, reserveTokens) -
+    SYSTEM_ENTRY_ESTIMATE -
+    effectiveKeepRecentTokens(contextWindow, keepRecentTokens, reserveTokens) -
+    SUMMARY_ESTIMATE
+  );
+}
+
 // The user's `/compact` keeps about this much recent context verbatim (or the
 // effective window, when that is smaller), cut at a message boundary. The user
 // asked for a compaction, so the kept window is deliberately small.

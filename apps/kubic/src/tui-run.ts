@@ -162,9 +162,9 @@ import {
   fauxProviderActive,
 } from '../../../packages/host/src/faux-provider.js';
 import {
-  shouldEmitSoloNotice,
-  soloTuiLine,
-  soloWarningLines,
+  shouldEmitNotice,
+  noIsolationTuiLine,
+  noIsolationNoticeLines,
 } from '../../../packages/host/src/limits/solo-warning.js';
 import {
   type AssembledModels,
@@ -3845,13 +3845,13 @@ export async function runTuiCommand(
   // Solo no-isolation notice: the trust statement is in the welcome block from
   // the first frame. Suppressed by the documented KUBIC_NO_NOTICE opt-out; the
   // text is solo-warning.ts's, never re-worded here.
-  const soloNotice = shouldEmitSoloNotice(process.env) ? soloTuiLine() : '';
+  const noIsolationNotice = shouldEmitNotice(process.env) ? noIsolationTuiLine() : '';
   // The faux testing provider is never silent: while it answers, the
   // welcome block says so next to (or instead of) the lane notice.
   const noticeFor = (): string =>
     boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
-      ? [FAUX_FOOTER, soloNotice].filter((part) => part !== '').join(' · ')
-      : soloNotice;
+      ? [FAUX_FOOTER, noIsolationNotice].filter((part) => part !== '').join(' · ')
+      : noIsolationNotice;
   // The terminal the screen opens on (block mode's copies).
   let screenTerminal: Terminal | undefined;
   const app = createTuiApp({
@@ -5254,7 +5254,7 @@ export async function runTuiCommand(
             // limits module's (never re-worded here), and an explicit ask is
             // answered even where the startup notice is suppressed.
             app.appendNotice(
-              soloWarningLines().map((line) => line.replace(/^warning: /, '')),
+              noIsolationNoticeLines().map((line) => line.replace(/^warning: /, '')),
             );
             app.setEditorFooter('safety: the limits are in the transcript');
             if (!stopped) screen?.render();

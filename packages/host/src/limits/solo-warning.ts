@@ -9,11 +9,11 @@
 // apps/kubic/src/headless-run.ts writes the block to stderr before the
 // first turn; apps/kubic/src/tui-run.ts shows the one-line statement in the
 // welcome block from the first render and the full block on `/safety`.
-export function soloTuiLine(): string {
+export function noIsolationTuiLine(): string {
   return 'solo: no isolation - in-process with your authority (files, network, credentials); controls: approvals + journal';
 }
 
-export function soloWarningLines(): string[] {
+export function noIsolationNoticeLines(): string[] {
   return [
     'warning: solo mode has no isolation: this run executes in-process with your user authority.',
     'warning: authority covers your files, network, and credentials - there is no containment and no prompt-injection prevention.',
@@ -21,11 +21,11 @@ export function soloWarningLines(): string[] {
   ];
 }
 
-export function emitSoloWarning(out: (line: string) => void): void {
-  for (const line of soloWarningLines()) out(line);
+export function emitNoIsolationNotice(out: (line: string) => void): void {
+  for (const line of noIsolationNoticeLines()) out(line);
 }
 
-export type SoloNoticeEnv = Record<string, string | undefined>;
+export type NoticeEnv = Record<string, string | undefined>;
 
 // The opt-out's environment variable.
 export const NOTICE_OPT_OUT_ENV = 'KUBIC_NO_NOTICE';
@@ -34,7 +34,7 @@ export const NOTICE_OPT_OUT_ENV = 'KUBIC_NO_NOTICE';
 // surfaces cannot disagree: KUBIC_NO_NOTICE=1 is the documented operator
 // opt-out. A `--session` resume still announces: the rule is per process
 // start, not per session. `=0` is not an opt-out.
-export function shouldEmitSoloNotice(env: SoloNoticeEnv): boolean {
+export function shouldEmitNotice(env: NoticeEnv): boolean {
   const optOut = env[NOTICE_OPT_OUT_ENV];
   return optOut !== '1' && optOut !== 'true';
 }

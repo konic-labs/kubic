@@ -125,8 +125,8 @@ import {
   providerOverrideFromEnv,
 } from '../../../packages/host/src/faux-provider.js';
 import {
-  emitSoloWarning,
-  shouldEmitSoloNotice,
+  emitNoIsolationNotice,
+  shouldEmitNotice,
 } from '../../../packages/host/src/limits/solo-warning.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
@@ -1227,9 +1227,9 @@ async function runHeadlessPromptImpl(
   // With a progress sink the notice is its compact one-liner,
   // printed by `progress.begin` once the lane has booted (still before the
   // first turn); the three-line block stays for every other run.
-  const soloNotice = shouldEmitSoloNotice(process.env);
-  if (soloNotice && options.progress === undefined) {
-    emitSoloWarning((line) => process.stderr.write(`${line}\n`));
+  const noIsolationNotice = shouldEmitNotice(process.env);
+  if (noIsolationNotice && options.progress === undefined) {
+    emitNoIsolationNotice((line) => process.stderr.write(`${line}\n`));
   }
   try {
     // Attached inside the try: the finally below always detaches them.
@@ -1860,7 +1860,7 @@ async function runHeadlessPromptImpl(
     report.model = await liveModelId(solo, context);
     options.progress?.begin({
       ...(report.model === undefined ? {} : { model: report.model }),
-      notice: soloNotice,
+      notice: noIsolationNotice,
     });
     // The turn guard: one event subscription per conversation counts
     // the run's turns for `--max-turns`. Durable retries are the harness's own

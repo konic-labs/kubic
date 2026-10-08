@@ -35,8 +35,8 @@ import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { FAUX_MODEL_REF } from '../../../packages/host/src/faux-provider.js';
 import {
   NOTICE_OPT_OUT_ENV,
-  soloTuiLine,
-  soloWarningLines,
+  noIsolationTuiLine,
+  noIsolationNoticeLines,
 } from '../../../packages/host/src/limits/solo-warning.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
@@ -131,7 +131,7 @@ describe('solo no-isolation notice on `kubic run`', () => {
     }
     expect(terminus).toBe('completed');
     // The exact module strings, byte for byte — the surfaces never re-word.
-    expect(warningLines(capture.writes)).toEqual(soloWarningLines());
+    expect(warningLines(capture.writes)).toEqual(noIsolationNoticeLines());
     // "before the first turn": every warning line landed while the model had
     // served zero requests, and the run did reach the model afterwards.
     for (const write of capture.writes) {
@@ -160,7 +160,7 @@ describe('solo no-isolation notice on `kubic run`', () => {
       firstCapture.restore();
     }
     expect(first.terminus).toBe('completed');
-    expect(warningLines(firstCapture.writes)).toEqual(soloWarningLines());
+    expect(warningLines(firstCapture.writes)).toEqual(noIsolationNoticeLines());
     const capture = captureStderr(() => 0);
     try {
       const resumed = await runHeadlessPrompt(
@@ -176,7 +176,7 @@ describe('solo no-isolation notice on `kubic run`', () => {
     } finally {
       capture.restore();
     }
-    expect(warningLines(capture.writes)).toEqual(soloWarningLines());
+    expect(warningLines(capture.writes)).toEqual(noIsolationNoticeLines());
   });
 });
 
@@ -209,7 +209,7 @@ describe('solo no-isolation notice suppression', () => {
   it('KUBIC_NO_NOTICE must be explicitly truthy to opt out', async () => {
     vi.stubEnv(NOTICE_OPT_OUT_ENV, '0');
     expect(warningLines(await runOnce('optout-zero'))).toEqual(
-      soloWarningLines(),
+      noIsolationNoticeLines(),
     );
   });
 
@@ -225,7 +225,7 @@ describe('solo no-isolation notice suppression', () => {
   it('does not treat an unrecognized opt-out value as consent', async () => {
     vi.stubEnv(NOTICE_OPT_OUT_ENV, 'yes');
     expect(warningLines(await runOnce('optout-word'))).toEqual(
-      soloWarningLines(),
+      noIsolationNoticeLines(),
     );
   });
 });
@@ -321,13 +321,13 @@ describe('solo no-isolation notice on `kubic tui`', () => {
     // No input was fed and no turn ran: whatever carries the line is the
     // startup render itself.
     const frame = fake.writes.join('');
-    expect(frame).toContain(soloTuiLine());
+    expect(frame).toContain(noIsolationTuiLine());
     fake.feed('\x03');
     fake.feed('\x03');
     expect((await pending).exitCode).toBe(0);
     // The restored main screen renders the same live root, so the operator
     // reads the same line after quitting as in the alt-screen.
-    expect(lines.join('\n')).toContain(soloTuiLine());
+    expect(lines.join('\n')).toContain(noIsolationTuiLine());
   });
 
   it('names the faux testing provider in the welcome block while it answers', async () => {
@@ -345,7 +345,7 @@ describe('solo no-isolation notice on `kubic tui`', () => {
     const frame = fake.writes.join('');
     // The first screen's provider row says it.
     expect(frame).toContain('faux/echo  testing provider, no model is called');
-    expect(frame).toContain(soloTuiLine());
+    expect(frame).toContain(noIsolationTuiLine());
     fake.feed('\x03');
     fake.feed('\x03');
     expect((await pending).exitCode).toBe(0);
@@ -374,7 +374,7 @@ describe('solo no-isolation notice on `kubic tui`', () => {
     const mark = fake.writes.length;
     for (const ch of '/safety') fake.feed(ch);
     fake.feed('\r');
-    const [first, second] = soloWarningLines().map((line) =>
+    const [first, second] = noIsolationNoticeLines().map((line) =>
       line.replace(/^warning: /, ''),
     );
     await waitFor(() =>

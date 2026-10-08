@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/knip@6.38.0/schema.json",
+  "ignoreExportsUsedInFile": true,
+  "workspaces": {
+    ".": {
+      "entry": [
+        "apps/kubic/src/main.ts",
+        "bin/kubic.js",
+        "scripts/*.mjs",
+        "**/*.test.ts",
+        "test/*.ts"
+      ],
+      "project": ["**/*.ts"]
+    }
+  }
+}

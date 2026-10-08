@@ -25,12 +25,9 @@ import {
   fauxToolCall,
 } from '../../worker/src/pi-boundary.js';
 import {
-  ApprovalService,
-  createApprovalAsk,
   enableFullAccess,
   FileApprovalStore,
   installSoloPolicy,
-  type TriggerContext,
   validatePolicy,
 } from './approvals.js';
 import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
@@ -48,29 +45,20 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-function triggerContext(): TriggerContext {
-  return {
-    workspace: '/fake',
-    network: 'none',
-    isDestructive: defaultIsDestructive,
-    isNetworkCommand,
-    isOutsideWorkspace: (path) => confinePath('/fake', path).rewritten,
-  };
-}
-
 describe('approvals gate the lane', () => {
   it('denies a destructive call headless, runs it under full-access', async () => {
     const dir = mkTmp('approvals-lane-');
     const store = new FileApprovalStore(dir);
-    const service = new ApprovalService({
-      policy: validatePolicy({ maxPendingMs: 20 }),
-      store,
-    });
-    let ask = createApprovalAsk(service, triggerContext(), store);
 
+    // Each boot installs the policy anew: the posture is read once, at install.
     const runOnce = async (): Promise<KubicLaneEvent[]> => {
+      const installed = installSoloPolicy({
+        workspace: dir,
+        sessionDir: dir,
+        maxPendingMs: 20,
+      });
       const lane = await bootFauxLane({
-        policy: { interceptors: { workspace: '/fake', approve: ask } },
+        policy: { interceptors: installed.interceptors },
         responses: [
           fauxToolUse([fauxToolCall('bash', { command: 'rm -rf /tmp/x' })]),
           fauxAssistantMessage('done'),
@@ -100,7 +88,6 @@ describe('approvals gate the lane', () => {
     enableFullAccess(store, 'test');
     // The posture is read once at boot, so full access applies
     // to the NEXT boot of the ask, never mid-session.
-    ask = createApprovalAsk(service, triggerContext(), store);
     const allowed = await runOnce();
     expect(allowed).toHaveLength(1);
     expect(JSON.stringify(allowed[0])).not.toContain('not approved');

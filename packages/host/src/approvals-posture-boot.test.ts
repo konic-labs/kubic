@@ -9,10 +9,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
 import {
-  ApprovalService,
-  createApprovalAsk,
   enableSessionFullAccess,
   FileApprovalStore,
   installSoloPolicy,
@@ -121,20 +118,15 @@ describe('posture is decided at boot', () => {
     expect(resumed.posture.fullAccess).toBe(false);
   });
 
-  it('createApprovalAsk also reads the posture once', async () => {
+  it('the installed ask also reads the posture once', async () => {
     const dir = tmpRoot('store-');
-    const store = new FileApprovalStore(dir);
-    const service = new ApprovalService({
-      policy: validatePolicy({ maxPendingMs: 10 }),
-      store,
+    const installed = installSoloPolicy({
+      workspace: dir,
+      sessionDir: dir,
+      maxPendingMs: 10,
     });
-    const ask = createApprovalAsk(
-      service,
-      triggerContextFor({ ...SOLO_DEFAULTS }, dir),
-      store,
-    );
     forgePosture(dir);
-    expect((await ask(DESTRUCTIVE)).approved).toBe(false);
+    expect((await installed.ask(DESTRUCTIVE)).approved).toBe(false);
   });
 });
 

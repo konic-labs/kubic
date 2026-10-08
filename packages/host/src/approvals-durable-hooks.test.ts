@@ -1,6 +1,6 @@
 // Approval interception through pi-durable ToolTask hooks. The approvals here
 // are driven end to end: a REAL Harness over Storage with the faux provider,
-// the production `createApprovalAsk` adapter, and `policyInterceptorHooks` as
+// the production installed policy (`installSoloPolicy`), and `policyInterceptorHooks` as
 // the lane's policy extension.
 //
 // The durable contract under test: `beforeTool` runs BEFORE the harness
@@ -11,7 +11,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { validateClasses } from '../../agents/src/policy.js';
 import { policyInterceptorHooks } from '../../worker/src/lane/interceptors.js';
 import {
   BACKGROUND_CONTEXT,
@@ -32,13 +31,10 @@ import {
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import {
   type ApprovalRequest,
-  ApprovalService,
   type ApprovalVerdict,
   approvalKey,
-  createApprovalAsk,
   FileApprovalStore,
-  triggerContextFor,
-  validatePolicy,
+  installSoloPolicy,
 } from './approvals.js';
 
 const COMMAND = 'rm -rf /tmp/x';
@@ -64,12 +60,12 @@ interface Booted {
   harness: Harness;
   storage: Storage;
   root: Conversation;
-  service: ApprovalService;
+  seatSignals: AbortSignal[];
   world: World;
 }
 
-// One process boot: a fresh approvals store/service (like a resumed command),
-// the real approval adapter, and the lane's policy hooks over the harness.
+// One process boot: a fresh installed policy (store, posture and seat), and
+// the lane's policy hooks over the harness.
 async function bootHarness(options: {
   workspace: string;
   storage?: Storage;
@@ -79,19 +75,17 @@ async function bootHarness(options: {
   scriptToolCall?: boolean;
 }): Promise<Booted> {
   const world: World = { calls: [] };
-  const store = new FileApprovalStore(options.workspace);
-  const service = new ApprovalService({
-    policy: validatePolicy({
-      maxPendingMs: options.maxPendingMs ?? 60_000,
-    }),
-    store,
-    awaitAnswer: options.answer,
+  const seatSignals: AbortSignal[] = [];
+  const installed = installSoloPolicy({
+    workspace: options.workspace,
+    sessionDir: options.workspace,
+    sessionId: 'sess-durable',
+    maxPendingMs: options.maxPendingMs ?? 60_000,
+    answer: (request, signal) => {
+      if (signal !== undefined) seatSignals.push(signal);
+      return options.answer(request);
+    },
   });
-  const ask = createApprovalAsk(
-    service,
-    triggerContextFor(validateClasses({}), options.workspace),
-    store,
-  );
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
@@ -109,10 +103,7 @@ async function bootHarness(options: {
   registry.install(
     defineExtension({
       name: 'kubic.policy',
-      hooks: policyInterceptorHooks({
-        workspace: options.workspace,
-        approve: ask,
-      }),
+      hooks: policyInterceptorHooks(installed.interceptors),
     }),
   );
   registry.install(
@@ -141,7 +132,7 @@ async function bootHarness(options: {
   const root = await harness.root(BACKGROUND_CONTEXT, {
     agent: { model: { provider: model.provider, modelId: model.id } },
   });
-  return { harness, storage, root, service, world };
+  return { harness, storage, root, seatSignals, world };
 }
 
 async function drive(root: Conversation): Promise<void> {
@@ -237,9 +228,11 @@ describe('approval hooks on a real harness', () => {
       const text = await toolResultText(booted.root);
       expect(text).toContain('not approved');
       expect(text).toContain(TIMEOUT_REASON_MARKER);
-      // The wait ended: the ask is not pending, so the service is not
-      // still awaiting any seat promise.
-      expect(booted.service.pendingRequests()).toEqual([]);
+      // The bound withdrew the question: the seat's signal is aborted, so the
+      // service no longer tracks the ask.
+      expect(booted.seatSignals.map((signal) => signal.aborted)).toEqual([
+        true,
+      ]);
     } finally {
       await booted.harness.close(BACKGROUND_CONTEXT);
     }

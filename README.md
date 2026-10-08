@@ -19,8 +19,11 @@ npm run build
 KUBIC_PROVIDER=faux ./bin/kubic.js run -p "hello"
 ```
 
-`KUBIC_PROVIDER=faux` selects the built-in test model. It answers without a network
-connection or an API key, so you can try the agent before you configure a real model.
+Run exactly as shown on a fresh clone with no configuration, the last command exits 0
+and prints `result: faux echo: hello`, then `session`, `journal`, `usage` and
+`trajectory` references. It also writes three honest-limit warnings and a
+`provider: faux/echo` line to stderr; those are expected. `KUBIC_PROVIDER=faux` selects
+the built-in test model, which answers without a network connection or an API key.
 To use a real model, export a provider key (for example `ANTHROPIC_API_KEY`) and run
 `./bin/kubic.js setup` to choose a default. On a terminal, a bare `./bin/kubic.js`
 runs setup on first launch and then opens the interactive TUI.
@@ -82,8 +85,10 @@ invocations: `npx kubic --version` (the `bin` entry, no install needed),
 `npm run kubic -- --version` (the same binary through npm), and
 `node dist/apps/kubic/src/main.js --version` (the build output directly).
 
-`./bin/kubic.js doctor` reports health. On a clean tree with no provider configured
-it exits 6 with a single `provider-down` failure; see
+On a fresh clone with no provider configured, `./bin/kubic.js doctor` exits 6 and
+prints `doctor: 16 pass, 6 warn, 1 fail, 0 skip`. Its one failure is
+`FAIL limit:provider-availability (provider-down)`; the six warnings are the five
+honest limits and the detection-only policy note. See
 [`docs/cli/doctor-and-debug.md`](docs/cli/doctor-and-debug.md). With a provider key
 in your environment, `./bin/kubic.js setup` saves a default model to
 `~/.kubic/config.toml`; see [`docs/cli/commands.md`](docs/cli/commands.md#kubic-setup).

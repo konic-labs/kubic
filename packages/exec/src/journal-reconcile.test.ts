@@ -49,33 +49,30 @@ describe('journal baseline + reconciliation', () => {
     expect(baseline['keep.txt']).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('honours ANCHORED gitignore dir rules (regression: /pi/ was not excluded)', () => {
-    // The matcher built `prefix: stripped` (leading `/` intact) but
-    // `isIgnored` compares it against a relPath that never carries one, so
-    // any anchored dir rule silently never matched: a repo whose .gitignore
-    // says `/pi/` walked that whole tree into the baseline (measured on the
-    // Kubic repo root: 2688 hashed files in ~12s, 2196 of them under pi/).
-    // Only unanchored rules (skip.log, build/) were covered before this test.
+  it('honours ANCHORED gitignore dir rules: /vendor/ does not exclude sub/vendor/', () => {
+    // A leading slash anchors a directory rule to the workspace root. A
+    // directory with the same name nested below the root is not excluded,
+    // so its files stay in the baseline.
     const root = tmpRoot('ws-anchored-');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');
-    mkdirSync(join(root, 'pi'));
-    writeFileSync(join(root, 'pi', 'upstream.ts'), 'vendored\n');
+    mkdirSync(join(root, 'vendor'));
+    writeFileSync(join(root, 'vendor', 'upstream.ts'), 'vendored\n');
     mkdirSync(join(root, 'dist'));
     writeFileSync(join(root, 'dist', 'out.js'), 'built\n');
     mkdirSync(join(root, 'sub'));
-    mkdirSync(join(root, 'sub', 'pi'));
-    writeFileSync(join(root, 'sub', 'pi', 'inner.ts'), 'nested\n');
-    writeFileSync(join(root, '.gitignore'), '/pi/\n/dist/\n');
+    mkdirSync(join(root, 'sub', 'vendor'));
+    writeFileSync(join(root, 'sub', 'vendor', 'inner.ts'), 'nested\n');
+    writeFileSync(join(root, '.gitignore'), '/vendor/\n/dist/\n');
 
     const baseline = captureBaseline(root);
     // Anchored rules are root-relative: both root dirs are excluded...
     expect(Object.keys(baseline).sort()).toEqual([
       '.gitignore',
       'keep.txt',
-      'sub/pi/inner.ts',
+      'sub/vendor/inner.ts',
     ]);
-    // ...and crucially the anchored `/pi/` must NOT over-match the nested
-    // same-named dir: `sub/pi/inner.ts` survives, which is the difference
+    // ...and the anchored `/vendor/` must NOT over-match the nested
+    // same-named dir: `sub/vendor/inner.ts` survives, which is the difference
     // between an anchored rule and an unanchored one. (Its presence above is
     // itself the proof, so this second call pins the complement.)
     expect(

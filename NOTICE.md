@@ -41,7 +41,3 @@ Fenced code in `kubic tui` answers is highlighted with:
 - `highlight.js` (BSD-3-Clause, a dependency of `lowlight`) — the grammars
 
 Both ship their licence texts under `node_modules/`.
-
-The `pi/` read-only reference clone is upstream code, gitignored, and not part
-of Kubic. It must be absent from any published tree (see
-`docs/publish-checklist.md`).

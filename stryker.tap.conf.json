@@ -24,13 +24,7 @@
   "disableBail": false,
   "ignoreStatic": false,
   "mutate": ["scripts/dep-lint.mjs", "scripts/check-pinned-deps.mjs"],
-  "ignorePatterns": [
-    "pi/**",
-    "dist/**",
-    "reports/**",
-    ".beads/**",
-    ".claude/**"
-  ],
+  "ignorePatterns": ["dist/**", "reports/**", ".beads/**", ".claude/**"],
   "plugins": ["@stryker-mutator/tap-runner"],
   "dryRunTimeoutMinutes": 5
 }

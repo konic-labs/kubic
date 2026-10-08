@@ -1,14 +1,4 @@
 # ---------------------------------------------------------------------------
-# Reference clone of the Pi agent harness.
-#
-# This is upstream code, not part of Kubic. It is checked out read-only as a
-# reference for the Pi interfaces Kubic builds on. It is not built, linted,
-# tested or modified by this repository, and it will be removed once Kubic no
-# longer needs it as a reference.
-# ---------------------------------------------------------------------------
-/pi/
-
-# ---------------------------------------------------------------------------
 # Node
 # ---------------------------------------------------------------------------
 node_modules/

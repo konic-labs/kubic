@@ -110,7 +110,7 @@ describe('explicit --skill paths anchor at the invoking cwd', () => {
     );
     expect(result.terminus).toBe('completed');
     // The sessions-rooted bridge must not shadow the cwd: the skill loads
-    // from <cwd>/rel/SKILL.md (pre-fix this resolved to a miss).
+    // from <cwd>/rel/SKILL.md.
     expect(debug.join('\n')).toContain('relcwd@cli');
   });
 

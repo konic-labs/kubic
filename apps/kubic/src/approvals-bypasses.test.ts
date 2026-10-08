@@ -428,7 +428,7 @@ describe('autoApprove never answers an always-ask capability', () => {
     const policy = installSoloPolicy({
       workspace,
       autoApprove: [KUBIC_STATE_WRITE],
-      // A long bound: the pre-fix path waited it out (the 60 s stall).
+      // A long bound: the call must not wait it out.
       maxPendingMs: 30_000,
     });
     const started = Date.now();

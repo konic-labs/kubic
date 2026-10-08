@@ -187,7 +187,7 @@ describe('/model on the kubic tui path', () => {
   it('does not resurrect an accepted /model steer', async () => {
     // Alt+Enter submits like Enter when idle. A `/model` steer the loop
     // ACCEPTED ran the command, so the draft must not come back as if it had
-    // been refused (the pre-fix branch restored on anything but 'queued').
+    // been refused: a draft is restored only when the steer was 'queued'.
     const workspace = tmpRoot('tui-334-steer-ws-');
     const sessionsRoot = tmpRoot('tui-334-steer-sessions-');
     const lines: string[] = [];

@@ -143,10 +143,9 @@ describe('git effects', () => {
       expect(out.result.sha).toBe('abc1234567890');
       expect(out.result.files).toEqual(['a.txt', 'b.txt']);
     }
-    // Single message element, not split: the joined legacy
-    // key conflated `['-m', 'work in progress']` with five elements; the
-    // argv-array key does not, and the recorded call proves which the
-    // op issued.
+    // Single message element, not split: a joined key would conflate
+    // `['-m', 'work in progress']` with five elements; the argv-array key
+    // does not, and the recorded call proves which the op issued.
     expect(argvOf(env)[0]).toBe('git commit -m work in progress');
     expect(env.calls[0]?.args).toEqual(['commit', '-m', 'work in progress']);
   });

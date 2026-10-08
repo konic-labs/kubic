@@ -298,7 +298,7 @@ function removeTmpBestEffort(fs: FileSystem, tmp: string): void {
 // Crash residue from an earlier run — a tmp whose write or rename never
 // finished — is never overwritten (the name is pid- and call-unique), so it
 // would sit in the workspace forever and the next sweep would journal it as
-// an unattributed create: the failure mode this issue removes for
+// an unattributed create: the failure mode already removed for
 // exceptions, reached through the crash path instead. Collect the siblings
 // this writer can name before writing, exactly as the journal's restore path
 // collects its own `.kubic-restore-*` residue. Best-effort and confined to

@@ -3,5 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./export": {
+      "source": "./src/export.ts",
+      "default": "./src/export.ts"
+    },
+    "./schema": {
+      "source": "./src/schema.ts",
+      "default": "./src/schema.ts"
+    }
+  }
 }

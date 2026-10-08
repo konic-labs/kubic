@@ -7,7 +7,7 @@ full workflow and every CI gate are in [docs/contributing.md](docs/contributing.
 
 ## Set up
 
-Node 22.19 or newer is the only requirement.
+Node 22.19 or newer and git are required: the test suite runs real git commands.
 
 ```sh
 npm ci

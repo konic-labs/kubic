@@ -5,7 +5,7 @@ the Pi agent harness, and runs one agent directly in your directory. Every chang
 the agent makes is recorded in a journal that does not depend on version control,
 so `kubic diff` and `kubic undo` work in a monorepo and in `~/Downloads` alike.
 
-**Status: implemented, not yet published.** A fresh clone plus Node 22.19 builds a
+**Status: implemented, not yet published.** A fresh clone plus Node >= 22.19 builds a
 working `kubic` binary, and every command listed below is implemented. Kubic is not
 on npm yet.
 
@@ -39,8 +39,10 @@ runs setup on first launch and then opens the interactive TUI.
   with `kubic sessions`, `kubic run --session` and `kubic tui --session`.
 - **Models.** `kubic models` reads the built-in model catalogue, and `kubic setup`
   picks a default. Provider keys come from your environment.
-- **Analysis.** `kubic eval`, `kubic benchmark`, `kubic replay`, `kubic export`,
-  `kubic cost`, `kubic policy` and `kubic audit` work on runs and their trajectories.
+- **Analysis.** `kubic eval`, `kubic benchmark`, `kubic replay` and `kubic export`
+  work on suites, runs and trajectories. `kubic cost` reads usage rows from the
+  session store, `kubic policy` answers tool-policy queries, and `kubic audit`
+  queries the audit ledger.
 
 The full command reference is in [`docs/cli/`](docs/cli/).
 
@@ -101,8 +103,8 @@ byte-equivalent.
 Session state lives in `~/.kubic/sessions/`, one state directory per session
 (`journal/`, `spans.jsonl`, the approvals posture and the session lock), plus the
 transcript files. Nothing prunes these for you: `kubic sessions prune` lists
-candidates by default and deletes only with `--yes`. A session that is locked by a
-live process is never touched.
+candidates by default and deletes only with `--yes` or a yes at its terminal
+prompt. A session that is locked by a live process is never touched.
 
 ## Contributing
 

@@ -12,11 +12,6 @@ import type {
   LaneEventSink,
 } from '../../worker/src/lane/events.js';
 import {
-  confinePath,
-  defaultIsDestructive,
-  isNetworkCommand,
-} from '../../worker/src/lane/interceptors.js';
-import {
   bootFauxLane,
   fauxToolUse,
 } from '../../worker/src/lane/test-harness.js';
@@ -28,7 +23,6 @@ import {
   enableFullAccess,
   FileApprovalStore,
   installSoloPolicy,
-  validatePolicy,
 } from './approvals.js';
 import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 

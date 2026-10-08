@@ -1,7 +1,4 @@
 // MCP refusal + ACP edge-only stance.
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   assertNoMcpConfig,
@@ -62,31 +59,6 @@ describe('MCP arrival requirements', () => {
     }
   });
 });
-
-function fileExists(path: string): boolean {
-  try {
-    statSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function tsFiles(dir: string, out: string[] = []): string[] {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return out;
-  }
-  for (const entry of entries) {
-    if (entry === 'node_modules' || entry === 'dist') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) tsFiles(full, out);
-    else if (/\.m?[jt]sx?$/.test(entry)) out.push(full);
-  }
-  return out;
-}
 
 // Refusal-path hardening: a surviving "refusal removed" mutant
 // is a P0 test bug, so every refusal branch pins exact errors.

@@ -11,7 +11,6 @@
 // module never touches node:fs directly. Never imports worker impl.
 
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { RUNTIME_EXCLUDE_ENTRIES } from '../../../exec/src/runtime-exclude.js';
 import { assertNoMcpConfig, McpUnsupportedError } from './stances.js';
 

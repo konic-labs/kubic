@@ -42,6 +42,6 @@ export function prefixHitRate(
 export function transparentCachingNote(): string {
   return (
     'caching is transparent: prefix hits/misses and exact-cache hits are ' +
-    'reported per agent; no silent cache rewrites, no hidden routing'
+    'reported per session; no silent cache rewrites, no hidden routing'
   );
 }

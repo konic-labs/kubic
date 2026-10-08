@@ -1084,6 +1084,15 @@ describe('kubic cost project scope and grouping', () => {
     expect(total).toBeCloseTo(
       projectRows.reduce((acc, row) => acc + row.costUsd, 0),
     );
+    // The per-request rows carry each response's model spend; for these runs
+    // they must add up to the session total as well.
+    const requestRows = await loadSessionCostRows(root, undefined, {
+      workspace: '/w',
+      by: 'request',
+    });
+    expect(total).toBeCloseTo(
+      requestRows.reduce((acc, row) => acc + row.costUsd, 0),
+    );
   });
 
   it('aggregates to one row per project with --by project', async () => {

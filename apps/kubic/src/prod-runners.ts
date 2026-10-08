@@ -121,6 +121,7 @@ import {
   doctorPolicyLoader,
   installedPolicyClasses,
   installedPolicyDeps,
+  journalRetentionDays,
   kubicConfigLoader,
   projectTrustFor,
   runtimeApprovalDeps,
@@ -277,8 +278,8 @@ export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
     // cwd boolean applied to ancestors.
     trustProject: projectTrustFor(cliConfig),
     // The shared lane projections — the configured agent id
-    // (journal attribution, `kubic diff --agent`) and the config-sourced
-    // role layers `--role` merges under the document.
+    // (journal attribution) and the config-sourced role layers `--role`
+    // merges under the document.
     ...runtimeLaneDeps(cliConfig),
     // The config `skills` projection — resolved at
     // load, loaded with source 'settings'. The lane falls back to the
@@ -433,12 +434,22 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // read time under it. Unset (or a refused config) leaves the read path
       // without a window: it then writes nothing.
       const retentionDays = sessionRetentionDays(cliConfig);
+      // `journal prune` takes its default keep window from the resolved
+      // `journal.retentionDays`; unset, it demands --keep-days, and a config
+      // that did not load is named in that refusal.
+      const journalWindow = journalRetentionDays(cliConfig);
       return runJournalCommand(request, {
         out,
         err: debug,
         errTheme: request.json === true ? PLAIN : stderrTheme(),
         ...reportStyle(request.json === true),
         ...(retentionDays === undefined ? {} : { retentionDays }),
+        ...(journalWindow === undefined
+          ? {}
+          : { journalRetentionDays: journalWindow }),
+        ...(cliConfig.error === undefined
+          ? {}
+          : { journalConfigError: cliConfig.error }),
       });
     },
     models: async (options, cliConfig) => {

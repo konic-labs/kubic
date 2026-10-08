@@ -85,12 +85,8 @@ const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
   ['config', ['--json'], 'config'],
   ['trust', [], 'trust'],
   ['audit', [], 'audit'],
-  [
-    'eval',
-    ['--suite', 'swe-bench-mini', '--task', 'p', '--generation', '1'],
-    'eval',
-  ],
-  ['benchmark', ['--generation', '1'], 'benchmark'],
+  ['eval', ['--suite', 'swe-bench-mini', '--task', 'p'], 'eval'],
+  ['benchmark', [], 'benchmark'],
   ['replay', ['t.json', '--tier', 'recorded'], 'replay'],
   ['export', ['--trajectory', 'trajectory.json'], 'export'],
 ];
@@ -122,9 +118,8 @@ const PARSED: Readonly<Record<string, unknown>> = {
   eval: {
     suite: 'swe-bench-mini',
     task: 'p',
-    generation: '1',
   },
-  benchmark: { generation: '1', model: 'faux/echo' },
+  benchmark: { model: 'faux/echo' },
   replay: { trajectory: 't.json', tier: 'recorded' },
   export: { trajectory: 'trajectory.json' },
 };
@@ -877,7 +872,6 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
           task: 'do it',
           suite: 'swe-bench-mini',
           worktree: workspace,
-          generation: '1',
           size: 'smoke',
         },
         loadedConfig(),

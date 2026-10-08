@@ -84,11 +84,12 @@ describe('journal CLI', () => {
     const { journalDir, root, out } = setup();
     const deps = { journalDir, root, out: out.write };
     expect(await runJournalCommand({ command: 'diff' }, deps)).toBe(0);
-    expect(out.lines.join('\n')).toContain('agent=root toolCall=call-1');
+    expect(out.lines.join('\n')).toContain('toolCall=call-1');
+    expect(out.lines.join('\n')).not.toContain('agent=');
     const none: string[] = [];
     expect(
       await runJournalCommand(
-        { command: 'diff', agent: 'nobody' },
+        { command: 'diff', path: 'no-such-file.txt' },
         {
           ...deps,
           out: (l: string) => none.push(l),
@@ -729,12 +730,12 @@ describe('journal CLI undo record + redo', () => {
         },
       ),
     ).toBe(0);
-    // The undo is the newest entry for the path, so its attribution is the
-    // one the diff reports.
-    expect(lines.join('\n')).toContain('agent=kubic-undo toolCall=none');
+    // The undo is the newest entry for the path, so its tool-call attribution
+    // is the one the diff reports.
+    expect(lines.join('\n')).toContain('toolCall=none');
   });
 
-  it('log prints the undo record with the kubic-undo attribution and no reconciled marker', async () => {
+  it('log prints the undo record with no reconciled marker', async () => {
     const { journalDir, root } = setup();
     expect(
       await runJournalCommand(
@@ -753,10 +754,11 @@ describe('journal CLI undo record + redo', () => {
         },
       ),
     ).toBe(0);
-    const undoLine = lines.find((l) => l.includes('kubic-undo'));
+    const undoLine = lines.find((l) => /\bnone\s+write\s+a\.txt\s/.test(l));
     expect(undoLine).toBeDefined();
-    // Table columns: TIME AGENT TOOL CALL OP PATH BYTES NOTE.
-    expect(undoLine ?? '').toMatch(/kubic-undo\s+none\s+write\s+a\.txt\s/);
+    // Table columns: TIME TOOL CALL OP PATH BYTES NOTE (no agent column).
+    expect(lines.join('\n')).not.toContain('AGENT');
+    expect(undoLine ?? '').toMatch(/none\s+write\s+a\.txt\s/);
     // The undo is attributed — not an unattributed reconciliation find.
     expect(undoLine ?? '').not.toContain('reconciled');
   });
@@ -1236,8 +1238,8 @@ describe('journal CLI presentation (themes, tables)', () => {
       { journalDir, root, out: (l) => plain.push(l) },
     );
     expect(plain).toEqual([
-      'TIME                      AGENT  TOOL CALL  OP     PATH   BYTES  NOTE',
-      '2023-11-14T22:13:20.000Z  root   call-1     write  a.txt    +0B',
+      'TIME                      TOOL CALL  OP     PATH   BYTES  NOTE',
+      '2023-11-14T22:13:20.000Z  call-1     write  a.txt    +0B',
       'unattributed: 0 of 1 entr(ies) reconciled at run end',
     ]);
     const fancy: string[] = [];

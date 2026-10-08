@@ -1,5 +1,6 @@
-// Change-journal commands (VCS-independent): diff, undo, log, status, plus
-// the git helper. Registered on the root program by ../dispatch.ts.
+// Change-journal commands (VCS-independent): diff, undo, log, status, the
+// journal prune command, plus the git helper. Registered on the root program
+// by ../dispatch.ts.
 //
 // commander owns the whole argv surface here — options, operands, generated
 // `--help`, and parse errors (exit 2, docs/cli/exit-codes.md). Each action
@@ -35,13 +36,20 @@ export function parsePositiveInt(value: string): number {
   return Number(value);
 }
 
+// `journal prune --keep-days <n>`: a non-negative integer of days (0 = off).
+export function parseKeepDays(value: string): number {
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    throw new InvalidArgumentError('needs a non-negative integer of days');
+  }
+  return Number(value);
+}
+
 // The store selector every journal command shares (fresh per command:
 // commander options belong to one command).
-function sessionOption() {
-  return new Option(
-    '--session <id>',
-    'read the run session journal <id> (or the journal:<id> ref `kubic run` prints)',
-  );
+function sessionOption(
+  help = 'read the run session journal <id> (or the journal:<id> ref `kubic run` prints)',
+) {
+  return new Option('--session <id>', help);
 }
 
 function jsonOption() {
@@ -82,6 +90,19 @@ Examples:
 
 const GIT_SUBCOMMANDS = 'status | log | stage | commit';
 
+const JOURNAL_HELP = `
+Prune removes entries older than the keep window from the journal \`kubic log\`
+reads: --session <id>, else this workspace's journal. A dry run unless --yes.
+An unknown session and a session attached to a live run are refused. --yes
+also sweeps blob files that no remaining entry references; the dry run lists
+entries only, and the reclaimed figure counts those bytes.
+
+Examples:
+  $ kubic journal prune --keep-days 30
+  $ kubic journal prune --session 3f2a --keep-days 30 --yes`;
+
+const JOURNAL_SUBCOMMANDS = 'prune';
+
 export const registerJournalCommands: CommandRegistrar = (program, ctx) => {
   const journal = async (request: JournalRequest): Promise<void> => {
     ctx.setExitCode(await ctx.runners.journal(request, ctx.config));
@@ -101,7 +122,6 @@ export const registerJournalCommands: CommandRegistrar = (program, ctx) => {
     )
     .option('--path <path>', 'only changes to this path')
     .option('--stat', 'per-file summary instead of hunks')
-    .option('--agent <id>', 'only changes made by this agent')
     .option(
       '--max-content-bytes <n>',
       '--json: clip each side of a change at <n> bytes (default 65536, 0 = unlimited)',
@@ -162,8 +182,58 @@ export const registerJournalCommands: CommandRegistrar = (program, ctx) => {
     .addOption(jsonOption())
     .action(async (opts) => journal({ command: 'status', ...opts }));
 
+  registerJournalGroup(program, ctx);
   registerGit(program, ctx);
 };
+
+function registerJournalGroup(
+  program: KubicProgram,
+  ctx: CommandContext,
+): void {
+  const journal = async (request: JournalRequest): Promise<void> => {
+    ctx.setExitCode(await ctx.runners.journal(request, ctx.config));
+  };
+
+  const group = program
+    .command('journal')
+    .description('prune the change journal (explicit; a dry run unless --yes)')
+    .addHelpText('after', JOURNAL_HELP)
+    // The group declares no operand, so `prune` is listed once, under
+    // Commands. A bare `kubic journal` or an unknown subcommand is still a
+    // usage error (exit 2), never commander's help-on-error or unknown-command
+    // exit 1 — the same shape `kubic sessions` uses.
+    .allowExcessArguments()
+    .action((_options, command) => {
+      const name = command.args[0];
+      throw new CliUsageError(
+        name === undefined
+          ? `journal needs a subcommand (${JOURNAL_SUBCOMMANDS})`
+          : `unknown journal subcommand '${name}' (${JOURNAL_SUBCOMMANDS})`,
+      );
+    });
+
+  group
+    .command('prune')
+    .description(
+      'delete journal entries older than the keep window (a dry run unless --yes)',
+    )
+    // Commander copies the group's excess-operand setting to its subcommands;
+    // prune takes no operand, so `prune <stray>` stays a usage error.
+    .allowExcessArguments(false)
+    .addOption(
+      sessionOption(
+        'prune the run session journal <id> (or the journal:<id> ref `kubic run` prints)',
+      ),
+    )
+    .option(
+      '--keep-days <n>',
+      'keep entries younger than n days (default: [journal] retentionDays, or KUBIC_JOURNAL_RETENTION_DAYS)',
+      parseKeepDays,
+    )
+    .option('--yes', 'delete the entries (without it, only list them)')
+    .addOption(jsonOption())
+    .action(async (opts) => journal({ command: 'prune', ...opts }));
+}
 
 function registerGit(program: KubicProgram, ctx: CommandContext): void {
   const git = async (request: GitRequest): Promise<void> => {

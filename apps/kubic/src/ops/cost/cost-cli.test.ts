@@ -111,7 +111,7 @@ function capture() {
 }
 
 describe('kubic cost text view', () => {
-  it('prints one row per agent plus the task total', async () => {
+  it('prints one row per session plus the task total', async () => {
     const cap = capture();
     const code = await runCostCommand(
       {},
@@ -127,12 +127,12 @@ describe('kubic cost text view', () => {
     // separate in/out/cache counters at sub-cent precision.
     expect(cap.lines[0]).toBe(
       [
-        'AGENT     ROLE  MODEL         IN  OUT  CACHE-R  CACHE-W     COST',
+        'SESSION   ROLE  MODEL         IN  OUT  CACHE-R  CACHE-W     COST',
         'worker-1  -     cheap/small  100   50        0        0  $0.2000',
         'worker-2  -     pro/large    200   60        0        0  $0.3000',
       ].join('\n'),
     );
-    expect(cap.lines[1]).toBe('task total $0.5000 (2 agents)');
+    expect(cap.lines[1]).toBe('task total $0.5000 (2 sessions)');
     expect(cap.errs).toEqual([]);
   });
 
@@ -308,7 +308,7 @@ describe('kubic cost cache aggregation', () => {
     // 1 of 2 sessions had a cache read > 0: a real measurement over the
     // rows the loader returned, never an invented number. The unit follows
     // the grouping level (per-agent by default).
-    expect(text).toMatch(/cache: 1\/2 agents with prefix hits/);
+    expect(text).toMatch(/cache: 1\/2 sessions with prefix hits/);
     expect(text).toMatch(/50%/);
   });
 
@@ -1045,12 +1045,12 @@ describe('kubic cost project scope and grouping', () => {
     });
     expect(rows.map((row) => row.session).sort()).toEqual(['s-one', 's-two']);
     const total = rows.reduce((acc, row) => acc + row.costUsd, 0);
-    const agentRows = await loadSessionCostRows(root, undefined, {
+    const requestRows = await loadSessionCostRows(root, undefined, {
       workspace: '/w',
-      by: 'agent',
+      by: 'request',
     });
     expect(total).toBeCloseTo(
-      agentRows.reduce((acc, row) => acc + row.costUsd, 0),
+      requestRows.reduce((acc, row) => acc + row.costUsd, 0),
     );
   });
 
@@ -1066,12 +1066,12 @@ describe('kubic cost project scope and grouping', () => {
     expect(rows[0]?.project).toBe('/w');
     expect(rows[0]?.model).toBe('-');
     expect(rows[0]?.costUsd).toBeGreaterThanOrEqual(0);
-    const agentRows = await loadSessionCostRows(root, undefined, {
+    const sessionRows = await loadSessionCostRows(root, undefined, {
       workspace: '/w',
-      by: 'agent',
+      by: 'session',
     });
     expect(rows[0]?.costUsd).toBeCloseTo(
-      agentRows.reduce((acc, row) => acc + row.costUsd, 0),
+      sessionRows.reduce((acc, row) => acc + row.costUsd, 0),
     );
   });
 
@@ -1144,16 +1144,16 @@ describe('kubic cost project scope and grouping', () => {
     );
     expect(code).toBe(0);
     expect(out[0]).toMatch(
-      /^AGENT +ROLE +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
+      /^SESSION +ROLE +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
     );
     const body = out.join('\n');
-    expect(body).toMatch(/aaa/);
+    expect(body).toMatch(/w-1/);
     expect(body).toMatch(/implementer/);
     expect(body).toMatch(/12400/);
     expect(body).toMatch(/1900/);
     expect(body).toMatch(/4000/);
     expect(body).toMatch(/\$0\.0023/);
-    expect(body).toMatch(/task total \$0\.0023 \(1 agents\)/);
+    expect(body).toMatch(/task total \$0\.0023 \(1 sessions\)/);
     expect(err).toEqual([]);
   });
 });

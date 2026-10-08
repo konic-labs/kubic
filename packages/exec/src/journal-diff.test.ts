@@ -100,7 +100,8 @@ describe('journal diff core', () => {
     expect(text).toContain('+++ b/a.txt');
     expect(text).toContain('-two');
     expect(text).toContain('+TWO');
-    expect(text).toContain('agent=root toolCall=call-1');
+    expect(text).toContain('toolCall=call-1');
+    expect(text).not.toContain('agent=');
     expect(text).toContain('unattributed');
     // The JSON form is lossless: every change survives a serialize/parse
     // round trip unchanged (no Map/Date/undefined-only fields to drop).

@@ -510,18 +510,11 @@ function costTable(
   by: CostGroupBy,
 ): string {
   const groupHeader =
-    by === 'request'
-      ? 'REQUEST'
-      : by === 'session'
-        ? 'SESSION'
-        : by === 'project'
-          ? 'PROJECT'
-          : 'AGENT';
+    by === 'request' ? 'REQUEST' : by === 'session' ? 'SESSION' : 'PROJECT';
   const groupOf = (entry: AgentCostInput): string => {
     if (by === 'request') return `#${entry.request ?? '?'}`;
     if (by === 'session') return entry.session ?? entry.agentId;
-    if (by === 'project') return entry.project ?? '(unknown)';
-    return entry.agent ?? entry.agentId;
+    return entry.project ?? '(unknown)';
   };
   const cell = (value: string): string =>
     stripUnsafeCharacters(value).replace(/\s+/g, ' ');
@@ -572,7 +565,7 @@ export async function runCostCommand(
     );
     return EXIT_USAGE;
   }
-  // `--by` takes exactly the four levels; anything else is
+  // `--by` takes exactly the three levels; anything else is
   // a usage error, and the rejected value is argv-controlled, so it is
   // redacted like the session id above.
   const by =
@@ -583,7 +576,7 @@ export async function runCostCommand(
         : undefined;
   if (by === undefined) {
     log.error(
-      `invalid --by ${redactSecretShapes(JSON.stringify(options.by))} (use request|agent|session|project)`,
+      `invalid --by ${redactSecretShapes(JSON.stringify(options.by))} (use request|session|project)`,
     );
     return EXIT_USAGE;
   }
@@ -621,13 +614,7 @@ export async function runCostCommand(
   }
   deps.out(costTable(summary, deps, by));
   const unit =
-    by === 'request'
-      ? 'requests'
-      : by === 'session'
-        ? 'sessions'
-        : by === 'project'
-          ? 'projects'
-          : 'agents';
+    by === 'request' ? 'requests' : by === 'session' ? 'sessions' : 'projects';
   deps.out(
     theme.bold(
       `task total ${formatCostUsd(summary.taskTotal)} (${summary.perAgent.length} ${unit})`,

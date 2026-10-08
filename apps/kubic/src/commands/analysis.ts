@@ -56,10 +56,10 @@ const SESSION_TRAJECTORY_HELP =
 const JSON_HELP = 'print one JSON document on stdout';
 const ENVELOPE_HELP =
   'print one JSON envelope on stdout (runtime failures included; a usage error stays on stderr)';
-// eval and benchmark share the provenance flags.
+// eval and benchmark share the run flags.
 const MODEL_HELP = 'provider/id of the run';
-const WORKTREE_HELP = 'where the run executed (provenance)';
-const GENERATION_HELP = 'worker generation that ran (provenance, integer)';
+const WORKTREE_HELP =
+  'the worktree the run executes in (--workspace worktree needs it clean); recorded as provenance';
 const SIZE_HELP =
   'record size: smoke|standard|extended (the determinism tier is derived)';
 const WORKSPACE_HELP =
@@ -94,7 +94,7 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
   command(
     program,
     'cost',
-    'report per-agent token and dollar cost over stored sessions',
+    'report token and dollar cost over stored sessions',
     ['kubic cost', 'kubic cost --session 3f2a --json'],
   )
     .option('--session <id>', 'read only this session ([A-Za-z0-9_-])')
@@ -104,7 +104,7 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     )
     .option(
       '--by <level>',
-      'group rows: request|agent|session|project (default agent)',
+      'group rows: request|session|project (default session)',
     )
     .option('--json', JSON_HELP)
     .action(async (options) => done(await runners.cost(options, config)));
@@ -150,10 +150,6 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
       `${MODEL_HELP} (--task default ${EVAL_DEFAULT_MODEL})${FROM_EXPORT}`,
     )
     .option('--worktree <path>', `${WORKTREE_HELP}${FROM_EXPORT}`)
-    .option(
-      '--generation <n>',
-      `${GENERATION_HELP}; required with --task${FROM_EXPORT}`,
-    )
     .option('--size <size>', SIZE_HELP)
     .option('--workspace <kind>', WORKSPACE_HELP)
     .option('--thinking <level>', `${THINKING_HELP}${FROM_EXPORT}`)
@@ -164,12 +160,11 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     program,
     'benchmark',
     'run the reproducible suite matrix (stub suites are reported, never passed)',
-    ['kubic benchmark --worktree wt --generation 1 --size smoke --json'],
+    ['kubic benchmark --worktree wt --size smoke --json'],
   )
     .option('--suite <id>', 'one suite instead of the whole matrix')
     .option('--model <id>', MODEL_HELP, EVAL_DEFAULT_MODEL)
     .option('--worktree <path>', WORKTREE_HELP)
-    .requiredOption('--generation <n>', GENERATION_HELP)
     .option('--size <size>', SIZE_HELP)
     .option('--workspace <kind>', WORKSPACE_HELP)
     .option('--thinking <level>', THINKING_HELP)

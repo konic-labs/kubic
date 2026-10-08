@@ -245,7 +245,7 @@ export interface HeadlessRunDeps {
   streamTuning?: StreamTuningTables;
   // The lane's agent id: the configured `[agent].name`, threaded
   // from runtimeLaneDeps. Absent means 'root' — the shipped behaviour, byte
-  // for byte (journal attribution and `kubic diff --agent` follow it).
+  // for byte (journal attribution follows it).
   agentId?: string;
   env?: ExecutionEnv;
   context?: Context;

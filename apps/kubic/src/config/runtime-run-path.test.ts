@@ -400,21 +400,15 @@ describe('solo-lane projections reach the live path', () => {
       'kubic-solo',
     ]);
 
-    // `kubic diff --agent` filters by the configured id — and only by it.
+    // The session journal names the change, whichever lane wrote it.
     const named: string[] = [];
     expect(
       await runJournalCommand(
-        { command: 'diff', agent: 'kubic-solo', session: result.sessionId },
+        { command: 'diff', session: result.sessionId },
         { root: workspace, sessionsRoot, out: (line) => named.push(line) },
       ),
     ).toBe(0);
     expect(named.join('\n')).toContain('note.txt');
-    const asRoot: string[] = [];
-    await runJournalCommand(
-      { command: 'diff', agent: 'root', session: result.sessionId },
-      { root: workspace, sessionsRoot, out: (line) => asRoot.push(line) },
-    );
-    expect(asRoot.join('\n')).not.toContain('note.txt');
 
     // Unset: the lane is 'root' — byte-identical to today.
     const bare = loadRuntimeConfig({

@@ -161,9 +161,9 @@ describe('tuiDepsWithDefaults forwards the lane projection', () => {
     expect(seen?.role).toBe('implementer');
   });
 
-  it('attributes TUI journal entries to [agent].name, so diff --agent finds them', async () => {
+  it('attributes TUI journal entries to [agent].name', async () => {
     const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-294-agent-');
+    const workspace = tmpRoot('kubic-tui-agent-');
     writeFileSync(join(workspace, 'note.txt'), 'v1\n');
     const lane = laneFor(workspace, '[agent]\nname = "foo"\n');
     expect(lane.agentId).toBe('foo');
@@ -200,7 +200,7 @@ describe('tuiDepsWithDefaults forwards the lane projection', () => {
     const named: string[] = [];
     expect(
       await runJournalCommand(
-        { command: 'diff', agent: 'foo', session: boot.sessionId },
+        { command: 'diff', session: boot.sessionId },
         { root: workspace, sessionsRoot, out: (line) => named.push(line) },
       ),
     ).toBe(0);

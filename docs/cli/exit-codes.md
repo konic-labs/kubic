@@ -92,6 +92,13 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   completed prune; 1 for a missing keep window (no `--keep-days`, no
   `session.retentionDays`), a malformed sessions root, or a session that
   could not be removed.
+- **`kubic journal prune`**: 0 for a dry run, a completed prune and `nothing
+  to prune`; 1 for a missing keep window (no `--keep-days`, no
+  `journal.retentionDays`), an unknown `--session`, a live-run refusal (the
+  session is attached by a live pid), or a pass that removed nothing while
+  entries were listed; 2 for usage errors (a window that is not a
+  non-negative integer of days, an unknown option, `kubic journal` without a
+  subcommand).
 - **`kubic trust`**: 0 recorded, revoked or listed; 2 usage errors
   (unknown option, a path that is not a directory, `--list` combined with
   `--revoke` or a path, stray operands); 1 an unreadable or corrupt store
@@ -159,7 +166,7 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   fail (a red tests/build/lint/typecheck signal, an incomplete run, or an
   unnamed runner failure as `eval-failed`); 2 usage errors and named
   runner refusals (`error: [<code>] …` — a missing or invalid `--size`,
-  `--generation` or `--worktree`, a dirty `--workspace worktree`, an
+  `--worktree`, a dirty `--workspace worktree`, an
   unreadable/malformed `--trajectory` file (`trajectory-unreadable` /
   `trajectory-malformed`), a `--trajectory` provenance mismatch, a
   record-validation failure (`invalid-record`), an unknown suite, or a

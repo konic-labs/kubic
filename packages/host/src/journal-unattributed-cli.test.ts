@@ -86,9 +86,7 @@ describe('journal CLI unattributed count', () => {
     expect(code).toBe(0);
     // Header, two entry rows, the summary.
     expect(lines).toHaveLength(4);
-    expect(lines[0]).toMatch(
-      /^TIME\s+AGENT\s+TOOL CALL\s+OP\s+PATH\s+BYTES\s+NOTE$/,
-    );
+    expect(lines[0]).toMatch(/^TIME\s+TOOL CALL\s+OP\s+PATH\s+BYTES\s+NOTE$/);
     expect(lines[3]).toBe(
       'unattributed: 1 of 2 entr(ies) reconciled at run end',
     );

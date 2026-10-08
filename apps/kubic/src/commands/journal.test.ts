@@ -80,17 +80,16 @@ describe('journal commands: generated help (exit 0, no runner)', () => {
   const cases: readonly (readonly [readonly string[], readonly string[]])[] = [
     [
       ['diff'],
-      [
-        '[path]',
-        '--path <path>',
-        '--stat',
-        '--agent <id>',
-        '--max-content-bytes <n>',
-      ],
+      ['[path]', '--path <path>', '--stat', '--max-content-bytes <n>'],
     ],
     [['undo'], ['[path]', '--step', '--dry-run', '--force']],
     [['log'], ['--session <id>', '--json']],
     [['status'], ['--session <id>', '--json']],
+    [['journal'], ['[options] [command]', 'prune']],
+    [
+      ['journal', 'prune'],
+      ['--session <id>', '--keep-days <n>', '--yes', '--json'],
+    ],
     [['git'], ['status', 'log', 'stage', 'commit']],
     [['git', 'status'], ['--json']],
     [
@@ -128,6 +127,12 @@ describe('journal commands: generated help (exit 0, no runner)', () => {
       expect(r.out.join('\n'), command).toContain('Examples:');
     }
   });
+
+  it('kubic journal --help lists prune once, under Commands', async () => {
+    const r = await kubic(['journal', '--help']);
+    expect(r.code).toBe(0);
+    expect(r.out.join('\n').match(/^ +prune\b/gm)).toHaveLength(1);
+  });
 });
 
 describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
@@ -136,7 +141,7 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
     [['undo', '--nope'], /^error: unknown option '--nope'/],
     [['log', '--nope'], /^error: unknown option '--nope'/],
     [['status', '--path', 'a'], /^error: unknown option '--path'/],
-    [['diff', '--agent'], /^error: option '--agent <id>' argument missing/],
+    [['diff', '--agent'], /^error: unknown option '--agent'/],
     [['diff', '--path'], /^error: option '--path <path>' argument missing/],
     [['log', '--session'], /^error: option '--session <id>' argument missing/],
     [['diff', '--max-content-bytes', 'abc'], /non-negative integer/],
@@ -149,6 +154,15 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
     ],
     [['undo', 'a.txt', 'b.txt'], /too many arguments/],
     [['log', 'stray'], /too many arguments/],
+    [['journal'], /^error: journal needs a subcommand \(prune\)/],
+    [['journal', 'nope'], /^error: unknown journal subcommand 'nope'/],
+    [['journal', 'prune', 'stray'], /too many arguments/],
+    [['journal', 'prune', '--keep-days', 'x'], /needs a non-negative integer/],
+    [['journal', 'prune', '--keep-days', '-1'], /needs a non-negative integer/],
+    [
+      ['journal', 'prune', '--yes', '--nope'],
+      /^error: unknown option '--nope'/,
+    ],
     [['git'], /^error: git needs a subcommand/],
     [['git', 'push'], /^error: unknown git subcommand 'push'/],
     [['git', 'status', '--nope'], /^error: unknown option '--nope'/],
@@ -173,13 +187,28 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
   }
 });
 
+describe('the removed diff --agent flag', () => {
+  for (const argv of [
+    ['diff', '--agent', 'w1'],
+    ['diff', '--agent=w1'],
+  ]) {
+    it(`kubic ${argv.join(' ')} is a usage error (exit 2), no runner`, async () => {
+      const r = await kubic(argv);
+      expect(r.code).toBe(2);
+      expect(r.out).toEqual([]);
+      expect(r.err).toHaveLength(1);
+      expect(r.err[0]).toMatch(/^error: unknown option '--agent/);
+      expect(r.journal).toEqual([]);
+    });
+  }
+});
+
 describe('journal commands: parsed requests reach the runner', () => {
   it('diff maps every option, both --flag value and --flag=value forms', async () => {
     const r = await kubic([
       'diff',
       '--path',
       'src/a.ts',
-      '--agent=w1',
       '--stat',
       '--max-content-bytes',
       '0',
@@ -192,13 +221,41 @@ describe('journal commands: parsed requests reach the runner', () => {
       {
         command: 'diff',
         path: 'src/a.ts',
-        agent: 'w1',
         stat: true,
         maxContentBytes: 0,
         session: 'journal:s-1',
         json: true,
       },
     ]);
+  });
+
+  it('journal prune maps --session, --keep-days, --yes and --json', async () => {
+    const r = await kubic([
+      'journal',
+      'prune',
+      '--session',
+      'journal:s-1',
+      '--keep-days',
+      '30',
+      '--yes',
+      '--json',
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.journal).toEqual([
+      {
+        command: 'prune',
+        session: 'journal:s-1',
+        keepDays: 30,
+        yes: true,
+        json: true,
+      },
+    ]);
+  });
+
+  it('journal prune with no options sends only its name (a dry run)', async () => {
+    const r = await kubic(['journal', 'prune']);
+    expect(r.code).toBe(0);
+    expect(r.journal).toEqual([{ command: 'prune' }]);
   });
 
   // `kubic diff <path>` scopes like `--path` — the operand

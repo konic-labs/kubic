@@ -46,9 +46,9 @@ USAGE      kubic                       open the TUI (on a terminal)
            kubic "<prompt>"            run one prompt, like kubic run -p
            kubic <command> [options]
 
-SESSION    run · tui · resume · attach · sessions              work with the agent
-CHANGES    diff · undo · log · status · commit · git           review and revert what it did
-SETUP      setup · models · config · trust · doctor · skills   providers, project, health
+SESSION    run · tui · resume · attach · sessions                work with the agent
+CHANGES    diff · undo · log · status · commit · git · journal   review and revert what it did
+SETUP      setup · models · config · trust · doctor · skills     providers, project, health
 ANALYSIS   cost · eval · benchmark · replay · export · policy · audit
 
 EXAMPLES   kubic "fix the failing test"
@@ -518,8 +518,8 @@ same context the headless one does:
   stay in the scrollback. A bare `kubic
   --model <provider/id>` on a terminal is `kubic tui --model …`.
 - **Agent id and role layers:** `[agent].name` names the lane
-  (journal and reconciliation attribution, so `kubic diff --agent <name>`
-  finds TUI changes) and `[roles.<name>].tools` layers under the role
+  (journal and reconciliation attribution, the id `kubic diff` reports
+  for TUI changes) and `[roles.<name>].tools` layers under the role
   document on `--role`, exactly as `run`.
 - **Audit identity:** every approval the TUI resolves writes its
   ledger record with the session id and the `provider/id` model the lane
@@ -769,7 +769,7 @@ the built-in palette; see `[ui] theme` under
 | `Up` / `Down` | Recall earlier prompts on an empty draft (Pi's editor history; consecutive duplicates collapse to one). `kubic tui --session <id>` seeds it from the resumed session's committed prompts, so `Up` recalls what the previous process sent — the newest 100, the same bound the editor keeps for live prompts. |
 | `Ctrl-T` | Show / hide the tree row (hidden by default). |
 | `Ctrl-O` | Toggle the **diff panel** — the last tool call that changed files (or, when a `bash` call changed something the file tools did not journal, that turn's reconciled change), rendered as unified hunks. Every file of the call is rendered under its own `path — op (file k/N)` header; the panel scrolls, and `Alt-↓` / `Alt-↑` cycle its files. |
-| `Ctrl-R` | Toggle the **journal panel** — every change in the session journal, including changes made with `bash` (filter by path or agent on the command line with `kubic diff --path/--agent`). `Alt-↓` / `Alt-↑` page through it. |
+| `Ctrl-R` | Toggle the **journal panel** — every change in the session journal, including changes made with `bash` (filter by path on the command line with `kubic diff --path`). `Alt-↓` / `Alt-↑` page through it. |
 | `Ctrl-X` | Expand / collapse every tool output block. Collapsed, a block shows the first 5 lines, each cut at the terminal width, with a `… +N lines · lines clipped (ctrl+x to expand)` hint whenever anything is hidden or cut. Expanded, every output line **wraps** (hanging indent under the `⎿`) and the tool call's args summary wraps too, so a long diagnostic, stack frame or path is readable in full. |
 | `alt+down` | With a panel open: the diff panel's next file (wrapping), or the journal panel's next page. Ignored while both panels are closed. |
 | `alt+up` | With a panel open: the diff panel's previous file (wrapping), or the journal panel's previous page. Ignored while both panels are closed. |
@@ -1268,7 +1268,7 @@ is plain text.
 
 **Usage errors** exit **2** with one `error:` line on stderr and touch
 nothing: an unknown option, an option without its value (`--path`,
-`--agent`, `--session`, `--max-content-bytes`), a `--max-content-bytes`
+`--session`, `--max-content-bytes`), a `--max-content-bytes`
 that is not a non-negative integer, an extra operand (only `undo` takes
 one, the `<path>` scope), a bad or conflicting `--session`. Every command
 answers `--help`/`-h` with generated help (exit 0); `diff --help` and
@@ -1281,19 +1281,21 @@ fallback — the same age bound `kubic sessions prune` applies to whole
 session dirs, one entry at a time. The workspace journal is not affected
 (its own `[journal] retentionDays` bounds it on append). With retention
 unset — or `0` — the log path writes nothing: reads never mutate the store.
+Entries are removed on request by [`kubic journal prune`](#kubic-journal-prune---session-id---keep-days-n---yes---json),
+which lists them by default.
 
 ```
-kubic diff [--path <path>] [--agent <id>] [--max-content-bytes <n>] [--session <id>] [--json]
+kubic diff [--path <path>] [--max-content-bytes <n>] [--session <id>] [--json]
 kubic undo [--step] [--dry-run] [--force] [--session <id>] [--json] [--] [<path>]
 kubic log [--session <id>] [--json]
 kubic status [--session <id>] [--json]
 ```
 
-Options also take the `--flag=value` form (`--agent=w1`).
+Options also take the `--flag=value` form (`--path=src/a.ts`).
 
 | Subcommand | Meaning |
 | --- | --- |
-| `diff [path] [--path <p>] [--agent <id>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). The `[path]` operand scopes exactly like `--path` (giving both with different values exits 2 naming the conflict; a second operand is refused the same way); `--stat` prints the per-file summary `path +added -removed tool[, turn N]` instead of hunks (counts from the same hunks, so they always agree; tool and turn render when the entry carries them — pre-schema entries show the op, reconciliation finds `reconciled`); `--path`/`--agent` filter; `--json` prints `{session, root, changes}` — the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). A `--path`/`--agent`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, is a usage error (exit 2). Read-only: `undo` keeps the single-store contract (undo across worktrees is out of scope). |
+| `diff [path] [--path <p>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). The `[path]` operand scopes exactly like `--path` (giving both with different values exits 2 naming the conflict; a second operand is refused the same way); `--stat` prints the per-file summary `path +added -removed tool[, turn N]` instead of hunks (counts from the same hunks, so they always agree; tool and turn render when the entry carries them — pre-schema entries show the op, reconciliation finds `reconciled`); `--path` filters; `--json` prints `{session, root, changes}` — the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). A `--path`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, is a usage error (exit 2). Read-only: `undo` keeps the single-store contract (undo across worktrees is out of scope). |
 | `undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]` | Restore journaled changes. `--json` prints one object `{session, root, dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible\|head-moved, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary; warnings (a removal whose content had no recoverable copy, a pre-undo file that is no longer lossless utf-8 text — recorded hash-only, so that undo cannot be redone — or a step whose inverse record would not fit the journal's byte bound — that step is skipped BEFORE the file is touched, so the undo never lands unrecorded) go to stderr as `warn: …`. A session whose lock is live refuses the whole invocation with one `error: session '<id>' is attached by pid <pid> — refusing to undo under a live run (pass --force to override)` line and exit 1: restoring under a live run races its writes, and `--force` is the documented override (the same knob the staleness refusal uses). `nothing to undo` exits 0. **Exit 1 when any step was skipped** (the partial outcome never reuses the usage code) — four skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find with no git pre-image (untracked, dirty at baseline, non-repo, binary or over-bound) or whose tool chain stored none, a write over a file above the 8 MiB pre-image bound (recorded hash-only), a delete-shaped undo whose file was absent pre-undo, or an inverse record over the journal's byte bound), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten), `head-moved (skipped): <p> — <reason>` (the entry predates a HEAD move the run observed — restoring would write pre-move content onto the moved HEAD; `--force` overrides per-invocation). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
 
 **Undo staleness safety.** Before any restore, the file's
@@ -1328,7 +1330,7 @@ informational: there is nothing to force.
 **The undo record and redo.** Every successful restore is
 itself journaled: the store appends the inverse entry for the step — the
 pre-undo content as `before`, the restored content as `after`, attributed
-`agent=kubic-undo toolCall=none` and never marked `reconciled` (it is an
+`toolCall=none` and never marked `reconciled` (it is an
 attributed change, not a reconciliation find). `kubic diff` and `kubic log`
 therefore describe the world *after* the undo, and `kubic undo --step`
 immediately after an undo is the **redo**: it restores the undo record's
@@ -1340,7 +1342,7 @@ undo of a delete cannot itself be undone. Plain `undo` (no `--step`) never
 targets `kubic-undo` records: it restores real agent work once and then
 reports `already undone` without appending, so repeating it never re-undoes
 the undo. `--dry-run` appends nothing; a skipped step appends nothing. |
-| `log [--json] [--session <id>]` | With `session.retentionDays` set and the session's lock live, the read-time self-heal is skipped with one `warn: journal retention skipped: session '<id>' is attached by pid <pid> — pruning under a live run can drop entries it just appended` line; the read itself is unchanged. A `TIME AGENT TOOL CALL OP PATH BYTES NOTE` table, one row per journal entry, oldest first — `NOTE` reads `reconciled` for an unattributed sweep find (`journal is empty` + exit 0 when empty); `--json` prints `{session, root, entries}` with the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
+| `log [--json] [--session <id>]` | With `session.retentionDays` set and the session's lock live, the read-time self-heal is skipped with one `warn: journal retention skipped: session '<id>' is attached by pid <pid> — pruning under a live run can drop entries it just appended` line; the read itself is unchanged. A `TIME TOOL CALL OP PATH BYTES NOTE` table, one row per journal entry, oldest first — `NOTE` reads `reconciled` for an unattributed sweep find (`journal is empty` + exit 0 when empty); `--json` prints `{session, root, entries}` with the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
 | `status [--json] [--session <id>]` | `--json` prints the status object (`session`, `root`, `entries`, `reversible`, `nonReversible`, `unattributed`, `corrupt`, `corruptLines`, `repo`). Otherwise `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, then `corrupt: C` (content missing under a recorded hash) and `corrupt index lines: L` (index lines that do not parse and were dropped from the read — a torn tail from a crash or a full disk; the next append repairs it and the next retention rewrite drops it), plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown` with `, root <path>` when the root reads, `, ahead <n>, behind <m>` when an upstream exists, and `, conflicts: <p>, …` when merges are unresolved. Inside a linked worktree the branch is resolved through the `.git` `gitdir:` pointer (below); an unreadable pointer prints `branch (unknown)`. |
 
 **Display truthfulness.** Three display-level guarantees on the
@@ -1468,6 +1470,61 @@ composition paths therefore capture a **baseline** when the lane boots and
 `kubic log` answers "did anything bypass the tools?" with the count line above;
 `kubic status` names it in the summary. `--json` keeps the raw entries (the
 `unattributed` flag is on each entry there).
+
+## `kubic journal prune [--session <id>] [--keep-days <n>] [--yes] [--json]`
+
+Deletes journal entries older than the keep window from the journal `kubic
+log` reads: `--session <id>`, else this workspace's journal (the same store
+resolution as `kubic diff`, `undo`, `log` and `status`). **A dry run unless
+`--yes`**: without it the command lists each entry it would prune (`would
+prune <time> <op> <path>`) and deletes nothing.
+
+| Option | Meaning |
+| --- | --- |
+| `--session <id>` | Prune that session's journal (or the `journal:<id>` ref `kubic run` prints). |
+| `--keep-days <n>` | Keep entries younger than `n` days (a non-negative integer). Default: `[journal] retentionDays`, or `KUBIC_JOURNAL_RETENTION_DAYS`. |
+| `--yes` | Delete the listed entries. |
+| `--json` | Print one document `{session, root, keepDays, dryRun, pruned, candidates: [{timestamp, op, path}]}`; `candidates` is what the dry run would prune, or what `--yes` pruned. |
+
+- **The keep window is never invented.** The window is `--keep-days` when
+  given, else the resolved `[journal] retentionDays`: the
+  `KUBIC_JOURNAL_RETENTION_DAYS` env var counts and beats the file key, and the
+  flag beats both. With neither, the command exits 1 and names both ways to set
+  one, plus the config error when the config did not load. A window that is not
+  a non-negative integer of days exits 2. `0` (either way) means retention is
+  off: nothing is listed or deleted, exit 0.
+- **Refusals come before any deletion.** An explicit `--session` that does not
+  exist exits 1 (`unknown session: <id>`), as `kubic cost --session` does, and
+  creates nothing. A session attached by a live pid (its session lock) is
+  refused with one `error:` line and exit 1 before any other check: on a dry
+  run, for every window, and with `--keep-days 0` too. That is the rule
+  `kubic undo` applies. The workspace journal has no session lock and is pruned
+  directly.
+- **Deletion goes through the store's own retention pass**, which rewrites the
+  index under its mutation lock. The report is what that pass removed: `pruned
+  N entries, B reclaimed`, with `(M listed: the journal changed while pruning)`
+  when the count differs from the M the dry run listed. A pass that removed
+  nothing while entries were listed (the journal changed under it) exits 1 with
+  `the journal changed while pruning and this run removed nothing — run it again
+  to see what is left`.
+- **Blob files.** `--yes` also sweeps the blob files no remaining entry
+  references: leftovers from earlier passes, and content only the pruned
+  entries used. The sweep is part of the pass, so its bytes count in
+  `reclaimed`; the dry run lists entries only and does not list the blobs.
+- **Output.** Text mode prints the candidate lines and `dry run: N entries
+  would be pruned (keep window D day(s)) — pass --yes to delete`, or
+  `pruned N entries, B reclaimed` after `--yes`. It prints `nothing to prune`
+  when no entry is older than the window.
+- **Exit codes:** 0 for a dry run, a completed prune, or nothing to prune; 1
+  for a missing keep window, a live-run refusal, an unknown session, or a pass
+  that removed nothing; 2 for a usage error (a window that is not a
+  non-negative integer of days, an unknown option, or `kubic journal` without
+  its subcommand).
+
+```
+kubic journal prune --keep-days 30
+kubic journal prune --session 3f2a --keep-days 30 --yes
+```
 
 ## `kubic models [provider] [--all] [--json] [--resolve <provider/id>]`
 
@@ -1630,15 +1687,16 @@ parsed by commander
   which is a usage error, leaves stdout empty and prints its `error:`
   line on stderr.
 
-## `kubic eval --suite <id> (--task <prompt> | --trajectory <file>) [--generation <n>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+## `kubic eval --suite <id> (--task <prompt> | --trajectory <file>) [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
 
 Scores one suite against a task prompt or an existing trajectory
 export. Every record needs its provenance (`model`, `thinking`,
-`worktree`, `generation`) and a `--size`; a record missing any of them
-is refused with exit 2 and is never stored.
+`worktree`) and a `--size`; a record missing any of them is refused with
+exit 2 and is never stored. A run is one generation, so a `--task` record's
+`generation` is always `0`.
 
-- With `--task`, the provenance comes from the flags: `--worktree` and
-  `--generation` are mandatory and `--model` defaults to `faux/echo`
+- With `--task`, the provenance comes from the flags: `--worktree` is
+  mandatory and `--model` defaults to `faux/echo`
   (the shipped testing provider's registered model).
 - With `--trajectory`, the provenance comes from the export itself:
   `model` from `provenance.model`, `thinking` from `model.thinking`, and
@@ -1659,10 +1717,9 @@ a skipped stub, which names the tier it would run at).
 | Flag | Meaning |
 | --- | --- |
 | `--suite <id>` | **Required.** A built-in suite id — `swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover`, `review-diff` or `agentic-live` — or a **category alias** (`swe`, `repo-mod`, `bugfix`, `refactor`, `testgen`, `review`, `agentic`); `kubic eval` scores one record, so a category with more than one suite exits 2 (`ambiguous-suite`). `terminal-live` is a stub and refuses with exit 2. An unknown selector exits 2. |
-| `--task <prompt>` | Runs the suite's fixture through the real lane and scores the trajectory it writes: the fixture's prompt is the run, its gate command(s) decide the verdict, and the record carries the eval fields. Needs a reachable model (`--model`, default `faux/echo`) and `--worktree`/`--generation`; the suite's fixture is materialized in a temp directory (or a fresh checkout, with `--workspace worktree`). |
+| `--task <prompt>` | Runs the suite's fixture through the real lane and scores the trajectory it writes: the fixture's prompt is the run, its gate command(s) decide the verdict, and the record carries the eval fields. Needs a reachable model (`--model`, default `faux/echo`) and `--worktree`; the suite's fixture is materialized in a temp directory (or a fresh checkout, with `--workspace worktree`). |
 | `--trajectory <file>` | Scores an existing trajectory export file, without re-running anything: the same file form `replay` and `export` take. `-` reads the export from stdin; a value starting with `{`/`[` is the pre inline-JSON form and still works. Fully live: exits 0 with the record, or 1 when the gates fail it. An unreadable file exits 2 (`trajectory-unreadable`), a file that is not JSON or not a valid export exits 2 (`trajectory-malformed`). |
-| `--generation <n>` | The generation of the run that produced the record. Digits only (`''`, `1e3`, `-1`, `1.5` all exit 2); anything else exits 2. **Required with `--task`.** With `--trajectory` it is read from `provenance.generation`; a different value exits 2 (`provenance-mismatch`). |
-| `--worktree <path>` | Where the run executed. With `--task`, a record without it is refused with exit 2. With `--trajectory` it is read from `provenance.worktree`; a different value exits 2 (`provenance-mismatch`). |
+| `--worktree <path>` | The worktree the run executes in (`--workspace worktree` needs it clean). With `--task`, a record without it is refused with exit 2. With `--trajectory` it is read from `provenance.worktree`; a different value exits 2 (`provenance-mismatch`). |
 | `--size <smoke\|standard\|extended>` | The record's size class (how much was run) — an implementation-side label, not a tier. Published on every record; a missing or unknown size exits 2 on both paths. |
 | `--model <id>` | `provider/id` of the run. With `--task` it defaults to `faux/echo`. With `--trajectory` it is read from `provenance.model`, and a different value exits 2 (`provenance-mismatch`). |
 | `--workspace inline\|worktree` | `inline` (default) materializes the suite fixture in a temp directory. `worktree` refuses with exit 2 unless `git status --porcelain` in `--worktree` is clean, then runs each suite in a fresh detached checkout of that repo at its HEAD (`git worktree add --detach`), removed and pruned afterwards. Any other value exits 2. |
@@ -1672,7 +1729,7 @@ a skipped stub, which names the tier it would run at).
 Text mode prints one `eval ok: suite …` line on stdout. A refusal prints
 `error: [<code>] <message>` on stderr.
 
-## `kubic benchmark --generation <n> [--suite <id>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+## `kubic benchmark [--suite <id>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
 
 Runs the reproducible matrix: every suite, or a single one with
 `--suite`. The output is a `SUITE / CATEGORY / STATUS` table followed by
@@ -1681,7 +1738,7 @@ the verdict line: `benchmark ok|FAILED: <passed>/<executed> suites passed,
 
 Stub suites show as `skipped (stub)` with `success:false`, so they are
 never reported as passing work, and they never count toward the verdict.
-Provenance (`--generation`, `--size`, `--worktree`) is validated once
+Provenance (`--size`, `--worktree`) is validated once
 before the matrix, so even a stub-only selection cannot skip it. A matrix
 with **no executable suite** (only stubs selected) refuses with
 `error: [no-executable-suites] benchmark: no executable suites selected`
@@ -1861,9 +1918,9 @@ manifest is written last, so a failed batch leaves a partial JSONL and no
 Reads real usage out of the durable session store, scoped to the current
 project by default: only sessions touching the invoking workspace are
 reported, with `--all` for the machine-global total the command used to
-print. Rows aggregate to the `--by` level (`request | agent | session |
-project`, default `agent`), one `GROUP / ROLE / MODEL / IN / OUT / CACHE-R
-/ CACHE-W / COST` row each — the session's role and model, with
+print. Rows aggregate to the `--by` level (`request | session | project`,
+default `session`: one row per session and model), one `GROUP / ROLE / MODEL
+/ IN / OUT / CACHE-R / CACHE-W / COST` row each — the session's role and model, with
 input, output and prefix-cache counters split out — followed by
 `task total $<sum> (<n> <level>)`. The total is exactly the sum of the
 rows. Costs below $1 print at 4 decimals (`$0.0023`), $1 and above at 2.
@@ -1895,7 +1952,7 @@ prints `no cost rows` and exits 0.
 | --- | --- |
 | `--session <id>` | Reads only this session. Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). An explicitly named session ignores the project scope. |
 | `--all` | Lifts the default project scope: report sessions from every project on the machine. |
-| `--by <level>` | Group rows at `request`, `agent` (the default), `session` or `project`. Anything else exits 2. |
+| `--by <level>` | Group rows at `request`, `session` (the default) or `project`. Anything else exits 2. |
 | `--json` | Prints the in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field — rows carry the same `agent`/`role`/`session`/`project`/`request` identity the table groups on. Exits 0. |
 
 ## `kubic policy --tool <name> [--json]`

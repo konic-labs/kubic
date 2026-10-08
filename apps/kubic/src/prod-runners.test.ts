@@ -289,13 +289,16 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
   // A home global layer setting `[session] retentionDays` (the project
   // layer would need a trust grant first), loaded through the
   // composition root's own config seam.
-  function configWithRetention(days: number): CliConfigResult {
+  function configWithRetention(
+    days: number,
+    section: 'session' | 'journal' = 'session',
+  ): CliConfigResult {
     const home = mkdtempSync(join(tmpdir(), 'prod-ret-home-'));
     roots.push(home);
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
-      `[session]\nretentionDays = ${days}\n`,
+      `[${section}]\nretentionDays = ${days}\n`,
     );
     const cwd = mkdtempSync(join(tmpdir(), 'prod-ret-cwd-'));
     roots.push(cwd);
@@ -360,6 +363,51 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
     const text = lines.join('\n');
     expect(text).toContain('fresh.txt');
     expect(text).not.toContain('aged.txt');
+    expect(
+      new FileJournalStore(journalDir).entries().map((entry) => entry.path),
+    ).toEqual(['fresh.txt']);
+  });
+
+  it('journal prune takes its default keep window from [journal] retentionDays', async () => {
+    const config = configWithRetention(7, 'journal');
+    const journalDir = join(defaultSessionsRoot(), 'sess-382', 'journal');
+    const store = new FileJournalStore(journalDir);
+    store.append({
+      path: 'aged.txt',
+      op: 'write',
+      before: 'old\n',
+      after: 'older\n',
+      bytesDelta: 0,
+      sessionId: 'sess-382',
+      agentId: 'root',
+      toolCallId: 'call-aged',
+      timestamp: Date.now() - 30 * DAY_MS,
+    });
+    store.append({
+      path: 'fresh.txt',
+      op: 'write',
+      before: 'new\n',
+      after: 'newer\n',
+      bytesDelta: 0,
+      sessionId: 'sess-382',
+      agentId: 'root',
+      toolCallId: 'call-fresh',
+      timestamp: Date.now(),
+    });
+    const { lines, r } = runners();
+    // No --yes: the window is applied, the dry run lists the aged entry, and
+    // nothing is deleted.
+    expect(
+      await r.journal({ command: 'prune', session: 'sess-382' }, config),
+    ).toBe(0);
+    expect(lines.join('\n')).toContain('dry run: 1 entry would be pruned');
+    expect(new FileJournalStore(journalDir).entries()).toHaveLength(2);
+    expect(
+      await r.journal(
+        { command: 'prune', session: 'sess-382', yes: true },
+        config,
+      ),
+    ).toBe(0);
     expect(
       new FileJournalStore(journalDir).entries().map((entry) => entry.path),
     ).toEqual(['fresh.txt']);

@@ -931,6 +931,17 @@ export function sessionRetentionDays(
   return result.runtime?.config.session?.retentionDays;
 }
 
+// `kubic journal prune`'s default keep-window: the resolved
+// `journal.retentionDays` of the runtime load, so `KUBIC_JOURNAL_RETENTION_DAYS`
+// counts (the env layer beats the file layers, as everywhere else). Undefined
+// when nothing sets it or the load was refused, so prune demands --keep-days.
+// 0 means retention off.
+export function journalRetentionDays(
+  result: CliConfigResult,
+): number | undefined {
+  return result.runtime?.journal.retentionDays;
+}
+
 // The `[agent] systemPromptFile` contents `kubic run` boots with: the file text
 // the runtime read at load. Undefined when no layer declares the key (or the
 // load was refused) — the lane assembles its prompt unchanged.

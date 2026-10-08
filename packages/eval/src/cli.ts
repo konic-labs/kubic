@@ -59,10 +59,10 @@ export interface EvalCliDeps extends EvalTaskDeps {
 }
 
 // The parsed `kubic eval` / `kubic benchmark` options (commander's
-// `opts()`): raw strings, so the semantics (the workspace vocabulary, the
-// integer generation, inline trajectory JSON) stay this module's, reported
-// with this module's exit codes. commander owns the syntax: unknown flags,
-// missing values, the required options, `--help`.
+// `opts()`): raw strings, so the semantics (the workspace vocabulary, inline
+// trajectory JSON) stay this module's, reported with this module's exit
+// codes. commander owns the syntax: unknown flags, missing values, the
+// required options, `--help`.
 export interface EvalOptions {
   readonly suite?: string;
   readonly task?: string;
@@ -71,15 +71,14 @@ export interface EvalOptions {
   readonly model?: string;
   readonly thinking?: string;
   readonly worktree?: string;
-  readonly generation?: string;
   readonly size?: string;
   readonly json?: boolean;
 }
 
-// model/thinking/worktree/generation stay undefined when their flag is
-// absent: the --trajectory path takes them from the export;
-// the --task and benchmark paths apply the defaults (EVAL_DEFAULT_MODEL,
-// thinking null) and require the rest (see forTask).
+// model/thinking/worktree stay undefined when their flag is absent: the
+// --trajectory path takes them from the export; the --task and benchmark
+// paths apply the defaults (EVAL_DEFAULT_MODEL, thinking null) and take the
+// worktree from --worktree (see forTask).
 interface Parsed {
   suite: string | undefined;
   task: string | undefined;
@@ -88,7 +87,6 @@ interface Parsed {
   model: string | undefined;
   thinking: string | undefined;
   worktree: string | undefined;
-  generation: number | undefined;
   size: string;
   json: boolean;
 }
@@ -100,17 +98,17 @@ interface TaskProvenance {
   generation: number;
 }
 
-const MISSING_GENERATION = "required option '--generation <n>' not specified";
+// One run is one generation: the record's provenance field is pinned to 0.
+const RUN_GENERATION = 0;
 
-// The --task / benchmark provenance: the flags are the only source, so the
-// generation is required and the model defaults (documented default).
-function forTask(parsed: Parsed): TaskProvenance | string {
-  if (parsed.generation === undefined) return MISSING_GENERATION;
+// The --task / benchmark provenance: the flags are the only source for the
+// worktree; the model defaults (documented default).
+function forTask(parsed: Parsed): TaskProvenance {
   return {
     model: parsed.model ?? EVAL_DEFAULT_MODEL,
     thinking: parsed.thinking ?? null,
     worktree: parsed.worktree ?? '',
-    generation: parsed.generation,
+    generation: RUN_GENERATION,
   };
 }
 
@@ -128,19 +126,6 @@ function normalize(options: EvalOptions): Parsed | string {
   if (workspace !== 'inline' && workspace !== 'worktree') {
     return '--workspace must be one of inline|worktree';
   }
-  let generation: number | undefined;
-  if (options.generation !== undefined) {
-    // Only decimal digits name a generation. `Number('')` is 0,
-    // `Number('1e3')` is 1000 and `Number(' 2 ')` is 2 — accepting those
-    // invented a generation the caller never wrote.
-    if (
-      !/^\d+$/.test(options.generation) ||
-      !Number.isSafeInteger(Number(options.generation))
-    ) {
-      return '--generation needs an integer';
-    }
-    generation = Number(options.generation);
-  }
   return {
     suite: options.suite,
     task: options.task,
@@ -149,7 +134,6 @@ function normalize(options: EvalOptions): Parsed | string {
     model: options.model,
     thinking: options.thinking,
     worktree: options.worktree,
-    generation,
     size: options.size ?? '',
     json: options.json === true,
   };
@@ -175,7 +159,7 @@ function emitRecord(
     return;
   }
   out(
-    `eval ok: suite ${record.suite} success=${String(record.success)} cost=${record.costUsd} tokens=${record.tokens} latencyMs=${record.latencyMs} tools=${record.toolCalls} model=${record.model} worktree=${record.worktree} generation=${record.generation} size=${record.size} determinism=${record.determinism}`,
+    `eval ok: suite ${record.suite} success=${String(record.success)} cost=${record.costUsd} tokens=${record.tokens} latencyMs=${record.latencyMs} tools=${record.toolCalls} model=${record.model} worktree=${record.worktree} size=${record.size} determinism=${record.determinism}`,
   );
 }
 
@@ -340,19 +324,12 @@ export async function runEvalCommand(
         ...(parsed.model === undefined ? {} : { model: parsed.model }),
         ...(parsed.thinking === undefined ? {} : { thinking: parsed.thinking }),
         ...(parsed.worktree === undefined ? {} : { worktree: parsed.worktree }),
-        ...(parsed.generation === undefined
-          ? {}
-          : { generation: parsed.generation }),
         size: parsed.size,
       });
       emitRecord(deps.out, record, parsed.json);
       return record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
     }
     const provenance = forTask(parsed);
-    if (typeof provenance === 'string') {
-      log.error(provenance);
-      return EVAL_EXIT_USAGE;
-    }
     const record = await runEvalTask(
       {
         suite: suiteId,
@@ -405,10 +382,6 @@ export async function runBenchmarkCommand(
     return EVAL_EXIT_USAGE;
   }
   const provenance = forTask(parsed);
-  if (typeof provenance === 'string') {
-    log.error(provenance);
-    return EVAL_EXIT_USAGE;
-  }
   // Validate provenance once, before the matrix. A stub-only
   // selection never reaches runEvalTask (which owns this check), so without
   // it `benchmark --suite agentic-live` reported `ok` with no size or

@@ -577,7 +577,7 @@ describe('git_worktree_list over real git', () => {
       join(repo.path, 'big.txt'),
       `${'changed line\n'.repeat(2500)}`,
     );
-    const diff = await ok('git_diff', {}, repo.path, 'diff-clip432');
+    const diff = await ok('git_diff', {}, repo.path, 'diff-clip-call');
     expect(diff.truncated).toBe(true);
     expect(diff.stat).toContain('big.txt');
     expect(diff.stat).toContain('changed');
@@ -586,7 +586,7 @@ describe('git_worktree_list over real git', () => {
   it('git_status carries the real root and an empty submodule list', async () => {
     const repo = scratchRepo();
     commitFile(repo, 'a.txt', 'one\n');
-    const status = await ok('git_status', {}, repo.path, 'st-root380');
+    const status = await ok('git_status', {}, repo.path, 'st-root-call');
     expect(status.repoRoot).toBe(repo.path);
     expect(status.submodules).toEqual([]);
   });

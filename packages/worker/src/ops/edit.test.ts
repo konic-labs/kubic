@@ -29,8 +29,8 @@ function tmp(prefix: string): string {
 }
 
 function setup(): { root: string; journal: FileJournalStore; c: OpContext } {
-  const root = tmp('edit-195-');
-  const journal = new FileJournalStore(tmp('edit-195-j-'));
+  const root = tmp('edit-tool-');
+  const journal = new FileJournalStore(tmp('edit-tool-j-'));
   const c: OpContext = {
     env: new NodeExecutionEnv(root),
     sessionId: 's1',

@@ -36,10 +36,10 @@ function tmp(prefix: string): string {
 /** A real workspace + a real session dir with the real session sink. */
 function ctx(): OpContext {
   return {
-    env: new NodeExecutionEnv(tmp('bash-182-ws-')),
+    env: new NodeExecutionEnv(tmp('bash-tool-ws-')),
     sessionId: 's1',
     agentId: 'a1',
-    spill: createSessionSpillSink(tmp('bash-182-session-')),
+    spill: createSessionSpillSink(tmp('bash-tool-session-')),
   };
 }
 

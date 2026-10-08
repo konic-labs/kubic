@@ -2,11 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import type {
-  AgentSummary,
-  KubicPresentationState,
-  LaneSnapshot,
-} from './presentation.js';
+import type { KubicPresentationState, LaneSnapshot } from './presentation.js';
 import {
   isPresentationCommand,
   PRESENTATION_COMMANDS,
@@ -19,12 +15,11 @@ const SOURCE = readFileSync(
 );
 
 describe('presentation contract', () => {
-  it('state carries exactly the six fields', () => {
+  it('state carries exactly the five fields', () => {
     expect(Object.keys(PRESENTATION_STATE_FIELDS).sort()).toEqual([
-      'agents',
       'approvals',
       'connection',
-      'lanes',
+      'lane',
       'session',
       'usage',
     ]);
@@ -32,8 +27,7 @@ describe('presentation contract', () => {
     // field to false must fail (mutation: BooleanLiteral true→false).
     expect(PRESENTATION_STATE_FIELDS).toEqual({
       session: true,
-      agents: true,
-      lanes: true,
+      lane: true,
       approvals: true,
       usage: true,
       connection: true,
@@ -70,16 +64,14 @@ describe('presentation contract', () => {
     expect(SOURCE).not.toMatch(/@kubic\/(host|worker|exec)/);
   });
 
-  it('holds replicated snapshots in keyed maps', () => {
-    // Type-level contract (checked by `tsc`): the replicated collections are
-    // id-keyed maps, not arrays. Building a literal and reading it back would
-    // only assert what the test itself wrote.
-    expectTypeOf<KubicPresentationState['agents']>().toEqualTypeOf<
-      ReadonlyMap<string, AgentSummary>
-    >();
-    expectTypeOf<KubicPresentationState['lanes']>().toEqualTypeOf<
-      ReadonlyMap<string, LaneSnapshot>
-    >();
+  it('holds one session and one lane, not id-keyed collections', () => {
+    // Type-level contract (checked by `tsc`): the state carries the single
+    // lane the session runs, and no agent or lane map keyed by id.
+    expectTypeOf<
+      KubicPresentationState['lane']
+    >().toEqualTypeOf<LaneSnapshot>();
+    expectTypeOf<KubicPresentationState>().not.toHaveProperty('agents');
+    expectTypeOf<KubicPresentationState>().not.toHaveProperty('lanes');
   });
 
   it('command guard accepts known and rejects unknown commands', () => {

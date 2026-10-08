@@ -1,7 +1,8 @@
 // KubicPresentationState event/presentation contract.
 // Pure types with zero implementation imports. Every field is a replicated
-// value or a keyed service instance — no field requires the presentation to
-// hold authority, and commands are narrow and typed.
+// value — no field requires the presentation to hold authority, and commands
+// are narrow and typed. One session, one lane: the state holds the session's
+// facts and its single live lane, not id-keyed collections.
 //
 // Negative rule: there is deliberately no `eval`-style command channel, no
 // raw event stream, and no way for the presentation to reach the harness
@@ -27,15 +28,9 @@ interface SessionSnapshot {
   // The live session's replicated facts.
   model?: string;
   thinking?: string;
-  approvalsSkipped: boolean;
-}
-
-export interface AgentSummary {
-  agentId: string;
-  role: string;
-  status: string;
-  // The agent's workspace: the repo root.
+  // The repo root the session works in.
   workspace?: string;
+  approvalsSkipped: boolean;
 }
 
 // One tool call of a lane, as the presentation renders it. `args`/`entry` are
@@ -52,8 +47,6 @@ export interface LaneToolSnapshot {
 }
 
 export interface LaneSnapshot {
-  laneId: string;
-  agentId: string;
   status: 'idle' | 'running' | 'done';
   // The live turn's calls, oldest first; completed turns fold away.
   tools: readonly LaneToolSnapshot[];
@@ -89,8 +82,7 @@ interface ConnectionState {
 
 export interface KubicPresentationState {
   session: SessionSnapshot;
-  agents: ReadonlyMap<string, AgentSummary>;
-  lanes: ReadonlyMap<string, LaneSnapshot>;
+  lane: LaneSnapshot;
   approvals: readonly ApprovalRequest[];
   usage: UsageTotals;
   connection: ConnectionState;
@@ -99,8 +91,7 @@ export interface KubicPresentationState {
 // Closed-world field coverage: fixes the state shape exactly.
 export const PRESENTATION_STATE_FIELDS = {
   session: true,
-  agents: true,
-  lanes: true,
+  lane: true,
   approvals: true,
   usage: true,
   connection: true,

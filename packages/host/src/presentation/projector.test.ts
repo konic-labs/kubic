@@ -28,22 +28,15 @@ function usageRow(input: number, output: number, total: number) {
 }
 
 describe('presentation projector', () => {
-  it('starts from the seed with one idle root lane', () => {
+  it('starts from the seed with one idle lane', () => {
     const state = new PresentationProjector(SEED).state();
     expect(state.session).toEqual({
       sessionId: 'sess-1',
       model: 'faux/faux-1',
       approvalsSkipped: false,
-    });
-    expect(state.agents.get('root')).toEqual({
-      agentId: 'root',
-      role: 'root',
-      status: 'idle',
       workspace: '/repo',
     });
-    expect(state.lanes.get('sess-1')).toEqual({
-      laneId: 'sess-1',
-      agentId: 'root',
+    expect(state.lane).toEqual({
       status: 'idle',
       tools: [],
       queued: [],
@@ -80,9 +73,9 @@ describe('presentation projector', () => {
       { type: 'run-end', inputs: [1 as never] },
     ];
     for (const event of events) projector.apply(event);
-    const lane = projector.state().lanes.get('sess-1');
-    expect(lane?.status).toBe('done');
-    expect(lane?.tools).toEqual([
+    const lane = projector.state().lane;
+    expect(lane.status).toBe('done');
+    expect(lane.tools).toEqual([
       {
         toolCallId: 'c1',
         toolName: 'bash',
@@ -93,8 +86,8 @@ describe('presentation projector', () => {
         durationMs: expect.any(Number),
       },
     ]);
-    expect(lane?.compacting).toBe(false);
-    expect(lane?.retrying).toBeUndefined();
+    expect(lane.compacting).toBe(false);
+    expect(lane.retrying).toBeUndefined();
     expect(projector.state().usage).toMatchObject({
       inputTokens: 100,
       outputTokens: 20,
@@ -143,10 +136,10 @@ describe('presentation projector', () => {
         tools: {},
       },
     } as never);
-    const lane = projector.state().lanes.get('sess-1');
-    expect(lane?.status).toBe('running');
-    expect(lane?.compacting).toBe(true);
-    expect(lane?.tools[0]).toMatchObject({ toolCallId: 'c9', isError: true });
+    const lane = projector.state().lane;
+    expect(lane.status).toBe('running');
+    expect(lane.compacting).toBe(true);
+    expect(lane.tools[0]).toMatchObject({ toolCallId: 'c9', isError: true });
     expect(projector.state().usage).toMatchObject({
       inputTokens: 5,
       cacheReadTokens: 7,
@@ -157,9 +150,7 @@ describe('presentation projector', () => {
       type: 'inbox',
       items: [{ id: 'sub-1', mode: 'followUp' }],
     } as never);
-    expect(projector.state().lanes.get('sess-1')?.queued).toEqual([
-      'second prompt',
-    ]);
+    expect(projector.state().lane.queued).toEqual(['second prompt']);
   });
 
   it('folds approval facts', () => {
@@ -198,16 +189,16 @@ describe('presentation projector regressions', () => {
       toolName: 'read',
       isError: false,
     } as never);
-    expect(projector.state().lanes.get('sess-1')?.tools).toHaveLength(1);
+    expect(projector.state().lane.tools).toHaveLength(1);
     // Turn 2.
     projector.apply({ type: 'run-start', inputs: [2 as never] });
-    expect(projector.state().lanes.get('sess-1')?.tools).toEqual([]);
+    expect(projector.state().lane.tools).toEqual([]);
     projector.apply({
       type: 'tool-start',
       toolCallId: 'c2',
       toolName: 'edit',
     } as never);
-    const tools = projector.state().lanes.get('sess-1')?.tools ?? [];
+    const tools = projector.state().lane.tools;
     expect(tools.map((tool) => tool.toolCallId)).toEqual(['c2']);
   });
 
@@ -265,21 +256,17 @@ describe('presentation projector regressions', () => {
       type: 'inbox',
       items: [{ id: 'sub-1', mode: 'followUp' }],
     } as never);
-    expect(projector.state().lanes.get('sess-1')?.queued).toEqual([
-      'second prompt',
-    ]);
+    expect(projector.state().lane.queued).toEqual(['second prompt']);
     projector.apply({
       type: 'tool-start',
       toolCallId: 'c1',
       toolName: 'read',
     } as never);
-    expect(projector.state().lanes.get('sess-1')?.queued).toEqual([
-      'second prompt',
-    ]);
+    expect(projector.state().lane.queued).toEqual(['second prompt']);
     // The harness placed it (the loop drops the id when the run starts): the
     // row goes with it, with no extra event needed.
     queuedText.delete('sub-1');
-    expect(projector.state().lanes.get('sess-1')?.queued).toEqual([]);
+    expect(projector.state().lane.queued).toEqual([]);
   });
 });
 

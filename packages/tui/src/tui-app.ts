@@ -2266,46 +2266,42 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
       approvalsSkipped: status.getState().approvalsSkipped,
     }),
     applyPresentation: (state: KubicPresentationState): void => {
-      const lane = state.lanes.get(seed.sessionId);
-      noticeRow.setActivity(
-        lane === undefined ? undefined : laneActivityLine(lane),
-      );
-      if (lane !== undefined) {
-        applyTreeSnapshot(tree.getState(), {
-          status: lane.status,
-          tools: lane.tools,
-          usage: {
-            costTotal: state.usage.costUsd,
-            inputTokens: state.usage.inputTokens,
-            outputTokens: state.usage.outputTokens,
-          },
+      const lane = state.lane;
+      noticeRow.setActivity(laneActivityLine(lane));
+      applyTreeSnapshot(tree.getState(), {
+        status: lane.status,
+        tools: lane.tools,
+        usage: {
+          costTotal: state.usage.costUsd,
+          inputTokens: state.usage.inputTokens,
+          outputTokens: state.usage.outputTokens,
+        },
+      });
+      transcript.setQueuedPrompts(lane.queued);
+      // The cards' facts. A call that left the snapshot while
+      // still marked running was cut off with its turn: it runs no more.
+      const live = new Set<string>();
+      for (const tool of lane.tools) {
+        live.add(tool.toolCallId);
+        const known = toolTimes.get(tool.toolCallId);
+        const durationMs = tool.durationMs ?? known?.durationMs;
+        toolTimes.set(tool.toolCallId, {
+          seenAt: known?.seenAt ?? Date.now(),
+          toolName: tool.toolName,
+          running: tool.status === 'running',
+          ...(durationMs === undefined ? {} : { durationMs }),
         });
-        transcript.setQueuedPrompts(lane.queued);
-        // The cards' facts. A call that left the snapshot while
-        // still marked running was cut off with its turn: it runs no more.
-        const live = new Set<string>();
-        for (const tool of lane.tools) {
-          live.add(tool.toolCallId);
-          const known = toolTimes.get(tool.toolCallId);
-          const durationMs = tool.durationMs ?? known?.durationMs;
-          toolTimes.set(tool.toolCallId, {
-            seenAt: known?.seenAt ?? Date.now(),
-            toolName: tool.toolName,
-            running: tool.status === 'running',
-            ...(durationMs === undefined ? {} : { durationMs }),
-          });
-        }
-        for (const [id, time] of toolTimes) {
-          if (time.running && !live.has(id)) {
-            toolTimes.set(id, { ...time, running: false });
-          }
-        }
-        // The diff panel follows the run: the newest call of the lane is
-        // what "the current run's changes" means, so the panel's default
-        // selection tracks it (an explicit setDiffToolCall still wins).
-        const last = lane.tools.at(-1);
-        if (last !== undefined) diffPanel.followToolCall(last.toolCallId);
       }
+      for (const [id, time] of toolTimes) {
+        if (time.running && !live.has(id)) {
+          toolTimes.set(id, { ...time, running: false });
+        }
+      }
+      // The diff panel follows the run: the newest call of the lane is
+      // what "the current run's changes" means, so the panel's default
+      // selection tracks it (an explicit setDiffToolCall still wins).
+      const last = lane.tools.at(-1);
+      if (last !== undefined) diffPanel.followToolCall(last.toolCallId);
       // The state's session facts are the SEED — the
       // lane the boot selected — and the projector never updates them from
       // events. Writing them back here would silently revert the operator's

@@ -42,21 +42,13 @@ function presentation(
 ): KubicPresentationState {
   return {
     session: { sessionId: 's', approvalsSkipped: false },
-    agents: new Map(),
-    lanes: new Map([
-      [
-        's',
-        {
-          laneId: 's',
-          agentId: 'root',
-          status: 'running',
-          tools: [],
-          queued: [],
-          compacting: false,
-          ...over,
-        },
-      ],
-    ]),
+    lane: {
+      status: 'running',
+      tools: [],
+      queued: [],
+      compacting: false,
+      ...over,
+    },
     approvals: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     connection: { status: 'connected' },

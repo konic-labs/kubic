@@ -173,29 +173,20 @@ describe('tool cards on the app', () => {
   });
   const lanes = (status: 'running' | 'done', durationMs?: number) => ({
     session: { sessionId: 's', approvalsSkipped: false },
-    agents: new Map(),
-    lanes: new Map([
-      [
-        '01a1c0de-7a6b-4c1e-9f00-3d2a5e9cb6b8',
+    lane: {
+      status: 'running' as const,
+      tools: [
         {
-          laneId: '01a1c0de-7a6b-4c1e-9f00-3d2a5e9cb6b8',
-          agentId: 'root',
-          status: 'running' as const,
-          tools: [
-            {
-              toolCallId: 'tc1',
-              toolName: 'bash',
-              status,
-              isError: false,
-              ...(durationMs === undefined ? {} : { durationMs }),
-            },
-          ],
-          queued: [],
-          compacting: false,
+          toolCallId: 'tc1',
+          toolName: 'bash',
+          status,
+          isError: false,
+          ...(durationMs === undefined ? {} : { durationMs }),
         },
       ],
-    ]),
-    workers: new Map(),
+      queued: [],
+      compacting: false,
+    },
     approvals: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     connection: { status: 'connected' as const },

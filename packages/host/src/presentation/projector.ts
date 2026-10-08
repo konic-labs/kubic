@@ -6,7 +6,7 @@
 // `subscribeLaneEvents` stream (itself pi-durable's `watchEvents`);
 // approvals are narrow typed events the host feeds in (`applyApproval`).
 //
-// The root lane's id IS the session id: the TUI has exactly one lane.
+// One session, one lane: the TUI renders exactly one lane, the session's own.
 
 import type {
   KubicPresentationState,
@@ -22,7 +22,7 @@ export interface PresentationSeed {
   readonly model?: string;
   readonly thinking?: string;
   readonly approvalsSkipped: boolean;
-  /** The agent's workspace (the repo root for a solo lane). */
+  /** The session's workspace (the repo root). */
   readonly workspace?: string;
 }
 
@@ -46,15 +46,7 @@ function emptyUsage(): UsageTotals {
   };
 }
 
-function laneOf(
-  state: KubicPresentationState,
-  laneId: string,
-): LaneSnapshot | undefined {
-  return state.lanes.get(laneId);
-}
-
 export class PresentationProjector {
-  private readonly rootLaneId: string;
   private readonly now: () => number;
   // Tool-call start times, so the state carries the duration the tree shows.
   private readonly toolStartedAt = new Map<string, number>();
@@ -68,11 +60,10 @@ export class PresentationProjector {
   private queuedItems: ReadonlyArray<{ readonly id: string | number }> = [];
   // The projector's monotonic fold counter: a consumer can tell
   // a fresh state from the one it last rendered without diffing. Deliberately
-  // NOT a presentation state field — the contract's seven keys stay exact.
+  // NOT a presentation state field — the contract's keys stay exact.
   private fold = 0;
 
   constructor(seed: PresentationSeed, now: () => number = Date.now) {
-    this.rootLaneId = seed.sessionId;
     this.now = now;
     this.current = {
       session: {
@@ -80,33 +71,14 @@ export class PresentationProjector {
         approvalsSkipped: seed.approvalsSkipped,
         ...(seed.model === undefined ? {} : { model: seed.model }),
         ...(seed.thinking === undefined ? {} : { thinking: seed.thinking }),
+        ...(seed.workspace === undefined ? {} : { workspace: seed.workspace }),
       },
-      agents: new Map([
-        [
-          'root',
-          {
-            agentId: 'root',
-            role: 'root',
-            status: 'idle',
-            ...(seed.workspace === undefined
-              ? {}
-              : { workspace: seed.workspace }),
-          },
-        ],
-      ]),
-      lanes: new Map([
-        [
-          this.rootLaneId,
-          {
-            laneId: this.rootLaneId,
-            agentId: 'root',
-            status: 'idle',
-            tools: [],
-            queued: [],
-            compacting: false,
-          },
-        ],
-      ]),
+      lane: {
+        status: 'idle',
+        tools: [],
+        queued: [],
+        compacting: false,
+      },
       approvals: [],
       usage: emptyUsage(),
       connection: { status: 'connected' },
@@ -136,7 +108,7 @@ export class PresentationProjector {
   // is the ONE writer of the queued rows, so this runs on every hand-out
   // instead of only on an `inbox` event.
   private syncQueued(): void {
-    const lane = this.rootLane();
+    const lane = this.current.lane;
     const queued = this.queuedItems
       .map((item) => this.queuedText.get(String(item.id)))
       .filter((text): text is string => text !== undefined);
@@ -146,14 +118,7 @@ export class PresentationProjector {
     ) {
       return;
     }
-    const lanes = new Map(this.current.lanes);
-    lanes.set(this.rootLaneId, { ...lane, queued });
-    this.current = { ...this.current, lanes };
-  }
-
-  /** The lane the TUI renders (the solo lane's id is the session id). */
-  get laneId(): string {
-    return this.rootLaneId;
+    this.current = { ...this.current, lane: { ...lane, queued } };
   }
 
   apply(event: KubicLaneEvent): void {
@@ -170,9 +135,9 @@ export class PresentationProjector {
           })),
           status:
             event.run === undefined
-              ? this.rootLane().status === 'running'
+              ? this.current.lane.status === 'running'
                 ? 'done'
-                : this.rootLane().status
+                : this.current.lane.status
               : 'running',
           compacting: event.compactions.length > 0,
           ...(event.retry === undefined
@@ -219,7 +184,7 @@ export class PresentationProjector {
         return;
       }
       case 'tool-end': {
-        const previous = this.rootLane().tools.find(
+        const previous = this.current.lane.tools.find(
           (tool) => tool.toolCallId === event.toolCallId,
         );
         const startedAt = this.toolStartedAt.get(event.toolCallId);
@@ -311,23 +276,16 @@ export class PresentationProjector {
     this.queuedText = text;
   }
 
-  private rootLane(): LaneSnapshot {
-    const lane = laneOf(this.current, this.rootLaneId);
-    if (lane === undefined) {
-      throw new Error(`presentation projector lost lane '${this.rootLaneId}'`);
-    }
-    return lane;
-  }
-
   private patchLane(patch: Partial<LaneSnapshot>): void {
-    const lanes = new Map(this.current.lanes);
-    lanes.set(this.rootLaneId, { ...this.rootLane(), ...patch });
-    this.current = { ...this.current, lanes };
+    this.current = {
+      ...this.current,
+      lane: { ...this.current.lane, ...patch },
+    };
     this.fold += 1;
   }
 
   private upsertTool(tool: LaneToolSnapshot): void {
-    const lane = this.rootLane();
+    const lane = this.current.lane;
     const tools = lane.tools.filter(
       (candidate) => candidate.toolCallId !== tool.toolCallId,
     );

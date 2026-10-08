@@ -13,11 +13,11 @@ import {
   checkRoleModelRef,
   defaultLayerPaths,
   GITIGNORE_REQUIRED_ENTRIES,
-  loadLayered,
   mergeLayered,
   ProjectUntrustedError,
   parseTomlConfig,
 } from './config.js';
+import { loadRuntimeConfig } from './runtime.js';
 import { McpUnsupportedError } from './stances.js';
 
 type BridgePick = Pick<FileBridge, 'exists' | 'readTextFile'>;
@@ -428,6 +428,26 @@ describe('[agent] systemPromptFile', () => {
   });
 });
 
+// The live loader, given the composition root's inputs for this home and project.
+function loadRuntime(
+  bridge: BridgePick,
+  options: { projectTrusted?: boolean; workspaceRoot?: string } = {},
+) {
+  return loadRuntimeConfig({
+    bridge,
+    home: '/home/u',
+    cwd: '/repo',
+    projectRoot: '/repo',
+    env: {},
+    ...(options.projectTrusted === undefined
+      ? {}
+      : { projectTrusted: options.projectTrusted }),
+    ...(options.workspaceRoot === undefined
+      ? {}
+      : { workspaceRoot: options.workspaceRoot }),
+  });
+}
+
 describe('trust-gated project-local config', () => {
   it('refuses untrusted project config pre-trust', () => {
     expect(() =>
@@ -463,11 +483,7 @@ describe('trust-gated project-local config', () => {
         return inner.readTextFile(path);
       },
     };
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
-    expect(() => loadLayered(bridge, paths, { projectTrusted: false })).toThrow(
+    expect(() => loadRuntime(bridge, { projectTrusted: false })).toThrow(
       ProjectUntrustedError,
     );
     expect(reads).toEqual([]);
@@ -478,23 +494,13 @@ describe('trust-gated project-local config', () => {
       '/home/u/.kubic/config.toml': '[model]\nprovider = "g"\nid = "m"\n',
       '/repo/.kubic/config.toml': '[journal]\nretentionDays = 7\n',
     });
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
-    const merged = loadLayered(bridge, paths, { projectTrusted: true });
+    const merged = loadRuntime(bridge, { projectTrusted: true });
     expect(merged.config.model?.provider).toBe('g');
     expect(merged.config.journal?.retentionDays).toBe(7);
   });
 
   it('treats absent files as empty layers', () => {
-    const merged = loadLayered(
-      fakeBridge({}),
-      defaultLayerPaths({
-        home: '/home/u',
-        projectRoot: '/repo',
-      }),
-    );
+    const merged = loadRuntime(fakeBridge({}));
     expect(merged.config).toEqual({});
     expect(merged.overriddenAttempts).toEqual([]);
   });
@@ -893,12 +899,8 @@ describe('layer merge hardening', () => {
 describe('layered load hardening', () => {
   it('wraps file errors with the layer name', () => {
     const bridge = fakeBridge({ '/etc/kubic/config.toml': '[bad\n' });
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
     try {
-      loadLayered(bridge, paths, { projectTrusted: true });
+      loadRuntime(bridge, { projectTrusted: true });
       expect.unreachable();
     } catch (error) {
       expect((error as Error).message).toMatch(/layer 'enterprise'/);
@@ -906,15 +908,11 @@ describe('layered load hardening', () => {
   });
 
   it('wraps MCP violations with the offending layer', () => {
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
     const bridge = fakeBridge({
       '/home/u/.kubic/config.toml': '[mcp]\nenabled = true\n',
     });
     try {
-      loadLayered(bridge, paths, { projectTrusted: true });
+      loadRuntime(bridge, { projectTrusted: true });
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(McpUnsupportedError);
@@ -923,25 +921,17 @@ describe('layered load hardening', () => {
   });
 
   it('wraps unknown-section violations with the offending layer', () => {
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
     const bridge = fakeBridge({
       '/home/u/.kubic/config.toml': '[telemetry]\nenabled = true\n',
     });
-    expect(() => loadLayered(bridge, paths)).toThrow(/layer 'global'/);
+    expect(() => loadRuntime(bridge)).toThrow(/layer 'global'/);
   });
 
   it('loads the other layers pre-trust when no project file exists', () => {
     const bridge = fakeBridge({
       '/home/u/.kubic/config.toml': '[model]\nprovider = "g"\nid = "m"\n',
     });
-    const merged = loadLayered(
-      bridge,
-      defaultLayerPaths({ home: '/home/u', projectRoot: '/repo' }),
-      { projectTrusted: false },
-    );
+    const merged = loadRuntime(bridge, { projectTrusted: false });
     expect(merged.config.model?.provider).toBe('g');
   });
 
@@ -956,7 +946,10 @@ describe('layered load hardening', () => {
     const bridge = fakeBridge({
       '/ws/.kubic/config.toml': '[ui]\ntheme = "light"\n',
     });
-    const merged = loadLayered(bridge, paths, { projectTrusted: true });
+    const merged = loadRuntime(bridge, {
+      projectTrusted: true,
+      workspaceRoot: '/ws',
+    });
     expect(merged.config.ui?.theme).toBe('light');
   });
 });

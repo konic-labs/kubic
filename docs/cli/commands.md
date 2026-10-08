@@ -1928,10 +1928,11 @@ manifest is written last, so a failed batch leaves a partial JSONL and no
 Reads real usage out of the durable session store, scoped to the current
 project by default: only sessions touching the invoking workspace are
 reported, with `--all` for the machine-global total the command used to
-print. Rows aggregate to the `--by` level (`request | session | project`,
-default `session`: one row per session and model), one `GROUP / ROLE / MODEL
-/ IN / OUT / CACHE-R / CACHE-W / COST` row each — the session's role and model, with
-input, output and prefix-cache counters split out — followed by
+print. The unit is the session: rows aggregate to the `--by` level
+(`request | session | project`, default `session`), one `GROUP / MODEL / IN
+/ OUT / CACHE-R / CACHE-W / COST` row each — a session that ran more than one
+model reads as one row per model, with input, output and prefix-cache
+counters split out — followed by
 `task total $<sum> (<n> <level>)`. The total is exactly the sum of the
 rows. Costs below $1 print at 4 decimals (`$0.0023`), $1 and above at 2.
 
@@ -1963,7 +1964,7 @@ prints `no cost rows` and exits 0.
 | `--session <id>` | Reads only this session. Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). An explicitly named session ignores the project scope. |
 | `--all` | Lifts the default project scope: report sessions from every project on the machine. |
 | `--by <level>` | Group rows at `request`, `session` (the default) or `project`. Anything else exits 2. |
-| `--json` | Prints the in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field — rows carry the same `agent`/`role`/`session`/`project`/`request` identity the table groups on. Exits 0. |
+| `--json` | Prints the in-code `toCostJson` shape (`rows`, `taskTotal`) field-for-field — rows carry the same `session`/`project`/`request` identity the table groups on. Exits 0. Pre-release change: the array was named `agents` before this change; Kubic has no published JSON contract yet, so the rename is not a versioned break. |
 
 ## `kubic policy --tool <name> [--json]`
 

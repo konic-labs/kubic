@@ -812,9 +812,9 @@ not. The split, exactly as shipped:
   (roughly one exchange, so agent work needs a larger window), about 5000 on
   16384, about 14300 on 32768 and about 91000 on 131072. These are estimates:
   the threshold minus those 2800 tokens and the kept window, with a summary of
-  700 to 1400 tokens. `kubic doctor` warns (`context-room`) when a model keeps
-  under 4096 of them. The same
-  three `[session]` keys (`autoCompact`, `reserveTokens`,
+  700 to 1400 tokens. `kubic doctor` warns (`context-room`) when a model you
+  can configure, one defined in `models.json` or your default model, keeps less
+  than 4096 estimated tokens of room. The same three `[session]` keys (`autoCompact`, `reserveTokens`,
   `keepRecentTokens`) drive `kubic run` and `kubic tui` alike — see the
   key-effect table — and `kubic config` / `kubic doctor`
   print the effective reserve after the clamp.

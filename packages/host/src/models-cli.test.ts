@@ -253,7 +253,7 @@ describe('a later models.json that declares the window replaces the default', ()
   it('clears the earlier fallback entry, and the effective window is the declared one', async () => {
     // The global file leaves llama3 without a window; the trusted project file
     // declares 32768 for the same model. The effective window is 32768, so the
-    // so the model is not defaulted.
+    // model is not defaulted.
     const home = tmpDir();
     mkdirSync(join(home, '.kubic', 'models'), { recursive: true });
     writeFileSync(

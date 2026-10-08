@@ -1304,7 +1304,7 @@ export function compactionSummaryLine(compaction: {
   keepRecentTokens: number;
   source: ConfigValueSource;
 }): string {
-  return `compaction: ${compaction.enabled ? 'automatic' : 'off'}, reserve=${compaction.reserveTokens} token(s) (${compaction.source}; clamped per model to at most a quarter of its window), keep-recent=${compaction.keepRecentTokens} token(s), capped to the model window`;
+  return `compaction: ${compaction.enabled ? 'automatic' : 'off'}, reserve=${compaction.reserveTokens} token(s) (${compaction.source}; clamped per model to at most a quarter of its window), keep-recent=${compaction.keepRecentTokens} token(s), capped to a quarter of the room below the reserve`;
 }
 
 // Human-readable rendering of the same view (one line per fact); secret

@@ -1088,6 +1088,48 @@ describe('kubic tui prompt loop', () => {
     expect(turn.settlementFooter()).toBe('compaction cancelled');
   });
 
+  // A lane loop whose /compact settles as `outcome`: the footer reads only that.
+  const compactSettling = (outcome: {
+    readonly status: string;
+    readonly tokensBefore: number;
+    readonly reason?: string;
+  }): TuiLaneLoop =>
+    ({
+      context: BACKGROUND_CONTEXT,
+      compact: async () => outcome,
+      abort: async () => undefined,
+    }) as unknown as TuiLaneLoop;
+
+  it('names the reason when /compact cut nothing for want of a cut point', async () => {
+    const turn = new TuiCompactionTurn(
+      compactSettling({
+        status: 'nothing',
+        tokensBefore: 1234,
+        reason: 'no-cut',
+      }),
+      undefined,
+    );
+    await turn.run('/compact');
+    expect(turn.settlementFooter()).toBe(
+      'nothing to compact: no cut point before the most recent turn (1234 tokens)',
+    );
+  });
+
+  it('names the most recent turn when there is no older history to compact', async () => {
+    const turn = new TuiCompactionTurn(
+      compactSettling({
+        status: 'nothing',
+        tokensBefore: 56,
+        reason: 'most-recent-turn',
+      }),
+      undefined,
+    );
+    await turn.run('/compact');
+    expect(turn.settlementFooter()).toBe(
+      'nothing to compact: no history older than the most recent turn (56 tokens of context)',
+    );
+  });
+
   it('reports /compact with nothing to cut as nothing to compact', async () => {
     // The shipped keep-recent window is 20000 tokens, so a small session has
     // nothing to cut: Pi completes the task without placing a summary entry,

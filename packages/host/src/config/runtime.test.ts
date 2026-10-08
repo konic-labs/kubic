@@ -228,10 +228,10 @@ describe('runtime config load', () => {
     );
   });
 
-  it('says the kept window is capped to the model window, in the key table and the summary line', () => {
+  it('says the kept window is capped to a quarter of the room below the reserve, in the key table and the summary line', () => {
     const entry = keyEffectFor('session.keepRecentTokens');
-    expect(entry === undefined ? '' : runtimeKeyEffectText(entry)).toMatch(
-      /capped per model/,
+    expect(entry === undefined ? '' : runtimeKeyEffectText(entry)).toContain(
+      'capped per model to a quarter of the room below its reserve',
     );
     expect(
       compactionSummaryLine({
@@ -240,7 +240,9 @@ describe('runtime config load', () => {
         keepRecentTokens: 20000,
         source: 'defaults',
       }),
-    ).toContain('keep-recent=20000 token(s), capped to the model window');
+    ).toContain(
+      'keep-recent=20000 token(s), capped to a quarter of the room below the reserve',
+    );
   });
 
   it('projects [journal] outOfScope with its layer, refusing an empty entry by name', () => {

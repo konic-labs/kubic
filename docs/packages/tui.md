@@ -19,7 +19,7 @@ TUI-side analogue of the worker Pi boundary.
 | `layout.ts` | `LayoutSlots`, `NARROW_COLUMNS`, `buildLayoutRoot` |
 | `screen.ts` | `Screen`, `bootScreen` (Pi's alt-screen with a `baseFilter` run over the base frame before the overlays are composited — the dimmed background) |
 | `status-bar.ts` | `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusBarState`, `StatusBarOptions`, `StatusBar` |
-| `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptOp`, `TranscriptView` (block mode: `blocks`, `select`, `toggleBlock`, `blockLines`, `reveal` on the view), `createTranscriptView` |
+| `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptView` (block mode: `blocks`, `select`, `toggleBlock`, `blockLines`, `reveal` on the view), `createTranscriptView` |
 | `tree.ts` | `RunStatus`, `ToolCallState`, `statusGlyph`, `toolGlyph`, `TreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
 | `editor-view.ts` | `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding, `insertText` at the cursor) |
 | `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `TOOL_DETAIL_MAX_CHARS`, `TOOL_OUTCOME_MAX_CHARS`, `sanitizeLaneText`, `summarizeToolArguments`, `summarizeToolOutcome`, `entriesToCells` — committed lane entries → coarse transcript cells; every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal. `sanitizeLaneText` strips complete ECMA-48 sequences (CSI, OSC, C1 CSI, 2-byte ESC forms — not just the ESC byte), collapses carriage-return overwrites to the text after the last `\r`, expands tabs by visible column width, and drops the remaining C0/C1 controls |
@@ -142,7 +142,7 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   above `StatusBarState.compactionThreshold`.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
   `prompt|text|tool|output|compaction|thinking|receipt` (a `thinking` cell collapses to `⋯ thought for 4.1s — <first sentence>`; a `receipt` cell is the app's per-turn `TurnReceipt`, merged before the next committed prompt and never stored); `TranscriptView` applies snapshot/delta ops
-  (`TranscriptOp`) and replays via `replayTranscript`. The in-flight
+  (the view's write log records each change). The in-flight
   assistant message streams live: `setStream(text)` renders a
   plain draft after the committed cells while `message-delta` events arrive,
   and the committed entry replaces it (clearing the draft — the text is

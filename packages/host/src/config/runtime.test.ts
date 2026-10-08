@@ -706,7 +706,7 @@ describe('enterprise-frozen thinking + thinking-only layers', () => {
   // silent (the model-pin pattern, one row per ignored input).
   it('records the env override a frozen enterprise level drops', () => {
     const files = {
-      // Thinking-only enterprise layer (the issue's shape): the pin comes
+      // Thinking-only enterprise layer (the shape that broke): the pin comes
       // from project, the level from enterprise.
       '/etc/kubic/config.toml': '[model]\nthinking = "high"\n',
       [PROJECT]: '[model]\nprovider = "local"\nid = "llama3"\n',

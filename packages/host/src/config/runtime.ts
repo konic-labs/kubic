@@ -1400,7 +1400,7 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
   return lines;
 }
 
-// Repository ignore split: config + roles are committed, the five
+// Repository ignore split: config + roles are committed, the four
 // runtime prefixes are ignored. Reads the workspace's ignore wiring through
 // the bridge (repo `.gitignore` + local `.git/info/exclude`) and reports the
 // missing prefixes by name — the same check the config tests pin, now on a

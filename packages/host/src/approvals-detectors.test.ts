@@ -214,7 +214,7 @@ describe('privilege escalation + indirection', () => {
     expect(
       detectTriggers('bash', { command: 'sudo systemctl restart foo' }, ctx),
     ).toEqual(['privilege-escalation']);
-    // The issue's motivating command: outside-write AND privilege-escalation.
+    // The motivating command: outside-write AND privilege-escalation.
     expect(
       detectTriggers(
         'bash',
@@ -853,8 +853,8 @@ describe('credential-access detector', () => {
 });
 
 describe('git-dir writes raise kubic-state-write', () => {
-  // Written before the isGitDirTarget check landed in
-  // detectTriggers — each of these returned [] on the unpatched detector.
+  // Each case below relies on the isGitDirTarget check in detectTriggers;
+  // without it, each one returns [].
   const ctx = triggerContext();
   it('raises for write/edit paths under .git/', () => {
     expect(

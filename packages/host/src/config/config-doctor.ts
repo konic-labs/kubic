@@ -2,7 +2,7 @@
 // keys fail closed with a named reason AND appear in doctor — nothing is
 // silently ignored.
 //
-// Seam note: doctor.ts is not this issue's file, and its `DoctorDeps` has no
+// Seam note: doctor.ts is outside this module, and its `DoctorDeps` has no
 // generic section hook, so the config check rides the existing `checkDeps`
 // channel (the same `{ id, ok, detail }` shape a dependency probe uses).
 // The composition root injects it; doctor renders it in both the human and

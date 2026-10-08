@@ -1,8 +1,8 @@
-// The full-access posture is resolved ONCE, at session boot. Before this issue
-// installSoloPolicy re-read <session>/posture.json on every ask, so one
-// model-issued bash redirect (`echo '{"fullAccess":true}' > …/posture.json`)
-// switched approvals off for the rest of the session — and the ledger recorded
-// it as if the user had.
+// The full-access posture is resolved ONCE, at session boot. installSoloPolicy
+// must not re-read <session>/posture.json on every ask: one model-issued bash
+// redirect (`echo '{"fullAccess":true}' > …/posture.json`) would otherwise switch
+// approvals off for the rest of the session, and the ledger would record it as
+// if the user had.
 //
 // Hermetic: temp session/workspace dirs removed in afterEach, no model.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

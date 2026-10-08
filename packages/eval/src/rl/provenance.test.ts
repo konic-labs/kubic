@@ -2,7 +2,7 @@
 // Every RL record embeds provenance (proc/gen/worktree/model/base) and
 // the failure category; stripped fields are validation errors.
 import { describe, expect, it } from 'vitest';
-import { makeExport } from './fixtures.js';
+import { makeExport } from '../test-support/fixtures.js';
 import {
   ENV_FAILURE_CODES,
   extractProvenance,

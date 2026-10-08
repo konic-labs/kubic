@@ -5,9 +5,9 @@ import {
   runBenchmarkCommand,
   runEvalCommand,
 } from './cli.js';
-import { makeExport } from './rl/fixtures.js';
 import { EvalRunnerError } from './runner.js';
 import type { EvalSignals } from './signals.js';
+import { makeExport } from './test-support/fixtures.js';
 
 function signals(): EvalSignals {
   return {

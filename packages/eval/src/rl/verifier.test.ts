@@ -2,7 +2,7 @@
 // The reference verifier answers tests-pass using the eval runner's own
 // signal derivation (computeSignals/gatesPass) — never a re-guess.
 import { describe, expect, it } from 'vitest';
-import { makeExport } from './fixtures.js';
+import { makeExport } from '../test-support/fixtures.js';
 import { referenceVerifier } from './verifier.js';
 
 describe('referenceVerifier', () => {

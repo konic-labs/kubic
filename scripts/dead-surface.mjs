@@ -10,10 +10,8 @@
 export const DEAD_FILES = {
   'apps/kubic/src/cli/context.ts':
     'type-only command registry contract: `import type` is erased, so nothing reaches it at runtime',
-  'packages/eval/src/rl/fixtures.ts':
-    'RL dataset export, not wired into the eval CLI yet',
-  'packages/eval/src/rl/index.ts':
-    'RL dataset export, not wired into the eval CLI yet',
+  'packages/eval/src/test-support/fixtures.ts':
+    'test support: the trajectory export builder the eval tests share',
   'packages/exec/src/test-support/git-sandbox.ts':
     'test support: the real-git sandbox the tests share',
   'packages/worker/src/lane/test-harness.ts':

@@ -3,8 +3,8 @@
 // preference; cross-boundary runs never form a trainable pair — both
 // surface as tagged exclusions instead.
 import { describe, expect, it } from 'vitest';
+import { makeExport } from '../test-support/fixtures.js';
 import { buildDpoRecord, validateDpoRecord } from './dpo.js';
-import { makeExport } from './fixtures.js';
 import { buildPreferencePair, validatePreferencePair } from './preference.js';
 
 function passing(overrides = {}) {

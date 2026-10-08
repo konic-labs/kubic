@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { makeExport } from './rl/fixtures.js';
 import { EvalRunnerError, runEvalTask, runEvalTrajectory } from './runner.js';
 import type { EvalSignals } from './signals.js';
+import { makeExport } from './test-support/fixtures.js';
 
 function signals(overrides: Partial<EvalSignals> = {}): EvalSignals {
   return {

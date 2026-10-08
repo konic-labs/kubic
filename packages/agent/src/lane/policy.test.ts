@@ -13,7 +13,7 @@ import {
   MemoryStorage,
   type Storage,
 } from '../pi-boundary.js';
-import { SOLO_DEFAULTS } from '../policy.js';
+import { DEFAULT_PERMISSIONS } from '../policy.js';
 import { applyToolPolicy } from './policy.js';
 import { bootLane, type Lane } from './solo.js';
 
@@ -117,7 +117,7 @@ describe('tool policy allowlisting', () => {
     const allowed = await applyToolPolicy(
       solo.registry,
       solo.conversation,
-      SOLO_DEFAULTS,
+      DEFAULT_PERMISSIONS,
       BACKGROUND_CONTEXT,
     );
     expect(allowed.sort()).toEqual(
@@ -160,7 +160,7 @@ describe('tool policy allowlisting', () => {
     await applyToolPolicy(
       solo.registry,
       solo.conversation,
-      { ...SOLO_DEFAULTS, filesystem: 'none', shell: false, git: false },
+      { ...DEFAULT_PERMISSIONS, filesystem: 'none', shell: false, git: false },
       BACKGROUND_CONTEXT,
     );
     expect(await offered(solo)).toEqual([]);
@@ -169,7 +169,7 @@ describe('tool policy allowlisting', () => {
   it('derives the allowlist the conversation actually offers', async () => {
     const solo = await booted();
     const classes = {
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'read' as const,
       shell: false as const,
       git: false as const,
@@ -198,7 +198,7 @@ describe('tool policy allowlisting', () => {
       applyToolPolicy(
         onlyRead as never,
         solo.conversation,
-        SOLO_DEFAULTS,
+        DEFAULT_PERMISSIONS,
         BACKGROUND_CONTEXT,
       ),
     ).rejects.toThrow(/not registered/);

@@ -20,7 +20,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
-import { SOLO_DEFAULTS } from '../policy.js';
+import { DEFAULT_PERMISSIONS } from '../policy.js';
 import { bootLane, SOLO_PROMPT_SECTION, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
@@ -99,7 +99,7 @@ function handle(id = 'sess-1'): TestSession {
 }
 
 const READ_ONLY_CLASSES = {
-  ...SOLO_DEFAULTS,
+  ...DEFAULT_PERMISSIONS,
   filesystem: 'read' as const,
   shell: false as const,
   git: false as const,

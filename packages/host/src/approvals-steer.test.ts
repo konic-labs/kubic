@@ -23,8 +23,8 @@ import {
   ALLOW_TURN_EDITS,
   type ApprovalRequest,
   type ApprovalVerdict,
-  type InstalledSoloPolicy,
-  installSoloPolicy,
+  type InstalledPolicy,
+  installPolicy,
 } from './approvals.js';
 import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 
@@ -38,7 +38,7 @@ afterEach(() => {
 interface Rig {
   dir: string;
   asks: ApprovalRequest[];
-  installed: InstalledSoloPolicy;
+  installed: InstalledPolicy;
   env: FakeExecutionEnv;
   lane: FauxLane;
   turn: (prompt: string) => Promise<KubicLaneEvent[]>;
@@ -57,7 +57,7 @@ async function rig(options: {
   made.push(dir);
   mkdirSync(join(dir, 'session'), { recursive: true });
   const asks: ApprovalRequest[] = [];
-  const installed = installSoloPolicy({
+  const installed = installPolicy({
     workspace: dir,
     sessionDir: join(dir, 'session'),
     ...(options.requires === undefined ? {} : { requires: options.requires }),

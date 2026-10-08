@@ -12,7 +12,7 @@
 
 import { basename, dirname, resolve, sep } from 'node:path';
 import type { PermissionClasses } from '../../agent/src/policy.js';
-import { SOLO_DEFAULTS } from '../../agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../agent/src/policy.js';
 import type {
   DiscoverSkillsOptions,
   LoadedSkill,
@@ -180,7 +180,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
   }
   const gated = gateSkills(admitted, {
     ...(options.role === undefined ? {} : { role: options.role }),
-    classes: options.classes ?? SOLO_DEFAULTS,
+    classes: options.classes ?? DEFAULT_PERMISSIONS,
     ...(options.log === undefined ? {} : { log: options.log }),
   });
   const visible = gated.visible.filter(

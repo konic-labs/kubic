@@ -9,7 +9,7 @@
 // `--role` that refuses to resolve fails closed with its named reason.
 
 import type { PermissionClasses } from '../../agent/src/policy.js';
-import { SOLO_DEFAULTS } from '../../agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../agent/src/policy.js';
 import {
   type CommandResult,
   EXIT_FAILED,
@@ -80,7 +80,7 @@ export function runSkillsCommand(
     // as it would at boot.
     if (gate.classes !== undefined) {
       classes = effectiveRoleClasses(
-        { ...SOLO_DEFAULTS, ...deps.base.classes },
+        { ...DEFAULT_PERMISSIONS, ...deps.base.classes },
         gate.classes,
       );
     }

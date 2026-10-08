@@ -6,14 +6,14 @@ import {
   checkGrantable,
   effectiveNetworkLevel,
   PolicyValidationError,
-  SOLO_DEFAULTS,
+  DEFAULT_PERMISSIONS,
   toolsForClasses,
   validateClasses,
 } from './policy.js';
 
 describe('permission policy model', () => {
   it('loads solo defaults matching', () => {
-    expect(SOLO_DEFAULTS).toEqual({
+    expect(DEFAULT_PERMISSIONS).toEqual({
       filesystem: 'workspace-write',
       shell: true,
       network: 'none',
@@ -23,7 +23,7 @@ describe('permission policy model', () => {
   });
 
   it('derives the solo tool allowlist from defaults', () => {
-    expect(toolsForClasses(SOLO_DEFAULTS).sort()).toEqual(
+    expect(toolsForClasses(DEFAULT_PERMISSIONS).sort()).toEqual(
       [
         'bash',
         'edit',
@@ -49,7 +49,7 @@ describe('permission policy model', () => {
 
   it('restricts read-only roles to read tools', () => {
     const tools = toolsForClasses({
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'read',
       shell: false,
       git: false,
@@ -63,54 +63,54 @@ describe('permission policy model', () => {
   // full shell.
   it('keeps bash for both shell levels, and narrows only the guard', () => {
     expect(
-      toolsForClasses({ ...SOLO_DEFAULTS, shell: 'read-only-allowlist' }),
+      toolsForClasses({ ...DEFAULT_PERMISSIONS, shell: 'read-only-allowlist' }),
     ).toContain('bash');
-    expect(toolsForClasses({ ...SOLO_DEFAULTS, shell: true })).toContain(
+    expect(toolsForClasses({ ...DEFAULT_PERMISSIONS, shell: true })).toContain(
       'bash',
     );
     expect(
       checkAgreement(
-        { ...SOLO_DEFAULTS, shell: 'read-only-allowlist' },
-        toolsForClasses({ ...SOLO_DEFAULTS, shell: 'read-only-allowlist' }),
+        { ...DEFAULT_PERMISSIONS, shell: 'read-only-allowlist' },
+        toolsForClasses({ ...DEFAULT_PERMISSIONS, shell: 'read-only-allowlist' }),
       ).agree,
     ).toBe(true);
   });
 
   it('refuses contradictory roles with named reasons', () => {
-    const read = checkAgreement({ ...SOLO_DEFAULTS, filesystem: 'read' }, [
+    const read = checkAgreement({ ...DEFAULT_PERMISSIONS, filesystem: 'read' }, [
       'read',
       'write',
     ]);
     expect(read.agree).toBe(false);
     if (!read.agree) expect(read.reason).toContain('write');
-    const shell = checkAgreement({ ...SOLO_DEFAULTS, shell: false }, ['bash']);
+    const shell = checkAgreement({ ...DEFAULT_PERMISSIONS, shell: false }, ['bash']);
     expect(shell.agree).toBe(false);
     if (!shell.agree) expect(shell.reason).toContain('bash');
   });
 
   it('accepts agreeing roles', () => {
     expect(
-      checkAgreement(SOLO_DEFAULTS, toolsForClasses(SOLO_DEFAULTS)).agree,
+      checkAgreement(DEFAULT_PERMISSIONS, toolsForClasses(DEFAULT_PERMISSIONS)).agree,
     ).toBe(true);
   });
 
   it('refuses ungrantable classes with named reasons', () => {
-    const missing = checkGrantable(SOLO_DEFAULTS, ['read']);
+    const missing = checkGrantable(DEFAULT_PERMISSIONS, ['read']);
     expect(missing.agree).toBe(false);
     if (!missing.agree) expect(missing.reason).toContain('ls');
     expect(
-      checkGrantable(SOLO_DEFAULTS, toolsForClasses(SOLO_DEFAULTS)).agree,
+      checkGrantable(DEFAULT_PERMISSIONS, toolsForClasses(DEFAULT_PERMISSIONS)).agree,
     ).toBe(true);
   });
 
   it('merges partial input over solo defaults', () => {
-    expect(validateClasses({})).toEqual(SOLO_DEFAULTS);
+    expect(validateClasses({})).toEqual(DEFAULT_PERMISSIONS);
     expect(validateClasses({ filesystem: 'read' }).shell).toBe(true);
   });
 
   it('rejects unknown class literals', () => {
     expect(() =>
-      validateClasses({ ...SOLO_DEFAULTS, filesystem: 'sometimes' }),
+      validateClasses({ ...DEFAULT_PERMISSIONS, filesystem: 'sometimes' }),
     ).toThrow(/invalid filesystem: "sometimes"/);
     expect(() => validateClasses(null)).toThrow(
       /permission classes must be an object/,
@@ -130,7 +130,7 @@ describe('permission policy model', () => {
 
 describe('checkAgreement every refuse branch', () => {
   it("refuses fs 'none' with a read tool, naming the tool", () => {
-    const result = checkAgreement({ ...SOLO_DEFAULTS, filesystem: 'none' }, [
+    const result = checkAgreement({ ...DEFAULT_PERMISSIONS, filesystem: 'none' }, [
       'read',
     ]);
     expect(result).toEqual({
@@ -140,7 +140,7 @@ describe('checkAgreement every refuse branch', () => {
   });
 
   it("refuses fs 'read' with a write tool, naming the tool", () => {
-    const result = checkAgreement({ ...SOLO_DEFAULTS, filesystem: 'read' }, [
+    const result = checkAgreement({ ...DEFAULT_PERMISSIONS, filesystem: 'read' }, [
       'read',
       'write',
     ]);
@@ -152,7 +152,7 @@ describe('checkAgreement every refuse branch', () => {
 
   it('refuses shell false with bash', () => {
     expect(
-      checkAgreement({ ...SOLO_DEFAULTS, shell: false }, ['bash']),
+      checkAgreement({ ...DEFAULT_PERMISSIONS, shell: false }, ['bash']),
     ).toEqual({
       agree: false,
       reason: "shell is disabled but tool 'bash' is registered",
@@ -160,7 +160,7 @@ describe('checkAgreement every refuse branch', () => {
   });
 
   it('refuses git false with git_commit, naming the tool', () => {
-    const result = checkAgreement({ ...SOLO_DEFAULTS, git: false }, [
+    const result = checkAgreement({ ...DEFAULT_PERMISSIONS, git: false }, [
       'read',
       'git_commit',
     ]);
@@ -173,12 +173,12 @@ describe('checkAgreement every refuse branch', () => {
   it('agrees when no refused tool is registered', () => {
     expect(
       checkAgreement(
-        { ...SOLO_DEFAULTS, filesystem: 'none', shell: false, git: false },
+        { ...DEFAULT_PERMISSIONS, filesystem: 'none', shell: false, git: false },
         [],
       ).agree,
     ).toBe(true);
     expect(
-      checkAgreement(SOLO_DEFAULTS, toolsForClasses(SOLO_DEFAULTS)).agree,
+      checkAgreement(DEFAULT_PERMISSIONS, toolsForClasses(DEFAULT_PERMISSIONS)).agree,
     ).toBe(true);
   });
 });
@@ -186,7 +186,7 @@ describe('checkAgreement every refuse branch', () => {
 describe('toolsForClasses over every level', () => {
   it('filesystem: none holds no fs tools, read holds reads, writes need workspace-write/full', () => {
     const base: PermissionClasses = {
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       shell: false,
       git: false,
     };
@@ -204,7 +204,7 @@ describe('toolsForClasses over every level', () => {
 
   it('shell: false holds no bash, the allowlist and full shell do', () => {
     const base: PermissionClasses = {
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'none',
       git: false,
     };
@@ -216,7 +216,7 @@ describe('toolsForClasses over every level', () => {
 
   it('git: false holds no git tools, workspace and full hold all eleven', () => {
     const base: PermissionClasses = {
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'none',
       shell: false,
     };
@@ -241,11 +241,11 @@ describe('toolsForClasses over every level', () => {
   });
 
   it('network and credentials levels add no tools', () => {
-    const base = toolsForClasses(SOLO_DEFAULTS);
+    const base = toolsForClasses(DEFAULT_PERMISSIONS);
     for (const network of ['none', 'allowlist', 'full'] as const) {
       for (const credentials of ['none', 'allowlist'] as const) {
         expect(
-          toolsForClasses({ ...SOLO_DEFAULTS, network, credentials }),
+          toolsForClasses({ ...DEFAULT_PERMISSIONS, network, credentials }),
         ).toEqual(base);
       }
     }
@@ -299,7 +299,7 @@ describe('inexpressible levels are reported, never silent', () => {
   });
 
   it('reports nothing for the expressible solo defaults', () => {
-    expect(checkExpressible(SOLO_DEFAULTS)).toEqual([]);
+    expect(checkExpressible(DEFAULT_PERMISSIONS)).toEqual([]);
     expect(
       checkExpressible(
         validateClasses({ network: 'full', filesystem: 'read' }),

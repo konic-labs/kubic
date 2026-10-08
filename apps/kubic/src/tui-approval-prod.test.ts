@@ -92,10 +92,10 @@ function fauxLaneBoot(
     if (model === undefined) throw new Error('no model registered');
     // The production policy derivation, with the seat the composition root
     // would attach (tui-run.ts does this on the real path).
-    const { installSoloPolicy } = await import(
+    const { installPolicy } = await import(
       '../../../packages/host/src/approvals.js'
     );
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: '/fake',
       sessionDir: join(root, id),
       ...(answer === undefined ? {} : { answer }),

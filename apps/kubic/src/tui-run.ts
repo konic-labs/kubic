@@ -95,7 +95,7 @@ import {
 import type { PermissionClasses } from '../../../packages/agent/src/policy.js';
 import {
   checkAgreement,
-  SOLO_DEFAULTS,
+  DEFAULT_PERMISSIONS,
   validateClasses,
 } from '../../../packages/agent/src/policy.js';
 import type { ModelEscalationEvent } from '../../../packages/agent/src/prompts.js';
@@ -144,10 +144,10 @@ import {
   type ApprovalVerdict,
   enableSessionFullAccess,
   fullAccessInForceWarning,
-  type InstalledSoloPolicy,
-  installSoloPolicy,
+  type InstalledPolicy,
+  installPolicy,
   type SessionFullAccessGrant,
-  type SoloApprovalConfig,
+  type ApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
@@ -983,12 +983,12 @@ export interface TuiRunOptions {
   debug?: DebugSink;
   // The config `[approvals]` policy — the same projection
   // `kubic run` installs. Absent means the documented defaults.
-  approvals?: SoloApprovalConfig;
+  approvals?: ApprovalConfig;
   // The installed-policy seat: the same derivation the headless
   // runner installs. Absent means the shipped default (classes above +
   // destructive/network/confine guards + the approval ask); tests inject a
   // variant. `kubic tui` drives the same lane, so it takes the same policy.
-  policy?: InstalledSoloPolicy;
+  policy?: InstalledPolicy;
   // Model registry injection: the same seam `runHeadlessPrompt`
   // takes as `models`, so the reconciliation tests can boot the REAL path
   // hermetically with faux models. Absent means the assembled prod catalog.
@@ -1163,7 +1163,7 @@ function assertToolSelection(
     );
   }
   const agreement = checkAgreement(
-    validateClasses({ ...(classes ?? SOLO_DEFAULTS) }),
+    validateClasses({ ...(classes ?? DEFAULT_PERMISSIONS) }),
     [...selection],
   );
   if (!agreement.agree) throw new ToolSelectionError(agreement.reason);
@@ -1495,7 +1495,7 @@ export async function bootTuiLane(
         : undefined;
     const installed =
       options.policy ??
-      installSoloPolicy({
+      installPolicy({
         workspace: env.cwd,
         // The lane enforces the most
         // restrictive merge of the config classes and the role's, and
@@ -1509,7 +1509,7 @@ export async function bootTuiLane(
             }
           : {
               classes: effectiveRoleClasses(
-                { ...SOLO_DEFAULTS, ...options.classes },
+                { ...DEFAULT_PERMISSIONS, ...options.classes },
                 selectedRole.resolved.classes,
               ),
               ...(selectedRole.resolved.requires.length === 0
@@ -2346,8 +2346,8 @@ type TuiConfigProjection = {
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
   policySource?: 'config' | 'default';
-  approvals?: SoloApprovalConfig;
-  policy?: InstalledSoloPolicy;
+  approvals?: ApprovalConfig;
+  policy?: InstalledPolicy;
   // Config journal retention, threaded from the same
   // runtimeRunDeps projection `kubic run` uses.
   journalRetention?: JournalRetention;

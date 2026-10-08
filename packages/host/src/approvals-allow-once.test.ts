@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   type ApprovalVerdict,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
 } from './approvals.js';
 import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 
@@ -38,7 +38,7 @@ function withSeat(verdict: ApprovalVerdict) {
   const workspace = tmpRoot('ws-');
   const sessionDir = tmpRoot('session-');
   let asks = 0;
-  const installed = installSoloPolicy({
+  const installed = installPolicy({
     workspace,
     sessionDir,
     answer: async () => {

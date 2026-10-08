@@ -31,7 +31,7 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '../../../../packages/agent/src/pi-boundary.js';
-import { SOLO_DEFAULTS } from '../../../../packages/agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../../../packages/agent/src/policy.js';
 import { FakeExecutionEnv } from '../../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../../packages/exec/src/file-bridge.js';
 import { loadRuntimeConfig } from '../../../../packages/host/src/config/runtime.js';
@@ -131,7 +131,7 @@ function request(): ReplayRunRequest {
 }
 
 const RUNTIME: ReplayRuntimeDeps = {
-  policyClasses: { ...SOLO_DEFAULTS, shell: false },
+  policyClasses: { ...DEFAULT_PERMISSIONS, shell: false },
   policySource: 'config',
   journalRetention: { maxAgeMs: 60_000 },
 };

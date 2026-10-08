@@ -1872,7 +1872,7 @@ export function fullAccessInForceWarning(sessionId: string): string {
 //     The permission wrapper is composed by the lane itself, innermost, from
 //     the same classes (solo.ts withPolicyContributions) — never duplicated
 //     here.
-export interface SoloPolicyInput {
+export interface PolicyInput {
   workspace: string;
   /** Config-sourced classes; absent means the documented SOLO_DEFAULTS. */
   classes?: PermissionClasses;
@@ -1958,8 +1958,8 @@ export interface SoloPolicyInput {
 // The config `[approvals]` half of the install: the one shape
 // the composition root projects from the config load and every solo entry
 // point (run, tui, replay, doctor) spreads into installSoloPolicy.
-export type SoloApprovalConfig = Pick<
-  SoloPolicyInput,
+export type ApprovalConfig = Pick<
+  PolicyInput,
   | 'route'
   | 'maxPendingMs'
   | 'autoApprove'
@@ -1996,7 +1996,7 @@ interface RecordedApprovalDeny {
 export const NO_ANSWER_SURFACE_REASON =
   'approval required, but no approval surface is installed on this command: kubic run has no ask prompt, so the call is refused; answer approvals in kubic tui, or change the approval route or policy';
 
-export interface InstalledSoloPolicy {
+export interface InstalledPolicy {
   classes: PermissionClasses;
   interceptors: PolicyInterceptorOptions;
   contributions: ToolContribution[];
@@ -2030,7 +2030,7 @@ export interface InstalledSoloPolicy {
 }
 
 export function installedPolicyPosture(
-  input: SoloPolicyInput,
+  input: PolicyInput,
   // The posture record read at boot; absent reads it here.
   bootPosture?: AccessPosture,
 ): InstalledPolicyPosture {
@@ -2095,7 +2095,7 @@ export function installedPolicyPosture(
   };
 }
 
-export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
+export function installPolicy(input: PolicyInput): InstalledPolicy {
   const denials: RecordedApprovalDeny[] = [];
   const store =
     input.sessionDir === undefined

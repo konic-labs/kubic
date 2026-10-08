@@ -41,7 +41,7 @@ import {
   detectTriggers,
   enableFullAccess,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
   KUBIC_STATE_WRITE,
   triggerContextFor,
   validatePolicy,
@@ -270,7 +270,7 @@ describe('control plane beyond the workspace', () => {
 
   it('refuses an overridden sessions root wholesale', async () => {
     const root = tmpRoot();
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace: WS,
       sessionDir: root,
       sessionsRoot: '/srv/kubic-sessions',
@@ -287,7 +287,7 @@ describe('control plane beyond the workspace', () => {
   it('full access in a subdirectory run refuses the project ledger and asks for the project config', async () => {
     const root = tmpRoot();
     enableFullAccess(new FileApprovalStore(root), 'test');
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace: SUB,
       sessionDir: root,
       home: HOME,
@@ -342,7 +342,7 @@ describe('kubic-state-write always asks', () => {
   it('session full access still asks for it (and refuses the refused class)', async () => {
     const root = tmpRoot();
     enableFullAccess(new FileApprovalStore(root), 'test');
-    const policy = installSoloPolicy({ workspace: WS, sessionDir: root });
+    const policy = installPolicy({ workspace: WS, sessionDir: root });
     const state = await policy.ask({
       toolName: 'write',
       args: { path: '.kubic/config.toml', content: 'x' },
@@ -366,7 +366,7 @@ describe('kubic-state-write always asks', () => {
   });
 
   it('a seat that approves lets the write through', async () => {
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace: WS,
       answer: async () => ({ approved: true, by: 'user' }),
     });

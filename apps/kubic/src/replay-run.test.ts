@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type PermissionClasses,
-  SOLO_DEFAULTS,
+  DEFAULT_PERMISSIONS,
 } from '../../../packages/agent/src/policy.js';
 import type {
   ReplayRunRequest,
@@ -178,7 +178,7 @@ describe('prod replay re-execution runner', () => {
 
   it('threads the selected model and the runtime deps into the lane run', async () => {
     cwdWithTrajectory();
-    const policyClasses: PermissionClasses = { ...SOLO_DEFAULTS, shell: false };
+    const policyClasses: PermissionClasses = { ...DEFAULT_PERMISSIONS, shell: false };
     const runtime: ReplayRuntimeDeps = {
       policySource: 'config',
       policyClasses,

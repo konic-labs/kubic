@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ensureRuntimeExcludeRules } from '../../exec/src/runtime-exclude.js';
-import { installSoloPolicy } from './approvals.js';
+import { installPolicy } from './approvals.js';
 import { runAuditCommand } from './policy/audit-cli.js';
 import {
   AUDIT_LEDGER_FILE,
@@ -112,7 +112,7 @@ describe('resolveRepoRuntimeRoot', () => {
 describe('solo decisions land in the repo ledger', () => {
   it('a run from <repo>/sub appends to <repo>/.kubic/…/audit.jsonl and creates nothing under sub', async () => {
     const { repo, sub } = fixtureRepo();
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: sub,
       sessionDir: tmpRoot('session-'),
     });
@@ -126,7 +126,7 @@ describe('solo decisions land in the repo ledger', () => {
 
   it('kubic audit lists it from the root and from sub', async () => {
     const { repo, sub } = fixtureRepo();
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: sub,
       sessionDir: tmpRoot('session-'),
     });
@@ -153,7 +153,7 @@ describe('solo provenance fields', () => {
     const { repo, sub } = fixtureRepo();
     const base = git(repo, ['rev-parse', 'HEAD']).trim();
     let thinking = 'high';
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: sub,
       sessionDir: tmpRoot('session-'),
       thinking: () => thinking,
@@ -174,7 +174,7 @@ describe('solo provenance fields', () => {
 
   it('accepts a static thinking level', async () => {
     const { repo } = fixtureRepo();
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: repo,
       sessionDir: tmpRoot('session-'),
       thinking: 'medium',

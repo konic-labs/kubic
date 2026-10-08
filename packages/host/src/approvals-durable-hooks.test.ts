@@ -34,7 +34,7 @@ import {
   type ApprovalVerdict,
   approvalKey,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
 } from './approvals.js';
 
 const COMMAND = 'rm -rf /tmp/x';
@@ -76,7 +76,7 @@ async function bootHarness(options: {
 }): Promise<Booted> {
   const world: World = { calls: [] };
   const seatSignals: AbortSignal[] = [];
-  const installed = installSoloPolicy({
+  const installed = installPolicy({
     workspace: options.workspace,
     sessionDir: options.workspace,
     sessionId: 'sess-durable',

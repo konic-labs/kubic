@@ -76,7 +76,7 @@ import {
   checkAgreement,
   type PermissionClasses,
   type RunMode,
-  SOLO_DEFAULTS,
+  DEFAULT_PERMISSIONS,
   validateClasses,
 } from '../../../packages/agent/src/policy.js';
 import { expandSkillInvocation } from '../../../packages/agent/src/skills/skills.js';
@@ -104,9 +104,9 @@ import { TIMEOUT_REASON_MARKER } from '../../../packages/host/src/approval-timeo
 import {
   enableSessionFullAccess,
   fullAccessInForceWarning,
-  type InstalledSoloPolicy,
-  installSoloPolicy,
-  type SoloApprovalConfig,
+  type InstalledPolicy,
+  installPolicy,
+  type ApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import type {
@@ -258,7 +258,7 @@ export interface HeadlessRunDeps {
   // The config `[approvals]` policy (route, maxPendingMs,
   // autoApprove, requireJustification, sessionScoped). Absent means the
   // documented defaults.
-  approvals?: SoloApprovalConfig;
+  approvals?: ApprovalConfig;
   // Enterprise policy: the composition root resolves it
   // once (`runtimePolicy` in config-runtime) and threads it here. A run only
   // gates its tool set and model selection when the layer actually
@@ -282,7 +282,7 @@ export interface HeadlessRunDeps {
   // network/confine guards and the approval ask, all derived by
   // installSoloPolicy. Tests inject a variant here; nothing else may skip
   // the install, which is why the default is not an opt-in.
-  policy?: InstalledSoloPolicy;
+  policy?: InstalledPolicy;
   // Declared out-of-scope paths for the baseline.
   // Populated by `[journal] outOfScope` through runtimeRunDeps;
   // absent means the mechanism's own skips only — `.git/`, `.kubic/` and
@@ -1044,7 +1044,7 @@ async function runHeadlessPromptImpl(
       return finished('unassigned', 'usage', invalid, invalid);
     }
     const agreement = checkAgreement(
-      validateClasses({ ...(deps.policyClasses ?? SOLO_DEFAULTS) }),
+      validateClasses({ ...(deps.policyClasses ?? DEFAULT_PERMISSIONS) }),
       [...options.tools],
     );
     if (!agreement.agree) {
@@ -1506,7 +1506,7 @@ async function runHeadlessPromptImpl(
     let liveThinkingRef: string | undefined;
     const installed =
       deps.policy ??
-      installSoloPolicy({
+      installPolicy({
         workspace: env.cwd,
         // The lane enforces the most restrictive
         // merge of the config classes and the role's — a role declaring
@@ -1524,7 +1524,7 @@ async function runHeadlessPromptImpl(
             };
           return {
             classes: effectiveRoleClasses(
-              { ...SOLO_DEFAULTS, ...deps.policyClasses },
+              { ...DEFAULT_PERMISSIONS, ...deps.policyClasses },
               grantClasses,
             ),
             ...(requires === undefined ? {} : { requires }),

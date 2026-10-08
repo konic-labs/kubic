@@ -13,7 +13,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
 } from '../../../packages/agent/src/pi-boundary.js';
-import { SOLO_DEFAULTS } from '../../../packages/agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../../packages/agent/src/policy.js';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 const READ_ONLY = {
-  ...SOLO_DEFAULTS,
+  ...DEFAULT_PERMISSIONS,
   filesystem: 'read' as const,
   shell: false as const,
   git: false as const,

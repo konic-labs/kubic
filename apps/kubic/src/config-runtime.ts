@@ -35,7 +35,7 @@ import {
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import type { JournalRetention } from '../../../packages/exec/src/journal.js';
 import { gitSync } from '../../../packages/exec/src/runtime-exclude.js';
-import type { SoloApprovalConfig } from '../../../packages/host/src/approvals.js';
+import type { ApprovalConfig } from '../../../packages/host/src/approvals.js';
 import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
 import {
   CONFIG_LAYERS,
@@ -665,7 +665,7 @@ export function selectModelUnderPolicy(
 // defaults.
 export function runtimeApprovalDeps(
   result: CliConfigResult,
-): SoloApprovalConfig {
+): ApprovalConfig {
   const policy = result.runtime?.approvals.policy;
   if (policy === undefined) return {};
   return {
@@ -695,7 +695,7 @@ export function runtimeRunDeps(result: CliConfigResult): {
   // must not be reported as operator-configured classes.
   policySource: 'config' | 'default';
   // The config `[approvals]` policy the lane installs.
-  approvals?: SoloApprovalConfig;
+  approvals?: ApprovalConfig;
   // The `[verify]` gate commands the run executes in its
   // worktree after it settles. Undefined when none is configured — every
   // gate then stays unknown.
@@ -1010,7 +1010,7 @@ export function runtimeCompactionDeps(
 export function installedPolicyDeps(result: CliConfigResult): {
   classes?: PermissionClasses;
   source: 'config' | 'default';
-} & SoloApprovalConfig {
+} & ApprovalConfig {
   const { policyClasses, policySource } = runtimeRunDeps(result);
   return {
     ...(policySource === 'config' && policyClasses !== undefined

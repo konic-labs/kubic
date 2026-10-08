@@ -24,7 +24,7 @@ import {
 } from '../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { installSoloPolicy } from '../../../packages/host/src/approvals.js';
+import { installPolicy } from '../../../packages/host/src/approvals.js';
 import {
   auditLedgerDir,
   readAuditLedger,
@@ -314,7 +314,7 @@ describe('installSoloPolicy audit model', () => {
   it('a string model is recorded as given; a function is read at RECORD time, per row', async () => {
     const workspace = tmpRoot('audit-id-install-ws-');
     let live = 'faux/big';
-    const withFn = installSoloPolicy({
+    const withFn = installPolicy({
       workspace,
       sessionDir: tmpRoot('audit-id-install-s1-'),
       sessionId: 'fn-session',
@@ -324,7 +324,7 @@ describe('installSoloPolicy audit model', () => {
     await withFn.ask(call('c1'));
     live = 'alt/m1';
     await withFn.ask(call('c2'));
-    const withString = installSoloPolicy({
+    const withString = installPolicy({
       workspace,
       sessionDir: tmpRoot('audit-id-install-s2-'),
       sessionId: 'str-session',
@@ -332,7 +332,7 @@ describe('installSoloPolicy audit model', () => {
       model: 'faux/small',
     });
     await withString.ask(call('c3'));
-    const withNone = installSoloPolicy({
+    const withNone = installPolicy({
       workspace,
       sessionDir: tmpRoot('audit-id-install-s3-'),
       sessionId: 'none-session',

@@ -31,7 +31,7 @@ export interface PermissionClasses {
 }
 
 // Solo defaults; unlisted classes default to most restrictive.
-export const SOLO_DEFAULTS: PermissionClasses = {
+export const DEFAULT_PERMISSIONS: PermissionClasses = {
   filesystem: 'workspace-write',
   shell: true,
   network: 'none',
@@ -260,19 +260,19 @@ export function validateClasses(input: unknown): PermissionClasses {
     filesystem: pick(
       'filesystem',
       FILESYSTEM_LEVELS,
-      SOLO_DEFAULTS.filesystem,
+      DEFAULT_PERMISSIONS.filesystem,
     ) as FilesystemLevel,
-    shell: pick('shell', SHELL_LEVELS, SOLO_DEFAULTS.shell) as ShellLevel,
+    shell: pick('shell', SHELL_LEVELS, DEFAULT_PERMISSIONS.shell) as ShellLevel,
     network: pick(
       'network',
       NETWORK_LEVELS,
-      SOLO_DEFAULTS.network,
+      DEFAULT_PERMISSIONS.network,
     ) as NetworkLevel,
-    git: pick('git', GIT_LEVELS, SOLO_DEFAULTS.git) as GitLevel,
+    git: pick('git', GIT_LEVELS, DEFAULT_PERMISSIONS.git) as GitLevel,
     credentials: pick(
       'credentials',
       CREDENTIAL_LEVELS,
-      SOLO_DEFAULTS.credentials,
+      DEFAULT_PERMISSIONS.credentials,
     ) as CredentialLevel,
   };
 }

@@ -22,12 +22,12 @@ import {
   defaultIsDestructive,
   isNetworkCommand,
 } from '../../agent/src/lane/interceptors.js';
-import { SOLO_DEFAULTS } from '../../agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../agent/src/policy.js';
 import {
   ApprovalService,
   CAPABILITIES,
   detectTriggers,
-  installSoloPolicy,
+  installPolicy,
   type TriggerContext,
   triggerContextFor,
   validatePolicy,
@@ -406,7 +406,7 @@ describe('privilege escalation + indirection', () => {
 
   it('requires every raised capability: autoApprove covers only what it names', async () => {
     const dir = mkTmp('approvals-detectors-');
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: dir,
       sessionDir: dir,
       autoApprove: ['privilege-escalation'],
@@ -548,7 +548,7 @@ describe('shell-expanded and cd-relative write targets', () => {
 
   it('wires the home directory through triggerContextFor', () => {
     const home = mkTmp('kubic-detectors-home-');
-    const ctx = triggerContextFor(SOLO_DEFAULTS, home, home);
+    const ctx = triggerContextFor(DEFAULT_PERMISSIONS, home, home);
     expect(ctx.home).toBe(home);
     expect(
       detectTriggers(

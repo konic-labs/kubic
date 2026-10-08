@@ -5,14 +5,14 @@
 // and the working-tree-discarding git forms. The table uses the PRODUCTION context
 // (triggerContextFor), so a green run proves what `kubic run` classifies.
 import { describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../agent/src/policy.js';
 import {
   type Capability,
   detectTriggers,
   triggerContextFor,
 } from './approvals.js';
 
-const ctx = triggerContextFor(SOLO_DEFAULTS, '/work', '/home/u');
+const ctx = triggerContextFor(DEFAULT_PERMISSIONS, '/work', '/home/u');
 
 function raised(command: string): Capability[] {
   return detectTriggers('bash', { command }, ctx).sort();

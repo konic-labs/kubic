@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import { SOLO_DEFAULTS } from '../policy.js';
+import { DEFAULT_PERMISSIONS } from '../policy.js';
 import type { LoadedSkill } from './skills.js';
 import {
   discoverSkills,
@@ -795,7 +795,7 @@ describe('role scoping and capability gating', () => {
     });
     const gated = gateSkills(skills, {
       role: 'reviewer',
-      classes: SOLO_DEFAULTS,
+      classes: DEFAULT_PERMISSIONS,
     });
     expect(gated.visible).toEqual([]);
     expect(gated.withheld).toEqual([
@@ -803,7 +803,7 @@ describe('role scoping and capability gating', () => {
     ]);
     const allowed = gateSkills(skills, {
       role: 'implementer',
-      classes: SOLO_DEFAULTS,
+      classes: DEFAULT_PERMISSIONS,
     });
     expect(allowed.visible.map((skill) => skill.name)).toEqual(['deploy']);
   });
@@ -823,7 +823,7 @@ describe('role scoping and capability gating', () => {
     });
     const gated = gateSkills(skills, {
       role: 'implementer',
-      classes: { ...SOLO_DEFAULTS, filesystem: 'read' },
+      classes: { ...DEFAULT_PERMISSIONS, filesystem: 'read' },
       log: (line: string): void => {
         logged.push(line);
       },
@@ -854,7 +854,7 @@ describe('role scoping and capability gating', () => {
       cwd: CWD,
       trusted: false,
     });
-    const gated = gateSkills(skills, { classes: SOLO_DEFAULTS });
+    const gated = gateSkills(skills, { classes: DEFAULT_PERMISSIONS });
     expect(gated.visible.map((skill) => skill.name)).toEqual(['deploy']);
     expect(gated.withheld).toEqual([]);
   });
@@ -923,7 +923,7 @@ describe('role scoping and capability gating', () => {
     });
     const gated = gateSkills(skills, {
       role: 'implementer',
-      classes: { ...SOLO_DEFAULTS, filesystem: 'read' },
+      classes: { ...DEFAULT_PERMISSIONS, filesystem: 'read' },
     });
     expect(gated.visible.map((skill) => skill.name)).toEqual(['ok']);
     expect(gated.withheld).toEqual([

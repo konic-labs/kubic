@@ -15,7 +15,7 @@ import {
 } from '../../agent/src/pi-boundary.js';
 import {
   type ApprovalVerdict,
-  installSoloPolicy,
+  installPolicy,
   NO_ANSWER_SURFACE_REASON,
 } from './approvals.js';
 
@@ -32,7 +32,7 @@ async function runDestructive(
   command = 'rm -rf /tmp/x',
 ): Promise<{ terminus: string; toolResults: string[]; asks: number }> {
   let asks = 0;
-  const installed = installSoloPolicy({
+  const installed = installPolicy({
     workspace: '/fake',
     ...(seat === undefined
       ? {}

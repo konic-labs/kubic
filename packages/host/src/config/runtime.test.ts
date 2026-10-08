@@ -12,7 +12,7 @@ import {
   promptToolsLine,
 } from '../../../agent/src/lane/test-harness.js';
 import { BACKGROUND_CONTEXT } from '../../../agent/src/pi-boundary.js';
-import { SOLO_DEFAULTS } from '../../../agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../../agent/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
@@ -311,7 +311,7 @@ describe('runtime config load', () => {
       { projectTrusted: true },
     );
     expect(runtime.permissions.classes).toEqual({
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'read',
       shell: false,
       network: 'allowlist',

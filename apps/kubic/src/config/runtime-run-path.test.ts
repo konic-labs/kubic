@@ -23,7 +23,7 @@ import {
   fauxProvider,
   fauxToolCall,
 } from '../../../../packages/agent/src/pi-boundary.js';
-import { SOLO_DEFAULTS } from '../../../../packages/agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../../../packages/agent/src/policy.js';
 import { NodeExecutionEnv } from '../../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../../packages/exec/src/file-bridge.js';
 import {
@@ -134,7 +134,7 @@ describe('config feeds the live run path', () => {
       env: {},
     });
     expect(runtime.permissions.classes).toEqual({
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'read',
       shell: false,
       git: false,
@@ -268,7 +268,7 @@ describe('config feeds the live run path', () => {
     // An absent [permissions] section resolves to the solo
     // defaults — never to the most permissive or restrictive extreme.
     expect(runtime.permissions.classes).toEqual({
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
     });
     expect(runtime.permissions.source).toBe('defaults');
     // The same shell write the narrowed lane refused goes through on the

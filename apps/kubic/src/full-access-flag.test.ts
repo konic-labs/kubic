@@ -32,7 +32,7 @@ import {
   enableSessionFullAccess,
   FileApprovalStore,
   FULL_ACCESS_FLAG,
-  installSoloPolicy,
+  installPolicy,
 } from '../../../packages/host/src/approvals.js';
 import {
   auditLedgerDir,
@@ -132,7 +132,7 @@ describe('full access audits only the capabilities it waived', () => {
       command: 'sessions create',
       workspace,
     });
-    return installSoloPolicy({ workspace, sessionDir });
+    return installPolicy({ workspace, sessionDir });
   }
 
   it('an untriggered read is not challenged and writes no ledger record', async () => {

@@ -15,7 +15,7 @@ import {
 import {
   type ApprovalRequest,
   approvalKey,
-  installSoloPolicy,
+  installPolicy,
   summarizeRequest,
 } from './approvals.js';
 
@@ -71,7 +71,7 @@ describe('summaries never truncate silently', () => {
 describe('the request carries the full command', () => {
   it('the approval key and the displayed command come from the same args', async () => {
     const seen: ApprovalRequest[] = [];
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: tmp(),
       sessionDir: tmp(),
       answer: async (request) => {

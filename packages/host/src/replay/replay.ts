@@ -58,7 +58,7 @@ import {
   type TrajectoryExport,
   TrajectorySchemaError,
 } from '../../../trajectory/src/schema.js';
-import type { SoloApprovalConfig } from '../approvals.js';
+import type { ApprovalConfig } from '../approvals.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from '../roles/resolver.js';
 
@@ -109,7 +109,7 @@ export interface ReplayRuntimeDeps {
   policySource: 'config' | 'default';
   journalRetention?: JournalRetention;
   // The config `[approvals]` policy, as `kubic run` installs it.
-  approvals?: SoloApprovalConfig;
+  approvals?: ApprovalConfig;
   // Enterprise policy: the same resolved EffectivePolicy
   // `kubic run` gates with — the model/provider gate, the role-grant check and
   // the lane tool intersection all derive from it inside the headless runner

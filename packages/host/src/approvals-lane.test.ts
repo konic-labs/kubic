@@ -22,7 +22,7 @@ import {
 import {
   enableFullAccess,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
 } from './approvals.js';
 import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 
@@ -46,7 +46,7 @@ describe('approvals gate the lane', () => {
 
     // Each boot installs the policy anew: the posture is read once, at install.
     const runOnce = async (): Promise<KubicLaneEvent[]> => {
-      const installed = installSoloPolicy({
+      const installed = installPolicy({
         workspace: dir,
         sessionDir: dir,
         maxPendingMs: 20,
@@ -94,7 +94,7 @@ describe('approvals gate the lane', () => {
 describe('credential access is challenged and audited', () => {
   it('denies a headless bash credential read and records trigger:credentials', async () => {
     const dir = mkTmp('approvals-cred-');
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: dir,
       sessionDir: join(dir, 'session'),
     });

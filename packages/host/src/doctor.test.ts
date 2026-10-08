@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FileApprovalStore, installedPolicyPosture } from './approvals.js';
-import type { DoctorDeps } from './doctor.js';
+import type { ContextRoomProbe, DoctorDeps } from './doctor.js';
 import { runDoctorCommand } from './doctor.js';
 import { assembleModels, providerProbesOf } from './models-cli.js';
 import {
@@ -261,6 +261,135 @@ describe('runDoctorCommand', () => {
         reason: 'provider-down',
       }),
     );
+  });
+
+  it('warns, naming the contextWindow key, for a defaulted model window; exit stays 0', async () => {
+    const lines: string[] = [];
+    const deps: DoctorDeps = {
+      ...cleanDeps((line: string) => lines.push(line)),
+      probeModelWindows: () => [
+        { provider: 'local', model: 'llama3', contextWindow: 8192 },
+      ],
+    };
+    const code = (await runDoctorCommand({ json: true }, deps)).exitCode;
+    expect(code).toBe(0);
+    const report = JSON.parse(lines.join('\n')) as {
+      ok: boolean;
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    expect(report.ok).toBe(true);
+    const window = report.checks.find(
+      (check) => check.id === 'models-window:local/llama3',
+    );
+    expect(window).toMatchObject({ status: 'warn', reason: 'window-default' });
+    expect(window?.detail).toContain('contextWindow');
+    expect(window?.detail).toContain('8192');
+  });
+
+  // The room check measures the models the user can configure: the models in
+  // models.json and the default model the configuration pins. A built-in model
+  // is never in its scope, so a probe with nothing configurable has no check.
+  describe('context-room (the models the user can configure)', () => {
+    const roomReport = async (probe: ContextRoomProbe | undefined) => {
+      const lines: string[] = [];
+      const deps: DoctorDeps = {
+        ...cleanDeps((line: string) => lines.push(line)),
+        ...(probe === undefined ? {} : { probeContextRoom: () => probe }),
+      };
+      const code = (await runDoctorCommand({ json: true }, deps)).exitCode;
+      const report = JSON.parse(lines.join('\n')) as {
+        ok: boolean;
+        checks: Array<{
+          id: string;
+          status: string;
+          reason: string;
+          detail: string;
+        }>;
+      };
+      const room = report.checks.find((check) => check.id === 'context-room');
+      return { code, ok: report.ok, room };
+    };
+
+    it('warns for a custom model below the floor, with the contextWindow fix; exit stays 0', async () => {
+      const { code, ok, room } = await roomReport({
+        customModels: [
+          { provider: 'local', model: 'tiny', contextWindow: 8192 },
+        ],
+      });
+      expect(code).toBe(0);
+      expect(ok).toBe(true);
+      expect(room).toMatchObject({ status: 'warn', reason: 'room-short' });
+      expect(room?.detail).toContain('local/tiny');
+      expect(room?.detail).toContain('every turn or two');
+      expect(room?.detail).toContain(
+        'set "contextWindow" in models.json for local/tiny',
+      );
+      expect(room?.detail).not.toContain('default model');
+    });
+
+    it('warns for a small-window default model, with the choose-a-model fix', async () => {
+      const { room } = await roomReport({
+        customModels: [],
+        defaultModel: {
+          provider: 'openai',
+          model: 'gpt-4',
+          contextWindow: 8192,
+        },
+      });
+      expect(room).toMatchObject({ status: 'warn', reason: 'room-short' });
+      expect(room?.detail).toContain('openai/gpt-4');
+      expect(room?.detail).toContain('choose one with a larger window');
+      expect(room?.detail).toContain('kubic setup');
+      expect(room?.detail).toContain('[policy] denied_tools');
+      expect(room?.detail).not.toContain('models.json');
+    });
+
+    it('has no check when nothing the user can configure is in scope', async () => {
+      expect((await roomReport(undefined)).room).toBeUndefined();
+      expect((await roomReport({ customModels: [] })).room).toBeUndefined();
+    });
+
+    it('measures a default model that is also a custom model once, with the contextWindow fix', async () => {
+      const tiny = { provider: 'local', model: 'tiny', contextWindow: 8192 };
+      const { room } = await roomReport({
+        customModels: [tiny],
+        defaultModel: tiny,
+      });
+      expect(room?.detail).toContain('set "contextWindow" in models.json');
+      expect(room?.detail).not.toContain('choose one with a larger window');
+    });
+
+    it('passes when every model in scope keeps the floor', async () => {
+      const { room } = await roomReport({
+        customModels: [
+          { provider: 'local', model: 'roomy', contextWindow: 16384 },
+        ],
+      });
+      expect(room?.status).toBe('pass');
+    });
+
+    it('treats the 4096 floor as a boundary: 4095 tokens of room warns, 4096 does not', async () => {
+      // A window of 13718 leaves 4095 estimated tokens of room, and 13720 leaves
+      // 4096 (reserve 3429 / 3430, kept window 2572, system entry 2822, summary 800).
+      const below = await roomReport({
+        customModels: [
+          { provider: 'local', model: 'edge', contextWindow: 13718 },
+        ],
+      });
+      expect(below.room).toMatchObject({ status: 'warn' });
+      expect(below.room?.detail).toContain('about 4095 tokens of room');
+      const floor = await roomReport({
+        customModels: [
+          { provider: 'local', model: 'edge', contextWindow: 13720 },
+        ],
+      });
+      expect(floor.room?.status).toBe('pass');
+    });
   });
 
   it('policy mismatch fails distinct naming the capability', async () => {

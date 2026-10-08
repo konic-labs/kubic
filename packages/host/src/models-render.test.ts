@@ -98,6 +98,32 @@ describe('the catalogue view', () => {
     expect(lines.some((line) => line.includes('without a key'))).toBe(false);
   });
 
+  it('marks a model whose context window was defaulted in the context column', () => {
+    const lines = renderModelsCatalog(
+      [
+        {
+          id: 'local',
+          usable: true,
+          models: [
+            {
+              id: 'llama3',
+              contextWindow: 8192,
+              contextWindowDefaulted: true,
+              thinking: ['off'],
+              input: ['text'],
+              inputCost: 0,
+              outputCost: 0,
+            },
+          ],
+        },
+      ],
+      plain,
+    );
+    expect(
+      lines.some((line) => line.includes('8k (default — set contextWindow)')),
+    ).toBe(true);
+  });
+
   it('colours the default marker and key cells', () => {
     const rich = createCliTheme('truecolor');
     const text = renderModelsCatalog(CATALOG, rich, {

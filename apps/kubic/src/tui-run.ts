@@ -207,7 +207,7 @@ import {
   type ManualCompactionOptions,
   type ManualCompactionOutcome,
   parseCompactCommand,
-  runManualCompaction,
+  runCompactCommand,
 } from '../../../packages/worker/src/compaction.js';
 import {
   abortLane,
@@ -628,9 +628,11 @@ export class TuiCompactionTurn implements TuiTurnDriver {
       return `compacted: ${outcome.tokensBefore} tokens → summary`;
     }
     if (outcome.status === 'nothing') {
-      // Pi found no older history to cut: no summary entry was placed, and
-      // saying `compacted` would claim work that never happened.
-      return `nothing to compact: ${outcome.tokensBefore} tokens`;
+      // No summary entry was placed, and saying `compacted` would claim work
+      // that never happened. The line says why, in words.
+      return outcome.reason === 'most-recent-turn'
+        ? `nothing to compact: no history older than the most recent turn (${outcome.tokensBefore} tokens of context)`
+        : `nothing to compact: no cut point before the most recent turn (${outcome.tokensBefore} tokens)`;
     }
     if (outcome.status === 'aborted' || outcome.status === 'orphaned') {
       return 'compaction cancelled';
@@ -1110,10 +1112,10 @@ export function soloTuiLoop(
       ),
     entries: (loopContext) =>
       readConversationEntries(solo.conversation, loopContext),
-    // `/compact [focus]` — Pi's manual compaction task with
-    // Kubic's compact prompt as the summarizer instructions.
+    // `/compact [focus]` — Pi's manual compaction task with Kubic's compact
+    // prompt as the summarizer instructions, under the manual keep window.
     compact: (focus, loopContext, options) =>
-      runManualCompaction(solo, focus, loopContext, options),
+      runCompactCommand(solo, focus, loopContext, options),
     // The shared abort+drain (conversation.abort, every kill
     // attempted, failures aggregated) and the settled-turn forget.
     abort: async (loopContext) => {

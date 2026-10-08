@@ -34,6 +34,7 @@ import {
 import { ConfigError, ProjectUntrustedError } from './config.js';
 import {
   checkWorkspaceIgnoreSplit,
+  compactionSummaryLine,
   effectiveConfigView,
   keyEffectFor,
   loadRuntimeConfig,
@@ -224,6 +225,23 @@ describe('runtime config load', () => {
     // The per-role ladder falls back to the `roles` section row.
     expect(runtimeKeyDisposition(keyEffectFor('roles.reviewer.escalate'))).toBe(
       'consumed',
+    );
+  });
+
+  it('says the kept window is capped to a quarter of the room below the reserve, in the key table and the summary line', () => {
+    const entry = keyEffectFor('session.keepRecentTokens');
+    expect(entry === undefined ? '' : runtimeKeyEffectText(entry)).toContain(
+      'capped per model to a quarter of the room below its reserve',
+    );
+    expect(
+      compactionSummaryLine({
+        enabled: true,
+        reserveTokens: 16384,
+        keepRecentTokens: 20000,
+        source: 'defaults',
+      }),
+    ).toContain(
+      'keep-recent=20000 token(s), capped to a quarter of the room below the reserve',
     );
   });
 

@@ -39,7 +39,12 @@ type Group = (typeof GROUP_ORDER)[number];
 
 export function doctorGroup(id: string): Group {
   if (id.startsWith('role:')) return 'roles';
-  if (id.startsWith('provider:') || id === 'limit:provider-availability') {
+  if (
+    id.startsWith('provider:') ||
+    id.startsWith('models-window:') ||
+    id === 'context-room' ||
+    id === 'limit:provider-availability'
+  ) {
     return 'providers';
   }
   if (

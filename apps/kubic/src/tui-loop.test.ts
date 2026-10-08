@@ -680,6 +680,7 @@ describe('kubic tui prompt loop', () => {
     let lane: SoloLane | undefined;
     const { models, calls } = fauxModels([
       'first answer',
+      'second answer',
       (context) => {
         seen.push(
           context.messages.map((message) => JSON.stringify(message)).join('\n'),
@@ -707,6 +708,11 @@ describe('kubic tui prompt loop', () => {
     for (const ch of 'first prompt') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('first answer'));
+    // Two turns: the first is older history. A session of one turn is only
+    // its most recent turn, and there is nothing older to compact.
+    for (const ch of 'second prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('second answer'));
     for (const ch of '/compact focus on the auth bug') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() =>
@@ -728,7 +734,8 @@ describe('kubic tui prompt loop', () => {
     // never saw the command text).
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain('focus on the auth bug');
-    expect(calls()).toBe(2);
+    // Two agent turns and the one summary request.
+    expect(calls()).toBe(3);
     expect(entries.filter((entry) => CompactionEntry.is(entry))).toHaveLength(
       1,
     );
@@ -823,6 +830,7 @@ describe('kubic tui prompt loop', () => {
     });
     const { models } = fauxModels([
       'first answer',
+      'second answer',
       async () => {
         summaryStarted();
         await summaryGate;
@@ -844,6 +852,10 @@ describe('kubic tui prompt loop', () => {
     for (const ch of 'first prompt') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('first answer'));
+    // Two turns, so there is older history to compact (see the test above).
+    for (const ch of 'second prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('second answer'));
     for (const ch of '/compact') fake.feed(ch);
     fake.feed('\r');
     // The compaction task is live (its summarization request is gated):
@@ -1076,6 +1088,48 @@ describe('kubic tui prompt loop', () => {
     expect(turn.settlementFooter()).toBe('compaction cancelled');
   });
 
+  // A lane loop whose /compact settles as `outcome`: the footer reads only that.
+  const compactSettling = (outcome: {
+    readonly status: string;
+    readonly tokensBefore: number;
+    readonly reason?: string;
+  }): TuiLaneLoop =>
+    ({
+      context: BACKGROUND_CONTEXT,
+      compact: async () => outcome,
+      abort: async () => undefined,
+    }) as unknown as TuiLaneLoop;
+
+  it('names the reason when /compact cut nothing for want of a cut point', async () => {
+    const turn = new TuiCompactionTurn(
+      compactSettling({
+        status: 'nothing',
+        tokensBefore: 1234,
+        reason: 'no-cut',
+      }),
+      undefined,
+    );
+    await turn.run('/compact');
+    expect(turn.settlementFooter()).toBe(
+      'nothing to compact: no cut point before the most recent turn (1234 tokens)',
+    );
+  });
+
+  it('names the most recent turn when there is no older history to compact', async () => {
+    const turn = new TuiCompactionTurn(
+      compactSettling({
+        status: 'nothing',
+        tokensBefore: 56,
+        reason: 'most-recent-turn',
+      }),
+      undefined,
+    );
+    await turn.run('/compact');
+    expect(turn.settlementFooter()).toBe(
+      'nothing to compact: no history older than the most recent turn (56 tokens of context)',
+    );
+  });
+
   it('reports /compact with nothing to cut as nothing to compact', async () => {
     // The shipped keep-recent window is 20000 tokens, so a small session has
     // nothing to cut: Pi completes the task without placing a summary entry,
@@ -1105,7 +1159,9 @@ describe('kubic tui prompt loop', () => {
     for (const ch of '/compact') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() =>
-      /nothing to compact: \d+ tokens/.test(fake.writes.join('')),
+      /nothing to compact: no history older than the most recent turn \(\d+ tokens of context\)/.test(
+        fake.writes.join(''),
+      ),
     );
     if (lane === undefined) throw new Error('the lane never booted');
     const page = await lane.conversation.entries(

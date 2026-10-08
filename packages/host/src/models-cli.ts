@@ -17,6 +17,7 @@ import { suggest } from '../../core/src/suggest.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { parseModelFlag, selectModel } from '../../worker/src/model-select.js';
 import {
+  DEFAULT_CONTEXT_WINDOW,
   parseModelsJson,
   type RegisterCustomProvidersOptions,
   refuseBuiltinCollisions,
@@ -31,7 +32,7 @@ import {
   type MutableModels,
 } from '../../worker/src/pi-boundary.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
-import type { DepProbe, ProviderProbe } from './doctor.js';
+import type { ContextRoomProbe, DepProbe, ProviderProbe } from './doctor.js';
 import {
   FAUX_PROVIDER_ID,
   fauxProviderActive,
@@ -63,6 +64,32 @@ interface ModelsSource {
   readonly error?: string;
 }
 
+// A models.json model that declares no `contextWindow`: it runs with the
+// fallback window, which `kubic models` and `kubic doctor` report.
+export interface DefaultedWindow {
+  readonly provider: string;
+  readonly model: string;
+  readonly contextWindow: number;
+}
+
+// A model the user defined in a loaded models.json. Built-in models are never
+// listed here: models.json cannot redeclare them.
+export interface CustomModelRef {
+  readonly provider: string;
+  readonly model: string;
+}
+
+// Removes the entries of one provider id, in place: a later file that defines
+// the provider replaces what an earlier file recorded for it.
+function dropProvider(
+  entries: { readonly provider: string }[],
+  provider: string,
+): void {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    if (entries[index]?.provider === provider) entries.splice(index, 1);
+  }
+}
+
 export interface AssembledModels {
   readonly models: MutableModels;
   // Receipt lines: `loaded models.json: …` / `models.json ignored: …`.
@@ -70,6 +97,10 @@ export interface AssembledModels {
   readonly providers: ReadonlyMap<string, ProviderInfo>;
   // Every models.json that exists at a looked-up location, in load order.
   readonly sources: readonly ModelsSource[];
+  // The loaded models whose window is the fallback default.
+  readonly defaultedWindows: readonly DefaultedWindow[];
+  // The models the loaded models.json files define.
+  readonly customModels: readonly CustomModelRef[];
   // The providers the implicit first-available pick may use, preferred
   // first: the testing provider, models.json customs, then built-ins whose
   // auth is configured. A keyless built-in is never on this list.
@@ -143,6 +174,9 @@ export interface ModelsCommandDeps extends CliIo {
   // Origin + auth state per provider (from assembleModels). Without it every
   // registered provider is listed as-is.
   providers?: ReadonlyMap<string, ProviderInfo>;
+  // The models running on the fallback window (from assembleModels); each is
+  // marked in the catalogue.
+  defaultedWindows?: readonly DefaultedWindow[];
   // The configured model pin (`provider/id`), marked as the
   // default in the terminal view. Absent: the selection chain's own pick.
   defaultModel?: string;
@@ -203,6 +237,8 @@ export async function assembleModels(
   const notes: string[] = [];
   const sources: ModelsSource[] = [];
   const customs: string[] = [];
+  const defaultedWindows: DefaultedWindow[] = [];
+  const customModels: CustomModelRef[] = [];
   if (fauxProviderActive(env)) {
     registerFauxProvider(models);
     providers.set(FAUX_PROVIDER_ID, { origin: 'testing', usable: true });
@@ -244,6 +280,21 @@ export async function assembleModels(
         if (at !== -1) customs.splice(at, 1);
         customs.push(name);
         providers.set(name, { origin: path, usable: true });
+      }
+      for (const spec of specs) {
+        // A file that defines a provider replaces the earlier files' entries
+        // for it, so a fallback an earlier file left cannot survive.
+        dropProvider(defaultedWindows, spec.id);
+        dropProvider(customModels, spec.id);
+        for (const model of spec.models) {
+          customModels.push({ provider: spec.id, model: model.id });
+          if (model.contextWindow !== undefined) continue;
+          defaultedWindows.push({
+            provider: spec.id,
+            model: model.id,
+            contextWindow: DEFAULT_CONTEXT_WINDOW,
+          });
+        }
       }
       sources.push({
         path,
@@ -303,6 +354,8 @@ export async function assembleModels(
     notes,
     providers,
     sources,
+    defaultedWindows,
+    customModels,
     fallbackProviders,
   };
 }
@@ -330,6 +383,46 @@ export function modelsSourcesProbe(assembled: AssembledModels): DepProbe {
     id: 'models-json',
     ok: assembled.sources.every((source) => source.status !== 'invalid'),
     detail: parts.join('; '),
+  };
+}
+
+// Doctor's room check: the models the user can configure, with the window the
+// registry gives each (a defaulted window included). A model in models.json is
+// measured; so is the default model the configuration pins, when it is in the
+// registry. Built-in models are not in scope, whatever their key.
+export function contextRoomProbeOf(
+  assembled: AssembledModels,
+  options: {
+    readonly defaultModel?: { readonly provider: string; readonly id: string };
+    readonly reserveTokens?: number;
+    readonly keepRecentTokens?: number;
+  } = {},
+): ContextRoomProbe {
+  const roomModel = (provider: string, id: string) => {
+    const contextWindow = assembled.models
+      .getModels(provider)
+      .find((model) => model.id === id)?.contextWindow;
+    return contextWindow === undefined
+      ? undefined
+      : { provider, model: id, contextWindow };
+  };
+  const customModels = assembled.customModels.flatMap((ref) => {
+    const measured = roomModel(ref.provider, ref.model);
+    return measured === undefined ? [] : [measured];
+  });
+  const defaultModel =
+    options.defaultModel === undefined
+      ? undefined
+      : roomModel(options.defaultModel.provider, options.defaultModel.id);
+  return {
+    ...(options.reserveTokens === undefined
+      ? {}
+      : { reserveTokens: options.reserveTokens }),
+    ...(options.keepRecentTokens === undefined
+      ? {}
+      : { keepRecentTokens: options.keepRecentTokens }),
+    customModels,
+    ...(defaultModel === undefined ? {} : { defaultModel }),
   };
 }
 
@@ -395,6 +488,9 @@ export async function runModelsCommand(
     }
   }
   const info = deps.providers;
+  const defaulted = new Set(
+    (deps.defaultedWindows ?? []).map((w) => `${w.provider}/${w.model}`),
+  );
   const catalog = deps.models.getProviders().map((provider) => {
     const known = info?.get(provider.id);
     return {
@@ -413,6 +509,9 @@ export async function runModelsCommand(
         id: m.id,
         name: m.name,
         contextWindow: m.contextWindow,
+        ...(defaulted.has(`${provider.id}/${m.id}`)
+          ? { contextWindowDefaulted: true }
+          : {}),
         thinking: getSupportedThinkingLevels(m),
         inputCost: m.cost.input,
         outputCost: m.cost.output,

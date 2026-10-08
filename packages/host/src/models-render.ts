@@ -9,6 +9,8 @@ import type { CliTheme } from '../../core/src/cli/theme.js';
 interface CatalogModel {
   readonly id: string;
   readonly contextWindow?: number;
+  // The window is the fallback default: models.json declares no contextWindow.
+  readonly contextWindowDefaulted?: boolean;
   readonly thinking: readonly string[];
   readonly input: readonly string[];
   readonly inputCost: number;
@@ -89,7 +91,9 @@ export function renderModelsCatalog(
         : ui.fg(provider.usable === false ? 'fg2' : 'fg0')(ref);
       rows.push([
         name,
-        formatContext(model.contextWindow),
+        model.contextWindowDefaulted === true
+          ? `${formatContext(model.contextWindow)} (default — set contextWindow)`
+          : formatContext(model.contextWindow),
         model.thinking.some((level) => level !== 'off') ? 'yes' : 'no',
         inputKinds(model.input),
         price(model.inputCost),

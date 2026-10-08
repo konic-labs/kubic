@@ -14,7 +14,9 @@ import type { ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
 import { withReadRoots } from '../../../exec/src/read-roots.js';
 import {
+  createManualKeepScope,
   DEFAULT_RESERVE_TOKENS,
+  type ManualKeepScope,
   soloCompactionSettings,
 } from '../compaction.js';
 import type { EscalationLadder, ThinkingInputs } from '../model-select.js';
@@ -314,6 +316,8 @@ export interface SoloLane {
   // The configured (unclamped) compaction reserve and a window lookup, so a
   // model switch re-clamps the harness reserve to the NEW model's window.
   configuredReserveTokens?: number;
+  // The manual-compaction scope the harness' keep getter reads.
+  manualKeep: ManualKeepScope;
   modelWindow?: (provider: string, modelId: string) => number | undefined;
   // Shuts the harness down (and with it the session's storage). Releasing
   // the session handle — lock included — stays the caller's job: boot may
@@ -490,6 +494,7 @@ export async function bootSoloLane(
       return undefined;
     }
   };
+  const manualKeep = createManualKeepScope();
   const settings: HarnessSettings = {
     ...options.settings,
     // Kubic executes one tool at a time:
@@ -505,6 +510,7 @@ export async function bootSoloLane(
         ? {}
         : { keepRecentTokens: options.compaction.keepRecentTokens }),
       currentWindow,
+      manualKeep,
     }),
   };
 
@@ -716,6 +722,7 @@ export async function bootSoloLane(
     sessionId: options.sessionId,
     configuredReserveTokens:
       options.compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
+    manualKeep,
     modelWindow: windowOf,
     close: async (closeContext) => {
       agentState?.dispose();

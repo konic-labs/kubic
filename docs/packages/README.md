@@ -6,9 +6,8 @@ neighbours — no architecture rationale, no CLI usage.
 
 - [core.md](core.md) — `packages/core`
 - [exec.md](exec.md) — `packages/exec`
-- [worker.md](worker.md) — `packages/worker`
+- [agent.md](agent.md) — `packages/agent`
 - [host.md](host.md) — `packages/host`
-- [agents-pkg.md](agents-pkg.md) — `packages/agents`
 - [trajectory.md](trajectory.md) — `packages/trajectory`
 - [eval.md](eval.md) — `packages/eval`
 - [tui.md](tui.md) — `packages/tui`
@@ -24,18 +23,17 @@ lint governs.
 @kubic/core         ← imports nothing internal; imported by all
 @kubic/exec         ← core
 @kubic/trajectory   ← core
-@kubic/agents       ← core, exec
-@kubic/eval         ← core, agents, trajectory
-@kubic/worker       ← core, exec, agents, trajectory, eval
-@kubic/host         ← core, exec, worker, agents, trajectory, eval
-@kubic/tui          ← core only (never host/worker implementation)
+@kubic/agent       ← core, exec
+@kubic/eval         ← core, agent, trajectory
+@kubic/host         ← core, exec, agent, trajectory, eval
+@kubic/tui          ← core only (never host/agent implementation)
 apps/kubic          ← composition root: wires host + tui together
 ```
 
 I/O confinement (component split; enforced by
 `scripts/dep-lint.mjs`): only `@kubic/exec` touches
 `node:fs`/`node:child_process`, with test scaffolding exempt. Pi seams:
-`@kubic/worker` via `src/pi-boundary.ts` only, `@kubic/tui` via
+`@kubic/agent` via `src/pi-boundary.ts` only, `@kubic/tui` via
 `src/tui-boundary.ts` only. A `test-support/` module is imported only by test
 files and by other `test-support/` modules.
 

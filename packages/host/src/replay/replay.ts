@@ -34,7 +34,8 @@
 // go through the exec FileBridge (I/O confinement).
 
 import { createHash } from 'node:crypto';
-import type { PermissionClasses } from '../../../agents/src/policy.js';
+import type { LaneCompactionOptions } from '../../../agent/src/lane/boot.js';
+import type { PermissionClasses } from '../../../agent/src/permissions.js';
 import {
   type CommandResult,
   EXIT_FAILED,
@@ -57,8 +58,7 @@ import {
   type TrajectoryExport,
   TrajectorySchemaError,
 } from '../../../trajectory/src/schema.js';
-import type { SoloCompactionOptions } from '../../../worker/src/lane/solo.js';
-import type { SoloApprovalConfig } from '../approvals.js';
+import type { ApprovalConfig } from '../approvals.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from '../roles/resolver.js';
 
@@ -109,7 +109,7 @@ export interface ReplayRuntimeDeps {
   policySource: 'config' | 'default';
   journalRetention?: JournalRetention;
   // The config `[approvals]` policy, as `kubic run` installs it.
-  approvals?: SoloApprovalConfig;
+  approvals?: ApprovalConfig;
   // Enterprise policy: the same resolved EffectivePolicy
   // `kubic run` gates with — the model/provider gate, the role-grant check and
   // the lane tool intersection all derive from it inside the headless runner
@@ -120,7 +120,7 @@ export interface ReplayRuntimeDeps {
   // gates the project models.json of the assembled catalog. Absent falls
   // back to the env opt-in inside assembleModels.
   trustProject?: (path: string) => boolean;
-  // The shared solo-lane projections `kubic run` threads
+  // The shared lane projections `kubic run` threads
   // — the configured agent id, the config-sourced role layers the pinned
   // role merges under its document, and the declared out-of-scope paths.
   // Absent means the documented run defaults ('root', no layers, the
@@ -135,7 +135,7 @@ export interface ReplayRuntimeDeps {
   // projection `kubic run` threads — the live re-execution tiers compact
   // under the configured policy, not the lane defaults. Absent means the
   // lane defaults.
-  compaction?: SoloCompactionOptions;
+  compaction?: LaneCompactionOptions;
   // [agent] systemPromptFile contents, from the same
   // projection `kubic run` threads — the re-executed tiers assemble the
   // same prompt. Absent means the lane assembles its prompt unchanged.

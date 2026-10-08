@@ -1,4 +1,4 @@
-// `kubic tui` wiring over the solo lane.
+// `kubic tui` wiring over the lane.
 //
 // Headless snapshots through the real TuiAltScreen + a fake Terminal
 // (same pattern as screen.test.ts): alt-screen open/restore asserted on
@@ -125,7 +125,7 @@ describe('kubic tui', () => {
     input('\x03');
     expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
-    expect(doc).not.toMatch(/[✓●◌] solo/);
+    expect(doc).not.toMatch(/[✓●◌] default/);
     expect(doc).toContain('approvals on');
     expect(doc).toContain(' ready ');
   });

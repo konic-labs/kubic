@@ -12,6 +12,24 @@
 
 import { join } from 'node:path';
 import {
+  listSessions,
+  openSessionStore,
+  SessionAttachError,
+  SessionLockError,
+  sessionLockIsLive,
+} from '../../../../agent/src/lane/session-store.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../../../agent/src/lane/transcript.js';
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  type Storage,
+  type Usage,
+  UsageDoc,
+} from '../../../../agent/src/pi-boundary.js';
+import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
@@ -27,24 +45,6 @@ import {
 import { redactSecretShapes } from '../../../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import { stripUnsafeCharacters } from '../../../../exec/src/runtime-exclude.js';
-import {
-  listSessions,
-  openSessionStore,
-  SessionAttachError,
-  SessionLockError,
-  sessionLockIsLive,
-} from '../../../../worker/src/lane/session-store.js';
-import {
-  entriesToTranscript,
-  readSessionEntries,
-} from '../../../../worker/src/lane/transcript.js';
-import {
-  BACKGROUND_CONTEXT,
-  type Context,
-  type Storage,
-  type Usage,
-  UsageDoc,
-} from '../../../../worker/src/pi-boundary.js';
 import { type RunUsage, SESSION_ID_PATTERN } from '../../run-cli.js';
 import {
   openReadOnlySessionStorage,

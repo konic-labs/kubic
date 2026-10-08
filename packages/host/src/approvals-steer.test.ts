@@ -3,28 +3,28 @@
 // instead of the proposed one after it is judged again, and "allow all edits
 // this turn" approves the turn's edit/write asks of the same kind — never
 // another capability, never past the turn. Driven end to end on a faux lane
-// through the solo policy and the lane's own hooks.
+// through the policy and the lane's own hooks.
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../exec/src/env.js';
-import type { KubicLaneEvent } from '../../worker/src/lane/events.js';
+import type { KubicLaneEvent } from '../../agent/src/lane/events.js';
 import {
   bootFauxLane,
   type FauxLane,
   fauxToolUse,
-} from '../../worker/src/lane/test-harness.js';
+} from '../../agent/src/lane/test-harness.js';
 import {
   fauxAssistantMessage,
   fauxToolCall,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   ALLOW_TURN_EDITS,
   type ApprovalRequest,
   type ApprovalVerdict,
-  type InstalledSoloPolicy,
-  installSoloPolicy,
+  type InstalledPolicy,
+  installPolicy,
 } from './approvals.js';
 import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 
@@ -38,7 +38,7 @@ afterEach(() => {
 interface Rig {
   dir: string;
   asks: ApprovalRequest[];
-  installed: InstalledSoloPolicy;
+  installed: InstalledPolicy;
   env: FakeExecutionEnv;
   lane: FauxLane;
   turn: (prompt: string) => Promise<KubicLaneEvent[]>;
@@ -57,7 +57,7 @@ async function rig(options: {
   made.push(dir);
   mkdirSync(join(dir, 'session'), { recursive: true });
   const asks: ApprovalRequest[] = [];
-  const installed = installSoloPolicy({
+  const installed = installPolicy({
     workspace: dir,
     sessionDir: join(dir, 'session'),
     ...(options.requires === undefined ? {} : { requires: options.requires }),

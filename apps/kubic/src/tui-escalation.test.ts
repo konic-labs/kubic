@@ -8,18 +8,18 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
-import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
-import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
-import type { TurnFailureReason } from '../../../packages/worker/src/lane/turn.js';
+import type { TurnFailureReason } from '../../../packages/agent/src/lane/turn.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
+import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
+import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
+import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { prodTuiDeps } from './prod-runners.js';

@@ -1,6 +1,6 @@
 // Approval interception through pi-durable ToolTask hooks. The approvals here
 // are driven end to end: a REAL Harness over Storage with the faux provider,
-// the production installed policy (`installSoloPolicy`), and `policyInterceptorHooks` as
+// the production installed policy (`installPolicy`), and `policyInterceptorHooks` as
 // the lane's policy extension.
 //
 // The durable contract under test: `beforeTool` runs BEFORE the harness
@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { policyInterceptorHooks } from '../../worker/src/lane/interceptors.js';
+import { policyInterceptorHooks } from '../../agent/src/lane/interceptors.js';
 import {
   BACKGROUND_CONTEXT,
   type Conversation,
@@ -27,14 +27,14 @@ import {
   openNodeJsonlStorage,
   type Storage,
   Type,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import {
   type ApprovalRequest,
   type ApprovalVerdict,
   approvalKey,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
 } from './approvals.js';
 
 const COMMAND = 'rm -rf /tmp/x';
@@ -76,7 +76,7 @@ async function bootHarness(options: {
 }): Promise<Booted> {
   const world: World = { calls: [] };
   const seatSignals: AbortSignal[] = [];
-  const installed = installSoloPolicy({
+  const installed = installPolicy({
     workspace: options.workspace,
     sessionDir: options.workspace,
     sessionId: 'sess-durable',

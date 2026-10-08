@@ -9,7 +9,7 @@
 import {
   ModelSelectError,
   type ModelSelection,
-} from '../../../packages/worker/src/model-select.js';
+} from '../../../packages/agent/src/model-select.js';
 
 // Where a selection came from, keyed by the selection OBJECT: the
 // named "unknown model/provider" refusal says which input carried the bad pin

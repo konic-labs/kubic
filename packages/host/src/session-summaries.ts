@@ -5,21 +5,21 @@
 // listed, greyed, so the picker can say why it cannot be resumed.
 
 import { join } from 'node:path';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   listSessions,
   openSessionStore,
   sessionLockIsLive,
-} from '../../worker/src/lane/session-store.js';
+} from '../../agent/src/lane/session-store.js';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../worker/src/lane/transcript.js';
+} from '../../agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
   type Storage,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { readSessionUsage, totalSessionUsage } from './ops/cost/cost-cli.js';
 import {
   openReadOnlySessionStorage,

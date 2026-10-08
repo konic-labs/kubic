@@ -1,14 +1,24 @@
 // Headless `kubic run -p`.
-// Non-interactive equivalent of the solo run: no alt-screen, no prompt,
+// Non-interactive equivalent of the run: no alt-screen, no prompt,
 // consumable output, exact exit codes. Host owns presentation only —
 // the agent run itself is injected by the composition root (faux in tests,
-// the solo lane in prod). This module imports the worker settlement
+// the lane in prod). This module imports the agent settlement
 // kernel (pure outcome mapping) read-only — never the lane, the session
 // store, or any TUI seam. Persistence (session+journal+usage+trajectory)
 // flows through the injected persist hook identically for text and
 // --json output.
 
-import type { RunMode } from '../../agents/src/policy.js';
+import {
+  type ClassifiedFailure,
+  classifyFailure,
+  type RetryDecision,
+} from '../../agent/src/lane/failures.js';
+import type { OperationErrorLike } from '../../agent/src/lane/settle.js';
+import {
+  type LaneTerminalStatus,
+  settleTerminalStatus,
+} from '../../agent/src/lane/settle.js';
+import type { RunMode } from '../../agent/src/permissions.js';
 import {
   type CommandResult,
   EXIT_APPROVAL,
@@ -23,16 +33,6 @@ import {
   INTERRUPT_EXIT_CODES,
   isInterruptSignal,
 } from '../../core/src/cli/exit-codes.js';
-import {
-  type ClassifiedFailure,
-  classifyFailure,
-  type RetryDecision,
-} from '../../worker/src/lane/failures.js';
-import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
-import {
-  type LaneTerminalStatus,
-  settleTerminalStatus,
-} from '../../worker/src/lane/settle.js';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 
@@ -187,7 +187,7 @@ export interface HeadlessRunResult {
   // strategy) — the precise half the terminus cannot carry. Absent on
   // termini with no failure code (`timeout`, `cancelled`, `usage`).
   failure?: ClassifiedFailure;
-  // The retry decision when the lane made one (solo overflow
+  // The retry decision when the lane made one (overflow
   // recovery) — strategy, reason and notBefore, also on success.
   retry?: RetryRecord;
   // The interrupt that ended the run, present exactly when the
@@ -268,8 +268,15 @@ export function buildRunEnvelope(
 // hands it the settled result for the receipt. Absent means today's plain
 // text everywhere (pipes, files, CI, `--json`).
 export interface RunProgressSink {
-  /** The lane booted: heading and (when `notice`) the one-line solo notice. */
-  begin(info: { readonly model?: string; readonly notice: boolean }): void;
+  /**
+   * The lane booted: heading and (when `notice`) the one-line no-isolation notice.
+   * `role` is the `--role` name the run selected; absent for the default role.
+   */
+  begin(info: {
+    readonly model?: string;
+    readonly notice: boolean;
+    readonly role?: string;
+  }): void;
   toolStart(event: {
     readonly toolCallId: string;
     readonly toolName: string;
@@ -345,7 +352,7 @@ export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
 // The parsed `kubic run` invocation. commander owns the argv
-// (apps/kubic/src/commands/solo.ts): flag syntax, unknown flags and
+// (apps/kubic/src/commands/session.ts): flag syntax, unknown flags and
 // missing values are its usage errors (exit 2); the value rules below are
 // this command's own semantics, applied as commander argument parsers.
 export interface RunCommandOptions {

@@ -19,6 +19,20 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  attachSession,
+  openSessionStore,
+} from '../../../packages/agent/src/lane/session-store.js';
+import { readSessionEntries } from '../../../packages/agent/src/lane/transcript.js';
+import { ModelSelectError } from '../../../packages/agent/src/model-select.js';
+import {
+  BACKGROUND_CONTEXT,
+  CompactionEntry,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
@@ -31,20 +45,6 @@ import {
   ProjectTrustStore,
   projectTrustStorePath,
 } from '../../../packages/host/src/config/trust-store.js';
-import {
-  attachSession,
-  openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { readSessionEntries } from '../../../packages/worker/src/lane/transcript.js';
-import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
-import {
-  BACKGROUND_CONTEXT,
-  CompactionEntry,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import {
   configRefusalExit,
   doctorConfigProbe,
@@ -662,7 +662,7 @@ describe('session compaction projection', () => {
 });
 
 describe('compaction disabled survives a threshold-crossing run', () => {
-  // Token math mirrors the worker's threshold test: window 3000, default
+  // Token math mirrors the agent's threshold test: window 3000, default
   // reserve 16384 clamps to 750, blocking threshold 2250. One exchange of
   // ~1200 + ~1200 estimated tokens crosses it — enabled, it compacts.
   function text(label: string, tokens: number): string {
@@ -713,7 +713,7 @@ describe('compaction disabled survives a threshold-crossing run', () => {
     compaction: ReturnType<typeof runtimeCompactionDeps>,
   ) {
     // Two turns on one session: the harness evaluates the blocking
-    // threshold when the second turn arrives (the worker's threshold test
+    // threshold when the second turn arrives (the agent's threshold test
     // pins the summary reading the pre-u2 prefix), so a single exchange
     // can never compact — the second turn is what crosses.
     let summaries = 0;

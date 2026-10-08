@@ -14,7 +14,7 @@
 // redacted, never the words around them and never anything the shell would
 // execute (see redactApprovalSecrets).
 
-import { redactSecrets } from '../../worker/src/lane/interceptors.js';
+import { redactSecrets } from '../../agent/src/lane/interceptors.js';
 
 // The summary's command budget: summaries are one-line labels (trajectory,
 // audit detail). The full command
@@ -208,7 +208,7 @@ const VALUE_RULES: ReadonlyArray<ValueRule> = [
 ];
 
 // What the approval dialog redacts. The shared `redactSecrets`
-// (worker interceptors) swallows the WORD after `secret`/`token`/`bearer`,
+// (agent interceptors) swallows the WORD after `secret`/`token`/`bearer`,
 // which is right for a persisted reason but wrong here: the dialog exists so
 // the operator sees what will run, and the swallowed word can be the
 // destructive verb or flag. Known key shapes and secret-named values are

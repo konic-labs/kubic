@@ -162,7 +162,7 @@ export interface ApprovalSurface {
   checkKeys(reserved?: ReadonlyArray<string>): boolean;
   keys(): Record<ApprovalAction, readonly string[]>;
   // The answer seat itself: field-for-field the host's
-  // `SoloPolicyInput.answer` shape (packages/host/src/approvals.ts), typed
+  // `PolicyInput.answer` shape (packages/host/src/approvals.ts), typed
   // structurally because the TUI package must not import host implementation
   // — the composition root's own typecheck pins the compatibility. Asking
   // through `seat` is the ONLY way in: it delegates to ask(), so the ingress

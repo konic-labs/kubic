@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createModels,
   InMemoryCredentialStore,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
 import {
   FAUX_MODEL_ID,
   FAUX_PROVIDER_ID,

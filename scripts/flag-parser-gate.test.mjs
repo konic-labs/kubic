@@ -145,7 +145,7 @@ describe('commander is the single parser', () => {
     );
     assert.match(program, EXTRA_TYPINGS_RE);
     assert.match(program, /\.exitOverride\(/);
-    for (const group of ['solo', 'journal', 'analysis']) {
+    for (const group of ['session', 'journal', 'analysis']) {
       const file = join(
         ROOT,
         'apps',

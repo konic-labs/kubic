@@ -8,8 +8,8 @@
 // 0 even when skills were skipped (a skip is reported, not a failure); a
 // `--role` that refuses to resolve fails closed with its named reason.
 
-import type { PermissionClasses } from '../../agents/src/policy.js';
-import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
+import type { PermissionClasses } from '../../agent/src/permissions.js';
+import { DEFAULT_PERMISSIONS } from '../../agent/src/permissions.js';
 import {
   type CommandResult,
   EXIT_FAILED,
@@ -80,7 +80,7 @@ export function runSkillsCommand(
     // as it would at boot.
     if (gate.classes !== undefined) {
       classes = effectiveRoleClasses(
-        { ...SOLO_DEFAULTS, ...deps.base.classes },
+        { ...DEFAULT_PERMISSIONS, ...deps.base.classes },
         gate.classes,
       );
     }

@@ -4,8 +4,8 @@
 // the header (chrome.ts), which reads it from this bar's state.
 //
 // Structural usage mirror: the fields below repeat the shape read in
-// packages/worker/src/usage.ts (KubicUsageRow) WITHOUT importing it —
-// dep-lint forbids tui → worker. Pi is untouched here (pure strings);
+// packages/agent/src/usage.ts (KubicUsageRow) WITHOUT importing it —
+// dep-lint forbids tui → agent. Pi is untouched here (pure strings);
 // the Component seam stays in ./tui-boundary.js. No node:fs (I/O
 // confinement). Faux-only tests: fixtures, zero network.
 //
@@ -125,7 +125,7 @@ export interface StatusBarState {
   readonly approvalsSkipped: boolean;
   readonly sessionId: string;
   // The model's context window and the token level at
-  // which the solo lane compacts (window − reserve, the policy; will
+  // which the lane compacts (window − reserve, the policy; will
   // make the reserve configurable). Both absent means the gauge stays off —
   // an unknown window must never render a made-up percentage.
   readonly contextWindow?: number;

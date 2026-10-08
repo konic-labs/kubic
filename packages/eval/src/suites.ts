@@ -2,7 +2,7 @@
 // One executable suite per category: each carries a FIXTURE —
 // the prompt the lane runs, the files the fixture workspace starts with,
 // and the gate command(s) that decide the verdict — so `kubic
-// benchmark` and `kubic eval --task` run real work through the solo lane
+// benchmark` and `kubic eval --task` run real work through the lane
 // instead of refusing. Suites that need a capability the binary does not
 // ship (a live PTY) are marked stub: true and reported as skipped, never
 // as passed work. Community suites follow the same shape (see

@@ -28,7 +28,7 @@ PROJECT     ▲ overlap — 5 sessions recorded against /repo
 POLICY      ✓ approvals ask-user   ✓ workspace-write · network none · 18 tools   ✓ routing policy
             ▲ guards are detection-only (lexical), not a sandbox
 LIMITS      ▲ memory and disk caps are not enforced; wall clock is
-            ▲ honest limits: solo no isolation · no injection prevention · …
+            ▲ honest limits: no isolation · no injection prevention · …
 ROLES       ✓ debugger   ✓ implementer   ✓ planner   ✓ reviewer
 SKILLS      ✓ skills 0 loaded
 
@@ -88,8 +88,8 @@ the exit code.
 | `models-window:<provider>/<model>` | Does a `models.json` model run on the 8192-token fallback because it declares no `contextWindow`? One `warn` per such model, which never flips the exit: the context gauge and compaction use that window. | `reason: window-default` → set `"contextWindow"` for the model in `models.json` (see [configuration](configuration.md#modelsjson)). |
 | `context-room` | How much room does a compaction leave for the next exchange? The estimate is the window, less the reserve, the system entry (about 2800 tokens with the default tools), the kept window and a typical 800-token summary. It covers only the models you can configure: the models in `models.json` (global, and the project file when trusted), and the default model that `[model]` or `KUBIC_MODEL` selects. A built-in model is never named, since `models.json` cannot resize it. One `warn` names each such model below 4096 tokens (for example `local/llama3 (window 8192, about 986 tokens of room)`): compaction then runs every turn or two. A check with nothing in scope is left out. Never flips the exit. | `reason: room-short` → for a `models.json` model, set `"contextWindow"` to the model's real window; for the default model, choose one with a larger window (`kubic setup`, or `[model]`), or offer it fewer tools (`[policy] denied_tools`). A smaller `[session] keepRecentTokens` also leaves more room (see [configuration](configuration.md)). |
 | `policy:approvals` | Does the approval policy validate? Unknown `autoApprove` capabilities (outside the known set plus `requires:<tool>` triggers), `autoApprove` entries under `route=deny` (they can never apply), or an outright invalid shape. An always-ask capability in `autoApprove` (`kubic-state-write`) is a `warn` (exit-neutral) naming it as ignored, and the line's `N auto-approved` count leaves it out. | Your `[approvals]` config — see [configuration](configuration.md). |
-| `policy:installed` | What does a run from this directory actually install? Prints the **installed** posture — `source=` (`config` or `default`), the five permission classes, the derived tool allowlist, and the named guards (`permission-wrapper`, `destructive-guard`, `network-guard`, `confine-guard`, `approval`), plus `route=`. A posture that contradicts itself (no interceptors, `ask-user` without an approval interceptor) fails with `policy-mismatch`: the line can never describe a policy no run enforces. | A `policy-mismatch` here is an install bug, not a config typo — the classes come from `[permissions]` when the config supplies them and from the documented solo defaults otherwise. |
-| `policy:detection-only` | Which installed classes are **lexical detection, not enforcement**: `network=none` is a bash command detector (a script the agent writes and runs can reach the network), `filesystem=…` is lexical path confinement (symlinks are not resolved), `credentials=none` is a lexical credential-path detector (only the listed paths are challenged). Always `warn` (exit-neutral); omitted entirely when nothing is detection-only. | Nothing to fix — it is a disclosure. If it matters for your threat model, the run needs OS-level isolation, which solo mode does not have. |
+| `policy:installed` | What does a run from this directory actually install? Prints the **installed** posture — `source=` (`config` or `default`), the five permission classes, the derived tool allowlist, and the named guards (`permission-wrapper`, `destructive-guard`, `network-guard`, `confine-guard`, `approval`), plus `route=`. A posture that contradicts itself (no interceptors, `ask-user` without an approval interceptor) fails with `policy-mismatch`: the line can never describe a policy no run enforces. | A `policy-mismatch` here is an install bug, not a config typo — the classes come from `[permissions]` when the config supplies them and from the documented defaults otherwise. |
+| `policy:detection-only` | Which installed classes are **lexical detection, not enforcement**: `network=none` is a bash command detector (a script the agent writes and runs can reach the network), `filesystem=…` is lexical path confinement (symlinks are not resolved), `credentials=none` is a lexical credential-path detector (only the listed paths are challenged). Always `warn` (exit-neutral); omitted entirely when nothing is detection-only. | Nothing to fix — it is a disclosure. If it matters for your threat model, the run needs OS-level isolation, which Kubic does not have. |
 | `policy:enterprise-sinks` | Audit-sink posture from the resolved `[policy]`: syslog-first order and availability. Fails when no sink is configured, when syslog is not first, or when the syslog target is unreachable (the target is probed for real now). Only appears when a `[policy]` section is configured. | Add/fix the `[[audit]]` tables — see [configuration](configuration.md#enterprise-policy-policy-58). |
 | `audit:sink:<kind>-<n>` | One check per configured `[[audit]]` table: reachable sinks pass naming target and level; a missing unix socket, an unbuilt table, or a runtime failure the process recorded fails with `sink-unreachable`. Only appears when `[[audit]]` tables are configured. | Fix the target the detail names, or remove the table — see [configuration](configuration.md#audit-sinks-audit). |
 | `policy:enterprise-network` | The resolved `[policy]` network mode: fails when it is `allowlist` with no domains, which allows nothing and is unenforceable. Only appears when a `[policy]` section is configured. | Give the allowlist its domains, or use `none`/`full` — see [configuration](configuration.md#enterprise-policy-policy-58). |
@@ -101,12 +101,12 @@ the exit code.
 | `policy:enforceability` | Can this version actually honor the policy? `[mcp]` keys and `mcp:`/`extensions:`/`third-party:` autoApprove values fail here with the refusal. Invalid shapes are **not** double-failed — they point at `policy:approvals`. | Remove the unsupported key. |
 | `limit:provider-availability` | Is at least one provider available? (`listed, not dialled` unless a probe really dialled.) | Same as `provider:<id>` — configure a provider. |
 | `limit:deps-present` | Are all dep probes present? | Same as `dep:<id>`. |
-| `limit:<…>` (five static notices) | Honest limits, always `warn`: solo has no isolation, no injection prevention, policy is an offer not enforcement, journal is not a backup, no third-party MCP. | Nothing to fix — they are disclosures, not failures. If your matrix is all-green except warns, you are healthy (exit 0). |
+| `limit:<…>` (five static notices) | Honest limits, always `warn`: no isolation, no injection prevention, policy is an offer not enforcement, journal is not a backup, no third-party MCP. | Nothing to fix — they are disclosures, not failures. If your matrix is all-green except warns, you are healthy (exit 0). |
 
 ## Debugging with `--skip`
 
 `--skip` marks checks skipped (comma-separated, e.g.
-`--skip license:kubic,limit:solo-no-isolation`) — useful to isolate a
+`--skip license:kubic,limit:no-isolation`) — useful to isolate a
 red check from noise. Skipping an id that matches no check exits 2, so
 a typo fails closed instead of silently passing.
 
@@ -124,7 +124,7 @@ The vocabulary is seven line classes (`[policy]`,
 
 - **`kubic run --debug`** (stderr): the boot `[session] id=<id>` and
   `[policy] role=<name> tools=<…>` lines (a stock
-  run names `role=solo (default)`), then per turn the `[agent]` run/lane
+  run names `role=default (default)`), then per turn the `[agent]` run/lane
   spans, one `[tool] in/out` pair per tool call, one `[model]
   in=<n> out=<n> cached=<n> <provider>/<model>` line per committed
   response, and retry/compaction `[lane]` lines. A faulted harness task

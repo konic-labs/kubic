@@ -1,6 +1,6 @@
 // Shared .gitignore-subset matcher.
 //
-// Extracted from the journal baseline walk so the worker's find/grep walk and
+// Extracted from the journal baseline walk so the agent's find/grep walk and
 // the journal walk cannot drift into two different notions of "ignored": a
 // path that is out of scope for `kubic diff`/`undo` must not be searched
 // repo-wide either. The subset is deliberately small and documented in

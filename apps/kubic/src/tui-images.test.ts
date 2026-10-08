@@ -6,14 +6,14 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CommandResult } from '../../../packages/core/src/cli/exit-codes.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import type { CommandResult } from '../../../packages/core/src/cli/exit-codes.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,
@@ -364,10 +364,10 @@ describe('kubic tui /image', () => {
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('image attached'));
 
-    for (const ch of 'solo it') fake.feed(ch);
+    for (const ch of 'lane it') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => admitted.length === 1);
-    expect(admitted).toEqual([{ prompt: 'solo it', images: 1 }]);
+    expect(admitted).toEqual([{ prompt: 'lane it', images: 1 }]);
 
     // The turn is still running and the echo still shows the image; a blank
     // Enter must not queue a second, imageless prompt.

@@ -7,6 +7,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   AUDIT_LEDGER_FILE,
@@ -14,12 +20,6 @@ import {
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { fakeTerminal, terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane, runTuiCommand, TuiTurnRunner } from './tui-run.js';
 

@@ -450,13 +450,13 @@ describe('syslog sink', () => {
     createSyslogSink({
       transport: a,
       facility: 'authpriv',
-      appName: 'kubic-worker',
+      appName: 'kubic-agent',
       hostname: 'web-1',
     }).write(record());
     // authpriv (10) × 8 + info (6) = 86.
     expect(
       a.lines[0]?.startsWith(
-        '<86>1 2026-10-05T12:00:00.000Z web-1 kubic-worker ',
+        '<86>1 2026-10-05T12:00:00.000Z web-1 kubic-agent ',
       ),
     ).toBe(true);
     const b = fakeTransport();

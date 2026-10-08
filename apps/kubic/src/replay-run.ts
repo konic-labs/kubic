@@ -1,5 +1,5 @@
 // Prod `kubic replay` re-execution runner: binds the host's
-// lane-backed replay runner to the real solo lane. The model pin in the
+// lane-backed replay runner to the real lane. The model pin in the
 // request (deterministic's --model, live's recorded model) is resolved
 // against the assembled catalog first: an unregistered pin can never
 // reach the lane, so it reports provider_probe_failed (exit 6 — the same
@@ -14,6 +14,11 @@
 // the live tier boots the role the `--role-config` names — its tools and
 // prompt apply through the same role machinery `kubic run` uses — and the
 // effective config's lane projections travel with it.
+
+import {
+  ModelSelectError,
+  parseModelFlag,
+} from '../../../packages/agent/src/model-select.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
@@ -24,10 +29,6 @@ import type {
 } from '../../../packages/host/src/replay/replay.js';
 import { createProdReplayRun } from '../../../packages/host/src/replay/run-prod.js';
 import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
-import {
-  ModelSelectError,
-  parseModelFlag,
-} from '../../../packages/worker/src/model-select.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 // The re-execution is rooted at the pinned worktree when

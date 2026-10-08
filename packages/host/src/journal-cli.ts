@@ -17,6 +17,12 @@
 
 import { basename, dirname, join, sep } from 'node:path';
 import {
+  listSessions,
+  openSessionStore,
+  sessionLockIsLive,
+} from '../../agent/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../agent/src/pi-boundary.js';
+import {
   CliUsageError,
   type CommandResult,
   EXIT_FAILED,
@@ -45,12 +51,6 @@ import {
   reconciliationSummary,
 } from '../../exec/src/journal-status.js';
 import { applyUndo, planUndo } from '../../exec/src/journal-undo.js';
-import {
-  listSessions,
-  openSessionStore,
-  sessionLockIsLive,
-} from '../../worker/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { MS_PER_DAY } from './config/runtime.js';
 import {
   appendToLedger,

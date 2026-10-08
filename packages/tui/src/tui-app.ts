@@ -1,4 +1,4 @@
-// Interactive TUI controller over the solo lane.
+// Interactive TUI controller over the lane.
 // Presentation only: the controller replicates the core
 // KubicPresentationState (contracts only, no authority) into the
 // tested views (tree, transcript, status) arranged by the
@@ -46,6 +46,7 @@ import type {
   KubicPresentationState,
   LaneImagePart,
 } from '../../core/src/presentation.js';
+import { DEFAULT_RUN_ROLE } from '../../core/src/run-role.js';
 import {
   type ApprovalCardOptions,
   renderApprovalCard,
@@ -264,7 +265,7 @@ export interface TuiAppSeed {
   // call site can silently default a full-access session to 'approvals:on'.
   readonly approvalsSkipped: boolean;
   // The boot model's context window and the token level at
-  // which the solo lane compacts. Absent when the catalog does not know the
+  // which the lane compacts. Absent when the catalog does not know the
   // window — the context gauge then stays off.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
@@ -293,7 +294,7 @@ export interface TuiAppSeed {
   // composition root). False when this terminal does not take it.
   readonly clipboard?: (text: string) => boolean;
   // Whether an `allow all edits this turn` answer applies now
-  // (the solo policy's own state), for the status line.
+  // (the policy's own state), for the status line.
   readonly editsApprovedThisTurn?: () => boolean;
   // The project's absolute root; with `listFiles`, file
   // references in answers link to `file://<root>/<path>`.
@@ -557,7 +558,7 @@ export interface TuiApp {
   // until the next one starts.
   setCancelling(cancelling: boolean): void;
   // The settled turn's start (submission) and failure text feed
-  // its receipt; a solo turn ends with one.
+  // its receipt; a turn ends with one.
   setTurnOutcome(
     outcome: 'completed' | 'cancelled' | 'failed',
     info?: { readonly startedAt?: number; readonly detail?: string },
@@ -780,7 +781,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         })();
   // The tree row starts hidden (collapsed); Ctrl-T opens it.
   const tree = new TreeView(undefined, {
-    label: seed.label ?? 'solo',
+    label: seed.label ?? DEFAULT_RUN_ROLE,
     collapsed: true,
   });
   // The transcript row must stay the ScrollView itself so the layout engine
@@ -1794,7 +1795,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     }
   >();
   // The call an approval holds: the newest running call of the asking tool
-  // (solo runs one challenged call at a time).
+  // (the lane runs one challenged call at a time).
   const waitingToolCallId = (): string | undefined => {
     const request = approvalSurface.pending();
     if (request === undefined) return undefined;

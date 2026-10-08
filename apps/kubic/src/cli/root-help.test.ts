@@ -8,7 +8,7 @@ import {
   LIGHT_PALETTE,
   TERMINAL_PALETTE,
 } from '../../../../packages/core/src/ui/tokens.js';
-import { registerSoloCommands } from '../commands/solo.js';
+import { registerSessionCommands } from '../commands/session.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import { COMMAND_NAMES } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';
@@ -90,7 +90,7 @@ async function subcommandHelp(level: 'none' | 'truecolor'): Promise<string> {
     rootHelp: ROOT_HELP,
     helpTheme: createCliTheme(level),
   });
-  registerSoloCommands(program, contextFor());
+  registerSessionCommands(program, contextFor());
   await runKubicProgram(program, ['doctor', '--help'], channels, {
     code: () => 0,
     finished: () => true,
@@ -132,7 +132,7 @@ describe('usage errors on a colour terminal', () => {
         rootHelp: ROOT_HELP,
         errorTheme: createCliTheme(level),
       });
-      registerSoloCommands(program, contextFor());
+      registerSessionCommands(program, contextFor());
       const code = await runKubicProgram(
         program,
         ['doctor', '--bogus'],

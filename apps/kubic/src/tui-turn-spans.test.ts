@@ -5,17 +5,17 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type {
+  KubicLaneEvent,
+  LaneEventSink,
+} from '../../../packages/agent/src/lane/events.js';
+import { BACKGROUND_CONTEXT } from '../../../packages/agent/src/pi-boundary.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
   TurnSpans,
   type TurnSpansSink,
 } from '../../../packages/host/src/run-spans.js';
 import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
-import type {
-  KubicLaneEvent,
-  LaneEventSink,
-} from '../../../packages/worker/src/lane/events.js';
-import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import { type TuiLaneLoop, TuiTurnRunner } from './tui-run.js';
 
 const made: string[] = [];

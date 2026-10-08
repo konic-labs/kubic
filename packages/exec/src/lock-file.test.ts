@@ -1,5 +1,5 @@
 // Exclusive lock-file primitive: the raw I/O half of
-// the session lock. Exec owns node:fs (I/O confinement) — the worker's
+// the session lock. Exec owns node:fs (I/O confinement) — the agent's
 // session-store keeps the semantics (liveness, stale-steal) and calls these.
 // Hermetic: tmp dirs only, no process signalling anywhere.
 import {

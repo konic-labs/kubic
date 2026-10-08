@@ -2,7 +2,7 @@
 // MCP is not supported yet: any `mcp` entry is a hard error, never silently
 // ignored. The requirements MCP support must meet are recorded as data so the
 // boundary is explicit. ACP vocabulary lives ONLY
-// here at the host edge — core/worker/tui must never import this module
+// here at the host edge — core/agent/tui must never import this module
 // (enforced by the import-lint test in stances.test.ts and by dep-lint's
 // host<-tui ban).
 

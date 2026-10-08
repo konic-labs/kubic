@@ -1,4 +1,4 @@
-// The ONE secret-key classifier: the worker spawn env, its debug
+// The ONE secret-key classifier: the agent spawn env, its debug
 // redaction and the trajectory exporter all ask this function, so a key the
 // spawn path treats as secret can never be exported in the clear.
 import { describe, expect, it } from 'vitest';

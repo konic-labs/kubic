@@ -25,7 +25,7 @@ describe('static limit notices', () => {
     const checks = staticLimitChecks();
     const ids = checks.map((check) => check.id);
     expect(ids).toEqual([
-      'limit:solo-no-isolation',
+      'limit:no-isolation',
       'limit:no-injection-prevention',
       'limit:policy-offer',
       'limit:journal-not-backup',
@@ -190,7 +190,7 @@ describe('exit mapping', () => {
     ).exitCode;
     expect(code).toBe(0);
     const text = lines.join('\n');
-    expect(text).toContain('WARN limit:solo-no-isolation');
+    expect(text).toContain('WARN limit:no-isolation');
     expect(text).toContain('0 fail');
   });
 

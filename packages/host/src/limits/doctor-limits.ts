@@ -38,12 +38,12 @@ export interface LimitDepProbe {
 export function staticLimitChecks(): DoctorCheck[] {
   return [
     {
-      id: 'limit:solo-no-isolation',
-      label: 'limit solo no-isolation',
+      id: 'limit:no-isolation',
+      label: 'limit no-isolation',
       status: 'warn',
       reason: 'ok',
       detail:
-        'honest limit (not enforced): solo runs in-process with your user authority (files, network, credentials) — no isolation, no containment; controls are approvals + journal',
+        'honest limit (not enforced): Kubic runs in-process with your user authority (files, network, credentials) — no isolation, no containment; controls are approvals + journal',
     },
     {
       id: 'limit:no-injection-prevention',

@@ -2,7 +2,7 @@
 // validation. Fixture role documents are inline strings — never real
 // filesystem roles (role contents land).
 import { describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../../agent/src/permissions.js';
 import {
   effectiveRoleClasses,
   mergeRoleLayers,
@@ -532,7 +532,7 @@ describe('role approval requires', () => {
 describe('roleDoctorChecks effective classes', () => {
   it('names the most-restrictive merge and the requires when config classes are given', () => {
     const resolved = resolveRole(parseRoleDocument(PLANNER_MD), []);
-    const [check] = roleDoctorChecks([resolved], {}, SOLO_DEFAULTS);
+    const [check] = roleDoctorChecks([resolved], {}, DEFAULT_PERMISSIONS);
     expect(check?.status).toBe('pass');
     expect(check?.detail).toContain('effective');
     expect(check?.detail).toContain('network:none');

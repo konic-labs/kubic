@@ -1,5 +1,5 @@
-// Config `[approvals]` reaches the solo lanes.
-// `kubic run` and `kubic tui` install the solo policy from the configured
+// Config `[approvals]` reaches the lanes.
+// `kubic run` and `kubic tui` install the policy from the configured
 // values. Installing the hardcoded defaults (route ask-user, maxPendingMs 60 000,
 // no autoApprove) while `kubic config` and doctor's `policy:approvals` print the
 // configured values would show two contradictory green lines.
@@ -10,20 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import {
-  type ApprovalRequest,
-  type ApprovalVerdict,
-  installedPolicyPosture,
-  installSoloPolicy,
-} from '../../../packages/host/src/approvals.js';
-import { collectDoctorChecks } from '../../../packages/host/src/doctor.js';
-import {
-  auditLedgerDir,
-  readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -31,7 +18,20 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import {
+  type ApprovalRequest,
+  type ApprovalVerdict,
+  installedPolicyPosture,
+  installPolicy,
+} from '../../../packages/host/src/approvals.js';
+import { collectDoctorChecks } from '../../../packages/host/src/doctor.js';
+import {
+  auditLedgerDir,
+  readAuditLedger,
+} from '../../../packages/host/src/policy/audit-ledger.js';
+import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
 import {
   installedPolicyDeps,
   loadCliConfig,
@@ -112,7 +112,7 @@ describe('config route=deny reaches kubic run', () => {
     expect(result.summary).toContain('denied by policy route');
   });
 
-  it('KUBIC_APPROVALS_ROUTE=deny takes effect in solo', async () => {
+  it('KUBIC_APPROVALS_ROUTE=deny takes effect in the lane', async () => {
     const home = tmpRoot('home-');
     const loaded = loadCliConfig({
       home,
@@ -174,7 +174,7 @@ describe('config autoApprove reaches the headless path', () => {
   it("autoApprove=['install'] lets npm install through, audited by:'autoApprove'", async () => {
     const workspace = tmpRoot('ws-');
     const loaded = loadedWith('autoApprove = ["install"]');
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace,
       ...installedPolicyDeps(loaded),
     });
@@ -194,7 +194,7 @@ describe('config autoApprove reaches the headless path', () => {
     const loaded = loadedWith(
       'autoApprove = ["install"]\nrequireJustification = true',
     );
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace,
       ...installedPolicyDeps(loaded),
     });
@@ -210,7 +210,7 @@ describe('config autoApprove reaches the headless path', () => {
   });
 
   it('autoApprove is explicit-only: without it the headless ask still refuses', async () => {
-    const installed = installSoloPolicy({ workspace: tmpRoot('ws-') });
+    const installed = installPolicy({ workspace: tmpRoot('ws-') });
     const verdict = await installed.ask({
       toolName: 'bash',
       args: { command: 'npm install' },
@@ -224,7 +224,7 @@ describe('config maxPendingMs bounds the TUI seat', () => {
   it('a seat that never answers denies at about the configured 500 ms', async () => {
     vi.useFakeTimers();
     const loaded = loadedWith('maxPendingMs = 500');
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: tmpRoot('ws-'),
       sessionDir: tmpRoot('session-'),
       ...installedPolicyDeps(loaded),

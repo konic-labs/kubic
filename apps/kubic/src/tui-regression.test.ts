@@ -9,14 +9,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { runRunCommand } from '../../../packages/host/src/run-cli.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { runTuiCommand } from './tui-run.js';
@@ -30,7 +30,7 @@ function tmpRoot(): string {
 }
 
 beforeEach(() => {
-  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // The no-isolation notice is not under test here (no-isolation-notice-prod.test.ts owns
   // it); the documented opt-out keeps it off the test runner's stderr.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });

@@ -3,8 +3,8 @@
 // and what is still a prompt for the lane — is pinned here, not inferred
 // from the prod test.
 import { describe, expect, it } from 'vitest';
+import { BACKGROUND_CONTEXT } from '../../../packages/agent/src/pi-boundary.js';
 import type { TuiApp } from '../../../packages/tui/src/tui-app.js';
-import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import {
   parseEscalateCommand,
   parseModelCommand,

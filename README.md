@@ -64,7 +64,7 @@ the same limits.
   outside the workspace.
 - **No third-party tools or MCP servers.** Requests for them are refused.
 
-See [`docs/architecture/solo.md`](docs/architecture/solo.md) and
+See [`docs/architecture/in-process.md`](docs/architecture/in-process.md) and
 [`docs/architecture/journal-and-safety.md`](docs/architecture/journal-and-safety.md)
 for the details.
 

@@ -1,4 +1,4 @@
-// The mode on the solo path: `kubic run --autonomous`
+// The mode on the path: `kubic run --autonomous`
 // records `autonomous` on the run's session; without the flag the session
 // carries `interactive` (off by default, never assumed). Faux provider,
 // scratch sessions root — zero network, zero paid tokens.
@@ -6,6 +6,17 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  listSessions,
+  openSessionStore,
+} from '../../../packages/agent/src/lane/session-store.js';
+import type { MutableModels } from '../../../packages/agent/src/pi-boundary.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
@@ -13,17 +24,6 @@ import {
   readAuditLedger,
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { buildRunEnvelope } from '../../../packages/host/src/run-cli.js';
-import {
-  listSessions,
-  openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];
@@ -132,10 +132,10 @@ describe('kubic run --autonomous records the mode', () => {
     60_000,
   );
 
-  // Review (low): the solo row records the resolved worktree base —
+  // Review (low): the row records the resolved worktree base —
   // the scratch cwd is outside git, so the honest value is `none`, never
   // a hardcoded `unknown`.
-  it('writes the resolved run base on the solo run:start row', async () => {
+  it('writes the resolved run base on the run:start row', async () => {
     const run = await runModeOf(false);
     const rows = readAuditLedger(auditLedgerDirFor(run.cwd));
     const start = rows.find((row) => row.what === 'run:start');

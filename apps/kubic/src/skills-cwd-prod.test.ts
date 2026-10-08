@@ -8,16 +8,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  FakeExecutionEnv,
-  NodeExecutionEnv,
-} from '../../../packages/exec/src/env.js';
-import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import {
+  FakeExecutionEnv,
+  NodeExecutionEnv,
+} from '../../../packages/exec/src/env.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane, type TuiLaneBoot, tuiBootOptions } from './tui-run.js';
 

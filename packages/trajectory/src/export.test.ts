@@ -309,7 +309,7 @@ describe('trajectory observations + failures + eval slot', () => {
     expect(observation?.output).toBe(big.slice(0, MAX_OBSERVATION_BYTES));
   });
 
-  it('keeps the failure taxonomy in sync with the worker owner', () => {
+  it('keeps the failure taxonomy in sync with the agent owner', () => {
     expect([...TRAJECTORY_FAILURE_CODES].sort()).toEqual(
       [
         'approval_denied',

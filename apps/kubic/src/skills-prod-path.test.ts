@@ -1,11 +1,11 @@
-// Skills on the live solo path.
+// Skills on the live path.
 // Before nothing in the shipped binary called discoverSkills /
 // formatSkillsForSystemPrompt and `--no-skills` did not exist. These tests
 // pin that the composition root runs discovery through the real FileBridge
 // and hands the model-visible blocks to the lane boot.
 //
 // Faux provider only (zero network, zero paid tokens): the assertions are
-// about the committed solo prompt bytes, read back from the session
+// about the committed prompt bytes, read back from the session
 // transcript (the reader) after a real `kubic run`.
 import {
   mkdirSync,
@@ -17,23 +17,16 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  FakeExecutionEnv,
-  NodeExecutionEnv,
-} from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { runRunCommand } from '../../../packages/host/src/run-cli.js';
-import { bootSkills } from '../../../packages/host/src/skills-boot.js';
+import { PROMPT_SECTION } from '../../../packages/agent/src/lane/boot.js';
 import {
   attachSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { SOLO_PROMPT_SECTION } from '../../../packages/worker/src/lane/solo.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+} from '../../../packages/agent/src/lane/session-store.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../../packages/worker/src/lane/transcript.js';
+} from '../../../packages/agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -42,7 +35,14 @@ import {
   fauxToolCall,
   type MutableModels,
   SystemEntry,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import {
+  FakeExecutionEnv,
+  NodeExecutionEnv,
+} from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { runRunCommand } from '../../../packages/host/src/run-cli.js';
+import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];
@@ -74,7 +74,7 @@ function writeSkill(root: string, name: string, description: string): string {
   return file;
 }
 
-// The solo prompt the lane committed for this session (the reader): the
+// The prompt the lane committed for this session (the reader): the
 // run's own durable record of the bytes the model saw.
 async function committedPrompt(
   root: string,
@@ -92,7 +92,7 @@ async function committedPrompt(
       const messages = entry.model as unknown as
         | Array<{ sections?: Record<string, string | null> }>
         | undefined;
-      const prompt = messages?.[0]?.sections?.[SOLO_PROMPT_SECTION];
+      const prompt = messages?.[0]?.sections?.[PROMPT_SECTION];
       if (typeof prompt === 'string' && prompt !== '') return prompt;
     }
     return '';
@@ -102,7 +102,7 @@ async function committedPrompt(
 }
 
 beforeEach(() => {
-  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // The no-isolation notice is not under test here (no-isolation-notice-prod.test.ts owns
   // it); the documented opt-out keeps it off the test runner's stderr.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });
@@ -115,7 +115,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('skills reach the live solo prompt', () => {
+describe('skills reach the live prompt', () => {
   it("injects a discovered skill's name, description and path into the assembled system prompt", async () => {
     const home = tmpRoot('skills-home-');
     const skillFile = writeSkill(
@@ -502,7 +502,7 @@ describe('settings skills from config', () => {
   });
 });
 
-describe('the role/capability gate reaches the live solo prompt', () => {
+describe('the role/capability gate reaches the live prompt', () => {
   function writeScopedSkill(
     root: string,
     name: string,

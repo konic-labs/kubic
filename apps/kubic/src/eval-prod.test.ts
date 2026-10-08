@@ -1,5 +1,5 @@
 // The live suite runner on the production path: `kubic eval --task` and `kubic
-// benchmark` run each built-in suite's fixture through the real solo lane and
+// benchmark` run each built-in suite's fixture through the real lane and
 // score the trajectory it writes. Faux provider only (scripted fixture prompts,
 // real tool calls); temp workspaces and a fixture git repo; zero network.
 

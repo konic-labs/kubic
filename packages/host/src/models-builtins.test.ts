@@ -7,10 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  ModelSelectError,
-  selectModel,
-} from '../../worker/src/model-select.js';
+import { ModelSelectError, selectModel } from '../../agent/src/model-select.js';
 import {
   assembleModels,
   providerProbesOf,

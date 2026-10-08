@@ -1,4 +1,4 @@
-// The full-access posture is resolved ONCE, at session boot. installSoloPolicy
+// The full-access posture is resolved ONCE, at session boot. installPolicy
 // must not re-read <session>/posture.json on every ask: one model-issued bash
 // redirect (`echo '{"fullAccess":true}' > …/posture.json`) would otherwise switch
 // approvals off for the rest of the session, and the ledger would record it as
@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   enableSessionFullAccess,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
 } from './approvals.js';
 import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 
@@ -45,7 +45,7 @@ describe('posture is decided at boot', () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
     let asks = 0;
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace,
       sessionDir,
       answer: async () => {
@@ -63,7 +63,7 @@ describe('posture is decided at boot', () => {
   it('headless: the forged posture is refused, not honoured', async () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
-    const installed = installSoloPolicy({ workspace, sessionDir });
+    const installed = installPolicy({ workspace, sessionDir });
     forgePosture(sessionDir);
     expect((await installed.ask(DESTRUCTIVE)).approved).toBe(false);
   });
@@ -77,7 +77,7 @@ describe('posture is decided at boot', () => {
       command: 'sessions create',
       workspace,
     });
-    const installed = installSoloPolicy({ workspace, sessionDir });
+    const installed = installPolicy({ workspace, sessionDir });
     expect(installed.posture.fullAccess).toBe(true);
     expect(await installed.ask(DESTRUCTIVE)).toEqual({
       approved: true,
@@ -88,7 +88,7 @@ describe('posture is decided at boot', () => {
   it('audit records carry the posture decided at boot, and the mid-run change is recorded once', async () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
-    const installed = installSoloPolicy({ workspace, sessionDir });
+    const installed = installPolicy({ workspace, sessionDir });
     forgePosture(sessionDir);
     await installed.ask(DESTRUCTIVE);
     await installed.ask(DESTRUCTIVE);
@@ -106,19 +106,19 @@ describe('posture is decided at boot', () => {
   it('the forged file is restored to the boot posture, so a later resume stays enforced', async () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
-    const installed = installSoloPolicy({ workspace, sessionDir });
+    const installed = installPolicy({ workspace, sessionDir });
     forgePosture(sessionDir);
     await installed.ask(DESTRUCTIVE);
     expect(
       JSON.parse(readFileSync(join(sessionDir, 'posture.json'), 'utf8')),
     ).toEqual({ fullAccess: false });
-    const resumed = installSoloPolicy({ workspace, sessionDir });
+    const resumed = installPolicy({ workspace, sessionDir });
     expect(resumed.posture.fullAccess).toBe(false);
   });
 
   it('the installed ask also reads the posture once', async () => {
     const dir = tmpRoot('store-');
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: dir,
       sessionDir: dir,
       maxPendingMs: 10,
@@ -137,7 +137,7 @@ describe('the in-session full-access toggle', () => {
     const workspace = tmpRoot('ws-');
     const sessionDir = tmpRoot('session-');
     let asks = 0;
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace,
       sessionDir,
       sessionId: 'sess-posture',
@@ -212,7 +212,7 @@ describe('the in-session full-access toggle', () => {
       workspace,
       clock: () => 1_700_000_000_000,
     });
-    const revoked = installSoloPolicy({
+    const revoked = installPolicy({
       workspace,
       sessionDir,
       sessionId: 'sess-posture',
@@ -247,7 +247,7 @@ describe('the in-session full-access toggle', () => {
     // operator's own flip a foreign change, rewrite the file and append a
     // false `posture:changed-mid-session` row.
     let tick = 1_700_000_000_000;
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace,
       sessionDir,
       clock: () => (tick += 1),
@@ -281,7 +281,7 @@ describe('the in-session full-access toggle', () => {
       workspace,
       clock,
     });
-    installSoloPolicy({
+    installPolicy({
       workspace,
       sessionDir: toggleDir,
       sessionId: 'sess-posture',
@@ -315,11 +315,11 @@ describe('the in-session full-access toggle', () => {
       command: 'sessions create',
       workspace,
     });
-    const first = installSoloPolicy({ workspace, sessionDir });
+    const first = installPolicy({ workspace, sessionDir });
     expect(first.posture.fullAccess).toBe(true);
     first.setFullAccess?.(false, 'kubic tui /approvals off');
     // A fresh install (a resume) reads the revoked posture.
-    const second = installSoloPolicy({ workspace, sessionDir });
+    const second = installPolicy({ workspace, sessionDir });
     expect(second.posture.fullAccess).toBe(false);
     expect(second.approvalsSkipped()).toBe(false);
   });

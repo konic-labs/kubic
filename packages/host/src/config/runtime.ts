@@ -16,16 +16,16 @@
 
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import {
-  type PermissionClasses,
-  validateClasses,
-} from '../../../agents/src/policy.js';
-import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
-  SOLO_KEEP_RECENT_TOKENS,
-} from '../../../worker/src/compaction.js';
+  KEEP_RECENT_TOKENS,
+} from '../../../agent/src/compaction.js';
+import {
+  type PermissionClasses,
+  validateClasses,
+} from '../../../agent/src/permissions.js';
+import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
+import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import {
   type EffectivePolicy,
@@ -122,7 +122,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
       'file whose contents the run, tui and replay lanes append to the assembled system prompt (ahead of the skills block)',
   },
   'agent.name': {
-    effect: 'agent id on the solo lane + journal attribution',
+    effect: 'agent id on the lane + journal attribution',
   },
   'model.provider': {
     effect: 'provider selection for `kubic run` and `kubic tui` (selectModel)',
@@ -136,19 +136,19 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'model.timeoutMs': {
     effect:
-      'per-request provider timeout on the solo lane (`settings.stream`), layered per role by `[roles.<name>].timeoutMs`',
+      'per-request provider timeout on the lane (`settings.stream`), layered per role by `[roles.<name>].timeoutMs`',
   },
   'model.maxRetries': {
     effect:
-      'provider/SDK retries inside one request attempt on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetries`',
+      'provider/SDK retries inside one request attempt on the lane (`settings.stream`), layered per role by `[roles.<name>].maxRetries`',
   },
   'model.maxRetryDelayMs': {
     effect:
-      'cap on the server-requested retry delay on the solo lane (`settings.stream`), layered per role by `[roles.<name>].maxRetryDelayMs`',
+      'cap on the server-requested retry delay on the lane (`settings.stream`), layered per role by `[roles.<name>].maxRetryDelayMs`',
   },
   'model.cacheRetention': {
     effect:
-      'prompt cache retention preference on the solo lane (`settings.stream`), layered per role by `[roles.<name>].cacheRetention`',
+      'prompt cache retention preference on the lane (`settings.stream`), layered per role by `[roles.<name>].cacheRetention`',
   },
   'model.escalate': {
     effect:
@@ -165,7 +165,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'approvals.autoApprove': {
     effect:
-      'explicit-only capability auto-approvals on the solo lane (never inferred)',
+      'explicit-only capability auto-approvals on the lane (never inferred)',
   },
   'approvals.sessionScoped': {
     effect:
@@ -173,7 +173,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
   'approvals.requireJustification': {
     effect:
-      'installed on the solo lane: an approval without justification is denied',
+      'installed on the lane: an approval without justification is denied',
   },
   'permissions.filesystem': {
     effect: 'permission classes for the lane: derived tool allowlist',
@@ -1271,7 +1271,7 @@ export function effectiveConfigView(
         runtime.compaction.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
       ),
       keepRecentTokens:
-        runtime.compaction.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+        runtime.compaction.keepRecentTokens ?? KEEP_RECENT_TOKENS,
       source: runtime.compaction.source,
     },
     model: runtime.model === undefined ? undefined : { ...runtime.model },

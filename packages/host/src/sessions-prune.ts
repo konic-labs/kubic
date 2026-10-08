@@ -9,7 +9,7 @@
 //
 // Rails (each pinned behaviourally by sessions-prune.test.ts):
 // - a session holding a LIVE lock is never a candidate (read-only view:
-//   worker `sessionLockIsLive`; a dead holder — a stale lock — never
+//   agent `sessionLockIsLive`; a dead holder — a stale lock — never
 //   protects), and the lock is re-checked immediately before each delete —
 //   a lock acquired between the plan and the delete pass still stops it;
 // - `--keep-session` names are never candidates;
@@ -26,8 +26,8 @@
 // never imports node:fs.
 
 import { join } from 'node:path';
+import { sessionLockIsLive } from '../../agent/src/lane/session-store.js';
 import type { BridgeFileInfo, FileBridge } from '../../exec/src/file-bridge.js';
-import { sessionLockIsLive } from '../../worker/src/lane/session-store.js';
 import { MS_PER_DAY } from './config/runtime.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 

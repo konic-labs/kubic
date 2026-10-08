@@ -16,15 +16,15 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import { bootTuiLane } from './tui-run.js';
 
 const made: string[] = [];

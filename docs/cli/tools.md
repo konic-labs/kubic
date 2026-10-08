@@ -1,11 +1,11 @@
 # Tools the model calls
 
 > Source of truth: `OPERATION_PARAMETERS` in
-> `packages/worker/src/ops/registry.ts` (schemas) and each operation's
+> `packages/agent/src/ops/registry.ts` (schemas) and each operation's
 > `validateArgs` (the authoritative check).
 
 Every lane (`kubic run`, `kubic tui`) registers the same fifteen tools,
-narrowed only by permission classes and `--role`. Solo mode has no
+narrowed only by permission classes and `--role`. Kubic has no
 isolation: these tools act on the real workspace.
 
 ## Argument contract

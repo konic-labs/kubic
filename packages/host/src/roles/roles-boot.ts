@@ -7,7 +7,7 @@
 // I/O confinement: this module never imports node:fs. The bridge is
 // injected, so tests drive fixtures while prod passes the real FileBridge.
 
-import type { PermissionClasses } from '../../../agents/src/policy.js';
+import type { PermissionClasses } from '../../../agent/src/permissions.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { DoctorCheck } from '../doctor.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
@@ -290,7 +290,7 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
         .map((entry) => ({ name: entry.name, path: entry.path }));
     } catch (error) {
       // An absent `.kubic/roles/` is the NORMAL case, not a failure: most
-      // workspaces have no role documents and the solo default is unaffected.
+      // workspaces have no role documents and the default is unaffected.
       // Letting the raw ENOENT escape would make every `kubic doctor` red, since
       // the probe is wired to the binary. An unreadable directory that
       // DOES exist still throws — the distinction is between "nothing there"
@@ -390,7 +390,7 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
 }
 
 // The role a lane boot runs as. `--role` names it; an absent flag means no
-// role (the solo default, unchanged). Fail-closed: an unknown role, a
+// role (the default, unchanged). Fail-closed: an unknown role, a
 // document that failed to parse, or a contradiction refuses the run with a
 // named reason — never an invented fallback.
 export interface RoleSelectionInput extends RolesDirInput {
@@ -461,7 +461,7 @@ export function selectRole(input: RoleSelectionInput): SelectedRole {
 
 // On the lane: the role's resolved tool set becomes the lane's
 // allowlist (absence, not approval, withholds a tool) and the role's prompt
-// text replaces the solo constant. Both halves are the resolver's own
+// text replaces the constant. Both halves are the resolver's own
 // values — this function invents nothing.
 //
 // The prompt half composes the document's `## Prompt` body: the

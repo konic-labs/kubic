@@ -16,7 +16,7 @@ import {
   detectTriggers,
   enableFullAccess,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
   MemoryApprovalStore,
   summarizeRequest,
   type TriggerContext,
@@ -329,7 +329,7 @@ describe('approval service', () => {
 describe('approval adapter, file store, posture', () => {
   it('passes non-triggered calls without asking the seat', async () => {
     const dir = mkTmp('approvals-');
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: dir,
       sessionDir: dir,
       answer: () => {
@@ -347,7 +347,7 @@ describe('approval adapter, file store, posture', () => {
 
   it('denies triggered calls headless and approves on answer', async () => {
     const dir = mkTmp('approvals-');
-    const headless = installSoloPolicy({
+    const headless = installPolicy({
       workspace: dir,
       sessionDir: dir,
       maxPendingMs: 10,
@@ -360,7 +360,7 @@ describe('approval adapter, file store, posture', () => {
     expect(verdict.approved).toBe(false);
 
     // The seat presents the dialog and its verdict arrives as the answer.
-    const seated = installSoloPolicy({
+    const seated = installPolicy({
       workspace: dir,
       sessionDir: dir,
       maxPendingMs: 5_000,
@@ -464,7 +464,7 @@ describe('approval adapter, file store, posture', () => {
     const sessionDir = mkTmp('approvals-session-');
     writeFileSync(join(sessionDir, 'approvals.json'), 'null');
     writeFileSync(join(sessionDir, 'posture.json'), '{"fullAccess":"yes"}');
-    const installed = installSoloPolicy({ workspace, sessionDir });
+    const installed = installPolicy({ workspace, sessionDir });
     expect(installed.posture.fullAccess).toBe(false);
     expect(installed.approvalsSkipped()).toBe(false);
     // The service reads the same store at construction (Object.entries(null)

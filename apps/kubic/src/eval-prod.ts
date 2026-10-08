@@ -1,6 +1,6 @@
 // Prod suite runner for `kubic eval --task` / `kubic benchmark`. Each built-in
 // suite carries a FIXTURE (prompt, starting files, gate commands); this runner
-// materializes it, drives the real solo lane through runHeadlessPrompt, and
+// materializes it, drives the real lane through runHeadlessPrompt, and
 // scores the trajectory the run wrote with the eval package's own signal
 // derivation — the same computeSignals/gatesPass the reference verifier reads,
 // never a re-guess.
@@ -15,6 +15,10 @@
 // that workspace after the run settles, so the trajectory carries the
 // signal:* labels the score is built from.
 import { dirname, join } from 'node:path';
+import {
+  ModelSelectError,
+  parseModelFlag,
+} from '../../../packages/agent/src/model-select.js';
 import {
   EVAL_DEFAULT_MODEL,
   type EvalOptions,
@@ -40,10 +44,6 @@ import {
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
-import {
-  ModelSelectError,
-  parseModelFlag,
-} from '../../../packages/worker/src/model-select.js';
 import {
   type CliConfigResult,
   projectTrustFor,

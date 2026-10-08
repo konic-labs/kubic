@@ -1,5 +1,5 @@
 // TreeView one-node + ToolOutput collapsing.
-// Solo-only: head row + tool children, glyphs ✓/●/◌, keyboard+click toggle,
+// In-process only: head row + tool children, glyphs ✓/●/◌, keyboard+click toggle,
 // truncation. Headless snapshots render directly (no VirtualTerminal in
 // Pi 0.85.1) like layout.test.ts.
 import { describe, expect, it } from 'vitest';
@@ -64,10 +64,10 @@ describe('tree glyphs', () => {
 describe('tree lane feed', () => {
   it('shows ● head with live children on start/finish', () => {
     const state = createTreeState();
-    expect(renderTreeLines(state, 100)[0]).toBe('◌ solo');
+    expect(renderTreeLines(state, 100)[0]).toBe('◌ default');
     applyTreeSnapshot(state, lane('running', [tool('c1', 'bash')]));
     const lines = renderTreeLines(state, 100);
-    expect(lines[0]).toBe('● solo');
+    expect(lines[0]).toBe('● default');
     expect(lines[1]).toBe('  ● bash');
     applyTreeSnapshot(
       state,
@@ -104,11 +104,11 @@ describe('tree collapse', () => {
     expect(collapsedSummary(state)).toBe('…3 calls, 142ms');
     toggleTree(state);
     const collapsed = renderTreeLines(state, 100);
-    expect(collapsed).toEqual(['● solo', '  …3 calls, 142ms']);
+    expect(collapsed).toEqual(['● default', '  …3 calls, 142ms']);
     toggleTree(state);
     const expanded = renderTreeLines(state, 100);
     expect(expanded).toEqual([
-      '● solo',
+      '● default',
       '  ✓ bash 40ms',
       '  ✓ bash 60ms',
       '  ✓ bash 42ms',
@@ -188,7 +188,7 @@ describe('tree snapshots (headless, no VirtualTerminal)', () => {
 
   it('snapshots the expanded tree', () => {
     expect(populated().render(100)).toEqual([
-      '● solo',
+      '● default',
       '  ✓ bash 142ms',
       '  ● bash',
     ]);
@@ -197,7 +197,7 @@ describe('tree snapshots (headless, no VirtualTerminal)', () => {
   it('snapshots the collapsed tree', () => {
     const view = populated();
     view.toggle();
-    expect(view.render(100)).toEqual(['● solo', '  …2 calls, 142ms']);
+    expect(view.render(100)).toEqual(['● default', '  …2 calls, 142ms']);
   });
 
   it('truncates every line at narrow widths (minSize 6)', () => {
@@ -238,7 +238,7 @@ describe('tree tool detail', () => {
       ]),
     );
     expect(renderTreeLines(state, 100)).toEqual([
-      '● solo',
+      '● default',
       '  ● bash pnpm test auth',
     ]);
     const narrow = renderTreeLines(state, 20)[1] ?? '';
@@ -324,7 +324,7 @@ describe('tree tool detail', () => {
     // sums the ledger and the usage rows; the tree never folds a raw row).
     const state = createTreeState();
     applyTreeSnapshot(state, lane('running', []));
-    expect(renderTreeLines(state, 100)[0]).toBe('● solo');
+    expect(renderTreeLines(state, 100)[0]).toBe('● default');
     applyTreeSnapshot(
       state,
       lane('running', [], {
@@ -333,7 +333,7 @@ describe('tree tool detail', () => {
         outputTokens: 300,
       }),
     );
-    expect(renderTreeLines(state, 100)[0]).toBe('● solo $0.00 1.2k/0.3k');
+    expect(renderTreeLines(state, 100)[0]).toBe('● default $0.00 1.2k/0.3k');
     applyTreeSnapshot(
       state,
       lane('running', [], {
@@ -342,7 +342,7 @@ describe('tree tool detail', () => {
         outputTokens: 1000,
       }),
     );
-    expect(renderTreeLines(state, 100)[0]).toBe('● solo $0.02 2.0k/1.0k');
+    expect(renderTreeLines(state, 100)[0]).toBe('● default $0.02 2.0k/1.0k');
   });
 
   it('starts a new group on the second run-start', () => {
@@ -365,7 +365,7 @@ describe('tree tool detail', () => {
     // bounded by the turn count, not the session's tool count.
     expect(state.previousTurns).toEqual([{ calls: 1, durationMs: 142 }]);
     expect(renderTreeLines(state, 100)).toEqual([
-      '● solo',
+      '● default',
       '  … 1 earlier call in 1 turn',
       '  ● read',
     ]);
@@ -462,9 +462,9 @@ describe('tree mutation hardening', () => {
 
   it('keeps an exact-width line untruncated (no ellipsis at length === width)', () => {
     const state = createTreeState();
-    // '◌ solo' is exactly 6 visible columns.
-    expect(renderTreeLines(state, 6)).toEqual(['◌ solo']);
-    expect(renderTreeLines(state, 6)[0]).not.toContain('…');
+    // '◌ default' is exactly 9 visible columns.
+    expect(renderTreeLines(state, 9)).toEqual(['◌ default']);
+    expect(renderTreeLines(state, 9)[0]).not.toContain('…');
   });
 
   it('honors constructor label/collapsed options and the snapshot durations', () => {
@@ -479,7 +479,7 @@ describe('tree mutation hardening', () => {
     expect(view.isCollapsed()).toBe(true);
     // One tool: singular 'call' — the duration is the projector's measurement,
     // carried in the snapshot.
-    expect(view.render(100)).toEqual(['● solo', '  …1 call, 500ms']);
+    expect(view.render(100)).toEqual(['● default', '  …1 call, 500ms']);
     expect(view.getState().tools[0]?.durationMs).toBe(500);
     // The label option names the head row when the view builds its own state.
     expect(new TreeView(undefined, { label: 'lane-7' }).render(100)).toEqual([

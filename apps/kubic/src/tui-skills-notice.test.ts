@@ -7,12 +7,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   createModels,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { bootTuiLane } from './tui-run.js';
 
 const made: string[] = [];

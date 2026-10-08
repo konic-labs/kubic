@@ -9,19 +9,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { installSoloPolicy } from '../../../packages/host/src/approvals.js';
-import {
-  auditLedgerDir,
-  readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
 import {
   createSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+} from '../../../packages/agent/src/lane/session-store.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -29,7 +21,15 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { installPolicy } from '../../../packages/host/src/approvals.js';
+import {
+  auditLedgerDir,
+  readAuditLedger,
+} from '../../../packages/host/src/policy/audit-ledger.js';
+import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
@@ -281,8 +281,8 @@ describe('kubic tui: the audit row names the model the lane runs', () => {
 
 describe('a run records its own identity', () => {
   it('a locally decided ask is one root row with the process pid', async () => {
-    const root = tmpRoot('audit-id-solo-root-');
-    const workspace = tmpRoot('audit-id-solo-ws-');
+    const root = tmpRoot('audit-id-lane-root-');
+    const workspace = tmpRoot('audit-id-lane-ws-');
     await runHeadlessPrompt(
       'clean up',
       {},
@@ -304,7 +304,7 @@ describe('a run records its own identity', () => {
   });
 });
 
-describe('installSoloPolicy audit model', () => {
+describe('installPolicy audit model', () => {
   const call = (id: string) => ({
     toolName: 'bash',
     args: { command: 'rm -rf build' },
@@ -314,7 +314,7 @@ describe('installSoloPolicy audit model', () => {
   it('a string model is recorded as given; a function is read at RECORD time, per row', async () => {
     const workspace = tmpRoot('audit-id-install-ws-');
     let live = 'faux/big';
-    const withFn = installSoloPolicy({
+    const withFn = installPolicy({
       workspace,
       sessionDir: tmpRoot('audit-id-install-s1-'),
       sessionId: 'fn-session',
@@ -324,7 +324,7 @@ describe('installSoloPolicy audit model', () => {
     await withFn.ask(call('c1'));
     live = 'alt/m1';
     await withFn.ask(call('c2'));
-    const withString = installSoloPolicy({
+    const withString = installPolicy({
       workspace,
       sessionDir: tmpRoot('audit-id-install-s2-'),
       sessionId: 'str-session',
@@ -332,7 +332,7 @@ describe('installSoloPolicy audit model', () => {
       model: 'faux/small',
     });
     await withString.ask(call('c3'));
-    const withNone = installSoloPolicy({
+    const withNone = installPolicy({
       workspace,
       sessionDir: tmpRoot('audit-id-install-s3-'),
       sessionId: 'none-session',

@@ -1,4 +1,4 @@
-// Installed solo policy: the classes and
+// Installed policy: the classes and
 // interceptor options the PRODUCTION path installs, and the composition order
 // they produce on a real lane — permission wrapper innermost (so a tool
 // outside the allowlist is refused at execute time, not merely absent from
@@ -7,21 +7,24 @@
 // the shared faux harness factory.
 
 import { afterAll, describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS, toolsForClasses } from '../../agents/src/policy.js';
-import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   bootFauxLane,
   type FauxLane,
   invokeRegisteredTool,
-} from '../../worker/src/lane/test-harness.js';
+} from '../../agent/src/lane/test-harness.js';
 import {
   PolicyDeniedError,
   type TelemetryRecord,
-} from '../../worker/src/lane/wrap.js';
+} from '../../agent/src/lane/wrap.js';
 import {
-  type InstalledSoloPolicy,
+  DEFAULT_PERMISSIONS,
+  toolsForClasses,
+} from '../../agent/src/permissions.js';
+import { FakeExecutionEnv } from '../../exec/src/env.js';
+import {
+  type InstalledPolicy,
   installedPolicyPosture,
-  installSoloPolicy,
+  installPolicy,
 } from './approvals.js';
 
 const lanes: FauxLane[] = [];
@@ -30,7 +33,7 @@ afterAll(async () => {
   for (const lane of lanes.splice(0)) await lane.cleanup();
 });
 
-async function bootWith(installed: InstalledSoloPolicy) {
+async function bootWith(installed: InstalledPolicy) {
   const env = new FakeExecutionEnv({});
   env.fs.writeFile('notes.txt', 'workspace notes\n');
   const lane = await bootFauxLane({
@@ -46,13 +49,13 @@ async function bootWith(installed: InstalledSoloPolicy) {
 }
 
 describe('installed policy defaults', () => {
-  it('installs the documented solo default classes when no config supplies any', () => {
-    const installed = installSoloPolicy({ workspace: '/fake' });
-    expect(installed.classes).toEqual({ ...SOLO_DEFAULTS });
+  it('installs the documented default classes when no config supplies any', () => {
+    const installed = installPolicy({ workspace: '/fake' });
+    expect(installed.classes).toEqual({ ...DEFAULT_PERMISSIONS });
     expect(installed.posture.source).toBe('default');
     // The allowlist is derived from the classes, never hand-kept.
     expect(installed.posture.allowlist).toEqual(
-      toolsForClasses({ ...SOLO_DEFAULTS }),
+      toolsForClasses({ ...DEFAULT_PERMISSIONS }),
     );
     // Deny-by-default tail: nothing network-capable, nothing credential-shaped.
     expect(installed.classes.network).toBe('none');
@@ -61,17 +64,17 @@ describe('installed policy defaults', () => {
 
   it('takes config-sourced classes when the config layer supplies them', () => {
     const classes = {
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'read' as const,
       shell: false as const,
     };
-    const installed = installSoloPolicy({ workspace: '/fake', classes });
+    const installed = installPolicy({ workspace: '/fake', classes });
     expect(installed.classes).toEqual(classes);
     expect(installed.posture.source).toBe('config');
   });
 
   it('names the guards and the approval route it installs', () => {
-    const installed = installSoloPolicy({ workspace: '/fake' });
+    const installed = installPolicy({ workspace: '/fake' });
     expect(installed.posture.interceptors).toContain('destructive-guard');
     expect(installed.posture.interceptors).toContain('approval');
     // Guards are only meaningful with the routes they block through.
@@ -80,7 +83,7 @@ describe('installed policy defaults', () => {
 
   it('the doctor posture and the lane policy come from one derivation', () => {
     const input = { workspace: '/fake', sessionDir: '/fake/sessions/s1' };
-    const installed = installSoloPolicy(input);
+    const installed = installPolicy(input);
     const posture = installedPolicyPosture(input);
     expect(installed.posture).toEqual(posture);
   });
@@ -89,13 +92,13 @@ describe('installed policy defaults', () => {
 describe('installed policy on a live lane', () => {
   it('narrows the active tools to the class-derived allowlist', async () => {
     const classes = {
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'read' as const,
       shell: false as const,
       git: false as const,
     };
     const { lane } = await bootWith(
-      installSoloPolicy({ workspace: '/fake', classes }),
+      installPolicy({ workspace: '/fake', classes }),
     );
     const active = (await lane.activeTools()).sort();
     expect(active).toEqual([...toolsForClasses(classes)].sort());
@@ -104,9 +107,9 @@ describe('installed policy on a live lane', () => {
   });
 
   it('refuses a tool outside the allowlist at execute time with PolicyDeniedError', async () => {
-    const classes = { ...SOLO_DEFAULTS, shell: false as const };
+    const classes = { ...DEFAULT_PERMISSIONS, shell: false as const };
     const { lane } = await bootWith(
-      installSoloPolicy({ workspace: '/fake', classes }),
+      installPolicy({ workspace: '/fake', classes }),
     );
     // Registered (it is in the harness tool set) but not allowed: the
     // refusal must come from the execute-time wrapper, not from absence.
@@ -123,9 +126,9 @@ describe('installed policy on a live lane', () => {
 
   it('records the DENIED attempt in telemetry, proving telemetry wraps permission', async () => {
     const records: TelemetryRecord[] = [];
-    const classes = { ...SOLO_DEFAULTS, shell: false as const };
+    const classes = { ...DEFAULT_PERMISSIONS, shell: false as const };
     const { lane } = await bootWith(
-      installSoloPolicy({
+      installPolicy({
         workspace: '/fake',
         classes,
         telemetry: (record: TelemetryRecord) => records.push(record),

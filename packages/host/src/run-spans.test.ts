@@ -14,7 +14,7 @@ import {
   Harness,
   MemoryStorage,
   Type,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
 import {
   RUN_SPAN_NAMES,
   RunSpans,
@@ -130,7 +130,7 @@ describe('RunSpans debug lines', () => {
     );
   });
 
-  it('never emits a debug class outside the nine', () => {
+  it('never emits a debug class outside the closed vocabulary', () => {
     const spans = new RunSpans(ticks([0, 0, 1, 2, 3, 4, 5, 6]));
     const run = spans.startRun();
     const drive = spans.startLane('drive');
@@ -144,7 +144,7 @@ describe('RunSpans debug lines', () => {
     expect(lines.some((line) => line.startsWith('[tool]'))).toBe(true);
     for (const line of lines) {
       expect(line).toMatch(
-        /^\[(policy|worker|session|tool|model|agent|exit|handles)\]/,
+        /^\[(policy|session|tool|model|agent|exit|handles)\]/,
       );
     }
   });

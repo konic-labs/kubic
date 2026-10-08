@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  createInvocation,
+  MemoryMemoStore,
+} from '../../../packages/agent/src/ops/memos.js';
+import { callOperation } from '../../../packages/agent/src/ops/registry.js';
+import {
   CliExitError,
   CliUsageError,
 } from '../../../packages/core/src/cli/exit-codes.js';
@@ -26,11 +31,6 @@ import {
   GIT_NOT_A_REPO,
   runGitCommand,
 } from '../../../packages/host/src/git-cli.js';
-import {
-  createInvocation,
-  MemoryMemoStore,
-} from '../../../packages/worker/src/ops/memos.js';
-import { callOperation } from '../../../packages/worker/src/ops/registry.js';
 
 const made: string[] = [];
 

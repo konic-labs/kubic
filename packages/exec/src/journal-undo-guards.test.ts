@@ -1,7 +1,7 @@
 // Undo containment and the walk's link handling.
 //
 // Undo of an agent-created file is a forced `rm`, and its containment was
-// exercised only indirectly, from the worker package. The guards that make it
+// exercised only indirectly, from the agent package. The guards that make it
 // safe — `guardTarget` before the remove, the create-only predicate, the
 // symlink refusal — had no exec-package test of their own, and neither did the
 // baseline walk's symlink skip or `probeFileState`'s shape handling. A

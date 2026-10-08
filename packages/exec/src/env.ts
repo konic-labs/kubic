@@ -1,7 +1,7 @@
 // ExecutionEnv seam.
 // Every tool runs through this seam — no tool imports node:fs/child_process
 // directly (enforced by scripts/dep-lint.mjs: only packages/exec may).
-// Solo has no isolation: confinement here is a cwd guardrail against
+// Kubic has no isolation: confinement here is a cwd guardrail against
 // accidental escapes, not a sandbox boundary.
 //
 // FileSystem + Shell interfaces, provenance on every result,
@@ -88,7 +88,7 @@ export interface FileSystem {
    * real file instead of replacing the link with a regular file. The
    * lexical path is confined first; the RESULT is not (a link inside the
    * workspace may point out — the caller decides, see `symlink_escape`
-   * in the worker's write path). Throws when the path does not exist.
+   * in the agent's write path). Throws when the path does not exist.
    * Optional so existing seams stay valid; absent = links resolve to
    * themselves (test doubles).
    */
@@ -143,7 +143,7 @@ export interface ProcessSnapshot {
    * How many characters (UTF-16 code units) the capped
    * accumulators have dropped from the head of each stream so far. Past the
    * cap a snapshot keeps its length while its head moves, so a reader that
-   * follows a stream (the worker fact scanner) needs this to find where the
+   * follows a stream (the agent fact scanner) needs this to find where the
    * new output starts. Absent means nothing was dropped.
    */
   dropped?: { stdout: number; stderr: number };
@@ -212,7 +212,7 @@ export interface ExecutionEnv {
 function confine(cwd: string, path: string): string {
   // Lexical guardrail only: resolve() defeats `..` and absolute escapes but
   // does NOT resolve symlinks — a symlink inside the cwd can still point
-  // out. Acceptable: solo has no isolation, this is an accidental-
+  // out. Acceptable: Kubic has no isolation, this is an accidental-
   // escape guard, not a sandbox boundary.
   const abs = resolve(cwd, path);
   if (abs === cwd || abs.startsWith(cwd + sep)) return abs;

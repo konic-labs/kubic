@@ -38,7 +38,7 @@ const SURFACES: ReadonlyArray<
 > = [
   [
     'brand heading',
-    (t) => [brandHeading(t, 'run', ['solo', 'faux/echo', '~/proj'])],
+    (t) => [brandHeading(t, 'run', ['default', 'faux/echo', '~/proj'])],
   ],
   ['section label', (t) => [sectionLabel(t, 'runtime')]],
   [

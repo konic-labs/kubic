@@ -6,21 +6,21 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import {
+  attachSession,
+  openSessionStore,
+} from '../../../packages/agent/src/lane/session-store.js';
+import { bootFauxLane } from '../../../packages/agent/src/lane/test-harness.js';
+import {
+  BACKGROUND_CONTEXT,
+  fauxAssistantMessage,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { createLineLogger } from '../../../packages/core/src/cli/logger.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
   runSessionsCommand,
   type SessionsInvocation,
 } from '../../../packages/host/src/sessions-cli.js';
-import {
-  attachSession,
-  openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { bootFauxLane } from '../../../packages/worker/src/lane/test-harness.js';
-import {
-  BACKGROUND_CONTEXT,
-  fauxAssistantMessage,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { dispatchCommand } from './dispatch.js';
 import { createProdRunners } from './prod-runners.js';
 

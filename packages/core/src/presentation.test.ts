@@ -59,8 +59,8 @@ describe('presentation contract', () => {
     expect(SOURCE).toMatch(/[Nn]egative rule/);
   });
 
-  it('imports nothing from host, worker, or exec', () => {
-    expect(SOURCE).not.toMatch(/@kubic\/(host|worker|exec)/);
+  it('imports nothing from host, agent, or exec', () => {
+    expect(SOURCE).not.toMatch(/@kubic\/(host|agent|exec)/);
   });
 
   it('holds one session and one lane, not id-keyed collections', () => {

@@ -1,4 +1,4 @@
-// `kubic tui` prompt loop over the solo lane.
+// `kubic tui` prompt loop over the lane.
 // Before runTuiCommand booted a viewer shell — no prompt accept, no
 // drive, no lane events into the views, and Ctrl-C exited unconditionally.
 //
@@ -13,21 +13,15 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import { bootLane, type Lane } from '../../../packages/agent/src/lane/boot.js';
 import {
   createSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import {
-  bootSoloLane,
-  type SoloLane,
-} from '../../../packages/worker/src/lane/solo.js';
+} from '../../../packages/agent/src/lane/session-store.js';
 import {
   bootFauxLane,
   fauxToolUse,
-} from '../../../packages/worker/src/lane/test-harness.js';
+} from '../../../packages/agent/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   CompactionEntry,
@@ -38,16 +32,19 @@ import {
   fauxText,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   runTuiCommand,
-  soloTuiLoop,
   TUI_CLOCK_TICK_MS,
   TuiCompactionTurn,
   type TuiLaneLoop,
   type TuiRunDeps,
   TuiTurnRunner,
+  tuiLoop,
 } from './tui-run.js';
 
 type FauxContent = Parameters<typeof fauxAssistantMessage>[0];
@@ -102,7 +99,7 @@ function fauxModels(steps: FauxStep[]): {
   return { models, setResponses, calls: () => faux.state.callCount };
 }
 
-// A real solo boot against a temp sessions root with the faux provider —
+// A real lane boot against a temp sessions root with the faux provider —
 // the prod boot shape (bootTuiLane) with the sessions root and models
 // injected, exactly like headless-run.ts accepts its deps.
 function fauxLaneBoot(
@@ -110,13 +107,13 @@ function fauxLaneBoot(
   models: MutableModels,
   options: {
     // A smaller keep-recent window lets a test-sized context compact.
-    compaction?: Parameters<typeof bootSoloLane>[0]['compaction'];
+    compaction?: Parameters<typeof bootLane>[0]['compaction'];
     // Boot-time harness settings (retry off, so a scripted
     // provider error fails the turn deterministically).
-    settings?: Parameters<typeof bootSoloLane>[0]['settings'];
+    settings?: Parameters<typeof bootLane>[0]['settings'];
     // The booted lane, for tests that read its transcript (the /compact
     // acceptance counts pi.compaction entries).
-    onBoot?: (solo: SoloLane) => void;
+    onBoot?: (lane: Lane) => void;
     // Hand the session journal to the TUI (its panels and the
     // turn receipt read it).
     exposeJournal?: boolean;
@@ -134,7 +131,7 @@ function fauxLaneBoot(
     const model = models.getModels(provider.id)[0];
     if (model === undefined) throw new Error('no model registered');
     const journal = new FileJournalStore(join(root, id, 'journal'));
-    const solo = await bootSoloLane({
+    const lane = await bootLane({
       session,
       models,
       model,
@@ -147,14 +144,14 @@ function fauxLaneBoot(
         : { compaction: options.compaction }),
       ...(options.settings === undefined ? {} : { settings: options.settings }),
     });
-    options.onBoot?.(solo);
+    options.onBoot?.(lane);
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
       ...(options.exposeJournal === true ? { journal } : {}),
-      loop: soloTuiLoop(solo),
+      loop: tuiLoop(lane),
       close: async () => {
-        await solo.close(context);
+        await lane.close(context);
         await session.release(context);
       },
     };
@@ -246,7 +243,7 @@ describe('kubic tui prompt loop', () => {
     for (const ch of 'run it') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('tool turn done'));
-    // The solo tree row opens on Ctrl-T; `/session` reports the
+    // The tree row opens on Ctrl-T; `/session` reports the
     // usage rows the status bar holds.
     fake.feed('\x14');
     for (const ch of '/session') fake.feed(ch);
@@ -677,7 +674,7 @@ describe('kubic tui prompt loop', () => {
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const seen: string[] = [];
-    let lane: SoloLane | undefined;
+    let lane: Lane | undefined;
     const { models, calls } = fauxModels([
       'first answer',
       'second answer',
@@ -760,7 +757,7 @@ describe('kubic tui prompt loop', () => {
     const gated = new Promise<void>((resolve) => {
       release = resolve;
     });
-    let lane: SoloLane | undefined;
+    let lane: Lane | undefined;
     const { models } = fauxModels([
       async () => {
         await gated;
@@ -1137,7 +1134,7 @@ describe('kubic tui prompt loop', () => {
     const root = tmpRoot();
     const lines: string[] = [];
     const fake = fakeTerminal(100);
-    let lane: SoloLane | undefined;
+    let lane: Lane | undefined;
     const { models } = fauxModels(['first answer']);
     const pending = runTuiCommand(
       {},
@@ -1406,11 +1403,7 @@ describe('kubic tui prompt loop', () => {
           approvalsSkipped: false,
         }),
       } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
-      const runner = new TuiTurnRunner(
-        app,
-        soloTuiLoop(lane.solo),
-        'faux/faux-1',
-      );
+      const runner = new TuiTurnRunner(app, tuiLoop(lane.lane), 'faux/faux-1');
       const first = lane.run('first prompt');
       // The run is live: its model request has started.
       await waitFor(() => lane.faux.state.callCount === 1);
@@ -1422,7 +1415,7 @@ describe('kubic tui prompt loop', () => {
       // pi-durable, not queued (lane/turn.ts's mapping of it is pinned
       // by lane/turn.test.ts).
       await expect(
-        lane.solo.conversation.submit(
+        lane.lane.conversation.submit(
           { type: 'input', content: 'second prompt', whenBusy: 'reject' },
           BACKGROUND_CONTEXT,
         ),
@@ -1721,7 +1714,7 @@ describe('the header facts on the live loop', () => {
   });
 });
 
-// Every settled solo turn ends with its receipt — the
+// Every settled turn ends with its receipt — the
 // whole production wire: the turn's tool call, the journal row its write
 // recorded, and the receipt the settlement appends.
 describe('the turn receipt on the live loop', () => {

@@ -28,7 +28,7 @@ function ask(key: string, capability = 'destructive-shell'): ApprovalRequest {
 }
 
 // The service over a REAL surface: the composition root's own shape
-// (`installSoloPolicy({ answer: surface.seat })`).
+// (`installPolicy({ answer: surface.seat })`).
 function serviceOver(surface: ReturnType<typeof createApprovalSurface>) {
   return new ApprovalService({
     policy: validatePolicy({ route: 'ask-user', maxPendingMs: 1_000 }),

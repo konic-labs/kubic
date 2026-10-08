@@ -10,7 +10,7 @@ size, and the determinism tier; records missing any of
 them are rejected (exit 2), never stored. Cost/latency/tokens reconcile against usage rows
 before a record is accepted. Each executable suite carries a fixture
 (prompt, starting files, gate commands); `kubic eval --task` and
-`kubic benchmark` run it through the real solo lane and score the
+`kubic benchmark` run it through the real lane and score the
 trajectory it writes. Suites run faux-only in CI (zero network, zero paid
 tokens); anything needing a capability the binary does not ship (a live
 PTY) stays `stub: true` and reports `skipped`, never passing work.
@@ -138,14 +138,14 @@ adds `signal:regression`.
 
 ## Dep-direction neighbours
 
-- May import: core, [agents](agents-pkg.md),
+- May import: core, [agent](agent.md),
   [trajectory](trajectory.md) (reads exports via
-  `parseTrajectoryExport`) — never exec/worker/host/tui.
+  `parseTrajectoryExport`) — never exec/agent/host/tui.
 - Records stay complete so the RL exporter (`rl/`) builds on
   them; RL fields are untouched by harness edits.
 
 ```text
-core + agents + trajectory ──→ @kubic/eval ──→ benchmark matrix
+core + agent + trajectory ──→ @kubic/eval ──→ benchmark matrix
 ```
 
 Back to the [docs index](../README.md).

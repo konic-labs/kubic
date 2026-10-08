@@ -118,8 +118,8 @@ describe('run progress', () => {
     });
     progress.settle();
     expect(settledLines(chunks)).toEqual([
-      '■ kubic run · solo · anthropic/claude · ~/project',
-      '○ solo has no isolation — approvals + journal are the controls · details: kubic doctor',
+      '■ kubic run · default · anthropic/claude · ~/project',
+      '○ Kubic has no isolation — approvals + journal are the controls · details: kubic doctor',
       '',
       '✕ bash    npm test  exit 1  0.4s',
       '✓ read    src/cart.js  0.0s',
@@ -175,7 +175,7 @@ describe('run progress', () => {
     const progress = createRunProgress(
       {
         isTTY: true,
-        columns: 50,
+        columns: 52,
         write: (chunk: string) => chunks.push(chunk),
       },
       createCliTheme('none'),
@@ -188,7 +188,7 @@ describe('run progress', () => {
     progress.begin({ model: 'faux/echo', notice: false });
     progress.settle();
     expect(settledLines(chunks)[0]).toBe(
-      '■ kubic run · solo · faux/echo · …/nested/project',
+      '■ kubic run · default · faux/echo · …/nested/project',
     );
   });
 
@@ -197,7 +197,7 @@ describe('run progress', () => {
     progress.begin({ notice: false });
     progress.settle();
     expect(settledLines(chunks)).toEqual([
-      '■ kubic run · solo · ~/project',
+      '■ kubic run · default · ~/project',
       '',
     ]);
   });

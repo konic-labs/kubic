@@ -7,13 +7,13 @@
 // Lock-free: the listing header plus the read-only lock probe, never an
 // attach (the rule — doctor must not block a concurrent run).
 import { join } from 'node:path';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   openSessionStore,
   sessionLockIsLive,
   sessionsTouchingWorkspace,
-} from '../../worker/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../agent/src/pi-boundary.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileApprovalStore } from './approvals.js';
 
 export interface FullAccessSession {

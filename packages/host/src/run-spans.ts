@@ -7,14 +7,14 @@
 //     per span, written by the composition root next to the journal),
 //   - stderr debug lines on the existing vocabulary (`[agent]` lane
 //     lines, `[tool]` in/out lines) behind `kubic run --debug`.
-// No new debug class is invented: DEBUG_CLASSES stays the pinned eight.
+// No new debug class is invented: the lines use only the DebugLog tags.
 // Since the attachment is a pi-durable `ToolTask` hook (beforeTool
 // opens the span, afterTool closes it and returns the result unchanged).
 // Never blocks a tool call — the handlers return undefined except for the
 // untouched result, so telemetry can only observe the lane, never fail it.
 
-import type { HookRegistration } from '../../worker/src/pi-boundary.js';
-import { hook, ToolTask } from '../../worker/src/pi-boundary.js';
+import type { HookRegistration } from '../../agent/src/pi-boundary.js';
+import { hook, ToolTask } from '../../agent/src/pi-boundary.js';
 import {
   DebugLog,
   type DebugSink,

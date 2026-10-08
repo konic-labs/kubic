@@ -5,11 +5,11 @@
 //
 // Shape ownership (read-only — this package never modifies them):
 //   Provenance/ExecutionEnv in packages/exec/src/env.ts,
-//   ResultStatus in packages/worker/src/lane/settle.ts,
+//   ResultStatus in packages/agent/src/lane/settle.ts,
 //   FileChange diffs in packages/exec/src/journal-diff.ts,
 //   ApprovalPolicy/verdicts in packages/host/src/approvals.ts,
-//   KubicUsageRow in packages/worker/src/usage.ts,
-//   FAILURE_CODES in packages/worker/src/lane/failures.ts.
+//   KubicUsageRow in packages/agent/src/usage.ts,
+//   FAILURE_CODES in packages/agent/src/lane/failures.ts.
 // This package imports none of them (dep-lint: trajectory sits below the
 // runtime implementations) — the structural interfaces below are
 // snapshots of those shapes, pinned by the golden fixture test.
@@ -26,7 +26,7 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 
 // Failure taxonomy — snapshot of FAILURE_CODES owned by
-// packages/worker/src/lane/failures.ts. The worker owns the spelling;
+// packages/agent/src/lane/failures.ts. The agent owns the spelling;
 // this list is pinned equal by test so a drift breaks loudly here.
 export const TRAJECTORY_FAILURE_CODES = [
   'model_failed',
@@ -68,7 +68,7 @@ export type TrajectoryResultStatus = (typeof RESULT_STATUSES)[number];
 export interface TrajectoryTask {
   taskId: string;
   objective: string;
-  // The role the run ran as: 'solo', or the `--role` name.
+  // The role the run ran as: 'default', or the `--role` name.
   role: string;
 }
 

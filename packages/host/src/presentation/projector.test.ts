@@ -1,7 +1,7 @@
 // 's host-side projector: folds the replicated event stream
 // into a KubicPresentationState. Pure — no I/O, no harness.
 import { describe, expect, it } from 'vitest';
-import type { KubicLaneEvent } from '../../../worker/src/lane/events.js';
+import type { KubicLaneEvent } from '../../../agent/src/lane/events.js';
 import { PresentationProjector } from './projector.js';
 
 const SEED = {

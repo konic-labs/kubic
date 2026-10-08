@@ -9,10 +9,24 @@ import {
   resolve,
 } from 'node:path';
 import type {
+  ApprovalAskVerdict,
+  ApprovalCall,
+  PolicyInterceptorOptions,
+} from '../../agent/src/lane/interceptors.js';
+import {
+  confinePath,
+  defaultIsDestructive,
+  isNetworkCommand,
+  redactReason,
+} from '../../agent/src/lane/interceptors.js';
+import type { ToolContribution } from '../../agent/src/lane/wrap.js';
+import { withTelemetry } from '../../agent/src/lane/wrap.js';
+import type { ToolDisplay } from '../../agent/src/ops/display-diff.js';
+import type {
   CredentialLevel,
   PermissionClasses,
   UnsupportedLevel,
-} from '../../agents/src/policy.js';
+} from '../../agent/src/permissions.js';
 import {
   checkAgreement,
   checkExpressible,
@@ -20,23 +34,9 @@ import {
   effectiveNetworkLevel,
   toolsForClasses,
   validateClasses,
-} from '../../agents/src/policy.js';
+} from '../../agent/src/permissions.js';
 import { redactSecretShapes } from '../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
-import type {
-  ApprovalAskVerdict,
-  ApprovalCall,
-  PolicyInterceptorOptions,
-} from '../../worker/src/lane/interceptors.js';
-import {
-  confinePath,
-  defaultIsDestructive,
-  isNetworkCommand,
-  redactReason,
-} from '../../worker/src/lane/interceptors.js';
-import type { ToolContribution } from '../../worker/src/lane/wrap.js';
-import { withTelemetry } from '../../worker/src/lane/wrap.js';
-import type { ToolDisplay } from '../../worker/src/ops/display-diff.js';
 import { approvalCommandText, summarizeCommand } from './approval-display.js';
 import { approvalPreview } from './approval-preview.js';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
@@ -49,10 +49,10 @@ import { isGitDirTarget } from './git-dir-target.js';
 import {
   appendToLedger,
   auditLedgerDirFor,
+  decisionAudit,
   fullAccessDisabledAudit,
   fullAccessEnabledAudit,
   postureChangedAudit,
-  soloDecisionAudit,
 } from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service.
 // The decider is the user — never the model. This module exposes no
@@ -176,8 +176,8 @@ export interface ApprovalRequest {
   // TUI card's diff preview). Absent when it could not be computed.
   preview?: ToolDisplay;
   // The answers this ask can take beyond allow and deny — the
-  // command can be edited before it runs (a solo shell call), or the edits
-  // of the rest of the turn approved at once (a solo edit/write a role's
+  // command can be edited before it runs (a shell call), or the edits
+  // of the rest of the turn approved at once (an edit/write a role's
   // obligation raised inside the workspace).
   editable?: boolean;
   batchable?: boolean;
@@ -231,7 +231,7 @@ export class MemoryApprovalStore implements ApprovalStore {
 }
 
 // Trigger detection. Predicates are injected so this module stays
-// free of shell parsing: the worker owns the classifiers and
+// free of shell parsing: the agent owns the classifiers and
 // the host owns the decision. The bash detectors are a literal-pattern
 // heuristic, not a sandbox: redirect/tee/cp-mv-install
 // outside-writes, `sudo` privilege escalation, and destructive/network
@@ -1354,7 +1354,7 @@ function shellTargetOutside(
 }
 
 // The read-family arguments that name what a call opens (the same path/root
-// mapping the worker confines with, CONFINED_TOOLS in interceptors.ts) plus
+// mapping the agent confines with, CONFINED_TOOLS in interceptors.ts) plus
 // the name FILTERS: `grep.include` and `find.nameContains` select files by
 // substring, so `include: '.env'` reaches a committed `.env` without naming
 // a path at all. The ask runs before that rewrite, so an
@@ -1693,17 +1693,17 @@ export class FileApprovalStore implements ApprovalStore {
   }
 }
 
-// Adapter from the service to the worker's approve hook. Non-triggered calls
-// pass immediately WITHOUT challenging — the worker keeps every guard up for
+// Adapter from the service to the agent's approve hook. Non-triggered calls
+// pass immediately WITHOUT challenging — the agent keeps every guard up for
 // them. Triggered calls need every raised capability approved and return
-// challenged=true so the worker stands down the guards for exactly that call.
+// challenged=true so the agent stands down the guards for exactly that call.
 // Full-access approves everything as challenged AND records the posture —
 // indicated, recorded beside the session for audit/doctor readers — never
 // quiet. The ask is awaited inside the pi-durable ToolTask beforeTool hook: the
 // service's own maxPendingMs bound still denies on timeout, and the hook runs
 // before the tool's intent commit, so a crash while a seat is deciding re-asks
 // on resume rather than resuming an unapproved call. Single-sourced with the
-// worker seam: `ApprovalCall`/`ApprovalAskVerdict` are the worker's types, so
+// agent seam: `ApprovalCall`/`ApprovalAskVerdict` are the agent's types, so
 // ask and hook cannot drift apart.
 type ApprovalAsk = (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
 
@@ -1852,13 +1852,13 @@ export function fullAccessInForceWarning(sessionId: string): string {
   return `session ${sessionId} runs with full access: approvals are skipped for every challenged call`;
 }
 
-// The INSTALLED solo policy. This is the
+// The INSTALLED policy. This is the
 // single derivation both the lane boot and `kubic doctor` read, so
 // agreement between what doctor prints and what the lane enforces holds by
 // construction instead of by two hand-kept copies.
 //
 // Deny-by-default doctrine, stated once here:
-//   - classes: the explicit, documented safe default is SOLO_DEFAULTS
+// - classes: the explicit, documented safe default is DEFAULT_PERMISSIONS
 //     — filesystem workspace-write, shell true, network none,
 //     git workspace, credentials none. Config-sourced classes REPLACE the
 //     default when the config layer supplies them; the restrictive tail
@@ -1870,11 +1870,11 @@ export function fullAccessInForceWarning(sessionId: string): string {
 //   - contributions: the telemetry wrapper is appended LAST, which makes it
 //     outermost — it therefore times (and records) a DENIED attempt too.
 //     The permission wrapper is composed by the lane itself, innermost, from
-//     the same classes (solo.ts withPolicyContributions) — never duplicated
+// the same classes (boot.ts withPolicyContributions) — never duplicated
 //     here.
-export interface SoloPolicyInput {
+export interface PolicyInput {
   workspace: string;
-  /** Config-sourced classes; absent means the documented SOLO_DEFAULTS. */
+  /** Config-sourced classes; absent means the documented DEFAULT_PERMISSIONS. */
   classes?: PermissionClasses;
   /**
    * Role-sourced approval obligations: tool names
@@ -1956,10 +1956,10 @@ export interface SoloPolicyInput {
 }
 
 // The config `[approvals]` half of the install: the one shape
-// the composition root projects from the config load and every solo entry
-// point (run, tui, replay, doctor) spreads into installSoloPolicy.
-export type SoloApprovalConfig = Pick<
-  SoloPolicyInput,
+// the composition root projects from the config load and every entry
+// point (run, tui, replay, doctor) spreads into installPolicy.
+export type ApprovalConfig = Pick<
+  PolicyInput,
   | 'route'
   | 'maxPendingMs'
   | 'autoApprove'
@@ -1996,7 +1996,7 @@ interface RecordedApprovalDeny {
 export const NO_ANSWER_SURFACE_REASON =
   'approval required, but no approval surface is installed on this command: kubic run has no ask prompt, so the call is refused; answer approvals in kubic tui, or change the approval route or policy';
 
-export interface InstalledSoloPolicy {
+export interface InstalledPolicy {
   classes: PermissionClasses;
   interceptors: PolicyInterceptorOptions;
   contributions: ToolContribution[];
@@ -2030,7 +2030,7 @@ export interface InstalledSoloPolicy {
 }
 
 export function installedPolicyPosture(
-  input: SoloPolicyInput,
+  input: PolicyInput,
   // The posture record read at boot; absent reads it here.
   bootPosture?: AccessPosture,
 ): InstalledPolicyPosture {
@@ -2095,7 +2095,7 @@ export function installedPolicyPosture(
   };
 }
 
-export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
+export function installPolicy(input: PolicyInput): InstalledPolicy {
   const denials: RecordedApprovalDeny[] = [];
   const store =
     input.sessionDir === undefined
@@ -2156,7 +2156,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           : input.thinking;
       appendToLedger(
         ledgerDir,
-        soloDecisionAudit({
+        decisionAudit({
           sessionId: auditSessionId,
           toolName,
           trigger,
@@ -2424,7 +2424,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
           call.toolName,
           call.args,
         );
-        // The answers a solo ask can take beyond allow/deny.
+        // The answers an ask can take beyond allow/deny.
         const editable =
           call.toolName === 'bash' && typeof call.args.command === 'string';
         const batchable = turnEditable(call.toolName, capability);
@@ -2544,7 +2544,7 @@ function boundedNote(text: string): string {
 }
 
 // The trigger context the shipped default evaluates capabilities with: the
-// same classifiers the worker guards use, so the approval
+// same classifiers the agent guards use, so the approval
 // decision and the guard that blocks the call can never disagree.
 export function triggerContextFor(
   classes: PermissionClasses,

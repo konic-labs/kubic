@@ -1,7 +1,7 @@
 // Bash approval-detector bypasses and autoApprove semantics. Each block pins
 // a bypass the detectors once missed. The classifiers are the PRODUCTION ones
 // (defaultIsDestructive, isNetworkCommand, confinePath) wired like
-// triggerContextFor, and the lane tests drive the real installSoloPolicy —
+// triggerContextFor, and the lane tests drive the real installPolicy —
 // faux/no provider, zero network. Detection stays lexical: a variable-built
 // path (`$D/roles/r.md` with D set elsewhere), a symlink, `sed -i`, a script
 // file or an interpreter still reach `.kubic/` without raising — those
@@ -12,6 +12,19 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  confinePath,
+  defaultIsDestructive,
+  isNetworkCommand,
+} from '../../../packages/agent/src/lane/interceptors.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   type ApprovalRequest,
@@ -20,7 +33,7 @@ import {
   detectTriggers,
   enableFullAccess,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
   KUBIC_STATE_WRITE,
   NO_ANSWER_SURFACE_REASON,
   type TriggerContext,
@@ -34,19 +47,6 @@ import {
 import type { DoctorDeps } from '../../../packages/host/src/doctor.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { policyEnforceabilityCheck } from '../../../packages/host/src/limits/doctor-limits.js';
-import {
-  confinePath,
-  defaultIsDestructive,
-  isNetworkCommand,
-} from '../../../packages/worker/src/lane/interceptors.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const WS = '/work';
@@ -390,7 +390,7 @@ describe('control-plane detector: $HOME expands like ~', () => {
     const root = mkTmp('kubic-approvals-bypass-home-');
     const workspace = mkTmp('kubic-approvals-bypass-ws-');
     enableFullAccess(new FileApprovalStore(root), 'test');
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace,
       sessionDir: root,
       home: mkTmp('kubic-approvals-bypass-h-'),
@@ -425,7 +425,7 @@ describe('autoApprove never answers an always-ask capability', () => {
 
   it('headless: kubic-state-write in autoApprove refuses instantly with the no-surface reason', async () => {
     const workspace = workspaceWithState();
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace,
       autoApprove: [KUBIC_STATE_WRITE],
       // A long bound: the call must not wait it out.
@@ -454,7 +454,7 @@ describe('autoApprove never answers an always-ask capability', () => {
   it('a seat is asked with the full request display, exactly like an empty autoApprove', async () => {
     const workspace = workspaceWithState();
     const seen: ApprovalRequest[] = [];
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace,
       autoApprove: [KUBIC_STATE_WRITE],
       answer: async (request) => {
@@ -477,7 +477,7 @@ describe('autoApprove never answers an always-ask capability', () => {
 
   it('other autoApprove entries still apply next to it, headless', async () => {
     const workspace = workspaceWithState();
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace,
       autoApprove: [KUBIC_STATE_WRITE, 'install'],
       maxPendingMs: 30_000,
@@ -628,7 +628,7 @@ describe('autoApprove never answers an always-ask capability', () => {
 describe('route=deny beats autoApprove on the lane', () => {
   it('denies an autoApprove capability the doctor says can never apply', async () => {
     const workspace = mkTmp('kubic-approvals-bypass-deny-');
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace,
       route: 'deny',
       autoApprove: ['install'],
@@ -654,7 +654,7 @@ describe('route=deny beats autoApprove on the lane', () => {
   it('denies a capability that no autoApprove entry names, without consulting a seat', async () => {
     const workspace = mkTmp('kubic-approvals-bypass-deny-seat-');
     let asked = 0;
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace,
       route: 'deny',
       autoApprove: ['network'],
@@ -677,7 +677,7 @@ describe('route=deny beats autoApprove on the lane', () => {
 
   it('headless with no autoApprove entry at all: the route is named, not the missing surface', async () => {
     const workspace = mkTmp('kubic-approvals-bypass-deny-headless-');
-    const policy = installSoloPolicy({ workspace, route: 'deny' });
+    const policy = installPolicy({ workspace, route: 'deny' });
     const verdict = await policy.ask({
       toolName: 'bash',
       args: { command: 'npm install left-pad' },
@@ -691,7 +691,7 @@ describe('route=deny beats autoApprove on the lane', () => {
 
   it('with route=ask-user the same autoApprove entry is approved (the control)', async () => {
     const workspace = mkTmp('kubic-approvals-bypass-ask-');
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace,
       route: 'ask-user',
       autoApprove: ['install'],
@@ -724,7 +724,7 @@ describe('route=deny beats autoApprove on the lane', () => {
 describe('git-push detector is linear-time', () => {
   const PUSH_TIMEOUT_MS = 250;
 
-  // The destructive matcher is stubbed out: it belongs to the worker and is
+  // The destructive matcher is stubbed out: it belongs to the agent and is
   // not what this block times — the git scan is.
   function timed(command: string): { found: string[]; ms: number } {
     const started = performance.now();

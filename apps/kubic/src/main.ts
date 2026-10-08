@@ -25,12 +25,11 @@ import {
   trustQuestionLines,
 } from './trust-question.js';
 
-// License identity: version comes from this app's own
-// package.json; the license half of the line is owned by core/license.ts.
-// Walk up from this module: the src layout finds apps/kubic/package.json
-// at once, while the dist layout (dist/apps/kubic/src/main.js)
-// has no sibling manifest, so the walk continues to the repo-root
-// package.json — both declare the same 0.0.0 version.
+// License identity: the version is the one in the manifest named kubic, the
+// repo root's package.json (apps/kubic is @kubic/cli, so the walk skips its
+// manifest). Walk up from this module to that manifest: the src layout and the
+// dist layout (dist/apps/kubic/src/main.js, which has no manifest of its own)
+// both reach it. The license half of the line is owned by core/license.ts.
 function cliVersion(): string {
   // File access goes through the exec FileBridge (I/O confinement):
   // the composition root never imports node:fs directly.

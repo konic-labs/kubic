@@ -6,12 +6,13 @@
 // glyph; calls are grouped per turn (run-start closes a group) and truncation
 // is measured in columns.
 //
-// The lane feed accepts the worker's KubicLaneEvent shape structurally
-// (packages/worker/src/lane/events.ts) WITHOUT importing it: the tui
-// package must never import host/worker implementation (dep-lint), so
+// The lane feed accepts the agent's KubicLaneEvent shape structurally
+// (packages/agent/src/lane/events.ts) WITHOUT importing it: the tui
+// package must never import host/agent implementation (dep-lint), so
 // only the fields the tree reads are typed here. `usage` rows sum into the
 // head row; `fault` events are ignored.
 
+import { DEFAULT_RUN_ROLE } from '../../core/src/run-role.js';
 import {
   sanitizeLaneText,
   summarizeToolArguments,
@@ -83,7 +84,7 @@ export interface TreeState {
   usage: TreeUsage;
 }
 
-export function createTreeState(label = 'solo'): TreeState {
+export function createTreeState(label = DEFAULT_RUN_ROLE): TreeState {
   return {
     label,
     status: 'idle',
@@ -316,10 +317,13 @@ export class TreeView implements Component {
   private body: TreeBody;
   private region: MouseRegion;
   private treeState: TreeState;
+  // The label the view names its tree with; a reset keeps it.
+  private baseLabel: string;
   private focusEditor: () => void;
 
   constructor(state?: TreeState, options?: TreeViewOptions) {
     this.treeState = state ?? createTreeState(options?.label);
+    this.baseLabel = options?.label ?? this.treeState.label;
     if (options?.collapsed !== undefined) {
       this.treeState.collapsed = options.collapsed;
     }
@@ -334,10 +338,11 @@ export class TreeView implements Component {
 
   // `/new` and `/resume` show another session's work; the tree
   // starts empty (the label is the view's own default). The
-  // caller says whether it starts collapsed — solo hides the tree row until
+  // caller says whether it starts collapsed — the lane hides the tree row until
   // Ctrl-T opens it.
   reset(label?: string, collapsed = false): void {
-    this.treeState = createTreeState(label);
+    if (label !== undefined) this.baseLabel = label;
+    this.treeState = createTreeState(this.baseLabel);
     this.treeState.collapsed = collapsed;
     this.body = new TreeBody(this.treeState);
     this.region = new MouseRegion(this.body, (event) => this.onMouse(event));

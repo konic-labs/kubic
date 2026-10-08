@@ -11,7 +11,7 @@ import {
   type TrajectoryFailureCode,
 } from '../../../trajectory/src/schema.js';
 
-// Failure codes (worker-owned spelling, pinned in trajectory schema).
+// Failure codes (agent-owned spelling, pinned in trajectory schema).
 export type { TrajectoryFailureCode };
 export { isTrajectoryFailureCode };
 

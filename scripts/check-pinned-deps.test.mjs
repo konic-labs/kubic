@@ -77,11 +77,11 @@ describe('check-pinned-deps', () => {
 
   it('pinned check rejects ranges in peerDependencies', () => {
     const dir = fixturePackageJson({});
-    mkdirSync(join(dir, 'packages', 'worker'), { recursive: true });
+    mkdirSync(join(dir, 'packages', 'agent'), { recursive: true });
     writeFileSync(
-      join(dir, 'packages', 'worker', 'package.json'),
+      join(dir, 'packages', 'agent', 'package.json'),
       JSON.stringify({
-        name: '@kubic/worker',
+        name: '@kubic/agent',
         peerDependencies: { '@earendil-works/pi-ai': '>=0.85.1' },
       }),
     );

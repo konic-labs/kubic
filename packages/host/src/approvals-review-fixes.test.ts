@@ -16,13 +16,13 @@ import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
-} from '../../worker/src/lane/interceptors.js';
+} from '../../agent/src/lane/interceptors.js';
 import {
   controlPlaneRefusal,
   detectTriggers,
   enableFullAccess,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
   KUBIC_STATE_WRITE,
   type TriggerContext,
 } from './approvals.js';
@@ -89,7 +89,7 @@ describe('a cd that does not change the directory at the write cannot hide it', 
     const root = mkTmp('kubic-rev-full-');
     const workspace = mkTmp('kubic-rev-ws-');
     enableFullAccess(new FileApprovalStore(root), 'test');
-    const policy = installSoloPolicy({
+    const policy = installPolicy({
       workspace,
       sessionDir: root,
       home: mkTmp('kubic-rev-home-'),

@@ -8,7 +8,7 @@
 // File access goes through the exec FileBridge (I/O confinement).
 
 import { basename, dirname, join, resolve } from 'node:path';
-import type { RunMode } from '../../../agents/src/policy.js';
+import type { RunMode } from '../../../agent/src/permissions.js';
 import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { AuditTableConfig } from '../config/config.js';
@@ -92,12 +92,12 @@ function mainCheckoutFor(top: string, dotGit: string): string {
 }
 
 // The ledger dir for a working directory: the repo runtime root's ledger
-// (resolveRepoRuntimeRoot) — the one the solo writer and `kubic audit` share.
+// (resolveRepoRuntimeRoot) — the one the writer and `kubic audit` share.
 export function auditLedgerDirFor(cwd: string): string {
   return auditLedgerDir(resolveRepoRuntimeRoot(cwd));
 }
 
-// The base revision a solo run started from: `git rev-parse
+// The base revision a run started from: `git rev-parse
 // HEAD` in the WORKSPACE, captured ONCE at run start — `none` outside git
 // or when git cannot run. Best-effort by contract: a failed probe is never a
 // run failure, and the record then honestly says `none`. The workspace
@@ -260,8 +260,8 @@ function verdictFields(verdict: Verdict): {
       };
 }
 
-// Audit record for a solo approval decision (the in-process lane's ask).
-export interface SoloDecisionInput {
+// Audit record for an approval decision (the in-process lane's ask).
+export interface DecisionInput {
   sessionId: string;
   toolName: string;
   trigger: string;
@@ -282,7 +282,7 @@ export interface SoloDecisionInput {
   posture: string;
 }
 
-export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
+export function decisionAudit(input: DecisionInput): AuditInput {
   const { approval, result, reason } = verdictFields(
     input.approved
       ? { approved: true, by: input.by ?? 'user' }

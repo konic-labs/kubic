@@ -1,6 +1,6 @@
 // Typed telemetry spans: nesting kubic.agent.run→pi.harness.hook→
 // pi.tool.execute. Host-side recorder only — Pi owns its own telemetry;
-// this module never imports worker implementation or Pi modules.
+// this module never imports agent implementation or Pi modules.
 
 const SPAN_NAMES = [
   'kubic.agent.run',

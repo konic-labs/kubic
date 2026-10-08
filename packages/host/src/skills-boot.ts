@@ -11,20 +11,20 @@
 // loader is told, never asked to guess.
 
 import { basename, dirname, resolve, sep } from 'node:path';
-import type { PermissionClasses } from '../../agents/src/policy.js';
-import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
+import type { PermissionClasses } from '../../agent/src/permissions.js';
+import { DEFAULT_PERMISSIONS } from '../../agent/src/permissions.js';
 import type {
   DiscoverSkillsOptions,
   LoadedSkill,
   SkillSource,
   SkippedSkill,
   WithheldSkill,
-} from '../../agents/src/skills/skills.js';
+} from '../../agent/src/skills/skills.js';
 import {
   discoverSkills,
   formatSkillsForSystemPrompt,
   gateSkills,
-} from '../../agents/src/skills/skills.js';
+} from '../../agent/src/skills/skills.js';
 import type { FileBridge } from '../../exec/src/file-bridge.js';
 import type { DoctorCheck } from './doctor.js';
 
@@ -67,7 +67,7 @@ export interface BootSkillOptions {
   // the skill-side `roles:` check: both must admit).
   roleSkills?: string[];
   // The capability classes the lane enforces, for the
-  // capability-aware check. Absent means the documented SOLO_DEFAULTS —
+  // capability-aware check. Absent means the documented DEFAULT_PERMISSIONS —
   // the same default the lane installs, so the gate never withholds what
   // the lane would run.
   classes?: PermissionClasses;
@@ -180,7 +180,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
   }
   const gated = gateSkills(admitted, {
     ...(options.role === undefined ? {} : { role: options.role }),
-    classes: options.classes ?? SOLO_DEFAULTS,
+    classes: options.classes ?? DEFAULT_PERMISSIONS,
     ...(options.log === undefined ? {} : { log: options.log }),
   });
   const visible = gated.visible.filter(
@@ -202,7 +202,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
   };
 }
 
-export type { SkippedSkill } from '../../agents/src/skills/skills.js';
+export type { SkippedSkill } from '../../agent/src/skills/skills.js';
 
 // The role/capability gate: applied in `bootSkills`
 // above — discovery stays in the loader (it owns the roots and trust),

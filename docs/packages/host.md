@@ -7,14 +7,14 @@
 `@kubic/host` is everything around the agent lane that decides, records
 and reports: the approval safety model, layered config and project trust,
 role resolution, `kubic doctor`, the audit ledger, spans and the debug
-channel, and the implementations behind the CLI commands. Solo mode has
+channel, and the implementations behind the CLI commands. Kubic has
 no isolation — docs and code must never imply otherwise.
 
 ## Public API (`packages/host/src`)
 
 | Module | Owns |
 | --- | --- |
-| `approvals.ts` | `CAPABILITIES`, `ApprovalPolicy`, `validatePolicy`, `detectTriggers`, `approvalKey`, `summarizeRequest`, `ApprovalStore` (`MemoryApprovalStore`, `FileApprovalStore`), `ApprovalService`, `controlPlaneRefusal`, the full-access posture (`enableFullAccess`, `enableSessionFullAccess`, …) and `installSoloPolicy` |
+| `approvals.ts` | `CAPABILITIES`, `ApprovalPolicy`, `validatePolicy`, `detectTriggers`, `approvalKey`, `summarizeRequest`, `ApprovalStore` (`MemoryApprovalStore`, `FileApprovalStore`), `ApprovalService`, `controlPlaneRefusal`, the full-access posture (`enableFullAccess`, `enableSessionFullAccess`, …) and `installPolicy` |
 | `approvals-credentials.ts` | The credential-path detector behind the `credentials` permission class |
 | `approval-display.ts`, `approval-preview.ts` | What an approval dialog shows: the command display and the change an edit or write would make |
 | `config/config.ts` | `CONFIG_LAYERS`, `KubicConfig` and its section types, `parseTomlConfig`, `mergeLayered`, the per-key checks, `GITIGNORE_REQUIRED_ENTRIES`, `checkGitignoreSplit` |
@@ -25,7 +25,7 @@ no isolation — docs and code must never imply otherwise.
 | `config/stances.ts` | `assertNoMcpConfig` (`McpUnsupportedError`) and the ACP edge types |
 | `config/toml-model.ts` | The line-based `[model]` update `kubic setup` writes |
 | `doctor.ts`, `doctor-render.ts`, `doctor-full-access.ts` | `collectDoctorChecks`, `runDoctorCommand`, the grouped terminal summary and the live full-access session list |
-| `limits/` | The honest-limit doctor checks and the solo warning every process start prints |
+| `limits/` | The honest-limit doctor checks and the no-isolation notice every process start prints |
 | `roles/` | `builtin-presets.ts` (the five built-in roles), `resolver.ts` (role documents, layer merge, tool guard), `roles-boot.ts` (loading `.kubic/roles/*.md`) |
 | `skills-boot.ts`, `skills-cli.ts` | The skills boot the lane runs and `kubic skills` |
 | `spans.ts`, `run-spans.ts` | The span recorder, the debug vocabulary and the run/turn span wiring (see below) |
@@ -82,7 +82,7 @@ serialized with `endMs: null`.
 asks, and `controlPlaneRefusal` refuses writes into
 `.kubic/journal|audit|sessions` outright — the workspace's, an
 ancestor's or `~/.kubic`'s — plus the session root in use
-(`installSoloPolicy({ home, sessionsRoot })`).
+(`installPolicy({ home, sessionsRoot })`).
 
 | Interface | Fields |
 | --- | --- |
@@ -91,7 +91,7 @@ ancestor's or `~/.kubic`'s — plus the session root in use
 | `ApprovalVerdict` | `{ approved: true, by: string, justified?: boolean } \| { approved: false, reason: string }` |
 
 `ApprovalStore` (`load`/`save`) has memory and file backings;
-the installed ask (`installSoloPolicy`) over `ApprovalService` serves the lane interception
+the installed ask (`installPolicy`) over `ApprovalService` serves the lane interception
 point; `detectTriggers` maps tool calls to capabilities via
 `TriggerContext`. The lane awaits the ask inside its pi-durable
 `ToolTask.beforeTool` hook, which runs before the tool's intent is
@@ -161,12 +161,12 @@ also self-heals session journal entries at read time via
 
 ## Dep-direction neighbours
 
-- May import: core, exec, [worker](worker.md), [agents](agents-pkg.md),
+- May import: core, exec, [agent](agent.md),
   [trajectory](trajectory.md), [eval](eval.md) — never [tui](tui.md).
 - Imported by: `apps/kubic` (the composition root wires host + tui).
 
 ```text
-core + exec + agents ──→ worker ──→ @kubic/host ──→ apps/kubic
+core + exec ──→ agent ──→ @kubic/host ──→ apps/kubic
                                      ↑   ↑
                                trajectory eval (read)
 ```

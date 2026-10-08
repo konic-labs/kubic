@@ -3,17 +3,17 @@
 // same origin, and neither may claim "config" for a directory that configured
 // nothing. This exists because the first implementation inferred `source` from
 // the shape of the classes object — and a config-less install still yields
-// SOLO_DEFAULTS, so the real binary printed `source=config` in an empty
+// DEFAULT_PERMISSIONS, so the real binary printed `source=config` in an empty
 // directory. Measured against /tmp/k86 with no config: PASS policy:installed
 // said source=config; that was the bug this test now pins shut.
 //
 // Faux provider only: zero network, zero paid tokens.
 
 import { describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../../packages/agent/src/permissions.js';
 import {
   detectTriggers,
-  installSoloPolicy,
+  installPolicy,
   triggerContextFor,
 } from '../../../packages/host/src/approvals.js';
 import {
@@ -67,12 +67,12 @@ describe('installed-policy source honesty', () => {
     // documented safe ones — that is the install, not a configuration.
     expect(deps.source).toBe('default');
     expect(deps.classes).toBeUndefined();
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: '/tmp/x',
       ...deps,
     });
     expect(installed.posture.source).toBe('default');
-    expect(installed.posture.classes).toEqual(SOLO_DEFAULTS);
+    expect(installed.posture.classes).toEqual(DEFAULT_PERMISSIONS);
     // Deny-by-default tail: the safe half is what the default is made of.
     expect(installed.posture.classes.network).toBe('none');
     expect(installed.posture.classes.credentials).toBe('none');
@@ -88,7 +88,7 @@ describe('installed-policy source honesty', () => {
     const deps = installedPolicyDeps(result);
     expect(deps.source).toBe('config');
     expect(deps.classes?.network).toBe('allowlist');
-    const installed = installSoloPolicy({ workspace: '/tmp/x', ...deps });
+    const installed = installPolicy({ workspace: '/tmp/x', ...deps });
     expect(installed.posture.source).toBe('config');
     expect(installed.posture.classes.network).toBe('allowlist');
     // The domain-less allowlist is reported, and the installed
@@ -115,8 +115,8 @@ describe('installed-policy source honesty', () => {
     expect(deps.source).toBe('default');
     expect(deps.classes).toBeUndefined();
     expect(
-      installSoloPolicy({ workspace: '/tmp/x', ...deps }).posture.classes,
-    ).toEqual(SOLO_DEFAULTS);
+      installPolicy({ workspace: '/tmp/x', ...deps }).posture.classes,
+    ).toEqual(DEFAULT_PERMISSIONS);
   });
 
   it('a refused config falls back to the default posture, never to silence', () => {
@@ -126,8 +126,8 @@ describe('installed-policy source honesty', () => {
     const deps = installedPolicyDeps(cliResult(undefined));
     expect(deps.source).toBe('default');
     expect(deps.classes).toBeUndefined();
-    const posture = installSoloPolicy({ workspace: '/tmp/x', ...deps }).posture;
-    expect(posture.classes).toEqual(SOLO_DEFAULTS);
+    const posture = installPolicy({ workspace: '/tmp/x', ...deps }).posture;
+    expect(posture.classes).toEqual(DEFAULT_PERMISSIONS);
     expect(posture.allowlist.length).toBeGreaterThan(0);
   });
 
@@ -145,9 +145,9 @@ describe('installed-policy source honesty', () => {
     expect(noConfig.source).toBe('default');
     expect(withPerms.source).toBe('config');
     expect(
-      installSoloPolicy({ workspace: '/tmp/x', ...noConfig }).posture.source,
+      installPolicy({ workspace: '/tmp/x', ...noConfig }).posture.source,
     ).toBe('default');
-    const configuredPosture = installSoloPolicy({
+    const configuredPosture = installPolicy({
       workspace: '/tmp/x',
       ...withPerms,
     }).posture;

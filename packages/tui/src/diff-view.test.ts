@@ -2,7 +2,7 @@
 // Text only, no VirtualTerminal in Pi 0.85.1: headless snapshots render
 // directly like layout.test.ts. Structural DiffFileChange mirrors exec
 // FileChange (journal-diff.ts) without importing it — tui must never
-// import exec/host/worker implementation (dep-lint).
+// import exec/host/agent implementation (dep-lint).
 import { describe, expect, it } from 'vitest';
 import {
   isBinaryText,

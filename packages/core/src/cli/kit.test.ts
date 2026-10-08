@@ -23,8 +23,8 @@ const ESC = '\u001b';
 
 describe('kit helpers at depth none are plain text', () => {
   it('heading, labels and marks', () => {
-    expect(brandHeading(plain, 'run', ['solo', 'faux/echo', '~/x'])).toBe(
-      '■ kubic run · solo · faux/echo · ~/x',
+    expect(brandHeading(plain, 'run', ['default', 'faux/echo', '~/x'])).toBe(
+      '■ kubic run · default · faux/echo · ~/x',
     );
     expect(brandHeading(plain, 'doctor')).toBe('■ kubic doctor');
     expect(sectionLabel(plain, 'runtime')).toBe('RUNTIME     ');
@@ -97,7 +97,7 @@ describe('kit helpers at depth none are plain text', () => {
 
 describe('kit helpers in colour', () => {
   it('uses the token roles', () => {
-    expect(brandHeading(rich, 'run', ['solo'])).toContain(
+    expect(brandHeading(rich, 'run', ['default'])).toContain(
       `${ESC}[1;38;2;255;0;77m■ kubic run`,
     );
     expect(statusMark(rich, 'ok')).toBe(rich.ui.fg('ok')('✓'));

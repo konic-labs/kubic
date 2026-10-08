@@ -3,19 +3,19 @@
 // that contradicts the permission classes is refused with the reason
 // as the usage terminus (exit 2); unknown names are refused by name; the
 // mutual exclusion is a usage error. The lane-level narrowing itself is
-// pinned in packages/worker/src/lane/solo-tools-line.test.ts.
+// pinned in packages/agent/src/lane/tools-line.test.ts.
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
+import { DEFAULT_PERMISSIONS } from '../../../packages/agent/src/permissions.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane } from './tui-run.js';
 
@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 const READ_ONLY = {
-  ...SOLO_DEFAULTS,
+  ...DEFAULT_PERMISSIONS,
   filesystem: 'read' as const,
   shell: false as const,
   git: false as const,

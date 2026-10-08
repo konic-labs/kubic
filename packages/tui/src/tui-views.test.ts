@@ -439,7 +439,7 @@ describe('panel content is untrusted', () => {
     expect(frame).toContain('--- a/src/app.ts');
     // The tree itself is still hidden by the rule (the status line's own
     // `●` mark is not a tree node).
-    expect(frame).not.toMatch(/[✓●◌] solo/);
+    expect(frame).not.toMatch(/[✓●◌] default/);
   });
 });
 

@@ -8,7 +8,7 @@
 // store + retention. Secrets never appear here (see secrets.ts).
 //
 // File access arrives as a FileBridge (exec-owned I/O confinement) — this
-// module never touches node:fs directly. Never imports worker impl.
+// module never touches node:fs directly. Never imports agent impl.
 
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { RUNTIME_EXCLUDE_ENTRIES } from '../../../exec/src/runtime-exclude.js';
@@ -147,7 +147,7 @@ export interface SessionConfig {
   retentionDays?: number;
   // Compaction policy: whether threshold
   // compaction runs, the reserved-room tokens and the verbatim recent
-  // window the solo lane compacts under. Unset means the lane defaults
+  // window the lane compacts under. Unset means the lane defaults
   // (automatic, 16384 reserved, 20000 kept recent).
   autoCompact?: boolean;
   reserveTokens?: number;

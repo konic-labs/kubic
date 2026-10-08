@@ -88,7 +88,7 @@ isolation, no containment — approvals plus the journal are the controls.
 
 ## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--thinking <level>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--debug] [--autonomous] [--json] [--dangerously-skip-approvals]`
 
-Non-interactive solo run: no alt-screen, no prompt, consumable output.
+Non-interactive run: no alt-screen, no prompt, consumable output.
 
 | Flag | Meaning |
 | --- | --- |
@@ -146,8 +146,9 @@ on a colour terminal; plain text under a pipe or `NO_COLOR`); on failure an
 
 **On an interactive terminal** (stdout **and** stderr a colour
 TTY, no `--json`) the run shows its progress instead of those lines. On
-stderr: a heading (`■ kubic run · solo · <provider/id> · <cwd>`), the solo
-notice as one line (`○ solo has no isolation — approvals + journal are the
+stderr: a heading (`■ kubic run · <role> · <provider/id> · <cwd>`, where
+`<role>` is the `--role` name, cut to 20 columns, or `default`), the
+notice as one line (`○ Kubic has no isolation — approvals + journal are the
 controls · details: kubic doctor`, same opt-outs as the full block), a
 spinner with the elapsed time while the model works, and one settled line
 per tool call when it finishes (`✓ read  src/cart.js  0.0s`, `✕ bash  npm
@@ -189,7 +190,7 @@ that write (an unreadable audit ledger or journal) is a transcript notice
 there, not a stderr line: the screen owns the terminal.
 
 **Usage errors (exit 2, stderr, no lane).** commander parses the argv
-(`apps/kubic/src/commands/solo.ts`): a missing `-p`, a flag without its
+(`apps/kubic/src/commands/session.ts`): a missing `-p`, a flag without its
 value, an unknown option, an invalid `--session` id, a non-positive or
 non-integer `--timeout`/`--max-turns` (or a `--timeout` above
 `2147483647`), and a stray operand all exit 2 with one `error: …` line.
@@ -227,7 +228,7 @@ refused (`the prompt is empty`).
 
 **Installed policy**. A run always boots the lane with a
 permission policy, whether or not a config names one: the five permission
-classes (`[permissions]` when configured, the documented solo defaults
+classes (`[permissions]` when configured, the documented defaults
 otherwise — `filesystem = workspace-write`, `shell = true`,
 `network = none`, `git = workspace`, `credentials = none`), the derived
 tool allowlist (a tool outside it is refused at execute time, not merely
@@ -272,7 +273,7 @@ was running is never executed again: the resumed turn sees it as
 interrupted. `kubic sessions attach X` prints the same `pending work:
 <kind> <id> (<status>)` summary (one line naming every live task and
 unsettled submission) — the storage-level probe in
-`packages/worker/src/lane/pending.ts` owns the format, so both surfaces
+`packages/agent/src/lane/pending.ts` owns the format, so both surfaces
 name the same work.
 
 **Concurrent runs in one workspace**. A run drives one
@@ -316,8 +317,8 @@ Lane and tool spans have two destinations:
 
 Both are additive: a run with no spans still exits exactly as before.
 
-A fresh solo start announces its trust model before the first turn: three
-`warning: solo mode has no isolation …` lines on **stderr** (never stdout —
+A fresh start announces its trust model before the first turn: three
+`warning: Kubic runs in-process with your authority: no isolation …` lines on **stderr** (never stdout —
 `--json` stays one parseable envelope). Suppressed by the opt-out
 `KUBIC_NO_NOTICE=1`. A `--session` resume still announces it: the rule is
 per process start, not per session. On an interactive terminal the three lines become one compact line under the run heading,
@@ -504,7 +505,7 @@ same context the headless one does:
   stderr.
 - **Roles:** `--role <name>` loads `.kubic/roles/<name>.md` — else `~/.kubic/roles/<name>.md` — or the
   matching preset embedded in the binary when neither has such a
-  document (the five presets ship with `kubic`, and a repo document of the same name replaces its preset) — the document's prompt text replaces the solo
+  document (the five presets ship with `kubic`, and a repo document of the same name replaces its preset) — the document's prompt text replaces the built-in
   constant and its tool set narrows the lane (absence, not approval). Every refusal is fail-closed
   with the named reason (unknown role, contradictory document, missing `## Prompt`, parse failure, untrusted project root); the boot exits before the alt-screen.
 - **Journal retention:** the session journal takes the same
@@ -584,8 +585,9 @@ a large workspace pays it (and the screen pauses) after every turn that used
   and repaints only when it changed.
 - **The agent tree**, sized to its content (at most 6 rows). It starts
   hidden — `Ctrl-T` opens and closes it. Below 80 columns it is hidden
-  either way. The tree's root row carries the run glyph plus the
-  session's `$cost in/out` tokens (`● solo $0.02 2.0k/1.0k`) — seeded from
+  either way. The tree's root row carries the run glyph, the run's role
+  (the `--role` name, cut to 20 columns, or `default`) and the
+  session's `$cost in/out` tokens (`● default $0.02 2.0k/1.0k`) — seeded from
   the session's usage ledger when the TUI attaches, then summed from each
   response; each tool row shows the glyph, the tool name, a one-line summary
   of its key argument (the `bash` command, the `read`/`edit` path), the
@@ -630,7 +632,7 @@ a large workspace pays it (and the screen pauses) after every turn that used
   shows the op's own count instead (`✓ 2 replacements`).
   The model's reasoning shows as one line, `⋯ thought for 4.1s — <its first
   sentence>` (the time is the response's generation time, measured for turns that arrive while the TUI watches — a resumed session's older reasoning reads `⋯ thinking — …`); `Ctrl-X` shows all of
-  it. Every settled solo turn ends with a receipt:
+  it. Every settled turn ends with a receipt:
   `✓ turn 18.4s · 4 tools · 1 file +1 −1 · $0.031` with
   `^O review diff   /undo revert` when it changed files (counted from the
   journal rows the turn recorded), or `✕ turn failed · 2.1s · <reason>` /
@@ -1062,7 +1064,7 @@ the transcript. An id with no session storage, including a folder that holds
 only a transcript file, is an unknown session and exits 1 the same way.
 
 The transcript `attach` prints is the durable one, read through the shared
-pi-durable adapter (`packages/worker/src/lane/transcript.ts`)
+pi-durable adapter (`packages/agent/src/lane/transcript.ts`)
 and never by booting a lane: a reader must be able to inspect a session it
 may not run.
 
@@ -1127,7 +1129,7 @@ journal entries at read time (see the read-time self-heal note under
   **process-local**: it reads this machine's process table, so a session
   held by a run on another machine or in another container is not seen as
   held (the same local-filesystem-only caveat the lock itself carries —
-  see [worker](../packages/worker.md#session-locking)). The
+  see [agent](../packages/agent.md#session-locking)). The
   probe is `process.kill(pid, 0)`: any result other than success —
   including `EPERM` for a pid this user cannot signal — reads as dead;
   same-user holders always signal, so a per-user sessions root never
@@ -1963,7 +1965,7 @@ prints `no cost rows` and exits 0.
 | `--session <id>` | Reads only this session. Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). An explicitly named session ignores the project scope. |
 | `--all` | Lifts the default project scope: report sessions from every project on the machine. |
 | `--by <level>` | Group rows at `request`, `session` (the default) or `project`. Anything else exits 2. |
-| `--json` | Prints the in-code `toCostJson` shape (`rows`, `taskTotal`) field-for-field — rows carry the same `session`/`project`/`request` identity the table groups on. Exits 0. Pre-release change: the array was named `agents` before this change; Kubic has no published JSON contract yet, so the rename is not a versioned break. |
+| `--json` | Prints the in-code `toCostJson` shape (`rows`, `taskTotal`) field-for-field — rows carry the same `session`/`project`/`request` identity the table groups on. Exits 0. Kubic has no published JSON contract yet. |
 
 ## `kubic policy --tool <name> [--json]`
 

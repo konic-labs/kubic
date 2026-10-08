@@ -1,21 +1,21 @@
 // The headless runner feeds the `kubic run` progress sink:
-// begin once the lane booted (with the solo-notice decision), then one
+// begin once the lane booted (with the -notice decision), then one
 // toolStart/toolEnd pair per tool call — and the three-line stderr warning
 // block is replaced by the sink's compact notice. Faux provider, no network.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import type { RunProgressSink } from '../../../packages/host/src/run-cli.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
-import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import type { MutableModels } from '../../../packages/agent/src/pi-boundary.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import type { RunProgressSink } from '../../../packages/host/src/run-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 describe('headless run progress', () => {
@@ -88,7 +88,7 @@ describe('headless run progress', () => {
     expect(events).toEqual(['begin:faux/small', 'start:ls', 'end:ls:ok']);
     expect(notice).toBe(true);
     expect(stderr.join('')).not.toContain(
-      'warning: solo mode has no isolation',
+      'warning: Kubic runs in-process with your authority: no isolation.',
     );
   });
 
@@ -113,6 +113,8 @@ describe('headless run progress', () => {
     } finally {
       spy.mockRestore();
     }
-    expect(stderr.join('')).toContain('warning: solo mode has no isolation');
+    expect(stderr.join('')).toContain(
+      'warning: Kubic runs in-process with your authority: no isolation.',
+    );
   });
 });

@@ -3,7 +3,7 @@
 > Behaviour operators see; package internals live on the
 > [packages pages](../packages/README.md).
 
-Commands operators run. Solo mode has no isolation — docs never imply
+Commands operators run. Kubic has no isolation — docs never imply
 otherwise.
 
 **Every command answers `--help`** (or `-h`) with commander's generated help and

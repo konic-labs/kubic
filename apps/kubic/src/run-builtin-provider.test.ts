@@ -7,12 +7,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import {
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];

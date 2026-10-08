@@ -82,7 +82,7 @@ describe('key-release events are presses only once', () => {
   > = [
     ['ctrl+o', 'o', (t) => t.panelMode(), 'diff'],
     ['ctrl+r', 'r', (t) => t.panelMode(), 'journal'],
-    // Solo starts with the tree collapsed (hidden), so exactly
+    // The starts with the tree collapsed (hidden), so exactly
     // one toggle opens it.
     ['ctrl+t', 't', (t) => t.tree.isCollapsed(), false],
     ['ctrl+x', 'x', (t) => t.transcript.expanded, true],

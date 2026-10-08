@@ -96,8 +96,8 @@ export interface TurnReceipt {
 }
 
 // A file change's display record (the inline diff, or a new
-// file's size and first lines) — a structural mirror of the worker's
-// ToolDisplay (dep-lint forbids tui → worker), sanitized at ingress.
+// file's size and first lines) — a structural mirror of the agent's
+// ToolDisplay (dep-lint forbids tui → agent), sanitized at ingress.
 export type CellDisplay =
   | {
       readonly kind: 'diff';

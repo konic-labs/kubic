@@ -6,7 +6,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
+import { applyToolPolicy } from '../../../agent/src/lane/policy.js';
+import {
+  bootFauxLane,
+  promptToolsLine,
+} from '../../../agent/src/lane/test-harness.js';
+import { DEFAULT_PERMISSIONS } from '../../../agent/src/permissions.js';
+import { BACKGROUND_CONTEXT } from '../../../agent/src/pi-boundary.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
@@ -20,12 +26,6 @@ import {
   disposeAllGitSandboxes,
   type GitSandbox,
 } from '../../../exec/src/test-support/git-sandbox.js';
-import { applyToolPolicy } from '../../../worker/src/lane/policy.js';
-import {
-  bootFauxLane,
-  promptToolsLine,
-} from '../../../worker/src/lane/test-harness.js';
-import { BACKGROUND_CONTEXT } from '../../../worker/src/pi-boundary.js';
 import {
   hasToolPolicy,
   isToolAllowed,
@@ -311,7 +311,7 @@ describe('runtime config load', () => {
       { projectTrusted: true },
     );
     expect(runtime.permissions.classes).toEqual({
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'read',
       shell: false,
       network: 'allowlist',
@@ -1128,7 +1128,7 @@ describe('effective config view', () => {
 
   // The acceptance criterion's own bar: a .kubic/config.toml value must
   // measurably change a live behaviour, not merely parse. This drives the
-  // real solo lane (through the shared faux harness factory) with the
+  // real lane (through the shared faux harness factory) with the
   // classes the config produced and asserts the lane's own allowlist — the
   // same set applyToolPolicy installs.
   it('narrows a live lane allowlist from [permissions] in config', async () => {
@@ -1145,8 +1145,8 @@ describe('effective config view', () => {
     });
     try {
       const allowed = await applyToolPolicy(
-        lane.solo.registry,
-        lane.solo.conversation,
+        lane.lane.registry,
+        lane.lane.conversation,
         runtime.permissions.classes,
         BACKGROUND_CONTEXT,
       );
@@ -1299,7 +1299,7 @@ level = "privileged"
       expect(active).not.toContain('bash');
       expect(active).toContain('read');
       // The prompt tells the model the truth about its own tool set;
-      // the committed system entry carries the assembled solo prompt.
+      // the committed system entry carries the assembled prompt.
       await lane.run('hi');
       const advertised = promptToolsLine(await lane.systemPrompt());
       expect(advertised).not.toContain('bash');

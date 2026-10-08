@@ -10,30 +10,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import {
-  enableFullAccess,
-  FileApprovalStore,
-  installedPolicyPosture,
-  installSoloPolicy,
-  NO_ANSWER_SURFACE_REASON,
-} from '../../../packages/host/src/approvals.js';
-import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
-import {
-  buildRunEnvelope,
-  mapTerminusToExitCode,
-} from '../../../packages/host/src/run-cli.js';
 import {
   attachSession,
   createSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+} from '../../../packages/agent/src/lane/session-store.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../../packages/worker/src/lane/transcript.js';
+} from '../../../packages/agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -41,7 +27,21 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import {
+  enableFullAccess,
+  FileApprovalStore,
+  installedPolicyPosture,
+  installPolicy,
+  NO_ANSWER_SURFACE_REASON,
+} from '../../../packages/host/src/approvals.js';
+import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
+import {
+  buildRunEnvelope,
+  mapTerminusToExitCode,
+} from '../../../packages/host/src/run-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const roots: string[] = [];
@@ -52,7 +52,7 @@ function tmpRoot(): string {
   return root;
 }
 
-// The solo no-isolation notice is pinned by solo-notice-prod.test.ts; here it
+// The no-isolation notice is pinned by no-isolation-notice-prod.test.ts; here it
 // is only stderr noise, silenced through its documented opt-out.
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -131,7 +131,7 @@ describe('prod run path: destructive call', () => {
     // A seat is attached but cannot answer: the service's own bound is what
     // elapses, and the recorded reason says so — the timeout label stays
     // truthful, exit 4 unchanged (pinned in both directions).
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: '/fake',
       maxPendingMs: 1,
       answer: async () => undefined,
@@ -236,7 +236,7 @@ describe('prod run path: allowlist', () => {
   it('refuses a tool outside the allowlist at execute time, not merely silently', async () => {
     const root = tmpRoot();
     // shell:false removes bash from the class-derived allowlist.
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: '/',
       classes: {
         ...installedPolicyPosture({ workspace: '/' }).classes,
@@ -360,7 +360,7 @@ describe('doctor reports the installed policy', () => {
 
   it('prints the installed classes, guards, and source', async () => {
     const lines: string[] = [];
-    const installed = installSoloPolicy({ workspace: '/fake' });
+    const installed = installPolicy({ workspace: '/fake' });
     const code = (
       await runDoctorCommand(
         {},
@@ -378,7 +378,7 @@ describe('doctor reports the installed policy', () => {
 
   it('names each unsupported level instead of printing it green', async () => {
     const lines: string[] = [];
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: '/fake',
       classes: {
         filesystem: 'full',
@@ -422,10 +422,7 @@ describe('doctor reports the installed policy', () => {
     const lines: string[] = [];
     await runDoctorCommand(
       {},
-      doctorDeps(
-        lines,
-        () => installSoloPolicy({ workspace: '/fake' }).posture,
-      ),
+      doctorDeps(lines, () => installPolicy({ workspace: '/fake' }).posture),
     );
     const printed = lines.join('\n');
     expect(printed).toContain('PASS provider:faux');
@@ -441,7 +438,7 @@ describe('doctor reports the installed policy', () => {
       {
         ...doctorDeps(
           lines,
-          () => installSoloPolicy({ workspace: '/fake' }).posture,
+          () => installPolicy({ workspace: '/fake' }).posture,
         ),
         probeProviders: () => [
           { id: 'faux', reachable: true, models: ['faux-1'], dialled: true },
@@ -457,7 +454,7 @@ describe('doctor reports the installed policy', () => {
 describe('installed policy derivation', () => {
   it('the printed posture and the installed lane policy are one object', () => {
     const input = { workspace: '/fake' };
-    const installed = installSoloPolicy(input);
+    const installed = installPolicy(input);
     expect(installed.posture).toEqual(installedPolicyPosture(input));
     expect(installed.classes).toEqual(installed.posture.classes);
     expect(installed.posture.allowlist.length).toBeGreaterThan(0);

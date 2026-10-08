@@ -7,11 +7,11 @@
 // Negative rule: there is deliberately no `eval`-style command channel, no
 // raw event stream, and no way for the presentation to reach the harness
 // directly. This package (core) imports nothing internal;
-// `scripts/dep-lint.mjs` rejects core → host/worker/exec imports structurally.
+// `scripts/dep-lint.mjs` rejects core → host/agent/exec imports structurally.
 //
 
 // One image content part of a prompt. The
-// lane prompt contract carries text plus optional images; the worker maps
+// lane prompt contract carries text plus optional images; the agent maps
 // these onto Pi's user-message content parts unchanged, so a session stores
 // (and a resumed session replays) them exactly as Pi does. `data` is
 // base64 without a `data:` prefix; `bytes` is the decoded size the

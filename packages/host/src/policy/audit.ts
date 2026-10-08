@@ -6,7 +6,7 @@
 // refused loudly. Sinks are syslog-first ([[audit]] order); a sink failure
 // — or zero sinks — throws instead of losing records silently.
 // Read-only wrt doctor, broker/ScopedToken, approvals:
-// nothing is imported from worker impl and nothing existing is modified.
+// nothing is imported from agent impl and nothing existing is modified.
 // Faux-only, zero network; no node:fs (sinks are injected).
 
 import { hostname } from 'node:os';

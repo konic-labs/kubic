@@ -44,14 +44,14 @@ The pure assembler is `packages/host/src/trajectory/run-trajectory.ts`
 | `provenance` | Session and agent ids; `pid` = the process; `worktree` = the run's cwd; `model` = `provider/id`, or `none/none` when the run ended before a model was selected. |
 | `worktree` | `git rev-parse HEAD` and the branch (null when detached); `no-vcs` outside a git checkout. |
 | `environment` | The env the lane spawns tools with, with every secret-classified value redacted. |
-| `task` | `taskId` is `prompt:<sha256 prefix>`, stable per prompt text, so two runs of one prompt can be paired. `role` is the role the run ran as (`solo` without `--role`). |
+| `task` | `taskId` is `prompt:<sha256 prefix>`, stable per prompt text, so two runs of one prompt can be paired. `role` is the role the run ran as (`default` without `--role`). |
 | `result` | The run's terminus mapped to a result status and failure category. Lane failures go through `classifyFailure`; a wall-clock timeout is `timeout` and the `--max-turns` stop is `turn_limit`, both with category `run_limit`; a boot failure or interrupt is `process_crashed` (an interrupt is `cancelled`). |
 
 ## Contracts
 
 `RESULT_STATUSES` is `completed`, `failed`, `cancelled`, `timeout`,
 `turn_limit`. `TRAJECTORY_FAILURE_CODES` snapshots the 16 lane failure
-codes owned by `packages/worker/src/lane/failures.ts` (pinned equal by
+codes owned by `packages/agent/src/lane/failures.ts` (pinned equal by
 test): `model_failed`, `model_refused`, `provider_transient`,
 `provider_auth`, `tool_failed`, `tool_invalid_args`, `tool_timeout`,
 `tool_unavailable`, `process_crashed`, `process_spawn_failed`,
@@ -73,13 +73,13 @@ failures throw `TrajectoryExportError` (exit 2) with
 The package imports none of the shapes it records: the execution
 environment (`exec` `env.ts`), file-change diffs (`exec`
 `journal-diff.ts`), approval verdicts (`host` `approvals.ts`), usage rows
-(`worker` `usage.ts`) and failure codes (`worker` `lane/failures.ts`) are
+(`agent` `usage.ts`) and failure codes (`agent` `lane/failures.ts`) are
 structural snapshots pinned by the golden fixture test.
 
 ## Dep-direction neighbours
 
 - May import: [@kubic/core](core.md) only — never
-  exec/worker/host/agents/eval/tui.
+  exec/agent/host/eval/tui.
 - Read by: `kubic replay` and [@kubic/eval](eval.md) via
   `parseTrajectoryExport` — no shim, no adapter.
 

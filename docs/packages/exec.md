@@ -6,7 +6,7 @@
 
 `@kubic/exec` is the execution-environment seam. Every tool runs through it — no tool imports
 `node:fs`/`child_process` directly (`scripts/dep-lint.mjs` rejects those
-imports everywhere else; test scaffolding is exempt). Solo has no
+imports everywhere else; test scaffolding is exempt). Kubic has no
 isolation: confinement here is a cwd guardrail against accidental
 escapes, not a sandbox boundary.
 
@@ -20,11 +20,11 @@ escapes, not a sandbox boundary.
 | `journal-status.ts` | `JournalStatus`, `journalStatus` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
 | `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation` (`baseline`, `baselinePath`, `sweep()`, `rebaseline(turn)`: re-capture the baseline and the run start for a new interactive turn), `beginReconciliation` |
-| `ignore.ts` | `IgnoreRule`, `parseIgnoreFile`, `isIgnored` — the shared `.gitignore`-subset matcher: the journal baseline walk and the worker's find/grep walk cannot disagree on what is ignored |
+| `ignore.ts` | `IgnoreRule`, `parseIgnoreFile`, `isIgnored` — the shared `.gitignore`-subset matcher: the journal baseline walk and the agent's find/grep walk cannot disagree on what is ignored |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
-| `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts`; path confinement in `env.ts` + `@kubic/worker` `lane/interceptors.ts` |
+| `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts`; path confinement in `env.ts` + `@kubic/agent` `lane/interceptors.ts` |
 | `index.ts` | Pointer | No barrel — import per-module paths |
 
 ## Contracts
@@ -67,8 +67,8 @@ keep resolving as a legacy fallback. The fake fs implements `readFileRange`
 with node-seam byte semantics (tests needing the whole-file fallback set
 `env.fs.readFileRange = undefined`), and `stat` reports UTF-8 byte sizes
 with conventional modes (files `0o644`, directories `0o755`). The worktree
-and worker git-op suites assert exact argv through it. `confine()` is lexical only (`resolve()` defeats `..`/absolute
-escapes but not symlinks) — acceptable because solo has no isolation. It
+and agent git-op suites assert exact argv through it. `confine()` is lexical only (`resolve()` defeats `..`/absolute
+escapes but not symlinks) — acceptable because Kubic has no isolation. It
 also accepts a path spelled through the workspace root's own `realpath`
 (`/tmp` and `/var` resolve to `/private/...` on macOS), so the write path
 can hand back a target it resolved through a link without tripping the
@@ -260,7 +260,7 @@ directory whose listing fails at sweep time carries its previous baseline
 hashes forward, so its files are compared against their own earlier state
 instead of reading as deleted. Real disappearances (ENOENT) still record
 deletes — the distinction is the error code, not the failure. The matcher is the shared
-`ignore.ts`, so this walk and the worker's find/grep walk also cannot
+`ignore.ts`, so this walk and the agent's find/grep walk also cannot
 disagree about what is ignored. The matcher stays the documented
 common subset (`*`, `?`, `**`, `dir/`, `!`) — character classes and rooted
 mid-pattern `**` are not modeled — compiled to tokens and matched with a
@@ -313,14 +313,14 @@ after-side is a designed absence, never `corrupt`.
 There is **no Kubic-side replay kernel**. The tool-call state machine, its
 replay policy and the abort-aware admission gate belong to the execution
 engine. In Pi 1.0 that engine is `@earendil-works/pi-durable`'s `pi.tool`
-task over a `ToolRegistration` (`packages/worker/src/pi-boundary.ts` is the
+task over a `ToolRegistration` (`packages/agent/src/pi-boundary.ts` is the
 only file that may import it), so Kubic keeps no copy of its own.
 
 What actually ships in Kubic:
 
 - **Replay policy declaration.** `Operation.replay` is `'never' | 'safe'`
-  per operation (`packages/worker/src/ops/*`), mapped onto pi-durable's
-  `ToolRegistration.replay` by `@kubic/worker` `lane/tools-adapter.ts`:
+  per operation (`packages/agent/src/ops/*`), mapped onto pi-durable's
+  `ToolRegistration.replay` by `@kubic/agent` `lane/tools-adapter.ts`:
   `never → 'unsafe'`, `safe → 'safe'`. The untranslated name would be a
   crash-safety change — pi-durable runs each call as its own durable task,
   commits its intent before `execute()`, and on recovery **reruns only a
@@ -339,17 +339,17 @@ What actually ships in Kubic:
   `kubic run` invocation persists no checkpoint**.
 
 `kubic replay --tier deterministic|live` **re-executes** the recorded
-objective through the solo lane at the pinned model/role config. It does
+objective through the lane at the pinned model/role config. It does
 **not** replay recorded effects: there is no effect log to replay from,
 and a `replay:"never"` tool re-invokes when the re-execution reaches it.
 Only `--tier recorded` is log-only, and it never touches a lane.
 
 ## Dep-direction neighbours
 
-- May import: [@kubic/core](core.md) only (no worker/host/agents/
+- May import: [@kubic/core](core.md) only (no agent/host/
   trajectory/eval/tui — see `scripts/dep-lint.mjs`).
-- Imported by: [@kubic/worker](worker.md) (lane bridges), [@kubic/host](host.md)
-  (journal CLI), [@kubic/agents](agents-pkg.md) (`FileBridge` for
+- Imported by: [@kubic/agent](agent.md) (lane bridges), [@kubic/host](host.md)
+  (journal CLI), [@kubic/agent](agent.md) (`FileBridge` for
   memory/skills).
 - Sole owner of `node:fs` / `node:child_process`.
 
@@ -358,7 +358,7 @@ Only `--tier recorded` is log-only, and it never touches a lane.
     ↑
 @kubic/exec           ← sole node:fs/child_process owner
     ↑         ↑
- worker      host …
+ agent      host …
 ```
 
 Back to the [docs index](../README.md).

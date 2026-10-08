@@ -1,4 +1,4 @@
-// `kubic run` on an interactive terminal: a heading, the one-line solo notice,
+// `kubic run` on an interactive terminal: a heading, the one-line no-isolation notice,
 // a spinner while the model works, one settled line per tool call, then — after
 // the answer the command prints on stdout — the receipt and the next steps.
 // Everything here goes to stderr; the run's data (the answer) stays on stdout.
@@ -25,6 +25,7 @@ import {
   truncateVisible,
   visibleWidth,
 } from '../../../packages/core/src/cli/width.js';
+import { runRoleLabel } from '../../../packages/core/src/run-role.js';
 import type {
   HeadlessRunResult,
   RunProgressSink,
@@ -157,7 +158,7 @@ export function createRunProgress(
   return {
     begin(info) {
       runStart = now();
-      const parts = ['solo'];
+      const parts = [runRoleLabel(info.role)];
       if (info.model !== undefined) parts.push(info.model);
       const where = shortPath(options.cwd, options.home);
       const columns = stream.columns ?? DEFAULT_COLUMNS;
@@ -173,7 +174,7 @@ export function createRunProgress(
       write(heading);
       if (info.notice) {
         write(
-          `${ui.fg('fg2')('○ solo has no isolation — approvals + journal are the controls · details: ')}${ui.fg('fg1')('kubic doctor')}`,
+          `${ui.fg('fg2')('○ Kubic has no isolation — approvals + journal are the controls · details: ')}${ui.fg('fg1')('kubic doctor')}`,
         );
       }
       write('');

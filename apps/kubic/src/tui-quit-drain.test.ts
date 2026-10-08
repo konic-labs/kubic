@@ -18,23 +18,23 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CommandResult } from '../../../packages/core/src/cli/exit-codes.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import { inspectStoredWork } from '../../../packages/worker/src/lane/pending.js';
+import { inspectStoredWork } from '../../../packages/agent/src/lane/pending.js';
 import {
   attachSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+} from '../../../packages/agent/src/lane/session-store.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import type { CommandResult } from '../../../packages/core/src/cli/exit-codes.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,
@@ -597,7 +597,7 @@ describe('quitting mid-turn drains the operation', () => {
     await submit(fake, 'run bash then hold');
     await waitFor(() => h.admitted.length === 1);
     const opId = h.admitted[0] ?? '';
-    // The solo tree row opens on Ctrl-T.
+    // The tree row opens on Ctrl-T.
     fake.feed('\x14');
     // The bash call has ended (the tree row turns ✓): the model's second step
     // is the gated one, so the turn is still running.

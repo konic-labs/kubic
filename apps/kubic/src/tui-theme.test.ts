@@ -5,6 +5,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createModels,
+  fauxProvider,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
@@ -13,10 +17,6 @@ import {
   tuiTheme,
 } from '../../../packages/tui/src/theme.js';
 import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
-import {
-  createModels,
-  fauxProvider,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,
@@ -212,7 +212,7 @@ describe('kubic tui rejects a bad theme at boot', () => {
     const themePath = join(root, 'solarized.json');
     writeFileSync(themePath, VALID_THEME);
     const fake = recordingTerminal();
-    const faux = fauxProvider({ models: [{ id: 'solo', input: ['text'] }] });
+    const faux = fauxProvider({ models: [{ id: 'lane', input: ['text'] }] });
     const registry = createModels();
     registry.setProvider(faux.provider);
     const exit = runTuiCommand(
@@ -229,7 +229,7 @@ describe('kubic tui rejects a bad theme at boot', () => {
             sessionsRoot: root,
             models: registry,
             env: new FakeExecutionEnv({}),
-            model: { provider: 'faux', id: 'solo' },
+            model: { provider: 'faux', id: 'lane' },
           }),
       },
     );
@@ -256,7 +256,7 @@ describe('/theme in the TUI', () => {
   }, async () => {
     const root = tmpRoot();
     const fake = recordingTerminal();
-    const faux = fauxProvider({ models: [{ id: 'solo', input: ['text'] }] });
+    const faux = fauxProvider({ models: [{ id: 'lane', input: ['text'] }] });
     const registry = createModels();
     registry.setProvider(faux.provider);
     const exit = runTuiCommand(
@@ -271,7 +271,7 @@ describe('/theme in the TUI', () => {
             sessionsRoot: root,
             models: registry,
             env: new FakeExecutionEnv({}),
-            model: { provider: 'faux', id: 'solo' },
+            model: { provider: 'faux', id: 'lane' },
           }),
       },
     );

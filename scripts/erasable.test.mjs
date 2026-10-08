@@ -63,8 +63,8 @@ describe('erasable-syntax config', () => {
   });
 
   it('every package/app tsconfig extends the base and typechecks', () => {
-    // Floor: 8 packages + apps/kubic — a collapsed discovery must not pass.
-    assert.ok(PACKAGES.length >= 9, `saw only ${PACKAGES.join(', ')}`);
+    // Floor: 7 packages + apps/kubic — a collapsed discovery must not pass.
+    assert.ok(PACKAGES.length >= 8, `saw only ${PACKAGES.join(', ')}`);
     for (const pkg of PACKAGES) {
       const file = join(ROOT, pkg, 'tsconfig.json');
       assert.ok(existsSync(file), `missing ${pkg}/tsconfig.json`);

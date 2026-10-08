@@ -4,7 +4,7 @@
 // audit event per use.
 //
 // Zero network, zero real processes here: command execution is injected by
-// the host composition root (faux in tests). Never imports worker impl.
+// the host composition root (faux in tests). Never imports agent impl.
 
 import {
   type SecretRef as CoreSecretRef,
@@ -25,7 +25,7 @@ class SecretError extends Error {
 
 export type SecretRef = CoreSecretRef;
 
-// The parse table lives in @kubic/core so the worker's
+// The parse table lives in @kubic/core so the agent's
 // models.json parser shares it — same direction as secret-shapes.ts. Kept
 // as a same-path export so the host call sites, the tests and the
 // export-surface gate do not move; core refusals cross the package edge as
@@ -269,7 +269,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // The shortest live value matched as a SUBSTRING: the debug and
 // persistence redaction and the ledger refusal all search text for the
-// resolved values, and a short or dummy key (`gw`, `solo`, `1`, a key named
+// resolved values, and a short or dummy key (`gw`, `lane`, `1`, a key named
 // like its provider) would blank every word it spells and refuse the
 // credential-use row that names the provider. Real provider keys are far
 // longer; below this length a value is not matched at all.

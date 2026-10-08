@@ -1,15 +1,15 @@
 // The TUI header's workspace facts: the project name,
 // the current branch and the changed-file count. Git runs through the exec
-// shell seam with explicit argv and the worker's porcelain v2 parser — the
+// shell seam with explicit argv and the agent's porcelain v2 parser — the
 // one `git_status` uses. `--no-optional-locks` keeps
 // the read from taking the index lock a running tool's own git may need.
 // Never throws: outside a repository (or without git) the header shows the
 // directory name alone.
 
 import { basename } from 'node:path';
+import { parsePorcelainStatus } from '../../../packages/agent/src/ops/git.js';
 import type { Shell } from '../../../packages/exec/src/env.js';
 import type { TuiWorkspace } from '../../../packages/tui/src/tui-app.js';
-import { parsePorcelainStatus } from '../../../packages/worker/src/ops/git.js';
 
 const PROVENANCE = {
   sessionId: '',

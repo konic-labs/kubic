@@ -2,4 +2,4 @@
 #
 # The Pi boundary choke point needs a human on every change: any Pi-internal
 # touch must stay visible and review-gated.
-/packages/worker/src/pi-boundary.ts @egesabanci
+/packages/agent/src/pi-boundary.ts @egesabanci

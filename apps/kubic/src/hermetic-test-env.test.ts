@@ -1,4 +1,4 @@
-// Hermetic unit-test environment. The solo prod path reads
+// Hermetic unit-test environment. The prod path reads
 // the account's skill roots (~/.agents/skills, ~/.pi/agent/skills) through
 // homedir() and the project trust opt-in through KUBIC_TRUST_PROJECT, so
 // before every system-prompt assertion depended on the developer's
@@ -18,25 +18,25 @@ import { connect, Socket } from 'node:net';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { PROMPT_SECTION } from '../../../packages/agent/src/lane/boot.js';
 import {
   attachSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { SOLO_PROMPT_SECTION } from '../../../packages/worker/src/lane/solo.js';
-import { readSessionEntries } from '../../../packages/worker/src/lane/transcript.js';
+} from '../../../packages/agent/src/lane/session-store.js';
+import { readSessionEntries } from '../../../packages/agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   SystemEntry,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
-// The solo prompt the lane committed for this session (the reader).
+// The prompt the lane committed for this session (the reader).
 async function committedPrompt(
   root: string,
   sessionId: string,
@@ -53,7 +53,7 @@ async function committedPrompt(
       const messages = entry.model as unknown as
         | Array<{ sections?: Record<string, string | null> }>
         | undefined;
-      const prompt = messages?.[0]?.sections?.[SOLO_PROMPT_SECTION];
+      const prompt = messages?.[0]?.sections?.[PROMPT_SECTION];
       if (typeof prompt === 'string' && prompt !== '') return prompt;
     }
     return '';
@@ -110,7 +110,7 @@ describe('hermetic unit-test environment', () => {
   // os.homedir() reads), so the developer's real skills would leak into the
   // prompt and this would test the runner, not Kubic.
   it.skipIf(!homedirIsolated)(
-    "keeps a developer's installed skills and trust opt-in out of the solo prompt",
+    "keeps a developer's installed skills and trust opt-in out of the prompt",
     async () => {
       // A developer machine: skills in both account roots, trust exported.
       const devHome = tmpRoot('dev-home-');

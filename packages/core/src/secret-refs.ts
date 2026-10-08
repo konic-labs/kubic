@@ -1,8 +1,8 @@
 // Secret-reference forms: `$ENV_VAR`,
 // `!command args` (no TTL — always re-run), `\$escaped` / `\!escaped`
-// literals, anything else literal. Lives in @kubic/core so the WORKER's
+// literals, anything else literal. Lives in @kubic/core so the AGENT's
 // models.json parser and the HOST's request-time resolver share the one
-// table (same direction as secret-shapes.ts): a worker → host
+// table (same direction as secret-shapes.ts): an agent → host
 // import would break `npm run lint:deps`. Pure string parsing — no env,
 // no processes, no audit; resolution stays in host/config/secrets.ts.
 

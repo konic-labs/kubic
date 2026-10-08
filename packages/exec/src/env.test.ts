@@ -707,7 +707,7 @@ describe('child output caps', () => {
 
   // Past the cap a snapshot keeps its length while its head
   // moves; the dropped count says where it starts, so a reader following
-  // the stream (the worker fact scanner) never misses or repeats output.
+  // the stream (the agent fact scanner) never misses or repeats output.
   it('says how much of each stream a live snapshot dropped', async () => {
     const { env } = makeNodeEnv();
     const positions: Array<{ end: number; text: string; dropped: number }> = [];

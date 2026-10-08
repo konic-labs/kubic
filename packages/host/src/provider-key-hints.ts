@@ -7,10 +7,7 @@
 // else any variable at all. The context never reads the real environment
 // or the disk, and no credential is involved.
 
-import {
-  builtinProviders,
-  createModels,
-} from '../../worker/src/pi-boundary.js';
+import { builtinProviders, createModels } from '../../agent/src/pi-boundary.js';
 
 type AuthContext = NonNullable<
   NonNullable<Parameters<typeof createModels>[0]>['authContext']

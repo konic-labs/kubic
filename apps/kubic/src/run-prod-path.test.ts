@@ -7,22 +7,14 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
-import {
-  buildRunEnvelope,
-  mapTerminusToExitCode,
-  runRunCommand,
-} from '../../../packages/host/src/run-cli.js';
 import {
   attachSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
+} from '../../../packages/agent/src/lane/session-store.js';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../../packages/worker/src/lane/transcript.js';
+} from '../../../packages/agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -31,7 +23,15 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { resolveEffectivePolicy } from '../../../packages/host/src/policy/enterprise.js';
+import {
+  buildRunEnvelope,
+  mapTerminusToExitCode,
+  runRunCommand,
+} from '../../../packages/host/src/run-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];
@@ -43,7 +43,7 @@ function tmpRoot(): string {
 }
 
 beforeEach(() => {
-  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // The no-isolation notice is not under test here (no-isolation-notice-prod.test.ts owns
   // it); the documented opt-out keeps it off the test runner's stderr.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });

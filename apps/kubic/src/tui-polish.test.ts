@@ -282,9 +282,9 @@ describe('app chrome', () => {
       model: 'faux/m',
       approvalsSkipped: false,
     });
-    app.setEditorFooter(`solo: ${'word '.repeat(20)}end`);
+    app.setEditorFooter(`lane: ${'word '.repeat(20)}end`);
     const rows = app.render(60);
-    const at = rows.findIndex((row) => row.includes('solo:'));
+    const at = rows.findIndex((row) => row.includes('lane:'));
     expect(at).toBeGreaterThan(0);
     expect(rows[at + 1]).toContain('end');
   });

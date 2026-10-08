@@ -12,20 +12,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  FakeExecutionEnv,
-  NodeExecutionEnv,
-} from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
-import {
   attachSession,
   createSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
+} from '../../../packages/agent/src/lane/session-store.js';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../../packages/worker/src/lane/transcript.js';
+} from '../../../packages/agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -33,7 +27,13 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import {
+  FakeExecutionEnv,
+  NodeExecutionEnv,
+} from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];
@@ -117,7 +117,7 @@ const SIGNAL_EXIT: Readonly<Record<(typeof SIGNALS)[number], number>> = {
   SIGTERM: 143,
 };
 
-describe('headless run signal handling (solo lane)', () => {
+describe('headless run signal handling (lane)', () => {
   for (const signal of SIGNALS) {
     it(`${signal} mid-drive kills the detached bash child and settles a mapped result`, {
       timeout: 10_000,

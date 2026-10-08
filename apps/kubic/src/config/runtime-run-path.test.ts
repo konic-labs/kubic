@@ -16,7 +16,14 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../../packages/agents/src/policy.js';
+import { fauxToolUse } from '../../../../packages/agent/src/lane/test-harness.js';
+import { DEFAULT_PERMISSIONS } from '../../../../packages/agent/src/permissions.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from '../../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../../packages/exec/src/file-bridge.js';
 import {
@@ -29,13 +36,6 @@ import {
 } from '../../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../../packages/host/src/config/trust-store.js';
 import { runJournalCommand } from '../../../../packages/host/src/journal-cli.js';
-import { fauxToolUse } from '../../../../packages/worker/src/lane/test-harness.js';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from '../../../../packages/worker/src/pi-boundary.js';
 import { runtimeLaneDeps, runtimeRunDeps } from '../config-runtime.js';
 import { runHeadlessPrompt } from '../headless-run.js';
 
@@ -48,9 +48,9 @@ function tmpRoot(prefix = 'kubic-run-path-'): string {
 }
 
 beforeEach(() => {
-  // The solo no-isolation notice goes straight to process.stderr (its text
-  // and gating are pinned in limits/solo-warning.test.ts and
-  // solo-notice-prod.test.ts); the documented opt-out keeps these runs quiet.
+  // The no-isolation notice goes straight to process.stderr (its text
+  // and gating are pinned in limits/no-isolation-notice.test.ts and
+  // no-isolation-notice-prod.test.ts); the documented opt-out keeps these runs quiet.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });
 
@@ -134,7 +134,7 @@ describe('config feeds the live run path', () => {
       env: {},
     });
     expect(runtime.permissions.classes).toEqual({
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
       filesystem: 'read',
       shell: false,
       git: false,
@@ -265,10 +265,10 @@ describe('config feeds the live run path', () => {
       projectTrusted: false,
       env: {},
     });
-    // An absent [permissions] section resolves to the solo
+    // An absent [permissions] section resolves to the
     // defaults — never to the most permissive or restrictive extreme.
     expect(runtime.permissions.classes).toEqual({
-      ...SOLO_DEFAULTS,
+      ...DEFAULT_PERMISSIONS,
     });
     expect(runtime.permissions.source).toBe('defaults');
     // The same shell write the narrowed lane refused goes through on the
@@ -298,7 +298,7 @@ describe('config feeds the live run path', () => {
   });
 });
 
-describe('solo-lane projections reach the live path', () => {
+describe('lane projections reach the live path', () => {
   const NO_SPLIT = { missing: [], checked: [], applicable: false };
 
   function namedRuntime(workspace: string, toml: string): RuntimeConfig {
@@ -357,9 +357,9 @@ describe('solo-lane projections reach the live path', () => {
     writeFileSync(join(workspace, 'note.txt'), 'v1\n');
     const runtime = namedRuntime(
       workspace,
-      '[agent]\nname = "kubic-solo"\n[approvals]\nroute = "ask-user"\n',
+      '[agent]\nname = "kubic-lane"\n[approvals]\nroute = "ask-user"\n',
     );
-    expect(runtime.config.agent?.name).toBe('kubic-solo');
+    expect(runtime.config.agent?.name).toBe('kubic-lane');
     const lane = runtimeLaneDeps({
       runtime,
       error: undefined,
@@ -367,7 +367,7 @@ describe('solo-lane projections reach the live path', () => {
       trust: NO_PROJECT_TRUST,
     });
     // The composition-root projection `kubic run` spreads into the runner.
-    expect(lane.agentId).toBe('kubic-solo');
+    expect(lane.agentId).toBe('kubic-lane');
 
     const faux = fauxProvider();
     const models = createModels();

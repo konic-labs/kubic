@@ -28,13 +28,13 @@ import {
   auditSinksDoctorChecks,
   buildConfiguredSinks,
   credentialUseAudit,
+  decisionAudit,
   fullAccessEnabledAudit,
   isPrivilegedAuditWhat,
   readAuditLedger,
   resolveRunBaseRevision,
   runStartAudit,
   setAuditSinks,
-  soloDecisionAudit,
   undoRestoreAudit,
 } from './audit-ledger.js';
 
@@ -62,12 +62,12 @@ function repo(): string {
 }
 
 describe('audit ledger', () => {
-  it('solo decisions share the ledger and the format', () => {
+  it('decisions share the ledger and the format', () => {
     const root = repo();
     const dir = auditLedgerDir(root);
     appendToLedger(
       dir,
-      soloDecisionAudit({
+      decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'destructive-shell',
@@ -88,7 +88,7 @@ describe('audit ledger', () => {
     const errors: string[] = [];
     const record = appendToLedger(
       dir,
-      soloDecisionAudit({
+      decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'credentials',
@@ -107,7 +107,7 @@ describe('audit ledger', () => {
   });
 
   // The live-value refusal is a substring match, so a short or
-  // dummy key (`gw`, `solo`, `1`, or `ollama` for provider `ollama`) matched
+  // dummy key (`gw`, `lane`, `1`, or `ollama` for provider `ollama`) matched
   // the record's own provider name and the credential-use row was silently
   // dropped. Below the minimum length nothing is matched and the row lands.
   it('never drops a credential-use row over a short or provider-named live key', () => {
@@ -117,7 +117,7 @@ describe('audit ledger', () => {
     for (const [provider, key] of [
       ['ollama', 'ollama'],
       ['gw', 'gw'],
-      ['solo', 'solo'],
+      ['lane', 'lane'],
       ['root', '1'],
     ] as const) {
       const record = appendToLedger(
@@ -139,7 +139,7 @@ describe('audit ledger', () => {
     expect(readAuditLedger(dir).map((r) => r.what)).toEqual([
       'credential:ollama',
       'credential:gw',
-      'credential:solo',
+      'credential:lane',
       'credential:root',
     ]);
   });
@@ -148,7 +148,7 @@ describe('audit ledger', () => {
     const root = repo();
     const dir = auditLedgerDir(root);
     const input = (reason: string) =>
-      soloDecisionAudit({
+      decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'credentials',
@@ -186,8 +186,8 @@ describe('audit ledger', () => {
   // which base ran X, and at which thinking level — no hard-coded 0/unknown
   // for a field the run knows.
   describe('audit provenance fields', () => {
-    it('records thinking and base on solo rows', () => {
-      const input = soloDecisionAudit({
+    it('records thinking and base on rows', () => {
+      const input = decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'destructive-shell',
@@ -262,7 +262,7 @@ describe('audit ledger', () => {
     });
 
     it("no live-path record carries 'unknown' for a field whose data exists", () => {
-      const solo = soloDecisionAudit({
+      const lane = decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'destructive-shell',
@@ -274,7 +274,7 @@ describe('audit ledger', () => {
         by: 'user',
         posture: 'approvals',
       });
-      expect(JSON.stringify(solo)).not.toContain('unknown');
+      expect(JSON.stringify(lane)).not.toContain('unknown');
     });
   });
 
@@ -380,14 +380,8 @@ describe('audit ledger', () => {
       workspace: root,
       approved: true,
     };
-    appendToLedger(
-      dir,
-      soloDecisionAudit({ ...decision, posture: 'approvals' }),
-    );
-    appendToLedger(
-      dir,
-      soloDecisionAudit({ ...decision, posture: 'full-access' }),
-    );
+    appendToLedger(dir, decisionAudit({ ...decision, posture: 'approvals' }));
+    appendToLedger(dir, decisionAudit({ ...decision, posture: 'full-access' }));
     const lines: string[] = [];
     const code = (
       await runAuditCommand(

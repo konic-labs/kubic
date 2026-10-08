@@ -1,6 +1,6 @@
 // Exclusive lock-file primitive (session locking).
 //
-// Exec owns node:fs (I/O confinement): the worker's session-store keeps
+// Exec owns node:fs (I/O confinement): the agent's session-store keeps
 // the lock SEMANTICS (holder liveness, stale-steal rules, SessionLockError)
 // and calls these three functions for the raw I/O. LOCAL FILESYSTEM ONLY:
 // O_EXCL create is atomic on a local filesystem — no network/shared-disk

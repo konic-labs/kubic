@@ -11,6 +11,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fauxToolUse } from '../../../../packages/agent/src/lane/test-harness.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../../../packages/agent/src/pi-boundary.js';
 import { EXIT_PROVIDER } from '../../../../packages/core/src/cli/exit-codes.js';
 import { NodeExecutionEnv } from '../../../../packages/exec/src/env.js';
 import { FileJournalStore } from '../../../../packages/exec/src/journal.js';
@@ -24,14 +32,6 @@ import {
   auditLedgerDir,
   readAuditLedger,
 } from '../../../../packages/host/src/policy/audit-ledger.js';
-import { fauxToolUse } from '../../../../packages/worker/src/lane/test-harness.js';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  type MutableModels,
-} from '../../../../packages/worker/src/pi-boundary.js';
 import { terminalRig } from '../../../../test/fake-terminal.js';
 import { runtimeLaneDeps, runtimeModelPin } from '../config-runtime.js';
 import {

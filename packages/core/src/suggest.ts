@@ -1,6 +1,6 @@
 // "Did you mean …?" for mistyped names: commands,
 // providers and model ids. Pure; shared by the CLI dispatcher (apps), the
-// model selection refusals (worker) and `kubic models <provider>` (host).
+// model selection refusals (agent) and `kubic models <provider>` (host).
 //
 // A candidate qualifies when its edit distance (optimal string alignment:
 // insert, delete, substitute, swap two adjacent letters; case-insensitive)

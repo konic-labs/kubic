@@ -1,6 +1,6 @@
 // Node file bridge: exec-owned durable file access.
 // All node:fs touching stays in this package (I/O confinement); Pi types
-// never cross here. The worker adapts this bridge to Pi's FileSystem for
+// never cross here. The agent adapts this bridge to Pi's FileSystem for
 // JsonlSessionRepo — sync core wrapped async at the seam.
 
 import {
@@ -111,7 +111,7 @@ export interface FileBridge {
   /**
    * Flush a file's contents and the metadata needed to read them back: the
    * session storage's fsync seam. Kubic opens its sessions without it (the
-   * journal is the fsync'd store — see docs/packages/worker.md), so this exists
+   * journal is the fsync'd store — see docs/packages/agent.md), so this exists
    * for a caller that asks for durability explicitly. Optional like the rest.
    */
   flushFile?(path: string): void;

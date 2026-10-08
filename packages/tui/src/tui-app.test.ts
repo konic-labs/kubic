@@ -1,4 +1,4 @@
-// Interactive TUI controller over the solo lane.
+// Interactive TUI controller over the lane.
 //
 // Headless snapshots only (no VirtualTerminal in Pi 0.85.1): the root
 // VStack renders pure, like renderLayout in layout.test.ts. Faux-only,
@@ -59,17 +59,17 @@ describe('tui app root', () => {
     expect(rows.at(-1)).toContain('^C quit');
   });
 
-  it('hides the solo tree row until Ctrl-T, and always below 80 columns', () => {
+  it('hides the tree row until Ctrl-T, and always below 80 columns', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
       approvalsSkipped: false,
     });
-    expect(app.render(100).join('\n')).not.toContain('◌ solo');
+    expect(app.render(100).join('\n')).not.toContain('◌ default');
     app.handleInput('\x14');
-    expect(app.render(100).join('\n')).toContain('◌ solo');
+    expect(app.render(100).join('\n')).toContain('◌ default');
     const narrow = app.render(70).join('\n');
-    expect(narrow).not.toContain('◌ solo');
+    expect(narrow).not.toContain('◌ default');
     expect(narrow).toContain('approvals on');
   });
 
@@ -91,7 +91,7 @@ describe('tui app root', () => {
         ],
       }),
     );
-    // The solo tree row starts hidden.
+    // The tree row starts hidden.
     expect(app.render(100).join('\n')).not.toContain('● read');
     // Ctrl-T toggles the tree. Sent in BOTH encodings, because
     // the classification goes through parseKey — the legacy byte here and
@@ -291,7 +291,7 @@ describe('tui app root', () => {
     });
     app.applyPresentation(presentation());
     app.handleInput('\x14');
-    expect(app.render(100).join('\n')).toContain('● solo');
+    expect(app.render(100).join('\n')).toContain('● default');
     app.setUsage([
       {
         model: MODEL,

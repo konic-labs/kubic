@@ -18,13 +18,21 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { createLineLogger } from '../../../packages/core/src/cli/logger.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   enableSessionFullAccess,
   FileApprovalStore,
   FULL_ACCESS_FLAG,
-  installSoloPolicy,
+  installPolicy,
 } from '../../../packages/host/src/approvals.js';
 import {
   auditLedgerDir,
@@ -35,14 +43,6 @@ import {
   mapTerminusToExitCode,
 } from '../../../packages/host/src/run-cli.js';
 import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { loadCliConfig } from './config-runtime.js';
 import { dispatchCommand } from './dispatch.js';
@@ -132,7 +132,7 @@ describe('full access audits only the capabilities it waived', () => {
       command: 'sessions create',
       workspace,
     });
-    return installSoloPolicy({ workspace, sessionDir });
+    return installPolicy({ workspace, sessionDir });
   }
 
   it('an untriggered read is not challenged and writes no ledger record', async () => {

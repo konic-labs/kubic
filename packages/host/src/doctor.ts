@@ -2,15 +2,20 @@
 // deps, and approval-policy mismatches, with a skip flag. Presentation
 // only — every probe is injected (faux-only, zero network): the command
 // never dials a provider, it reports what the injected probers say.
-// Provider shapes mirror worker/models-config.ts read-only; policy
+// Provider shapes mirror packages/agent/src/models-config.ts read-only; policy
 // validation reuses host/approvals.ts. File access, if ever needed,
 // goes through the exec FileBridge — this module never imports node:fs.
 
 import {
+  DEFAULT_RESERVE_TOKENS,
+  KEEP_RECENT_TOKENS,
+  roomAfterCompaction,
+} from '../../agent/src/compaction.js';
+import {
   describeUnsupported,
   effectiveCredentialLevel,
   effectiveNetworkLevel,
-} from '../../agents/src/policy.js';
+} from '../../agent/src/permissions.js';
 // License identity: constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
@@ -21,11 +26,6 @@ import {
 } from '../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
-import {
-  DEFAULT_RESERVE_TOKENS,
-  roomAfterCompaction,
-  SOLO_KEEP_RECENT_TOKENS,
-} from '../../worker/src/compaction.js';
 import {
   alwaysAskAutoApprove,
   CAPABILITIES,
@@ -487,7 +487,7 @@ function roomChecks(probe: ContextRoomProbe): DoctorCheck[] {
     room: roomAfterCompaction(
       model.contextWindow,
       probe.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
-      probe.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+      probe.keepRecentTokens ?? KEEP_RECENT_TOKENS,
     ),
     custom,
   }));
@@ -983,7 +983,7 @@ function summarize(checks: DoctorCheck[]): string {
 }
 
 // The parsed `kubic doctor` invocation (commander owns the argv:
-// apps/kubic/src/commands/solo.ts). Each `skip` entry may list several
+// apps/kubic/src/commands/session.ts). Each `skip` entry may list several
 // comma-separated check ids.
 export interface DoctorCommandOptions {
   readonly skip?: readonly string[];

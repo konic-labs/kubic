@@ -5,6 +5,7 @@
 
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { getSupportedThinkingLevels } from '../../../packages/agent/src/pi-boundary.js';
 import {
   type CommandResult,
   EXIT_CANCELLED,
@@ -25,7 +26,6 @@ import {
   type SetupProviderChoice,
   type SetupUi,
 } from '../../../packages/host/src/setup-cli.js';
-import { getSupportedThinkingLevels } from '../../../packages/worker/src/pi-boundary.js';
 import {
   type CliConfigResult,
   projectTrustFor,

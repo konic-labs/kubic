@@ -10,9 +10,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const registered = vi.hoisted(() => ({ calls: [] as string[][] }));
-vi.mock('../../worker/src/models-config.js', async (importOriginal) => {
+vi.mock('../../agent/src/models-config.js', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('../../worker/src/models-config.js')>();
+    await importOriginal<typeof import('../../agent/src/models-config.js')>();
   return {
     ...actual,
     registerCustomProviders: (

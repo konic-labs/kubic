@@ -7,11 +7,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   bootFauxLane,
   runPrompt,
-} from '../../../packages/worker/src/lane/test-harness.js';
+} from '../../../packages/agent/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -20,7 +19,8 @@ import {
   type MutableModels,
   type Usage,
   UsageDoc,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,
@@ -89,13 +89,13 @@ async function billedSession(root: string): Promise<string> {
     ],
   });
   try {
-    await runPrompt(lane.solo, 'first prompt', { requestId: 'u1' });
-    await runPrompt(lane.solo, 'second prompt', { requestId: 'u2' });
+    await runPrompt(lane.lane, 'first prompt', { requestId: 'u1' });
+    await runPrompt(lane.lane, 'second prompt', { requestId: 'u2' });
     // Two earlier responses, two billed buckets: 0.02 + 0.01 = 0.03.
     // `harness.root()` runs OUTSIDE the commit: calling it inside the
     // transaction deadlocks on the harness's own conversation handle.
-    const conversation = await lane.solo.harness.root(BACKGROUND_CONTEXT);
-    await lane.solo.harness.commit(async (tx) => {
+    const conversation = await lane.lane.harness.root(BACKGROUND_CONTEXT);
+    await lane.lane.harness.commit(async (tx) => {
       const usage = await tx.doc(UsageDoc, conversation.id);
       usage.models = {
         'faux/first': usageOf(1000, 200, 0.02),

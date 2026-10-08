@@ -8,13 +8,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxText,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';

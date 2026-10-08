@@ -1,5 +1,5 @@
 // Prod `kubic run -p` runner: the composition root drives the
-// real solo lane headless and derives the terminus from the lane's own
+// real lane headless and derives the terminus from the lane's own
 // settled outcome (E1). Everything durable lands under
 // <sessionsRoot>/<id>/ (E3): the transcript and usage rows in the session
 // store, file effects in <id>/journal/ via lane interception, and the
@@ -11,13 +11,80 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  abortLane,
+  forgetLaneKills,
+} from '../../../packages/agent/src/lane/abort.js';
+import {
+  bootLane,
+  type Lane,
+  type LaneCompactionOptions,
+} from '../../../packages/agent/src/lane/boot.js';
+import {
+  type KubicLaneEvent,
+  subscribeLaneEvents,
+} from '../../../packages/agent/src/lane/events.js';
+import {
+  type ClassifiedFailure,
+  classifyFailure,
+  type RetryDecision,
+} from '../../../packages/agent/src/lane/failures.js';
+import {
+  describePendingSettlement,
+  inspectPending,
+  pendingInputText,
+  settlePending,
+} from '../../../packages/agent/src/lane/pending.js';
+import {
+  attachSession,
+  createSession,
+  laneConversationIdOf,
+  openSessionStore,
+  type SessionHandle,
+  sessionsTouchingWorkspace,
+} from '../../../packages/agent/src/lane/session-store.js';
+import {
+  entriesToTranscript,
+  readConversationEntries,
+  readSessionEntries,
+  type TranscriptItem,
+} from '../../../packages/agent/src/lane/transcript.js';
+import {
+  awaitTurn,
+  runTurnWithOverflowRecovery,
+  type TurnOutcome,
+  turnAbort,
+  turnLaneRecord,
+} from '../../../packages/agent/src/lane/turn.js';
+import {
+  ModelSelectError,
+  type ModelSelection,
+  type selectModel,
+} from '../../../packages/agent/src/model-select.js';
+import { OPERATIONS } from '../../../packages/agent/src/ops/registry.js';
+import {
   checkAgreement,
+  DEFAULT_PERMISSIONS,
   type PermissionClasses,
   type RunMode,
-  SOLO_DEFAULTS,
   validateClasses,
-} from '../../../packages/agents/src/policy.js';
-import { expandSkillInvocation } from '../../../packages/agents/src/skills/skills.js';
+} from '../../../packages/agent/src/permissions.js';
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  createModels,
+  createRegistry,
+  type EntryRecord,
+  Harness,
+  type MutableModels,
+  UserEntry,
+  withCancel,
+} from '../../../packages/agent/src/pi-boundary.js';
+import { expandSkillInvocation } from '../../../packages/agent/src/skills/skills.js';
+import {
+  resolveStreamOptions,
+  type StreamTuningTables,
+} from '../../../packages/agent/src/stream-options.js';
+import { DEFAULT_RUN_ROLE } from '../../../packages/core/src/run-role.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
@@ -36,11 +103,11 @@ import {
 import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
 import { TIMEOUT_REASON_MARKER } from '../../../packages/host/src/approval-timeout.js';
 import {
+  type ApprovalConfig,
   enableSessionFullAccess,
   fullAccessInForceWarning,
-  type InstalledSoloPolicy,
-  installSoloPolicy,
-  type SoloApprovalConfig,
+  type InstalledPolicy,
+  installPolicy,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import type {
@@ -59,9 +126,9 @@ import {
   providerOverrideFromEnv,
 } from '../../../packages/host/src/faux-provider.js';
 import {
-  emitSoloWarning,
-  shouldEmitSoloNotice,
-} from '../../../packages/host/src/limits/solo-warning.js';
+  emitNoIsolationNotice,
+  shouldEmitNotice,
+} from '../../../packages/host/src/limits/no-isolation-notice.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
@@ -115,72 +182,6 @@ import {
   verifierLabels,
 } from '../../../packages/host/src/verify/verifier.js';
 import {
-  abortLane,
-  forgetLaneKills,
-} from '../../../packages/worker/src/lane/abort.js';
-import {
-  type KubicLaneEvent,
-  subscribeLaneEvents,
-} from '../../../packages/worker/src/lane/events.js';
-import {
-  type ClassifiedFailure,
-  classifyFailure,
-  type RetryDecision,
-} from '../../../packages/worker/src/lane/failures.js';
-import {
-  describePendingSettlement,
-  inspectPending,
-  pendingInputText,
-  settlePending,
-} from '../../../packages/worker/src/lane/pending.js';
-import {
-  attachSession,
-  createSession,
-  laneConversationIdOf,
-  openSessionStore,
-  type SessionHandle,
-  sessionsTouchingWorkspace,
-} from '../../../packages/worker/src/lane/session-store.js';
-import {
-  bootSoloLane,
-  type SoloCompactionOptions,
-  type SoloLane,
-} from '../../../packages/worker/src/lane/solo.js';
-import {
-  entriesToTranscript,
-  readConversationEntries,
-  readSessionEntries,
-  type TranscriptItem,
-} from '../../../packages/worker/src/lane/transcript.js';
-import {
-  awaitTurn,
-  runTurnWithOverflowRecovery,
-  type TurnOutcome,
-  turnAbort,
-  turnLaneRecord,
-} from '../../../packages/worker/src/lane/turn.js';
-import {
-  ModelSelectError,
-  type ModelSelection,
-  type selectModel,
-} from '../../../packages/worker/src/model-select.js';
-import { OPERATIONS } from '../../../packages/worker/src/ops/registry.js';
-import {
-  BACKGROUND_CONTEXT,
-  type Context,
-  createModels,
-  createRegistry,
-  type EntryRecord,
-  Harness,
-  type MutableModels,
-  UserEntry,
-  withCancel,
-} from '../../../packages/worker/src/pi-boundary.js';
-import {
-  resolveStreamOptions,
-  type StreamTuningTables,
-} from '../../../packages/worker/src/stream-options.js';
-import {
   resolveRoleThinking,
   roleModelScope,
   selectBootModel,
@@ -203,8 +204,8 @@ export interface HeadlessRunOptions {
   invokeSkill?: string;
   // Role selection: `--role <name>` boots the lane as
   // the role document `.kubic/roles/<name>.md` defines — its prompt text
-  // replaces the solo constant and its resolved tool set becomes the
-  // lane's allowlist. Absent means the solo default, unchanged.
+  // replaces the constant and its resolved tool set becomes the
+  // lane's allowlist. Absent means the default, unchanged.
   role?: string;
   // Debug channel: when set, the run emits its lane/tool
   // debug lines to the injected sink (stderr in prod). The span artifact is
@@ -224,7 +225,7 @@ export interface HeadlessRunOptions {
   // session. Absent means off (interactive), never assumed.
   autonomous?: boolean;
   // Live progress on an interactive terminal (heading, compact
-  // solo notice, one line per tool call). Absent: today's stderr warning
+  // no-isolation notice, one line per tool call). Absent: today's stderr warning
   // block and no progress output.
   progress?: RunProgressSink;
 }
@@ -258,7 +259,7 @@ export interface HeadlessRunDeps {
   // The config `[approvals]` policy (route, maxPendingMs,
   // autoApprove, requireJustification, sessionScoped). Absent means the
   // documented defaults.
-  approvals?: SoloApprovalConfig;
+  approvals?: ApprovalConfig;
   // Enterprise policy: the composition root resolves it
   // once (`runtimePolicy` in config-runtime) and threads it here. A run only
   // gates its tool set and model selection when the layer actually
@@ -278,11 +279,11 @@ export interface HeadlessRunDeps {
   // level, a role default, or Pi's 'off'.
   thinking?: RuntimeThinking;
   // The installed-policy seat. Absent means the shipped
-  // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
+  // DEFAULT: the documented DEFAULT_PERMISSIONS classes plus the destructive/
   // network/confine guards and the approval ask, all derived by
-  // installSoloPolicy. Tests inject a variant here; nothing else may skip
+  // installPolicy. Tests inject a variant here; nothing else may skip
   // the install, which is why the default is not an opt-in.
-  policy?: InstalledSoloPolicy;
+  policy?: InstalledPolicy;
   // Declared out-of-scope paths for the baseline.
   // Populated by `[journal] outOfScope` through runtimeRunDeps;
   // absent means the mechanism's own skips only — `.git/`, `.kubic/` and
@@ -296,7 +297,7 @@ export interface HeadlessRunDeps {
   // config load — the boot hands it to the settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent
   // window).
-  compaction?: SoloCompactionOptions;
+  compaction?: LaneCompactionOptions;
   // Debug sink for the debug lines. Defaults to stderr so a live
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
@@ -434,7 +435,7 @@ function finished(
   errorMessage?: string,
   signal?: string,
   failure?: ClassifiedFailure,
-  // The retry decision when the lane made one (solo overflow
+  // The retry decision when the lane made one (overflow
   // recovery) — strategy, reason, notBefore and whether the retry
   // happened, also on success.
   retry?: RetryRecord,
@@ -557,14 +558,14 @@ function stoppedResult(
 // while the lane is open, the session storage otherwise. A read failure
 // leaves the trajectory without actions, never the run without its result.
 async function captureEntries(
-  solo: SoloLane | undefined,
+  lane: Lane | undefined,
   session: SessionHandle,
   context: Context,
 ): Promise<EntryRecord[]> {
   try {
-    return solo === undefined
+    return lane === undefined
       ? await readSessionEntries(session.storage, context)
-      : await readConversationEntries(solo.conversation, context);
+      : await readConversationEntries(lane.conversation, context);
   } catch {
     return [];
   }
@@ -601,7 +602,7 @@ async function settledWithin<T>(
 // a context that is NOT the cancelled bound, and the wait is bounded so the
 // run's own result never hangs on it.
 async function abortAbandonedLane(
-  solo: SoloLane,
+  lane: Lane,
   report: (message: string) => void,
 ): Promise<void> {
   const cancel = withCancel(BACKGROUND_CONTEXT);
@@ -611,7 +612,7 @@ async function abortAbandonedLane(
     LANE_ABORT_BOUND_MS,
   );
   try {
-    await abortLane(solo, cancel.context);
+    await abortLane(lane, cancel.context);
   } catch (error) {
     report(
       `guard: drain failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -679,23 +680,23 @@ async function appendPromptEntry(
 // earlier identical prompt) is never written twice, and a lane that booted
 // but never admitted the prompt still gets its entry.
 async function ensurePromptDurable(
-  solo: SoloLane | undefined,
+  lane: Lane | undefined,
   session: SessionHandle,
   prompt: string,
   context: Context,
   report: (message: string) => void,
 ): Promise<void> {
-  const entries = await captureEntries(solo, session, context);
+  const entries = await captureEntries(lane, session, context);
   const present = entriesToTranscript(entries).some(
     (item) => item.kind === 'user' && item.text.trim() === prompt.trim(),
   );
   if (present) return;
   try {
-    if (solo === undefined) {
+    if (lane === undefined) {
       await appendPromptEntry(session, prompt, context);
     } else {
-      await solo.conversation.commit(async (tx) => {
-        await tx.appendEntry(UserEntry, solo.conversation.id, {
+      await lane.conversation.commit(async (tx) => {
+        await tx.appendEntry(UserEntry, lane.conversation.id, {
           model: [{ role: 'user', content: prompt, timestamp: Date.now() }],
         });
       }, context);
@@ -891,7 +892,7 @@ export async function runHeadlessPrompt(
       sessionsRoot: capture.sessionsRoot,
       sessionId: capture.sessionId,
       agentId: resolveRunAgentId(deps.agentId),
-      role: capture.role ?? 'solo',
+      role: capture.role ?? DEFAULT_RUN_ROLE,
       prompt: scrub(prompt),
       entries: capture.entries,
       ...(capture.model === undefined ? {} : { model: capture.model }),
@@ -1044,7 +1045,7 @@ async function runHeadlessPromptImpl(
       return finished('unassigned', 'usage', invalid, invalid);
     }
     const agreement = checkAgreement(
-      validateClasses({ ...(deps.policyClasses ?? SOLO_DEFAULTS) }),
+      validateClasses({ ...(deps.policyClasses ?? DEFAULT_PERMISSIONS) }),
       [...options.tools],
     );
     if (!agreement.agree) {
@@ -1134,7 +1135,7 @@ async function runHeadlessPromptImpl(
   // The booted lane is hoisted so every exit path can stop the
   // in-flight turn — a guard firing mid-turn must not abandon the tool
   // processes it interrupted.
-  let solo: SoloLane | undefined;
+  let lane: Lane | undefined;
   // Set when a guard or an interrupt abandoned a live turn: the finally then
   // states the durable conversation abort (plus the kill drain) instead of
   // dropping handles for work that is still running.
@@ -1184,8 +1185,8 @@ async function runHeadlessPromptImpl(
   function onSignal(signal: string): void {
     detachSignals();
     interruptedBy ??= signal;
-    if (solo !== undefined) {
-      for (const kill of solo.kills.drain(String(solo.conversation.id))) {
+    if (lane !== undefined) {
+      for (const kill of lane.kills.drain(String(lane.conversation.id))) {
         try {
           kill();
         } catch {
@@ -1219,7 +1220,7 @@ async function runHeadlessPromptImpl(
       // write is not a run failure.
     }
   };
-  // Solo no-isolation notice: the trust model is announced on
+  // The no-isolation notice: the trust model is announced on
   // stderr before the first turn, once per process start, using the module
   // strings verbatim so `kubic tui` reads identically. Suppressed by the
   // documented KUBIC_NO_NOTICE opt-out. stderr, never stdout: `--json`
@@ -1227,9 +1228,9 @@ async function runHeadlessPromptImpl(
   // With a progress sink the notice is its compact one-liner,
   // printed by `progress.begin` once the lane has booted (still before the
   // first turn); the three-line block stays for every other run.
-  const soloNotice = shouldEmitSoloNotice(process.env);
-  if (soloNotice && options.progress === undefined) {
-    emitSoloWarning((line) => process.stderr.write(`${line}\n`));
+  const noIsolationNotice = shouldEmitNotice(process.env);
+  if (noIsolationNotice && options.progress === undefined) {
+    emitNoIsolationNotice((line) => process.stderr.write(`${line}\n`));
   }
   try {
     // Attached inside the try: the finally below always detaches them.
@@ -1254,7 +1255,7 @@ async function runHeadlessPromptImpl(
     // the pin can act as the selection default. All four refusals are
     // fail-closed with a named reason: an unknown role, a contradictory
     // document, a document with no instructions, and a parse failure.
-    // Nothing is invented, and an absent --role leaves the solo boot
+    // Nothing is invented, and an absent --role leaves the lane boot
     // byte-identical.
     let role: { resolved: ResolvedRole; prompt: string } | undefined;
     // The resolved role document's `skills` list for
@@ -1333,9 +1334,9 @@ async function runHeadlessPromptImpl(
       roleDocSkills = selected.doc.skills;
       capture.role = selected.resolved.name;
     } else {
-      // The stock solo run resolves no role document — the
+      // The stock run resolves no role document — the
       // [policy] line still names the default role it runs as.
-      debug?.(`[policy] role=solo (default)`);
+      debug?.(`[policy] role=${DEFAULT_RUN_ROLE} (default)`);
     }
     // A refused models.json is a config error the user must see: it goes
     // to the warning channel unconditionally; a successful load is a
@@ -1455,8 +1456,8 @@ async function runHeadlessPromptImpl(
     capture.cwd = env.cwd;
     // Installed policy: the composition root derives
     // the classes and interceptor options the lane runs on, ONCE, from the
-    // same function doctor reads (host/approvals.installSoloPolicy). Config-
-    // sourced classes replace the documented SOLO_DEFAULTS; the
+    // same function doctor reads (host/approvals.installPolicy). Config-
+    // sourced classes replace the documented DEFAULT_PERMISSIONS; the
     // destructive/network/confine guards and the approval ask are installed
     // either way, so a run with no config is not a run with no policy.
     // The workspace root is explicit — the lane cannot invent one.
@@ -1506,7 +1507,7 @@ async function runHeadlessPromptImpl(
     let liveThinkingRef: string | undefined;
     const installed =
       deps.policy ??
-      installSoloPolicy({
+      installPolicy({
         workspace: env.cwd,
         // The lane enforces the most restrictive
         // merge of the config classes and the role's — a role declaring
@@ -1524,7 +1525,7 @@ async function runHeadlessPromptImpl(
             };
           return {
             classes: effectiveRoleClasses(
-              { ...SOLO_DEFAULTS, ...deps.policyClasses },
+              { ...DEFAULT_PERMISSIONS, ...deps.policyClasses },
               grantClasses,
             ),
             ...(requires === undefined ? {} : { requires }),
@@ -1564,7 +1565,7 @@ async function runHeadlessPromptImpl(
           posture: report.posture,
           autonomous: options.autonomous === true,
           // Review (low): the resolved base was in scope
-          // (`runBase`, passed to installSoloPolicy above) while the row
+          // (`runBase`, passed to installPolicy above) while the row
           // hardcoded `unknown`.
           base: runBase,
         }),
@@ -1756,7 +1757,7 @@ async function runHeadlessPromptImpl(
     // climbs only via the single auto trigger; explicit switches are a
     // TUI affordance).
     try {
-      solo = await bootSoloLane({
+      lane = await bootLane({
         session,
         models,
         model,
@@ -1840,7 +1841,7 @@ async function runHeadlessPromptImpl(
     // The boot reconciled the selection with the session's stored model: the
     // trajectory and the audit rows name what the lane reports, the same source
     // as the envelope and the usage rows.
-    const running = await liveModel(solo, context);
+    const running = await liveModel(lane, context);
     if (running !== undefined) {
       capture.model = { provider: running.provider, id: running.id };
       liveModelRef = `${running.provider}/${running.id}`;
@@ -1849,25 +1850,26 @@ async function runHeadlessPromptImpl(
     // defaults an unset level to `off`, the same answer `/thinking`
     // reports) — the audit rows name this, not the pre-boot pick.
     liveThinkingRef =
-      (await solo.conversation.agent(context)).thinkingLevel ?? 'off';
+      (await lane.conversation.agent(context)).thinkingLevel ?? 'off';
     // What the lane booted with (post-clamp), read
     // from the committed agent doc — the same source the envelope reports.
     // Unset stays unset: the trajectory omits the key rather than
     // inventing a level the lane never committed.
-    const bootedThinking = (await solo.conversation.agent(context))
+    const bootedThinking = (await lane.conversation.agent(context))
       .thinkingLevel;
     if (bootedThinking !== undefined) capture.thinking = bootedThinking;
-    report.model = await liveModelId(solo, context);
+    report.model = await liveModelId(lane, context);
     options.progress?.begin({
       ...(report.model === undefined ? {} : { model: report.model }),
-      notice: soloNotice,
+      ...(capture.role === undefined ? {} : { role: capture.role }),
+      notice: noIsolationNotice,
     });
     // The turn guard: one event subscription per conversation counts
     // the run's turns for `--max-turns`. Durable retries are the harness's own
     // (they commit no assistant entry), so a turn is one committed response.
     const detachEvents = await subscribeLaneEvents(
-      solo.harness,
-      solo.conversation.id,
+      lane.harness,
+      lane.conversation.id,
       (event) => {
         // A retry backoff and a compaction are
         // named on the debug channel — tens of silent seconds otherwise.
@@ -1916,13 +1918,13 @@ async function runHeadlessPromptImpl(
       // covers the durable turn itself (submit → wait → settlement). Tool
       // spans nest under `drive` because `startLane('drive')` is the lane
       // open when the harness runs them.
-      const pending = await inspectPending(solo, context);
+      const pending = await inspectPending(lane, context);
       const acceptSpan = spans.startLane('accept');
-      let resumed: Awaited<ReturnType<typeof solo.harness.submission>>;
+      let resumed: Awaited<ReturnType<typeof lane.harness.submission>>;
       try {
         if (pending.pending) {
-          const pendingPrompt = await pendingInputText(solo, context);
-          const placed = (await solo.harness.inspect(context)).submissions.find(
+          const pendingPrompt = await pendingInputText(lane, context);
+          const placed = (await lane.harness.inspect(context)).submissions.find(
             (record) => record.type === 'input' && record.status === 'placed',
           );
           if (
@@ -1933,14 +1935,14 @@ async function runHeadlessPromptImpl(
             pendingPrompt === effectivePrompt &&
             placed !== undefined
           ) {
-            resumed = await solo.harness.submission(placed.id, context);
+            resumed = await lane.harness.submission(placed.id, context);
             notice(
               `${pending.summary ?? 'pending work'} carries this prompt: resuming it instead of re-prompting`,
             );
           } else {
-            const settlement = await settlePending(solo, 'resume', {
+            const settlement = await settlePending(lane, 'resume', {
               context,
-              kills: solo.kills,
+              kills: lane.kills,
               guard: guard.context,
             });
             notice(describePendingSettlement(pending.summary, settlement));
@@ -1959,7 +1961,7 @@ async function runHeadlessPromptImpl(
       // prompting twice, while a fresh invocation is a fresh prompt.
       const requestId = `kubic-run:${randomUUID()}`;
       let outcome: TurnOutcome;
-      // The solo overflow-recovery decision, when the lane
+      // The overflow-recovery decision, when the lane
       // made one — carried into the envelope on every exit path below.
       let retryDecision: RetryDecision | undefined;
       let retryRetried = false;
@@ -1972,7 +1974,7 @@ async function runHeadlessPromptImpl(
           // once on the fresh context; every other outcome passes through
           // exactly as runTurn reports it.
           const recovered = await runTurnWithOverflowRecovery(
-            solo,
+            lane,
             effectivePrompt,
             {
               requestId,
@@ -2040,7 +2042,7 @@ async function runHeadlessPromptImpl(
       }
       if (outcome.kind === 'completed') {
         const items = entriesToTranscript(
-          await readConversationEntries(solo.conversation, context),
+          await readConversationEntries(lane.conversation, context),
         );
         return finished(
           id,
@@ -2076,13 +2078,13 @@ async function runHeadlessPromptImpl(
     // plain completion); a completed or failed turn forgets its (dead) kill
     // handles. Failures only reach the debug channel: the mapped result
     // and the sweep both stand.
-    if (solo !== undefined) {
+    if (lane !== undefined) {
       if (abandoned) {
-        await abortAbandonedLane(solo, (message) =>
+        await abortAbandonedLane(lane, (message) =>
           guardedReport(debug, message),
         );
       } else {
-        forgetLaneKills(solo);
+        forgetLaneKills(lane);
       }
     }
     // In-flight work is dead: a later signal takes the default path again.
@@ -2118,7 +2120,7 @@ async function runHeadlessPromptImpl(
     // the capture below so the trajectory carries the fallback write.
     try {
       await ensurePromptDurable(
-        solo,
+        lane,
         session,
         effectivePrompt,
         context,
@@ -2134,15 +2136,15 @@ async function runHeadlessPromptImpl(
     // still open through the shared transcript adapter; a read
     // failure leaves the trajectory without actions, never the run without
     // its result.
-    capture.entries = await captureEntries(solo, session, context);
+    capture.entries = await captureEntries(lane, session, context);
     // The harness owns the storage it adopted; closing it first means the
     // handle's release only gives the lock back (and closes a storage no
     // harness took). The result is already mapped: a close failure must
     // neither escape nor mask it. An abandoned turn may still hold a stuck
     // invocation, so THAT close is bounded — the run's own result wins.
     try {
-      if (solo !== undefined) {
-        const closing = solo.close(context);
+      if (lane !== undefined) {
+        const closing = lane.close(context);
         if (abandoned) {
           await settledWithin(closing, LANE_ABORT_BOUND_MS);
         } else {
@@ -2176,22 +2178,22 @@ function catalogIdentity(models: MutableModels | undefined): string[] {
 // conversation's agent model, else the boot's effective model. Tolerant of
 // liveness gaps, which report nothing rather than fail.
 async function liveModel(
-  solo: SoloLane,
+  lane: Lane,
   context: Context,
 ): Promise<{ provider: string; id: string } | undefined> {
-  const agent = await solo.conversation.agent(context);
+  const agent = await lane.conversation.agent(context);
   const live = agent.model;
   if (live !== undefined) {
     return { provider: live.provider, id: live.modelId };
   }
-  return solo.model as SoloLane['model'] | undefined;
+  return lane.model as Lane['model'] | undefined;
 }
 
 async function liveModelId(
-  solo: SoloLane,
+  lane: Lane,
   context: Context,
 ): Promise<string | undefined> {
-  const running = await liveModel(solo, context);
+  const running = await liveModel(lane, context);
   return running === undefined
     ? undefined
     : `${running.provider}/${running.id}`;

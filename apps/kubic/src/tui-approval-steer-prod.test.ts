@@ -14,15 +14,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import { bootLane } from '../../../packages/agent/src/lane/boot.js';
 import {
   createSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { bootSoloLane } from '../../../packages/worker/src/lane/solo.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+} from '../../../packages/agent/src/lane/session-store.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -30,13 +27,16 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   runTuiCommand,
-  soloTuiLoop,
   type TuiApprovalSeat,
   type TuiRunDeps,
+  tuiLoop,
 } from './tui-run.js';
 
 const made: string[] = [];
@@ -74,7 +74,7 @@ function fauxModels(steps: FauxMessage[]): {
 // The prod boot shape with the sessions root + models injected (same pattern as
 // tui-loop.test.ts). The seat arrives as bootLane's second argument — the same
 // way runTuiCommand hands the real one to the real boot — and is forwarded to
-// installSoloPolicy exactly like prod does.
+// installPolicy exactly like prod does.
 function fauxLaneBoot(
   root: string,
   models: MutableModels,
@@ -93,15 +93,15 @@ function fauxLaneBoot(
     if (model === undefined) throw new Error('no model registered');
     // The production policy derivation, with the seat the composition root
     // would attach (tui-run.ts does this on the real path).
-    const { installSoloPolicy } = await import(
+    const { installPolicy } = await import(
       '../../../packages/host/src/approvals.js'
     );
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: '/fake',
       sessionDir: join(root, id),
       ...(answer === undefined ? {} : { answer }),
     });
-    const solo = await bootSoloLane({
+    const lane = await bootLane({
       session,
       models,
       model,
@@ -118,9 +118,9 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
-      loop: soloTuiLoop(solo),
+      loop: tuiLoop(lane),
       close: async () => {
-        await solo.close(context);
+        await lane.close(context);
         await session.release(context);
       },
     };

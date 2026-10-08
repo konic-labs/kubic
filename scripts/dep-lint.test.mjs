@@ -49,14 +49,14 @@ describe('dep-lint', () => {
     );
   });
 
-  it('fails when packages/tui imports worker implementation via relative path', () => {
+  it('fails when packages/tui imports agent implementation via relative path', () => {
     const dir = fixtureTree({
-      'packages/tui/src/views.ts': `import { tools } from '../../worker/src/tools.js';\n`,
+      'packages/tui/src/views.ts': `import { tools } from '../../agent/src/tools.js';\n`,
     });
     const violations = checkTree(dir);
     assert.ok(
-      violations.some((v) => v.from === 'tui' && v.to === 'worker'),
-      `expected tui->worker violation, got ${JSON.stringify(violations)}`,
+      violations.some((v) => v.from === 'tui' && v.to === 'agent'),
+      `expected tui->agent violation, got ${JSON.stringify(violations)}`,
     );
   });
 
@@ -71,14 +71,14 @@ describe('dep-lint', () => {
     );
   });
 
-  it('fails when packages/worker imports host', () => {
+  it('fails when packages/agent imports host', () => {
     const dir = fixtureTree({
-      'packages/worker/src/session.ts': `import { dispatch } from '@kubic/host';\n`,
+      'packages/agent/src/session.ts': `import { dispatch } from '@kubic/host';\n`,
     });
     const violations = checkTree(dir);
     assert.ok(
-      violations.some((v) => v.from === 'worker' && v.to === 'host'),
-      `expected worker->host violation, got ${JSON.stringify(violations)}`,
+      violations.some((v) => v.from === 'agent' && v.to === 'host'),
+      `expected agent->host violation, got ${JSON.stringify(violations)}`,
     );
   });
 
@@ -113,12 +113,12 @@ describe('dep-lint', () => {
 
   it('fails when tools import node:fs directly', () => {
     const dir = fixtureTree({
-      'packages/worker/src/tools.ts': `import { readFileSync } from 'node:fs';\n`,
+      'packages/agent/src/tools.ts': `import { readFileSync } from 'node:fs';\n`,
     });
     const violations = checkTree(dir);
     assert.ok(
-      violations.some((v) => v.from === 'worker'),
-      `expected worker node:fs violation, got ${JSON.stringify(violations)}`,
+      violations.some((v) => v.from === 'agent'),
+      `expected agent node:fs violation, got ${JSON.stringify(violations)}`,
     );
   });
 
@@ -185,7 +185,7 @@ describe('dep-lint', () => {
 
   it('allows test files to import node builtins for scaffolding', () => {
     const dir = fixtureTree({
-      'packages/worker/src/result.test.ts': `import { mkdtempSync } from 'node:fs';\n`,
+      'packages/agent/src/result.test.ts': `import { mkdtempSync } from 'node:fs';\n`,
     });
     assert.deepEqual(checkTree(dir), []);
   });
@@ -203,25 +203,24 @@ describe('dep-lint', () => {
 
   it('fails on require() of a forbidden package', () => {
     const dir = fixtureTree({
-      'packages/tui/src/views.ts': `const m = require('@kubic/worker');\n`,
+      'packages/tui/src/views.ts': `const m = require('@kubic/agent');\n`,
     });
     const violations = checkTree(dir);
     assert.ok(
-      violations.some((v) => v.from === 'tui' && v.to === 'worker'),
-      `expected tui->worker violation, got ${JSON.stringify(violations)}`,
+      violations.some((v) => v.from === 'tui' && v.to === 'agent'),
+      `expected tui->agent violation, got ${JSON.stringify(violations)}`,
     );
   });
 
   it('flags every forbidden edge of each package row exactly', () => {
     const rows = {
-      core: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval', 'tui'],
-      exec: ['worker', 'host', 'agents', 'trajectory', 'eval', 'tui'],
-      worker: ['host', 'tui'],
+      core: ['exec', 'agent', 'host', 'trajectory', 'eval', 'tui'],
+      exec: ['agent', 'host', 'trajectory', 'eval', 'tui'],
+      agent: ['host', 'tui', 'trajectory', 'eval'],
       host: ['tui'],
-      agents: ['host', 'worker', 'tui', 'trajectory', 'eval'],
-      trajectory: ['exec', 'worker', 'host', 'agents', 'eval', 'tui'],
-      eval: ['exec', 'worker', 'host', 'tui'],
-      tui: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval'],
+      trajectory: ['exec', 'agent', 'host', 'eval', 'tui'],
+      eval: ['exec', 'agent', 'host', 'tui'],
+      tui: ['exec', 'agent', 'host', 'trajectory', 'eval'],
     };
     for (const [owner, targets] of Object.entries(rows)) {
       const files = {};
@@ -302,15 +301,15 @@ describe('dep-lint', () => {
 
   it('flags node:fs subpaths, bare child_process, and records the spec', () => {
     const dir = fixtureTree({
-      'packages/worker/src/a.ts': `import { readFile } from 'node:fs/promises';\n`,
+      'packages/agent/src/a.ts': `import { readFile } from 'node:fs/promises';\n`,
       'packages/host/src/b.ts': `import { exec } from 'child_process';\n`,
-      'packages/worker/src/c.ts': `import { spawn } from 'node:child_process/subprocess';\n`,
+      'packages/agent/src/c.ts': `import { spawn } from 'node:child_process/subprocess';\n`,
     });
     const violations = checkTree(dir);
     assert.deepEqual(violations.map((v) => `${v.from}->${v.to}`).sort(), [
+      'agent->node:child_process/subprocess',
+      'agent->node:fs/promises',
       'host->child_process',
-      'worker->node:child_process/subprocess',
-      'worker->node:fs/promises',
     ]);
   });
 
@@ -321,18 +320,18 @@ describe('dep-lint', () => {
     assert.deepEqual(checkTree(dir), []);
   });
 
-  it('allows the worker Pi boundary file and flags other Pi users', () => {
+  it('allows the agent Pi boundary file and flags other Pi users', () => {
     const ok = fixtureTree({
-      'packages/worker/src/pi-boundary.ts': `import { createModel } from '@earendil-works/pi-ai';\n`,
+      'packages/agent/src/pi-boundary.ts': `import { createModel } from '@earendil-works/pi-ai';\n`,
     });
     assert.deepEqual(checkTree(ok), []);
     const bad = fixtureTree({
-      'packages/worker/src/tools.ts': `import { createModel } from '@earendil-works/pi-ai';\n`,
+      'packages/agent/src/tools.ts': `import { createModel } from '@earendil-works/pi-ai';\n`,
     });
     const violations = checkTree(bad);
     assert.deepEqual(
       violations.map((v) => `${v.from}->${v.to}`),
-      ['worker->@earendil-works/pi-ai'],
+      ['agent->@earendil-works/pi-ai'],
     );
   });
 
@@ -404,14 +403,14 @@ describe('dep-lint', () => {
 
   it('reports exact lines for fs and Pi-seam violations', () => {
     const dir = fixtureTree({
-      'packages/worker/src/a.ts': `import { a } from '@kubic/worker';\nimport { b } from '@kubic/worker';\nimport { fs } from 'node:fs';\n`,
+      'packages/agent/src/a.ts': `import { a } from '@kubic/agent';\nimport { b } from '@kubic/agent';\nimport { fs } from 'node:fs';\n`,
       'packages/tui/src/b.ts': `import { a } from '@kubic/tui';\nimport { V } from '@earendil-works/pi-tui';\n`,
     });
     const byFile = {};
     for (const v of checkTree(dir)) byFile[v.file] = v;
-    assert.equal(byFile[join('packages', 'worker', 'src', 'a.ts')].line, 3);
+    assert.equal(byFile[join('packages', 'agent', 'src', 'a.ts')].line, 3);
     assert.equal(
-      byFile[join('packages', 'worker', 'src', 'a.ts')].to,
+      byFile[join('packages', 'agent', 'src', 'a.ts')].to,
       'node:fs',
     );
     assert.equal(byFile[join('packages', 'tui', 'src', 'b.ts')].line, 2);
@@ -420,12 +419,12 @@ describe('dep-lint', () => {
   it('flags export-from and side-effect imports', () => {
     const dir = fixtureTree({
       'packages/tui/src/a.ts': `export { x } from '@kubic/host';\n`,
-      'packages/tui/src/b.ts': `import '@kubic/worker';\n`,
+      'packages/tui/src/b.ts': `import '@kubic/agent';\n`,
     });
     const violations = checkTree(dir);
     assert.deepEqual(violations.map((v) => `${v.from}->${v.to}`).sort(), [
+      'tui->agent',
       'tui->host',
-      'tui->worker',
     ]);
   });
 
@@ -473,11 +472,9 @@ describe('dep-lint', () => {
     );
   });
 
-  it('allows worker importing agents: recorded drift', () => {
-    // Beyond the diagram's `worker ──▶ exec, core`: the lane builds on
-    // agents roles/policy/task contracts.
+  it('allows the agent lane to import its permission module', () => {
     const dir = fixtureTree({
-      'packages/worker/src/lane/policy.ts': `import type { PermissionClasses } from '../../../agents/src/policy.js';\n`,
+      'packages/agent/src/lane/policy.ts': `import type { PermissionClasses } from '../../policy.js';\n`,
     });
     assert.deepEqual(checkTree(dir), []);
   });

@@ -1,5 +1,5 @@
-// End to end: the host approval service gating a real solo lane
-// through the worker approve hook. The lane boots through
+// End to end: the host approval service gating a real lane
+// through the agent approve hook. The lane boots through
 // the shared faux harness factory; its tool-end events come from the
 // durable watch exactly as `kubic run`/`tui` consume them.
 
@@ -10,19 +10,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type {
   KubicLaneEvent,
   LaneEventSink,
-} from '../../worker/src/lane/events.js';
+} from '../../agent/src/lane/events.js';
 import {
   bootFauxLane,
   fauxToolUse,
-} from '../../worker/src/lane/test-harness.js';
+} from '../../agent/src/lane/test-harness.js';
 import {
   fauxAssistantMessage,
   fauxToolCall,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
 import {
   enableFullAccess,
   FileApprovalStore,
-  installSoloPolicy,
+  installPolicy,
 } from './approvals.js';
 import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 
@@ -46,7 +46,7 @@ describe('approvals gate the lane', () => {
 
     // Each boot installs the policy anew: the posture is read once, at install.
     const runOnce = async (): Promise<KubicLaneEvent[]> => {
-      const installed = installSoloPolicy({
+      const installed = installPolicy({
         workspace: dir,
         sessionDir: dir,
         maxPendingMs: 20,
@@ -94,7 +94,7 @@ describe('approvals gate the lane', () => {
 describe('credential access is challenged and audited', () => {
   it('denies a headless bash credential read and records trigger:credentials', async () => {
     const dir = mkTmp('approvals-cred-');
-    const installed = installSoloPolicy({
+    const installed = installPolicy({
       workspace: dir,
       sessionDir: join(dir, 'session'),
     });

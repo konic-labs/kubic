@@ -4,15 +4,15 @@
 // transcript is read once per turn, never per event. Stub lane only: zero
 // network, zero paid tokens.
 import { describe, expect, it } from 'vitest';
-import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import type {
   KubicLaneEvent,
   LaneEventSink,
-} from '../../../packages/worker/src/lane/events.js';
+} from '../../../packages/agent/src/lane/events.js';
 import {
   BACKGROUND_CONTEXT,
   type EntryRecord,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import { type TuiLaneLoop, TuiTurnRunner } from './tui-run.js';
 
 const COMMITTED: EntryRecord = {

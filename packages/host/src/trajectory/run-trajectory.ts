@@ -14,6 +14,16 @@
 
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { classifyFailure } from '../../../agent/src/lane/failures.js';
+import {
+  classifyHarnessError,
+  type OperationErrorLike,
+} from '../../../agent/src/lane/settle.js';
+import {
+  entriesToTranscript,
+  type TranscriptItem,
+} from '../../../agent/src/lane/transcript.js';
+import type { EntryRecord } from '../../../agent/src/pi-boundary.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import {
   type FileChange,
@@ -35,16 +45,6 @@ import type {
   TrajectoryResultStatus,
   TrajectoryUsage,
 } from '../../../trajectory/src/schema.js';
-import { classifyFailure } from '../../../worker/src/lane/failures.js';
-import {
-  classifyHarnessError,
-  type OperationErrorLike,
-} from '../../../worker/src/lane/settle.js';
-import {
-  entriesToTranscript,
-  type TranscriptItem,
-} from '../../../worker/src/lane/transcript.js';
-import type { EntryRecord } from '../../../worker/src/pi-boundary.js';
 import type { OrgAuditRecord } from '../policy/audit.js';
 import type { RunTerminusKind } from '../run-cli.js';
 
@@ -66,7 +66,7 @@ export interface RunOutcome {
 export interface RunTrajectoryInput {
   sessionId: string;
   agentId: string;
-  // The role the lane ran as: 'solo', or the `--role` name.
+  // The role the lane ran as: 'default', or the `--role` name.
   role: string;
   prompt: string;
   // The session's durable entries (any order; older runs filtered here).

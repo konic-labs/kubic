@@ -11,14 +11,14 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../../../packages/exec/src/env.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../../../packages/worker/src/pi-boundary.js';
+} from '../../../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../../../packages/exec/src/env.js';
 import { runHeadlessPrompt } from '../../headless-run.js';
 
 const roots: string[] = [];
@@ -29,7 +29,7 @@ function tmpRoot(): string {
   return root;
 }
 
-// The solo no-isolation notice is pinned by solo-notice-prod.test.ts; here it
+// The no-isolation notice is pinned by no-isolation-notice-prod.test.ts; here it
 // is only stderr noise, silenced through its documented opt-out.
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -152,7 +152,7 @@ describe('live run emits lane/tool spans', () => {
     // Vocabulary is closed: no invented debug class on the run path.
     for (const line of lines) {
       expect(line).toMatch(
-        /^\[(policy|worker|session|tool|model|agent|exit|handles)\]/,
+        /^\[(policy|session|tool|model|agent|exit|handles)\]/,
       );
     }
   });

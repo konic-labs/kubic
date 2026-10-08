@@ -16,6 +16,14 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { buildPreferencePair } from '../../../packages/eval/src/rl/preference.js';
 import { referenceVerifier } from '../../../packages/eval/src/rl/verifier.js';
 import { computeSignals } from '../../../packages/eval/src/signals.js';
@@ -31,14 +39,6 @@ import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
 } from '../../../packages/trajectory/src/schema.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { runtimeRunDeps } from './config-runtime.js';
 import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
 

@@ -1,10 +1,27 @@
 // `kubic sessions` commands: create, list, attach.
-// Thin over the worker session store; presentation only (one line per
+// Thin over the agent session store; presentation only (one line per
 // fact). attach prints metadata plus the transcript tail so a user can
 // confirm what they are resuming before driving it.
 
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { inspectStoredWork } from '../../agent/src/lane/pending.js';
+import {
+  attachSession,
+  createSession,
+  forkSession,
+  listSessions,
+  openSessionStore,
+  SessionAttachError,
+  SessionForkError,
+  SessionLockError,
+} from '../../agent/src/lane/session-store.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+  type TranscriptItem,
+} from '../../agent/src/lane/transcript.js';
+import { BACKGROUND_CONTEXT } from '../../agent/src/pi-boundary.js';
 import {
   type CommandResult,
   EXIT_FAILED,
@@ -16,23 +33,6 @@ import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { stripUnsafeCharacters } from '../../exec/src/runtime-exclude.js';
-import { inspectStoredWork } from '../../worker/src/lane/pending.js';
-import {
-  attachSession,
-  createSession,
-  forkSession,
-  listSessions,
-  openSessionStore,
-  SessionAttachError,
-  SessionForkError,
-  SessionLockError,
-} from '../../worker/src/lane/session-store.js';
-import {
-  entriesToTranscript,
-  readSessionEntries,
-  type TranscriptItem,
-} from '../../worker/src/lane/transcript.js';
-import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
 import { enableSessionFullAccess, FileApprovalStore } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
@@ -59,7 +59,7 @@ export interface SessionsCommandDeps extends CliIo {
 }
 
 // The parsed `kubic sessions <sub>` invocation (commander owns the argv:
-// apps/kubic/src/commands/solo.ts).
+// apps/kubic/src/commands/session.ts).
 export type SessionsInvocation =
   | {
       readonly command: 'create';

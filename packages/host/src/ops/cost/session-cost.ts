@@ -32,7 +32,7 @@ export interface SessionCostInput {
 // The default is the session: one row per session and model it ran.
 export type CostGroupBy = 'request' | 'session' | 'project';
 
-export const COST_GROUP_BYS: readonly CostGroupBy[] = [
+const COST_GROUP_BYS: readonly CostGroupBy[] = [
   'request',
   'session',
   'project',
@@ -95,10 +95,8 @@ export function groupCostRows(
   return [...grouped.values()];
 }
 
-export interface SessionCostEntry extends SessionCostInput {}
-
 export interface SessionCostSummary {
-  rows: SessionCostEntry[];
+  rows: SessionCostInput[];
   taskTotal: number;
   // The units the level counts: distinct sessions at `session` (a session with
   // several model buckets is one unit), otherwise one per row.
@@ -110,14 +108,14 @@ export interface SessionCostSummary {
 
 // The `--json` document: the rows the table prints and the task total.
 export interface CostJsonShape {
-  rows: SessionCostEntry[];
+  rows: SessionCostInput[];
   taskTotal: number;
 }
 
 // The cache counters each unit carries. At the `session` level a session's
 // buckets sum into one unit, so its prefix hit is judged on the session.
 function cacheUnitsOf(
-  rows: readonly SessionCostEntry[],
+  rows: readonly SessionCostInput[],
   by: CostGroupBy,
 ): Array<{ cacheRead: number; cacheWrite: number }> {
   const withCache = rows.filter(
@@ -147,9 +145,9 @@ export function summarizeSessionCost(
   rows: SessionCostInput[],
   by: CostGroupBy = DEFAULT_COST_GROUP_BY,
 ): SessionCostSummary {
-  const entries: SessionCostEntry[] = rows.map((row) => ({ ...row }));
+  const entries: SessionCostInput[] = rows.map((row) => ({ ...row }));
   const taskTotal = entries.reduce(
-    (acc: number, entry: SessionCostEntry) => acc + entry.costUsd,
+    (acc: number, entry: SessionCostInput) => acc + entry.costUsd,
     0,
   );
   const units =

@@ -85,10 +85,6 @@ import {
   readSessionUsage,
   type SessionUsageRow,
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
-import {
-  TurnSpans,
-  type TurnSpansSink,
-} from '../../../packages/host/src/ops/perf/run-spans.js';
 import { resolveRunBaseRevision } from '../../../packages/host/src/policy/audit-ledger.js';
 import {
   type EffectivePolicy,
@@ -116,6 +112,10 @@ import {
   type RunTerminusKind,
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
+import {
+  TurnSpans,
+  type TurnSpansSink,
+} from '../../../packages/host/src/run-spans.js';
 import {
   type SessionSummary,
   summarizeProjectSessions,

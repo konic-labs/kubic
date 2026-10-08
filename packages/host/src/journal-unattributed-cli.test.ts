@@ -97,6 +97,24 @@ describe('journal CLI unattributed count', () => {
     expect(lines[2]).toMatch(/\sreconciled$/);
   });
 
+  it('log names an unattributed row by its path, byte delta and note', async () => {
+    const { journalDir, root } = seedUnattributed();
+    const lines: string[] = [];
+    const code = (
+      await runJournalCommand(
+        { command: 'log' },
+        {
+          journalDir,
+          root,
+          out: (l) => lines.push(l),
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(0);
+    const row = lines.find((line) => line.includes('b.txt'));
+    expect(row).toMatch(/\sb\.txt\s+\+3B\s+reconciled$/);
+  });
+
   it('log on an empty journal keeps its sentence and reports zero finds', async () => {
     const journalDir = mkTmp('j-');
     const root = mkTmp('ws-');

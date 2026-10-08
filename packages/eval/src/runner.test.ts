@@ -35,7 +35,6 @@ describe('runEvalTask refusals are specific', () => {
     model: 'acme/m1',
     thinking: null,
     worktree: '/wt/a',
-    generation: 3,
     size: 'standard',
     workspace: 'inline' as const,
   };
@@ -47,21 +46,13 @@ describe('runEvalTask refusals are specific', () => {
     }),
   };
 
-  it('refuses a blank worktree and a negative generation, accepts generation 0', async () => {
+  it('refuses a blank worktree', async () => {
     await expect(
       runEvalTask({ ...base, worktree: '  ' }, ok),
     ).rejects.toMatchObject({
       code: 'missing-worktree',
       message: expect.stringMatching(/^worktree is required/),
     });
-    await expect(
-      runEvalTask({ ...base, generation: -1 }, ok),
-    ).rejects.toMatchObject({
-      code: 'missing-generation',
-      message: expect.stringMatching(/^generation is required/),
-    });
-    const record = await runEvalTask({ ...base, generation: 0 }, ok);
-    expect(record.generation).toBe(0);
   });
 
   it('explains a worktree-mode refusal with or without a checker', async () => {
@@ -119,7 +110,6 @@ describe('runEvalTask', () => {
         model: 'acme/m1',
         thinking: null,
         worktree: '/wt/agent-1',
-        generation: 3,
         size: 'standard',
         workspace: 'inline',
       },
@@ -134,12 +124,12 @@ describe('runEvalTask', () => {
     expect(record.suite).toBe('swe-bench-mini');
     expect(record.success).toBe(true);
     expect(record.worktree).toBe('/wt/agent-1');
-    expect(record.generation).toBe(3);
+    expect(record.caseId).toBe('swe-bench-mini');
     expect(record.size).toBe('standard');
     expect(record.tokens).toBe(150);
   });
 
-  it('rejects a run missing worktree/generation/size instead of storing', async () => {
+  it('rejects a run missing worktree/size instead of storing', async () => {
     await expect(
       runEvalTask(
         {
@@ -148,7 +138,6 @@ describe('runEvalTask', () => {
           model: 'acme/m1',
           thinking: null,
           worktree: '',
-          generation: 3,
           size: 'standard',
           workspace: 'inline',
         },
@@ -166,7 +155,6 @@ describe('runEvalTask', () => {
         model: 'acme/m1',
         thinking: null,
         worktree: '/wt/clean',
-        generation: 1,
         size: 'smoke',
         workspace: 'worktree',
       },
@@ -196,7 +184,6 @@ describe('runEvalTask', () => {
           model: 'acme/m1',
           thinking: null,
           worktree: '/wt/dirty',
-          generation: 1,
           size: 'smoke',
           workspace: 'worktree',
         },
@@ -219,7 +206,6 @@ describe('runEvalTask', () => {
           model: 'acme/m1',
           thinking: null,
           worktree: '/wt/unchecked',
-          generation: 1,
           size: 'smoke',
           workspace: 'worktree',
         },
@@ -241,7 +227,6 @@ describe('runEvalTask', () => {
           model: 'acme/m1',
           thinking: null,
           worktree: '/wt/a',
-          generation: 1,
           size: 'smoke',
           workspace: 'inline',
         },
@@ -263,7 +248,6 @@ describe('runEvalTask', () => {
           model: 'acme/m1',
           thinking: null,
           worktree: '/wt/a',
-          generation: 1,
           size: 'smoke',
           workspace: 'inline',
         },
@@ -285,7 +269,6 @@ describe('runEvalTask', () => {
           model: 'acme/m1',
           thinking: null,
           worktree: '/wt/a',
-          generation: 1,
           size: 'smoke',
           workspace: 'inline',
         },
@@ -316,7 +299,6 @@ describe('runEvalTask', () => {
           model: 'acme/m1',
           thinking: null,
           worktree: '/wt/a',
-          generation: 1,
           size: 'smoke',
           workspace: 'inline',
         },
@@ -327,32 +309,6 @@ describe('runEvalTask', () => {
     ).rejects.toMatchObject({ code: 'missing-usage-rows' });
   });
 
-  it('rejects non-integer and infinite generations at the API layer', async () => {
-    for (const generation of [1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
-      await expect(
-        runEvalTask(
-          {
-            suite: 'swe-bench-mini',
-            task: 'fix',
-            model: 'acme/m1',
-            thinking: null,
-            worktree: '/wt/a',
-            generation,
-            size: 'smoke',
-            workspace: 'inline',
-          },
-          {
-            runSuite: async () => ({
-              success: true,
-              signals: signals(),
-              usageRows: usageRows(),
-            }),
-          },
-        ),
-      ).rejects.toMatchObject({ code: 'missing-generation' });
-    }
-  });
-
   it('stores success=false for a completed run with a red gate', async () => {
     const record = await runEvalTask(
       {
@@ -361,7 +317,6 @@ describe('runEvalTask', () => {
         model: 'acme/m1',
         thinking: null,
         worktree: '/wt/a',
-        generation: 1,
         size: 'smoke',
         workspace: 'inline',
       },
@@ -433,7 +388,6 @@ describe('runEvalTrajectory', () => {
       model: 'acme/m1',
       thinking: null,
       worktree: '/wt/agent-1',
-      generation: 3,
       size: 'standard',
     });
     expect(record.success).toBe(true);
@@ -501,7 +455,6 @@ describe('runEvalTrajectory', () => {
       model: 'acme/m1',
       thinking: null,
       worktree: '/wt/agent-1',
-      generation: 3,
       size: 'standard',
     });
     expect(record.success).toBe(false);
@@ -515,16 +468,15 @@ describe('runEvalTrajectory', () => {
 });
 
 describe('runEvalTrajectory provenance comes from the export', () => {
-  it('records the export provider/model, generation and worktree when no flags are given', async () => {
+  it('records the export provider/model and worktree when no flags are given', async () => {
     const record = await runEvalTrajectory({
       suite: 'swe-bench-mini',
-      trajectory: makeExport({ model: 'acme/m1', generation: 3 }),
+      trajectory: makeExport({ model: 'acme/m1' }),
       size: 'standard',
     });
     expect(record.model).toBe('acme/m1');
-    expect(record.generation).toBe(3);
     expect(record.worktree).toBe('/wt/agent-1');
-    expect(record.caseId).toBe('swe-bench-mini:3');
+    expect(record.caseId).toBe('swe-bench-mini');
   });
 
   it('takes thinking from exported.model.thinking', async () => {
@@ -553,7 +505,6 @@ describe('runEvalTrajectory provenance comes from the export', () => {
       model: 'acme/m1',
       thinking: 'low',
       worktree: '/wt/agent-1',
-      generation: 3,
       size: 'standard',
     });
     expect(record.model).toBe('acme/m1');
@@ -563,7 +514,6 @@ describe('runEvalTrajectory provenance comes from the export', () => {
   it.each([
     ['model', { model: 'faux/faux' }, /model/],
     ['worktree', { worktree: '/other' }, /worktree/],
-    ['generation', { generation: 0 }, /generation/],
     ['thinking', { thinking: 'high' }, /thinking/],
   ] as const)(
     'refuses a conflicting %s flag with provenance-mismatch',

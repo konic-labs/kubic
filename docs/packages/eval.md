@@ -5,8 +5,8 @@
 > Source: `packages/eval/src`.
 
 `@kubic/eval` is the benchmark harness. Every
-stored result carries how it ran — model/thinking/worktree/generation,
-the record size, and the determinism tier; records missing any of
+stored result carries how it ran — model/thinking/worktree, the record
+size, and the determinism tier; records missing any of
 them are rejected (exit 2), never stored. Cost/latency/tokens reconcile against usage rows
 before a record is accepted. Each executable suite carries a fixture
 (prompt, starting files, gate commands); `kubic eval --task` and
@@ -57,7 +57,7 @@ ci` clean, usage reconciliation, RL export fields untouched.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `suite` | `string` (non-empty) | required |
-| `caseId` | `string` (non-empty) | required |
+| `caseId` | `string` (non-empty) | required; the suite's name (a suite is one case) |
 | `category` | `EvalCategory` (one of 8) | required |
 | `success` | `boolean` | — |
 | `costUsd` | `number` (≥ 0) | reconciled vs usage rows |
@@ -67,7 +67,6 @@ ci` clean, usage reconciliation, RL export fields untouched.
 | `model` | `string` (non-empty) | required |
 | `thinking` | `string \| null` | string or null only |
 | `worktree` | `string` (non-empty) | required |
-| `generation` | `number` (integer ≥ 0) | required |
 | `size` | `EvalSize` | required; `smoke \| standard \| extended` — the record's size class (an implementation-side label, not a tier) |
 | `determinism` | `EvalDeterminism` | required; `recorded \| deterministic \| live` — derived from the path: `recorded` for `--trajectory`, `live` for `--task`; benchmark rows publish `live` |
 | `signals` | `EvalSignals` | optional on input |

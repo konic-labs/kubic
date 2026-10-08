@@ -54,8 +54,8 @@ export). Records missing a mandatory flag are rejected (exit 2), never
 stored.
 
 Every record carries `success`, `costUsd`, `tokens`, `latencyMs`,
-`toolCalls`, `model`, `thinking`, `worktree`, `generation`, `size`, and
-`determinism` (`recorded` for `--trajectory`, `live` for `--task`).
+`toolCalls`, `model`, `thinking`, `worktree`, `size`, and `determinism`
+(`recorded` for `--trajectory`, `live` for `--task`).
 
 ## 3. `--json` shapes
 

@@ -1683,23 +1683,23 @@ parsed by commander
 Scores one suite against a task prompt or an existing trajectory
 export. Every record needs its provenance (`model`, `thinking`,
 `worktree`) and a `--size`; a record missing any of them is refused with
-exit 2 and is never stored. A run is one generation, so a `--task` record's
-`generation` is always `0`.
+exit 2 and is never stored. A suite is one case: a record's `caseId` is the
+suite name.
 
 - With `--task`, the provenance comes from the flags: `--worktree` is
   mandatory and `--model` defaults to `faux/echo`
   (the shipped testing provider's registered model).
 - With `--trajectory`, the provenance comes from the export itself:
   `model` from `provenance.model`, `thinking` from `model.thinking`, and
-  `worktree` and `generation` from `provenance`. These flags become
+  `worktree` from `provenance`. These flags become
   optional cross-checks. A flag that disagrees with the export is
   refused with exit 2 and `[provenance-mismatch]`, and no record is
   printed. The size is not part of an export, so `--size` stays
   mandatory; the determinism tier is derived from the path.
 
-Every record carries `success`, `costUsd`, `tokens`,
-`latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`,
-`generation`, `size` and `determinism`. `determinism` is the tier,
+Every record carries `suite`, `caseId`, `success`, `costUsd`, `tokens`,
+`latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`, `size` and
+`determinism`. `determinism` is the tier,
 derived from the path: `--trajectory` scores a recorded export without
 re-executing anything → `recorded`; `--task` executes a model-backed
 suite → `live`. Benchmark rows publish the same field (`live` — including

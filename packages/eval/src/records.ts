@@ -1,12 +1,11 @@
 // Eval records.
-// Every stored result carries how it ran: model/thinking/worktree/
-// generation, the record SIZE (smoke|standard|extended — an
-// implementation-side classification, not a design term) and
-// the DETERMINISM tier (recorded|deterministic|live). Records
-// missing worktree, generation, size or determinism are rejected (never
-// stored) — a result that cannot be attributed cannot be reproduced, and a
-// reader must be able to tell how far to trust a comparison. Cost/latency/
-// tokens reconcile against usage rows before a record is accepted.
+// Every stored result carries how it ran: model/thinking/worktree, the record
+// SIZE (smoke|standard|extended — an implementation-side classification, not
+// a design term) and the DETERMINISM tier (recorded|deterministic|live).
+// Records missing worktree, size or determinism are rejected (never stored) —
+// a result that cannot be attributed cannot be reproduced, and a reader must
+// be able to tell how far to trust a comparison. Cost/latency/tokens reconcile
+// against usage rows before a record is accepted.
 import { type EvalCategory, isEvalCategory } from './categories.js';
 import type { EvalSignals } from './signals.js';
 
@@ -43,7 +42,6 @@ export interface EvalRecordInput {
   model: string;
   thinking: string | null;
   worktree: string;
-  generation: number;
   size: string;
   determinism: string;
   signals?: EvalSignals;
@@ -67,7 +65,7 @@ function nonNegative(value: unknown): value is number {
   return typeof value === 'number' && value >= 0;
 }
 
-// Fail-closed gate: worktree/generation/size/determinism missing or
+// Fail-closed gate: worktree/size/determinism missing or
 // malformed means the record is rejected, not stored — the caller must not persist
 // `record` when `valid` is false (it is absent on that branch).
 export function validateEvalRecord(input: unknown): RecordValidation {
@@ -94,13 +92,6 @@ export function validateEvalRecord(input: unknown): RecordValidation {
   }
   if (!nonEmpty(candidate.worktree)) {
     errors.push('worktree is required: record how the run executed');
-  }
-  if (
-    typeof candidate.generation !== 'number' ||
-    !Number.isInteger(candidate.generation) ||
-    !(candidate.generation >= 0)
-  ) {
-    errors.push('generation is required: record which worker generation ran');
   }
   if (typeof candidate.size !== 'string' || !isEvalSize(candidate.size)) {
     errors.push(

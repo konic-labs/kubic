@@ -231,14 +231,14 @@ describe('eval --trajectory provenance', () => {
       record: {
         model: string;
         worktree: string;
-        generation: number;
+        caseId: string;
         determinism: string;
       };
     };
     expect(envelope.record).toMatchObject({
       model: 'acme/m1',
       worktree: '/wt/agent-1',
-      generation: 3,
+      caseId: 'swe-bench-mini',
       // Scoring an existing export re-executes nothing.
       determinism: 'recorded',
     });
@@ -291,7 +291,7 @@ describe('eval --trajectory provenance', () => {
     expect(o.errs.join('\n')).toMatch(/\[provenance-mismatch\]/);
   });
 
-  it('scores --task with no generation flag and records generation 0', async () => {
+  it('scores --task without a generation and keys the record by its suite', async () => {
     const o = out();
     const exit = (
       await runEvalCommand(
@@ -307,9 +307,10 @@ describe('eval --trajectory provenance', () => {
     ).exitCode;
     expect(exit).toBe(0);
     const envelope = JSON.parse(o.lines.join('\n')) as {
-      record: { generation: number };
+      record: { caseId: string; generation?: number };
     };
-    expect(envelope.record.generation).toBe(0);
+    expect(envelope.record.caseId).toBe('swe-bench-mini');
+    expect(envelope.record).not.toHaveProperty('generation');
   });
 });
 

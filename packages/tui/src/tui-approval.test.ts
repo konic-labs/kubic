@@ -9,7 +9,7 @@ import { createApprovalSurface } from './approval-surface.js';
 import { APPROVAL_MIN_WIDTH } from './approval-view.js';
 import { createTuiApp, type TuiApprovalRequest } from './tui-app.js';
 
-const SESSION = 'sess-96';
+const SESSION = 'sess-approval';
 const MODEL = 'test-model';
 
 function request(

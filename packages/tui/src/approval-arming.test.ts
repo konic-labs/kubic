@@ -15,7 +15,7 @@ import {
 import { createTuiApp } from './tui-app.js';
 
 const REQUEST: ApprovalViewRequest = {
-  key: 'k-315',
+  key: 'k-arming-first',
   capability: 'destructive-shell',
   toolName: 'bash',
   command: 'rm -rf build',
@@ -80,7 +80,7 @@ describe('approval arming delay', () => {
       setTimer: () => () => {},
     });
     const first = surface.ask(REQUEST);
-    const second = surface.ask({ ...REQUEST, key: 'k-316' });
+    const second = surface.ask({ ...REQUEST, key: 'k-arming-second' });
     time.advance(APPROVAL_ARMING_MS);
     expect(surface.decide('a')).toBe(true);
     await first;

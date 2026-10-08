@@ -1047,7 +1047,7 @@ describe('slash commands in the app', () => {
 
 describe('app-level wiring that no test executed', () => {
   const REQUEST: ApprovalViewRequest = {
-    key: 'k-320',
+    key: 'k-tui-app',
     capability: 'destructive-shell',
     toolName: 'bash',
     command: 'rm -rf build',

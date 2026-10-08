@@ -43,7 +43,7 @@ function presentation(
   };
 }
 
-const SESSION = 'sess-96';
+const SESSION = 'sess-views';
 const MODEL = 'test-model';
 const ESC = '\u001b';
 const BEL = '\u0007';

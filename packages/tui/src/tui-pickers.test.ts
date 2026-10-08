@@ -9,7 +9,7 @@ import type { Component } from './tui-boundary.js';
 
 function setup() {
   const app = createTuiApp({
-    sessionId: 'sess-461',
+    sessionId: 'sess-pickers',
     model: 'anthropic/sonnet',
     approvalsSkipped: false,
     approvalSurface: createApprovalSurface({ armingMs: 0 }),

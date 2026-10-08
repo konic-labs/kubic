@@ -61,7 +61,7 @@ function commandRows(lines: readonly string[]): string[] {
 
 function request(command: string): ApprovalViewRequest {
   return {
-    key: 'k-316',
+    key: 'k-command',
     capability: 'destructive-shell',
     toolName: 'bash',
     summary: `destructive-shell: ${command.slice(0, 120)}… (+${command.length - 120} chars)`,

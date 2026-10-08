@@ -2057,10 +2057,10 @@ interface RecordedApprovalDeny {
 }
 
 // The named reason a challenged call is refused with while no surface can
-// collect a verdict. Named once, here, so the block reason, the doctor line
-// and the headless terminus all say the same sentence.
+// collect a verdict. Named once, here, so the block reason and the headless
+// run's terminus say the same sentence.
 export const NO_ANSWER_SURFACE_REASON =
-  'approval required, but no approval surface is installed on this command (headless has no TTY; the TUI overlay has not landed) — refusing the operation instead of running it unapproved';
+  'approval required, but no approval surface is installed on this command: kubic run has no ask prompt, so the call is refused; answer approvals in kubic tui, or change the approval route or policy';
 
 export interface InstalledSoloPolicy {
   classes: PermissionClasses;

@@ -114,6 +114,7 @@ describe('prod run path: destructive call', () => {
     // now under an honest status.
     expect(result.summary).toMatch(/^approval refused: /);
     expect(result.summary).toContain(NO_ANSWER_SURFACE_REASON);
+    expect(result.summary).toContain('answer approvals in kubic tui');
     expect(result.summary).toContain('(bash)');
     expect(result.error?.message).toBe(result.summary);
     const envelope = buildRunEnvelope(

@@ -146,7 +146,9 @@ describe('credential access is challenged and audited', () => {
     expect(installed.denials().map((entry) => entry.capability)).toContain(
       'credentials',
     );
-    expect(installed.denials()[0]?.reason).toContain('headless');
+    expect(installed.denials()[0]?.reason).toContain(
+      'kubic run has no ask prompt',
+    );
     const record = readAuditLedger(auditLedgerDirFor(dir)).find(
       (row) => row.permission.permission === 'trigger:credentials',
     );

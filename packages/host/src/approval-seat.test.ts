@@ -103,6 +103,9 @@ describe('installed policy answer seat', () => {
     expect(result.toolResults.join('\n')).toContain(
       'no approval surface is installed',
     );
+    expect(result.toolResults.join('\n')).toContain(
+      'answer approvals in kubic tui',
+    );
   });
 
   it('a seat that answers nothing times out to deny (never hangs)', async () => {
@@ -120,7 +123,9 @@ describe('installed policy answer seat', () => {
     expect(result.terminus).toBe('completed');
   });
 
-  it('names the missing surface in the reason the refusal carries', () => {
-    expect(NO_ANSWER_SURFACE_REASON).toContain('no approval surface');
+  it('says why a headless run cannot ask, and how to get an answer', () => {
+    expect(NO_ANSWER_SURFACE_REASON).toBe(
+      'approval required, but no approval surface is installed on this command: kubic run has no ask prompt, so the call is refused; answer approvals in kubic tui, or change the approval route or policy',
+    );
   });
 });

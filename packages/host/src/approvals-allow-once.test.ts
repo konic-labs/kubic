@@ -18,7 +18,7 @@ import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 const made: string[] = [];
 
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-231-${prefix}`));
+  const dir = mkdtempSync(join(tmpdir(), `kubic-approvals-allow-${prefix}`));
   made.push(dir);
   return dir;
 }

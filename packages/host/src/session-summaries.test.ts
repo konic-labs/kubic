@@ -33,7 +33,7 @@ afterEach(async () => {
 });
 
 function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'summaries-461-'));
+  const dir = mkdtempSync(join(tmpdir(), 'session-summaries-'));
   made.push(dir);
   return dir;
 }

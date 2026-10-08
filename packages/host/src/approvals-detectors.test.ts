@@ -406,7 +406,7 @@ describe('privilege escalation + indirection', () => {
   });
 
   it('requires every raised capability: autoApprove covers only what it names', async () => {
-    const dir = mkTmp('approvals-131-');
+    const dir = mkTmp('approvals-detectors-');
     const store = new FileApprovalStore(dir);
     const service = new ApprovalService({
       policy: validatePolicy({
@@ -549,7 +549,7 @@ describe('shell-expanded and cd-relative write targets', () => {
   });
 
   it('wires the home directory through triggerContextFor', () => {
-    const home = mkTmp('kubic-355-home-');
+    const home = mkTmp('kubic-detectors-home-');
     const ctx = triggerContextFor(SOLO_DEFAULTS, home, home);
     expect(ctx.home).toBe(home);
     expect(

@@ -297,7 +297,7 @@ describe('redactBridgeWrites (session persistence)', () => {
   const KEY = 'sk-live-abcdef123456';
 
   function fixture(secrets: () => string[]) {
-    const dir = mkdtempSync(join(tmpdir(), 'kubic-359-bridge-'));
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-secrets-bridge-'));
     dirs.push(dir);
     const inner = createNodeFileBridge(dir);
     return {

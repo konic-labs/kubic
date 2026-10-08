@@ -126,7 +126,7 @@ describe('runtime config load', () => {
 
     // Measurably live: the projection prunes a real store. An entry older
     // than the bound is gone after the append that enforces retention.
-    const dir = tempDir('kubic-90-journal-');
+    const dir = tempDir('kubic-runtime-journal-');
     const store = new FileJournalStore(dir, {
       maxAgeMs: runtime.journal.maxAgeMs,
     });
@@ -164,7 +164,7 @@ describe('runtime config load', () => {
       },
     );
     expect(unbounded.journal.maxAgeMs).toBeUndefined();
-    const keepDir = tempDir('kubic-90-journal-keep-');
+    const keepDir = tempDir('kubic-runtime-journal-keep-');
     const keep = new FileJournalStore(
       keepDir,
       unbounded.journal.maxAgeMs === undefined

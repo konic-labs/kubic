@@ -99,9 +99,9 @@ async function run(
 // Two projects, A and B, each with a recorded session. B's journal is the
 // newer one by mtime — the pre fallback picked it from anywhere.
 async function twoProjects() {
-  const sessionsRoot = mkTmp('sr362-');
-  const wsA = mkTmp('wsA362-');
-  const wsB = mkTmp('wsB362-');
+  const sessionsRoot = mkTmp('journal-cli-sessions-');
+  const wsA = mkTmp('journal-cli-ws-a-');
+  const wsB = mkTmp('journal-cli-ws-b-');
   await recordSession(sessionsRoot, 'sess-a', wsA);
   await recordSession(sessionsRoot, 'sess-b', wsB);
   mkdirSync(join(wsA, 'src'));
@@ -160,9 +160,9 @@ describe('journal CLI workspace binding', () => {
   });
 
   it('undo --force from B with no flags never selects A’s journal; B is byte-identical', async () => {
-    const sessionsRoot = mkTmp('sr362-');
-    const wsA = mkTmp('wsA362-');
-    const wsB = mkTmp('wsB362-');
+    const sessionsRoot = mkTmp('journal-cli-sessions-');
+    const wsA = mkTmp('journal-cli-ws-a-');
+    const wsB = mkTmp('journal-cli-ws-b-');
     await recordSession(sessionsRoot, 'sess-a', wsA);
     mkdirSync(join(wsB, 'src'));
     writeFileSync(join(wsB, 'src', 'index.ts'), 'B-own\n');
@@ -197,9 +197,9 @@ describe('journal CLI workspace binding', () => {
   });
 
   it('a session whose recorded workspace is gone is a named refusal, nothing written', async () => {
-    const sessionsRoot = mkTmp('sr362-');
-    const gone = mkTmp('wsGone362-');
-    const wsB = mkTmp('wsB362-');
+    const sessionsRoot = mkTmp('journal-cli-sessions-');
+    const gone = mkTmp('journal-cli-ws-gone-');
+    const wsB = mkTmp('journal-cli-ws-b-');
     await recordSession(sessionsRoot, 'sess-g', gone);
     seedWrite(sessionsRoot, 'sess-g', 'gone.txt', 'pre\n', null);
     seedWrite(sessionsRoot, 'sess-g', 'a.txt', 'a1\n', 'a2\n');
@@ -221,8 +221,8 @@ describe('journal CLI workspace binding', () => {
   });
 
   it('a session journal with no recorded workspace refuses undo by name', async () => {
-    const sessionsRoot = mkTmp('sr362-');
-    const wsB = mkTmp('wsB362-');
+    const sessionsRoot = mkTmp('journal-cli-sessions-');
+    const wsB = mkTmp('journal-cli-ws-b-');
     seedWrite(sessionsRoot, 'sess-x', 'gone.txt', 'pre\n', null);
     const { code, errs } = await run(
       { command: 'undo', session: 'sess-x', force: true },
@@ -235,7 +235,7 @@ describe('journal CLI workspace binding', () => {
 
   it('with no session for the cwd, the bare command prints the no-journal hint', async () => {
     const { sessionsRoot } = await twoProjects();
-    const elsewhere = mkTmp('wsC362-');
+    const elsewhere = mkTmp('journal-cli-ws-c-');
     const { code, lines, errs } = await run(
       { command: 'diff' },
       { root: elsewhere, sessionsRoot },
@@ -290,7 +290,7 @@ describe('journal CLI workspace binding', () => {
     });
 
     // A workspace store (no session) reports session null and the cwd.
-    const plain = mkTmp('wsP362-');
+    const plain = mkTmp('journal-cli-ws-plain-');
     const none = await run(
       { command: 'status', json: true },
       { root: plain, sessionsRoot },
@@ -341,8 +341,8 @@ describe('journal commands step aside for a live session', () => {
   }
 
   it('leaves a live session journal byte-identical, with a notice', async () => {
-    const sessionsRoot = mkTmp('sr337-');
-    const ws = mkTmp('ws337-');
+    const sessionsRoot = mkTmp('journal-cli-sessions-live-');
+    const ws = mkTmp('journal-cli-ws-live-');
     await recordSession(sessionsRoot, 'sess-live', ws);
     // seedWrite stamps entries at 1_700_000_000_000 — years older than the
     // 1-day window — so the self-heal WOULD drop it.
@@ -370,8 +370,8 @@ describe('journal commands step aside for a live session', () => {
   });
 
   it('refuses to undo under a live session unless --force', async () => {
-    const sessionsRoot = mkTmp('sr337u-');
-    const ws = mkTmp('ws337u-');
+    const sessionsRoot = mkTmp('journal-cli-sessions-undo-');
+    const ws = mkTmp('journal-cli-ws-undo-');
     await recordSession(sessionsRoot, 'sess-busy', ws);
     writeFileSync(join(ws, 'a.txt'), 'v1\n');
     seedWrite(sessionsRoot, 'sess-busy', 'a.txt', 'v1\n', 'v2\n');

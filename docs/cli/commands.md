@@ -146,7 +146,8 @@ on a colour terminal; plain text under a pipe or `NO_COLOR`); on failure an
 
 **On an interactive terminal** (stdout **and** stderr a colour
 TTY, no `--json`) the run shows its progress instead of those lines. On
-stderr: a heading (`■ kubic run · default · <provider/id> · <cwd>`), the
+stderr: a heading (`■ kubic run · <role> · <provider/id> · <cwd>`, where
+`<role>` is the `--role` name, cut to 20 columns, or `default`), the
 notice as one line (`○ Kubic has no isolation — approvals + journal are the
 controls · details: kubic doctor`, same opt-outs as the full block), a
 spinner with the elapsed time while the model works, and one settled line
@@ -584,7 +585,8 @@ a large workspace pays it (and the screen pauses) after every turn that used
   and repaints only when it changed.
 - **The agent tree**, sized to its content (at most 6 rows). It starts
   hidden — `Ctrl-T` opens and closes it. Below 80 columns it is hidden
-  either way. The tree's root row carries the run glyph plus the
+  either way. The tree's root row carries the run glyph, the run's role
+  (the `--role` name, cut to 20 columns, or `default`) and the
   session's `$cost in/out` tokens (`● default $0.02 2.0k/1.0k`) — seeded from
   the session's usage ledger when the TUI attaches, then summed from each
   response; each tool row shows the glyph, the tool name, a one-line summary

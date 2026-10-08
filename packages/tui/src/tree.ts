@@ -12,6 +12,7 @@
 // only the fields the tree reads are typed here. `usage` rows sum into the
 // head row; `fault` events are ignored.
 
+import { DEFAULT_RUN_ROLE } from '../../core/src/run-role.js';
 import {
   sanitizeLaneText,
   summarizeToolArguments,
@@ -83,7 +84,7 @@ export interface TreeState {
   usage: TreeUsage;
 }
 
-export function createTreeState(label = 'default'): TreeState {
+export function createTreeState(label = DEFAULT_RUN_ROLE): TreeState {
   return {
     label,
     status: 'idle',
@@ -316,10 +317,13 @@ export class TreeView implements Component {
   private body: TreeBody;
   private region: MouseRegion;
   private treeState: TreeState;
+  // The label the view names its tree with; a reset keeps it.
+  private baseLabel: string;
   private focusEditor: () => void;
 
   constructor(state?: TreeState, options?: TreeViewOptions) {
     this.treeState = state ?? createTreeState(options?.label);
+    this.baseLabel = options?.label ?? this.treeState.label;
     if (options?.collapsed !== undefined) {
       this.treeState.collapsed = options.collapsed;
     }
@@ -337,7 +341,8 @@ export class TreeView implements Component {
   // caller says whether it starts collapsed — the lane hides the tree row until
   // Ctrl-T opens it.
   reset(label?: string, collapsed = false): void {
-    this.treeState = createTreeState(label);
+    if (label !== undefined) this.baseLabel = label;
+    this.treeState = createTreeState(this.baseLabel);
     this.treeState.collapsed = collapsed;
     this.body = new TreeBody(this.treeState);
     this.region = new MouseRegion(this.body, (event) => this.onMouse(event));

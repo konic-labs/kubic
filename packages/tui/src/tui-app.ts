@@ -46,6 +46,7 @@ import type {
   KubicPresentationState,
   LaneImagePart,
 } from '../../core/src/presentation.js';
+import { DEFAULT_RUN_ROLE } from '../../core/src/run-role.js';
 import {
   type ApprovalCardOptions,
   renderApprovalCard,
@@ -780,7 +781,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         })();
   // The tree row starts hidden (collapsed); Ctrl-T opens it.
   const tree = new TreeView(undefined, {
-    label: seed.label ?? 'default',
+    label: seed.label ?? DEFAULT_RUN_ROLE,
     collapsed: true,
   });
   // The transcript row must stay the ScrollView itself so the layout engine

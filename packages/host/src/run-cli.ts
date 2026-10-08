@@ -268,8 +268,15 @@ export function buildRunEnvelope(
 // hands it the settled result for the receipt. Absent means today's plain
 // text everywhere (pipes, files, CI, `--json`).
 export interface RunProgressSink {
-  /** The lane booted: heading and (when `notice`) the one-line no-isolation notice. */
-  begin(info: { readonly model?: string; readonly notice: boolean }): void;
+  /**
+   * The lane booted: heading and (when `notice`) the one-line no-isolation notice.
+   * `role` is the `--role` name the run selected; absent for the default role.
+   */
+  begin(info: {
+    readonly model?: string;
+    readonly notice: boolean;
+    readonly role?: string;
+  }): void;
   toolStart(event: {
     readonly toolCallId: string;
     readonly toolName: string;

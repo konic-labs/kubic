@@ -120,6 +120,10 @@ import {
 import { formatCost } from '../../../packages/core/src/cli/kit.js';
 import type { LaneImagePart } from '../../../packages/core/src/presentation.js';
 import {
+  DEFAULT_RUN_ROLE,
+  runRoleLabel,
+} from '../../../packages/core/src/run-role.js';
+import {
   type FileSystem,
   NodeExecutionEnv,
 } from '../../../packages/exec/src/env.js';
@@ -1373,7 +1377,7 @@ export async function bootTuiLane(
     // default the boot runs as when no --role was given (mirrors the
     // headless runner's line).
     if (selectedRole === undefined) {
-      options.debug?.(`[policy] role=default (default)`);
+      options.debug?.(`[policy] role=${DEFAULT_RUN_ROLE} (default)`);
     } else {
       options.debug?.(
         `[policy] role=${selectedRole.resolved.name} tools=${selectedRole.resolved.tools.join(',')}`,
@@ -2149,7 +2153,7 @@ export async function bootTuiLane(
             sessionsRoot: root,
             sessionId: id,
             agentId: options.agentId ?? 'root',
-            role: options.role ?? 'default',
+            role: options.role ?? DEFAULT_RUN_ROLE,
             prompt: turn.prompt,
             entries,
             model: { provider: live.provider, id: live.id },
@@ -3861,6 +3865,9 @@ export async function runTuiCommand(
   const app = createTuiApp({
     sessionId: boot.sessionId,
     model: boot.model,
+    // The tree's head row names the run's role: the `--role` name, cut to
+    // its column, else the default role.
+    label: runRoleLabel(options.role),
     // The bar shows the lane's committed level
     // from the first frame — never the seed default the lane already moved
     // past (a clamped resume would otherwise read 'off' until Alt+T or a

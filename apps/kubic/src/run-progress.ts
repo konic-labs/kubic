@@ -25,6 +25,7 @@ import {
   truncateVisible,
   visibleWidth,
 } from '../../../packages/core/src/cli/width.js';
+import { runRoleLabel } from '../../../packages/core/src/run-role.js';
 import type {
   HeadlessRunResult,
   RunProgressSink,
@@ -157,7 +158,7 @@ export function createRunProgress(
   return {
     begin(info) {
       runStart = now();
-      const parts = ['default'];
+      const parts = [runRoleLabel(info.role)];
       if (info.model !== undefined) parts.push(info.model);
       const where = shortPath(options.cwd, options.home);
       const columns = stream.columns ?? DEFAULT_COLUMNS;

@@ -84,6 +84,7 @@ import {
   resolveStreamOptions,
   type StreamTuningTables,
 } from '../../../packages/agent/src/stream-options.js';
+import { DEFAULT_RUN_ROLE } from '../../../packages/core/src/run-role.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
@@ -891,7 +892,7 @@ export async function runHeadlessPrompt(
       sessionsRoot: capture.sessionsRoot,
       sessionId: capture.sessionId,
       agentId: resolveRunAgentId(deps.agentId),
-      role: capture.role ?? 'default',
+      role: capture.role ?? DEFAULT_RUN_ROLE,
       prompt: scrub(prompt),
       entries: capture.entries,
       ...(capture.model === undefined ? {} : { model: capture.model }),
@@ -1335,7 +1336,7 @@ async function runHeadlessPromptImpl(
     } else {
       // The stock run resolves no role document — the
       // [policy] line still names the default role it runs as.
-      debug?.(`[policy] role=default (default)`);
+      debug?.(`[policy] role=${DEFAULT_RUN_ROLE} (default)`);
     }
     // A refused models.json is a config error the user must see: it goes
     // to the warning channel unconditionally; a successful load is a
@@ -1860,6 +1861,7 @@ async function runHeadlessPromptImpl(
     report.model = await liveModelId(lane, context);
     options.progress?.begin({
       ...(report.model === undefined ? {} : { model: report.model }),
+      ...(capture.role === undefined ? {} : { role: capture.role }),
       notice: noIsolationNotice,
     });
     // The turn guard: one event subscription per conversation counts

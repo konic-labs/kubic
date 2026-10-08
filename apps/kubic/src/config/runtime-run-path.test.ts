@@ -17,13 +17,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fauxToolUse } from '../../../../packages/agent/src/lane/test-harness.js';
+import { DEFAULT_PERMISSIONS } from '../../../../packages/agent/src/permissions.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
 } from '../../../../packages/agent/src/pi-boundary.js';
-import { DEFAULT_PERMISSIONS } from '../../../../packages/agent/src/policy.js';
 import { NodeExecutionEnv } from '../../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../../packages/exec/src/file-bridge.js';
 import {

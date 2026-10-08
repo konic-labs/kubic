@@ -6,7 +6,7 @@ import {
 } from '../../../../packages/core/src/cli/exit-codes.js';
 import { registerAnalysisCommands } from '../commands/analysis.js';
 import { registerJournalCommands } from '../commands/journal.js';
-import { registerSessionCommands } from '../commands/solo.js';
+import { registerSessionCommands } from '../commands/session.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import { COMMAND_NAMES, ROOT_HELP } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';

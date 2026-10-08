@@ -59,7 +59,7 @@ export interface SessionsCommandDeps extends CliIo {
 }
 
 // The parsed `kubic sessions <sub>` invocation (commander owns the argv:
-// apps/kubic/src/commands/solo.ts).
+// apps/kubic/src/commands/session.ts).
 export type SessionsInvocation =
   | {
       readonly command: 'create';

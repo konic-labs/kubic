@@ -15,6 +15,11 @@ import {
   forgetLaneKills,
 } from '../../../packages/agent/src/lane/abort.js';
 import {
+  bootLane,
+  type Lane,
+  type LaneCompactionOptions,
+} from '../../../packages/agent/src/lane/boot.js';
+import {
   type KubicLaneEvent,
   subscribeLaneEvents,
 } from '../../../packages/agent/src/lane/events.js';
@@ -38,11 +43,6 @@ import {
   sessionsTouchingWorkspace,
 } from '../../../packages/agent/src/lane/session-store.js';
 import {
-  bootLane,
-  type LaneCompactionOptions,
-  type Lane,
-} from '../../../packages/agent/src/lane/solo.js';
-import {
   entriesToTranscript,
   readConversationEntries,
   readSessionEntries,
@@ -62,6 +62,13 @@ import {
 } from '../../../packages/agent/src/model-select.js';
 import { OPERATIONS } from '../../../packages/agent/src/ops/registry.js';
 import {
+  checkAgreement,
+  DEFAULT_PERMISSIONS,
+  type PermissionClasses,
+  type RunMode,
+  validateClasses,
+} from '../../../packages/agent/src/permissions.js';
+import {
   BACKGROUND_CONTEXT,
   type Context,
   createModels,
@@ -72,13 +79,6 @@ import {
   UserEntry,
   withCancel,
 } from '../../../packages/agent/src/pi-boundary.js';
-import {
-  checkAgreement,
-  type PermissionClasses,
-  type RunMode,
-  DEFAULT_PERMISSIONS,
-  validateClasses,
-} from '../../../packages/agent/src/policy.js';
 import { expandSkillInvocation } from '../../../packages/agent/src/skills/skills.js';
 import {
   resolveStreamOptions,
@@ -102,11 +102,11 @@ import {
 import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
 import { TIMEOUT_REASON_MARKER } from '../../../packages/host/src/approval-timeout.js';
 import {
+  type ApprovalConfig,
   enableSessionFullAccess,
   fullAccessInForceWarning,
   type InstalledPolicy,
   installPolicy,
-  type ApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
 import type {
@@ -127,7 +127,7 @@ import {
 import {
   emitNoIsolationNotice,
   shouldEmitNotice,
-} from '../../../packages/host/src/limits/solo-warning.js';
+} from '../../../packages/host/src/limits/no-isolation-notice.js';
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {

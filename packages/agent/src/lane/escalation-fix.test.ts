@@ -14,7 +14,7 @@ import {
   MemoryStorage,
   type Storage,
 } from '../pi-boundary.js';
-import { bootLane, escalateLaneModel, type Lane } from './solo.js';
+import { bootLane, escalateLaneModel, type Lane } from './boot.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],

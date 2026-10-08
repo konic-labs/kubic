@@ -4,7 +4,7 @@
 // arrives injected (faux in tests); deny-by-default holds — a tool with no
 // enterprise allow is denied.
 
-import { describeUnsupported } from '../../../agent/src/policy.js';
+import { describeUnsupported } from '../../../agent/src/permissions.js';
 import {
   type CommandResult,
   EXIT_OK,

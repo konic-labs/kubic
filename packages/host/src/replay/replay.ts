@@ -34,8 +34,8 @@
 // go through the exec FileBridge (I/O confinement).
 
 import { createHash } from 'node:crypto';
-import type { LaneCompactionOptions } from '../../../agent/src/lane/solo.js';
-import type { PermissionClasses } from '../../../agent/src/policy.js';
+import type { LaneCompactionOptions } from '../../../agent/src/lane/boot.js';
+import type { PermissionClasses } from '../../../agent/src/permissions.js';
 import {
   type CommandResult,
   EXIT_FAILED,

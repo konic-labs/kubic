@@ -16,14 +16,14 @@
 // module never imports node:fs.
 
 import { homedir } from 'node:os';
-import type { LaneCompactionOptions } from '../../../packages/agent/src/lane/solo.js';
+import type { LaneCompactionOptions } from '../../../packages/agent/src/lane/boot.js';
 import {
   ModelSelectError,
   type ModelSelection,
   selectModel,
 } from '../../../packages/agent/src/model-select.js';
+import type { PermissionClasses } from '../../../packages/agent/src/permissions.js';
 import type { MutableModels } from '../../../packages/agent/src/pi-boundary.js';
-import type { PermissionClasses } from '../../../packages/agent/src/policy.js';
 import type {
   ModelStreamTuning,
   StreamTuningTables,
@@ -663,9 +663,7 @@ export function selectModelUnderPolicy(
 // every solo lane enforces are one derivation. A refused config contributes
 // nothing (the command fails closed first); absent means the documented
 // defaults.
-export function runtimeApprovalDeps(
-  result: CliConfigResult,
-): ApprovalConfig {
+export function runtimeApprovalDeps(result: CliConfigResult): ApprovalConfig {
   const policy = result.runtime?.approvals.policy;
   if (policy === undefined) return {};
   return {

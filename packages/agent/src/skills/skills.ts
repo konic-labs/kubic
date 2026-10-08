@@ -28,7 +28,7 @@
 //     helpers; the camelCase spelling stays as an alias)
 
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import { type PermissionClasses, toolsForClasses } from '../policy.js';
+import { type PermissionClasses, toolsForClasses } from '../permissions.js';
 
 export type SkillSource = 'user' | 'project' | 'package' | 'settings' | 'cli';
 

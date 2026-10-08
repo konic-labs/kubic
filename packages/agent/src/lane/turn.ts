@@ -18,6 +18,7 @@ import type { ManualCompactionOutcome } from '../compaction.js';
 import { runManualCompaction } from '../compaction.js';
 import type { Context, Submission } from '../pi-boundary.js';
 import { ConversationBusy } from '../pi-boundary.js';
+import type { Lane } from './boot.js';
 import type {
   ClassifiedFailure,
   FailureCode,
@@ -30,7 +31,6 @@ import type {
   SubmissionFailure,
 } from './settle.js';
 import { classifySubmissionFailure, classifyThrownError } from './settle.js';
-import type { Lane } from './solo.js';
 
 // `TurnOutcome.failed.reason` for the one refusal Kubic raises itself: the
 // conversation is busy and the caller asked to be rejected rather than

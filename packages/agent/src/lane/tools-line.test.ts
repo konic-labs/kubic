@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { DEFAULT_PERMISSIONS } from '../permissions.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -20,8 +21,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
-import { DEFAULT_PERMISSIONS } from '../policy.js';
-import { bootLane, PROMPT_SECTION, type Lane } from './solo.js';
+import { bootLane, type Lane, PROMPT_SECTION } from './boot.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],

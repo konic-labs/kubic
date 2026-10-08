@@ -9,9 +9,9 @@ import {
   DEFAULT_RESERVE_TOKENS,
   effectiveKeepRecentTokens,
   effectiveReserveTokens,
+  KEEP_RECENT_TOKENS,
   runCompactCommand,
   runManualCompaction,
-  KEEP_RECENT_TOKENS,
   SYSTEM_ENTRY_ESTIMATE,
 } from '../compaction.js';
 import {

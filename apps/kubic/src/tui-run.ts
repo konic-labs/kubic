@@ -31,6 +31,12 @@ import {
   forgetLaneKills,
   type OperationKillRegistry,
 } from '../../../packages/agent/src/lane/abort.js';
+import {
+  bootLane,
+  escalateLaneModel,
+  type Lane,
+  type LaneCompactionOptions,
+} from '../../../packages/agent/src/lane/boot.js';
 import type {
   KubicInboxItem,
   KubicLaneEvent,
@@ -50,12 +56,6 @@ import {
   listSessions,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import {
-  bootLane,
-  escalateLaneModel,
-  type LaneCompactionOptions,
-  type Lane,
-} from '../../../packages/agent/src/lane/solo.js';
 import {
   entriesToTranscript,
   readConversationEntries,
@@ -83,6 +83,12 @@ import {
 } from '../../../packages/agent/src/models-config.js';
 import { OPERATIONS } from '../../../packages/agent/src/ops/registry.js';
 import { walkFiles } from '../../../packages/agent/src/ops/walk.js';
+import type { PermissionClasses } from '../../../packages/agent/src/permissions.js';
+import {
+  checkAgreement,
+  DEFAULT_PERMISSIONS,
+  validateClasses,
+} from '../../../packages/agent/src/permissions.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -92,12 +98,6 @@ import {
   type MutableModels,
   type SubmissionId,
 } from '../../../packages/agent/src/pi-boundary.js';
-import type { PermissionClasses } from '../../../packages/agent/src/policy.js';
-import {
-  checkAgreement,
-  DEFAULT_PERMISSIONS,
-  validateClasses,
-} from '../../../packages/agent/src/policy.js';
 import type { ModelEscalationEvent } from '../../../packages/agent/src/prompts.js';
 import {
   expandSkillInvocation,
@@ -140,6 +140,7 @@ import {
 } from '../../../packages/exec/src/journal-undo.js';
 import { createSecretCommandRunner } from '../../../packages/exec/src/secret-runner.js';
 import {
+  type ApprovalConfig,
   type ApprovalRequest,
   type ApprovalVerdict,
   enableSessionFullAccess,
@@ -147,7 +148,6 @@ import {
   type InstalledPolicy,
   installPolicy,
   type SessionFullAccessGrant,
-  type ApprovalConfig,
 } from '../../../packages/host/src/approvals.js';
 import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
 import { createLedgerModelKeyResolver } from '../../../packages/host/src/config/model-key-audit.js';
@@ -162,10 +162,10 @@ import {
   fauxProviderActive,
 } from '../../../packages/host/src/faux-provider.js';
 import {
-  shouldEmitNotice,
-  noIsolationTuiLine,
   noIsolationNoticeLines,
-} from '../../../packages/host/src/limits/solo-warning.js';
+  noIsolationTuiLine,
+  shouldEmitNotice,
+} from '../../../packages/host/src/limits/no-isolation-notice.js';
 import {
   type AssembledModels,
   assembleModels,
@@ -3845,12 +3845,16 @@ export async function runTuiCommand(
   // Solo no-isolation notice: the trust statement is in the welcome block from
   // the first frame. Suppressed by the documented KUBIC_NO_NOTICE opt-out; the
   // text is solo-warning.ts's, never re-worded here.
-  const noIsolationNotice = shouldEmitNotice(process.env) ? noIsolationTuiLine() : '';
+  const noIsolationNotice = shouldEmitNotice(process.env)
+    ? noIsolationTuiLine()
+    : '';
   // The faux testing provider is never silent: while it answers, the
   // welcome block says so next to (or instead of) the lane notice.
   const noticeFor = (): string =>
     boot.model === `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`
-      ? [FAUX_FOOTER, noIsolationNotice].filter((part) => part !== '').join(' · ')
+      ? [FAUX_FOOTER, noIsolationNotice]
+          .filter((part) => part !== '')
+          .join(' · ')
       : noIsolationNotice;
   // The terminal the screen opens on (block mode's copies).
   let screenTerminal: Terminal | undefined;
@@ -5254,7 +5258,9 @@ export async function runTuiCommand(
             // limits module's (never re-worded here), and an explicit ask is
             // answered even where the startup notice is suppressed.
             app.appendNotice(
-              noIsolationNoticeLines().map((line) => line.replace(/^warning: /, '')),
+              noIsolationNoticeLines().map((line) =>
+                line.replace(/^warning: /, ''),
+              ),
             );
             app.setEditorFooter('safety: the limits are in the transcript');
             if (!stopped) screen?.render();

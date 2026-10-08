@@ -26,7 +26,7 @@ import type {
   CredentialLevel,
   PermissionClasses,
   UnsupportedLevel,
-} from '../../agent/src/policy.js';
+} from '../../agent/src/permissions.js';
 import {
   checkAgreement,
   checkExpressible,
@@ -34,7 +34,7 @@ import {
   effectiveNetworkLevel,
   toolsForClasses,
   validateClasses,
-} from '../../agent/src/policy.js';
+} from '../../agent/src/permissions.js';
 import { redactSecretShapes } from '../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { approvalCommandText, summarizeCommand } from './approval-display.js';
@@ -49,10 +49,10 @@ import { isGitDirTarget } from './git-dir-target.js';
 import {
   appendToLedger,
   auditLedgerDirFor,
+  decisionAudit,
   fullAccessDisabledAudit,
   fullAccessEnabledAudit,
   postureChangedAudit,
-  decisionAudit,
 } from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service.
 // The decider is the user — never the model. This module exposes no

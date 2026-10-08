@@ -10,7 +10,7 @@
 // Faux provider only: zero network, zero paid tokens.
 
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PERMISSIONS } from '../../../packages/agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../../packages/agent/src/permissions.js';
 import {
   detectTriggers,
   installPolicy,

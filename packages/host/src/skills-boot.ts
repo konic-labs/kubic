@@ -11,8 +11,8 @@
 // loader is told, never asked to guess.
 
 import { basename, dirname, resolve, sep } from 'node:path';
-import type { PermissionClasses } from '../../agent/src/policy.js';
-import { DEFAULT_PERMISSIONS } from '../../agent/src/policy.js';
+import type { PermissionClasses } from '../../agent/src/permissions.js';
+import { DEFAULT_PERMISSIONS } from '../../agent/src/permissions.js';
 import type {
   DiscoverSkillsOptions,
   LoadedSkill,

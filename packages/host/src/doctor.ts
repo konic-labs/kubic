@@ -8,14 +8,14 @@
 
 import {
   DEFAULT_RESERVE_TOKENS,
-  roomAfterCompaction,
   KEEP_RECENT_TOKENS,
+  roomAfterCompaction,
 } from '../../agent/src/compaction.js';
 import {
   describeUnsupported,
   effectiveCredentialLevel,
   effectiveNetworkLevel,
-} from '../../agent/src/policy.js';
+} from '../../agent/src/permissions.js';
 // License identity: constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
@@ -983,7 +983,7 @@ function summarize(checks: DoctorCheck[]): string {
 }
 
 // The parsed `kubic doctor` invocation (commander owns the argv:
-// apps/kubic/src/commands/solo.ts). Each `skip` entry may list several
+// apps/kubic/src/commands/session.ts). Each `skip` entry may list several
 // comma-separated check ids.
 export interface DoctorCommandOptions {
   readonly skip?: readonly string[];

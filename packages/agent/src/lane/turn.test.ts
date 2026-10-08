@@ -20,8 +20,8 @@ import {
 } from '../pi-boundary.js';
 import type { AbortableLane } from './abort.js';
 import { abortLane, forgetLaneKills, OperationKillRegistry } from './abort.js';
+import { bootLane, type Lane } from './boot.js';
 import { type KubicLaneEvent, subscribeLaneEvents } from './events.js';
-import { bootLane, type Lane } from './solo.js';
 import { entriesToTranscript, readConversationEntries } from './transcript.js';
 import {
   runTurn,

@@ -21,7 +21,7 @@
 //
 //   JUSTIFICATION:
 //     seam: <Pi package + export path, e.g. @earendil-works/pi-durable#Harness>
-//     used by: <Kubic module that needs it, e.g. packages/agent/src/lane/solo.ts>
+//     used by: <Kubic module that needs it, e.g. packages/agent/src/lane/boot.ts>
 //     why Pi has no alternative: <one line — what breaks if we reimplement>
 
 // JUSTIFICATION:
@@ -200,7 +200,7 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Harness, createRegistry,
 //     defineExtension
-//   used by: packages/agent/src/lane/solo.ts (the solo lane boots with a
+//   used by: packages/agent/src/lane/boot.ts (the solo lane boots with a
 //     per-process registry holding the Kubic extension)
 //   why Pi has no alternative: the durable harness IS the execution engine
 //     — Harness.open over a Storage owns conversations, durable
@@ -216,7 +216,7 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#section (prompt sections) and #hook,
 //     #ToolTask, #GenerationTask, #CompactionTask (hook targets)
-//   used by: packages/agent/src/lane/solo.ts (ordered prompt sections) and
+//   used by: packages/agent/src/lane/boot.ts (ordered prompt sections) and
 //     lane/interceptors.ts (beforeTool/afterTool policy and approval);
 //     lane/solo.ts compaction (CompactionTask.beforeCompact)
 //   why Pi has no alternative: these are the built-in tasks whose hooks are
@@ -227,7 +227,7 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#AgentDoc, #LiveDoc, #UsageDoc,
 //     #configure
-//   used by: packages/agent/src/lane/solo.ts (reconciles the stored model
+//   used by: packages/agent/src/lane/boot.ts (reconciles the stored model
 //     through the root conversation's pi.agent document),
 //     lane/events.ts (reads pi.live), the session readers (sum pi.usage),
 //     and any creating commit that sets agent choices
@@ -249,7 +249,7 @@ export type {
 //   seam: @earendil-works/pi-durable#watchEvents, #ConversationBusy,
 //     #MemoryStorage, #defineDoc
 //   used by: packages/agent/src/lane/events.ts (maps the committed event
-//     stream), packages/agent/src/lane/solo.ts (rejects a busy submit with
+//     stream), packages/agent/src/lane/boot.ts (rejects a busy submit with
 //     ConversationBusy), packages/agent/src/lane/session-store.ts
 //     (defines the kubic.session document), and the Kubic test harness
 //     factory (swaps MemoryStorage for temp-dir JSONL)
@@ -353,7 +353,7 @@ export type { CompactionResult } from '@earendil-works/pi-durable';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Registry
-//   used by: packages/agent/src/lane/solo.ts (SoloLane.registry — the
+//   used by: packages/agent/src/lane/boot.ts (SoloLane.registry — the
 //     per-process registry the boot installs the Kubic extensions into)
 //     and lane/policy.ts (resolving a name-based allowlist back to the
 //     ToolRegistration objects configure({ tools }) takes)

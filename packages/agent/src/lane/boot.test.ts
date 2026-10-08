@@ -29,11 +29,11 @@ import { PromptCacheError } from '../prompts.js';
 import {
   assemblePrompt,
   bootLane,
-  PROMPT_SECTION,
   DEFAULT_ROLE,
   type Lane,
+  PROMPT_SECTION,
   splitModelId,
-} from './solo.js';
+} from './boot.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],

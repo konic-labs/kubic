@@ -16,7 +16,10 @@ import {
   PolicyDeniedError,
   type TelemetryRecord,
 } from '../../agent/src/lane/wrap.js';
-import { DEFAULT_PERMISSIONS, toolsForClasses } from '../../agent/src/policy.js';
+import {
+  DEFAULT_PERMISSIONS,
+  toolsForClasses,
+} from '../../agent/src/permissions.js';
 import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   type InstalledPolicy,

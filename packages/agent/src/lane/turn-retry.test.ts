@@ -15,10 +15,7 @@ import {
   type FauxLane,
   type FauxResponseStep,
 } from './test-harness.js';
-import {
-  recoverOverflowTurn,
-  runTurnWithOverflowRecovery,
-} from './turn.js';
+import { recoverOverflowTurn, runTurnWithOverflowRecovery } from './turn.js';
 
 const LANES: FauxLane[] = [];
 

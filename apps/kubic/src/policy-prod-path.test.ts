@@ -422,10 +422,7 @@ describe('doctor reports the installed policy', () => {
     const lines: string[] = [];
     await runDoctorCommand(
       {},
-      doctorDeps(
-        lines,
-        () => installPolicy({ workspace: '/fake' }).posture,
-      ),
+      doctorDeps(lines, () => installPolicy({ workspace: '/fake' }).posture),
     );
     const printed = lines.join('\n');
     expect(printed).toContain('PASS provider:faux');

@@ -9,11 +9,15 @@
 // caller focus).
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  BACKGROUND_TOKENS,
   buildCompactPrompt,
+  type CompactionLane,
+  compactionSettings,
   createManualKeepScope,
   DEFAULT_RESERVE_TOKENS,
   effectiveKeepRecentTokens,
   effectiveReserveTokens,
+  KEEP_RECENT_TOKENS,
   MANUAL_KEEP_RECENT_TOKENS,
   MAX_KEEP_RECENT_FRACTION,
   MAX_RESERVE_FRACTION,
@@ -21,11 +25,7 @@ import {
   roomAfterCompaction,
   runCompactCommand,
   runManualCompaction,
-  BACKGROUND_TOKENS,
-  KEEP_RECENT_TOKENS,
-  type CompactionLane,
   SYSTEM_ENTRY_ESTIMATE,
-  compactionSettings,
 } from './compaction.js';
 import {
   BACKGROUND_CONTEXT,

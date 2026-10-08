@@ -7,7 +7,7 @@
 // I/O confinement: this module never imports node:fs. The bridge is
 // injected, so tests drive fixtures while prod passes the real FileBridge.
 
-import type { PermissionClasses } from '../../../agent/src/policy.js';
+import type { PermissionClasses } from '../../../agent/src/permissions.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { DoctorCheck } from '../doctor.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';

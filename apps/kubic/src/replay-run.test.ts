@@ -11,9 +11,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  type PermissionClasses,
   DEFAULT_PERMISSIONS,
-} from '../../../packages/agent/src/policy.js';
+  type PermissionClasses,
+} from '../../../packages/agent/src/permissions.js';
 import type {
   ReplayRunRequest,
   ReplayRuntimeDeps,
@@ -178,7 +178,10 @@ describe('prod replay re-execution runner', () => {
 
   it('threads the selected model and the runtime deps into the lane run', async () => {
     cwdWithTrajectory();
-    const policyClasses: PermissionClasses = { ...DEFAULT_PERMISSIONS, shell: false };
+    const policyClasses: PermissionClasses = {
+      ...DEFAULT_PERMISSIONS,
+      shell: false,
+    };
     const runtime: ReplayRuntimeDeps = {
       policySource: 'config',
       policyClasses,

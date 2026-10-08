@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { PermissionClasses } from './policy.js';
+import type { PermissionClasses } from './permissions.js';
 import {
   checkAgreement,
   checkExpressible,
   checkGrantable,
+  DEFAULT_PERMISSIONS,
   effectiveNetworkLevel,
   PolicyValidationError,
-  DEFAULT_PERMISSIONS,
   toolsForClasses,
   validateClasses,
-} from './policy.js';
+} from './permissions.js';
 
 describe('permission policy model', () => {
   it('loads solo defaults matching', () => {
@@ -71,26 +71,32 @@ describe('permission policy model', () => {
     expect(
       checkAgreement(
         { ...DEFAULT_PERMISSIONS, shell: 'read-only-allowlist' },
-        toolsForClasses({ ...DEFAULT_PERMISSIONS, shell: 'read-only-allowlist' }),
+        toolsForClasses({
+          ...DEFAULT_PERMISSIONS,
+          shell: 'read-only-allowlist',
+        }),
       ).agree,
     ).toBe(true);
   });
 
   it('refuses contradictory roles with named reasons', () => {
-    const read = checkAgreement({ ...DEFAULT_PERMISSIONS, filesystem: 'read' }, [
-      'read',
-      'write',
-    ]);
+    const read = checkAgreement(
+      { ...DEFAULT_PERMISSIONS, filesystem: 'read' },
+      ['read', 'write'],
+    );
     expect(read.agree).toBe(false);
     if (!read.agree) expect(read.reason).toContain('write');
-    const shell = checkAgreement({ ...DEFAULT_PERMISSIONS, shell: false }, ['bash']);
+    const shell = checkAgreement({ ...DEFAULT_PERMISSIONS, shell: false }, [
+      'bash',
+    ]);
     expect(shell.agree).toBe(false);
     if (!shell.agree) expect(shell.reason).toContain('bash');
   });
 
   it('accepts agreeing roles', () => {
     expect(
-      checkAgreement(DEFAULT_PERMISSIONS, toolsForClasses(DEFAULT_PERMISSIONS)).agree,
+      checkAgreement(DEFAULT_PERMISSIONS, toolsForClasses(DEFAULT_PERMISSIONS))
+        .agree,
     ).toBe(true);
   });
 
@@ -99,7 +105,8 @@ describe('permission policy model', () => {
     expect(missing.agree).toBe(false);
     if (!missing.agree) expect(missing.reason).toContain('ls');
     expect(
-      checkGrantable(DEFAULT_PERMISSIONS, toolsForClasses(DEFAULT_PERMISSIONS)).agree,
+      checkGrantable(DEFAULT_PERMISSIONS, toolsForClasses(DEFAULT_PERMISSIONS))
+        .agree,
     ).toBe(true);
   });
 
@@ -130,9 +137,10 @@ describe('permission policy model', () => {
 
 describe('checkAgreement every refuse branch', () => {
   it("refuses fs 'none' with a read tool, naming the tool", () => {
-    const result = checkAgreement({ ...DEFAULT_PERMISSIONS, filesystem: 'none' }, [
-      'read',
-    ]);
+    const result = checkAgreement(
+      { ...DEFAULT_PERMISSIONS, filesystem: 'none' },
+      ['read'],
+    );
     expect(result).toEqual({
       agree: false,
       reason: "filesystem is 'none' but tool 'read' is registered",
@@ -140,10 +148,10 @@ describe('checkAgreement every refuse branch', () => {
   });
 
   it("refuses fs 'read' with a write tool, naming the tool", () => {
-    const result = checkAgreement({ ...DEFAULT_PERMISSIONS, filesystem: 'read' }, [
-      'read',
-      'write',
-    ]);
+    const result = checkAgreement(
+      { ...DEFAULT_PERMISSIONS, filesystem: 'read' },
+      ['read', 'write'],
+    );
     expect(result).toEqual({
       agree: false,
       reason: "filesystem is 'read' but write tool 'write' is registered",
@@ -173,12 +181,18 @@ describe('checkAgreement every refuse branch', () => {
   it('agrees when no refused tool is registered', () => {
     expect(
       checkAgreement(
-        { ...DEFAULT_PERMISSIONS, filesystem: 'none', shell: false, git: false },
+        {
+          ...DEFAULT_PERMISSIONS,
+          filesystem: 'none',
+          shell: false,
+          git: false,
+        },
         [],
       ).agree,
     ).toBe(true);
     expect(
-      checkAgreement(DEFAULT_PERMISSIONS, toolsForClasses(DEFAULT_PERMISSIONS)).agree,
+      checkAgreement(DEFAULT_PERMISSIONS, toolsForClasses(DEFAULT_PERMISSIONS))
+        .agree,
     ).toBe(true);
   });
 });

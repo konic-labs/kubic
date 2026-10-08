@@ -6,11 +6,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { bootLane } from '../../../packages/agent/src/lane/boot.js';
 import {
   createSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -21,7 +21,7 @@ import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import { runTuiCommand, tuiLoop, type TuiRunDeps } from './tui-run.js';
+import { runTuiCommand, type TuiRunDeps, tuiLoop } from './tui-run.js';
 
 const made: string[] = [];
 

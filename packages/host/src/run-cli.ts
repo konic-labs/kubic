@@ -18,7 +18,7 @@ import {
   type LaneTerminalStatus,
   settleTerminalStatus,
 } from '../../agent/src/lane/settle.js';
-import type { RunMode } from '../../agent/src/policy.js';
+import type { RunMode } from '../../agent/src/permissions.js';
 import {
   type CommandResult,
   EXIT_APPROVAL,
@@ -345,7 +345,7 @@ export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 export const MAX_RUN_TIMEOUT_MS = 2_147_483_647;
 
 // The parsed `kubic run` invocation. commander owns the argv
-// (apps/kubic/src/commands/solo.ts): flag syntax, unknown flags and
+// (apps/kubic/src/commands/session.ts): flag syntax, unknown flags and
 // missing values are its usage errors (exit 2); the value rules below are
 // this command's own semantics, applied as commander argument parsers.
 export interface RunCommandOptions {

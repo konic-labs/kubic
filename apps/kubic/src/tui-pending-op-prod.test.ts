@@ -7,11 +7,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bootLane } from '../../../packages/agent/src/lane/boot.js';
 import {
   createSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,

@@ -23,7 +23,7 @@ import {
 import {
   type PermissionClasses,
   validateClasses,
-} from '../../../agent/src/policy.js';
+} from '../../../agent/src/permissions.js';
 import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';

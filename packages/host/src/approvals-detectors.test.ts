@@ -22,7 +22,7 @@ import {
   defaultIsDestructive,
   isNetworkCommand,
 } from '../../agent/src/lane/interceptors.js';
-import { DEFAULT_PERMISSIONS } from '../../agent/src/policy.js';
+import { DEFAULT_PERMISSIONS } from '../../agent/src/permissions.js';
 import {
   ApprovalService,
   CAPABILITIES,

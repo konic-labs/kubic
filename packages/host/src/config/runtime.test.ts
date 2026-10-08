@@ -11,8 +11,8 @@ import {
   bootFauxLane,
   promptToolsLine,
 } from '../../../agent/src/lane/test-harness.js';
+import { DEFAULT_PERMISSIONS } from '../../../agent/src/permissions.js';
 import { BACKGROUND_CONTEXT } from '../../../agent/src/pi-boundary.js';
-import { DEFAULT_PERMISSIONS } from '../../../agent/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';

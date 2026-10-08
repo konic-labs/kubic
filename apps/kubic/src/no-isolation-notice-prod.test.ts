@@ -16,12 +16,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bootLane } from '../../../packages/agent/src/lane/boot.js';
 import {
   createSession,
   openSessionStore,
   type SessionHandle,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -35,12 +35,12 @@ import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { FAUX_MODEL_REF } from '../../../packages/host/src/faux-provider.js';
 import {
   NOTICE_OPT_OUT_ENV,
-  noIsolationTuiLine,
   noIsolationNoticeLines,
-} from '../../../packages/host/src/limits/solo-warning.js';
+  noIsolationTuiLine,
+} from '../../../packages/host/src/limits/no-isolation-notice.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
-import { runTuiCommand, tuiLoop, type TuiRunDeps } from './tui-run.js';
+import { runTuiCommand, type TuiRunDeps, tuiLoop } from './tui-run.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..');
@@ -446,7 +446,7 @@ describe('the notice text has exactly one source', () => {
     return out;
   }
 
-  it('appears only in packages/host/src/limits/solo-warning.ts', () => {
+  it('appears only in packages/host/src/limits/no-isolation-notice.ts', () => {
     const roots = ['apps', 'packages'].map((name) =>
       productionSources(join(REPO_ROOT, name)),
     );
@@ -457,6 +457,6 @@ describe('the notice text has exactly one source', () => {
         hits.push(file.slice(REPO_ROOT.length + 1));
       }
     }
-    expect(hits).toEqual(['packages/host/src/limits/solo-warning.ts']);
+    expect(hits).toEqual(['packages/host/src/limits/no-isolation-notice.ts']);
   });
 });

@@ -37,6 +37,12 @@ import {
   type ToolRegistration,
   ToolResultEntry,
 } from '../pi-boundary.js';
+import {
+  bootLane,
+  type Lane,
+  type LaneBootOptions,
+  PROMPT_SECTION,
+} from './boot.js';
 import type { LaneEventSink } from './events.js';
 import { subscribeLaneEvents } from './events.js';
 import {
@@ -45,12 +51,6 @@ import {
   type SessionHandle,
   type SessionStore,
 } from './session-store.js';
-import {
-  bootLane,
-  PROMPT_SECTION,
-  type LaneBootOptions,
-  type Lane,
-} from './solo.js';
 
 type Models = ReturnType<typeof createModels>;
 

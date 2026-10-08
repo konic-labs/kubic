@@ -13,14 +13,11 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { bootLane, type Lane } from '../../../packages/agent/src/lane/boot.js';
 import {
   createSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import {
-  bootLane,
-  type Lane,
-} from '../../../packages/agent/src/lane/solo.js';
 import {
   bootFauxLane,
   fauxToolUse,
@@ -42,12 +39,12 @@ import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   runTuiCommand,
-  tuiLoop,
   TUI_CLOCK_TICK_MS,
   TuiCompactionTurn,
   type TuiLaneLoop,
   type TuiRunDeps,
   TuiTurnRunner,
+  tuiLoop,
 } from './tui-run.js';
 
 type FauxContent = Parameters<typeof fauxAssistantMessage>[0];
@@ -1406,11 +1403,7 @@ describe('kubic tui prompt loop', () => {
           approvalsSkipped: false,
         }),
       } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
-      const runner = new TuiTurnRunner(
-        app,
-        tuiLoop(lane.lane),
-        'faux/faux-1',
-      );
+      const runner = new TuiTurnRunner(app, tuiLoop(lane.lane), 'faux/faux-1');
       const first = lane.run('first prompt');
       // The run is live: its model request has started.
       await waitFor(() => lane.faux.state.callCount === 1);

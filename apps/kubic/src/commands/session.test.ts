@@ -14,7 +14,7 @@ import type {
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
 import type { CliConfigResult } from '../config-runtime.js';
-import { registerSessionCommands } from './solo.js';
+import { registerSessionCommands } from './session.js';
 
 const CONFIG = {} as CliConfigResult;
 

@@ -28,13 +28,13 @@ import {
   auditSinksDoctorChecks,
   buildConfiguredSinks,
   credentialUseAudit,
+  decisionAudit,
   fullAccessEnabledAudit,
   isPrivilegedAuditWhat,
   readAuditLedger,
   resolveRunBaseRevision,
   runStartAudit,
   setAuditSinks,
-  decisionAudit,
   undoRestoreAudit,
 } from './audit-ledger.js';
 
@@ -380,14 +380,8 @@ describe('audit ledger', () => {
       workspace: root,
       approved: true,
     };
-    appendToLedger(
-      dir,
-      decisionAudit({ ...decision, posture: 'approvals' }),
-    );
-    appendToLedger(
-      dir,
-      decisionAudit({ ...decision, posture: 'full-access' }),
-    );
+    appendToLedger(dir, decisionAudit({ ...decision, posture: 'approvals' }));
+    appendToLedger(dir, decisionAudit({ ...decision, posture: 'full-access' }));
     const lines: string[] = [];
     const code = (
       await runAuditCommand(

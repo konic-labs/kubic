@@ -41,13 +41,13 @@ import { createHash } from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
 import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import { readRootFor } from '../../../exec/src/read-roots.js';
-import type { HookRegistration, JsonValue } from '../pi-boundary.js';
-import { hook, ToolTask } from '../pi-boundary.js';
 import {
   effectiveNetworkLevel,
   type NetworkLevel,
   type ShellLevel,
-} from '../policy.js';
+} from '../permissions.js';
+import type { HookRegistration, JsonValue } from '../pi-boundary.js';
+import { hook, ToolTask } from '../pi-boundary.js';
 
 export interface PolicyInterceptorOptions {
   workspace: string;

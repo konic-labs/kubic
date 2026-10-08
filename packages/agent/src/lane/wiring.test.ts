@@ -16,12 +16,7 @@ import {
   SystemEntry,
   ToolTask,
 } from '../pi-boundary.js';
-import {
-  assemblePrompt,
-  bootLane,
-  PROMPT_SECTION,
-  type Lane,
-} from './solo.js';
+import { assemblePrompt, bootLane, type Lane, PROMPT_SECTION } from './boot.js';
 
 const captured = vi.hoisted(() => ({
   interceptorCalls: 0,
@@ -312,7 +307,7 @@ describe('solo boot hands HarnessSettings compaction to', () => {
     });
     LANES.push(lane);
     expect(captured.compactionOptions[0]?.currentWindow()).toBe(200_000);
-    const { escalateLaneModel } = await import('./solo.js');
+    const { escalateLaneModel } = await import('./boot.js');
     await escalateLaneModel(
       lane,
       {

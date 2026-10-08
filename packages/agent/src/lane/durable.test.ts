@@ -20,7 +20,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
-import { bootLane, PROMPT_SECTION, type Lane } from './solo.js';
+import { bootLane, type Lane, PROMPT_SECTION } from './boot.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],

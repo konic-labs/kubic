@@ -14,11 +14,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { bootLane } from '../../../packages/agent/src/lane/boot.js';
 import {
   createSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
@@ -34,9 +34,9 @@ import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   runTuiCommand,
-  tuiLoop,
   type TuiApprovalSeat,
   type TuiRunDeps,
+  tuiLoop,
 } from './tui-run.js';
 
 const made: string[] = [];

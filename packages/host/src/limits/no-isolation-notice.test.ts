@@ -4,9 +4,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   emitNoIsolationNotice,
-  noIsolationTuiLine,
   noIsolationNoticeLines,
-} from './solo-warning.js';
+  noIsolationTuiLine,
+} from './no-isolation-notice.js';
 
 describe('solo startup warning', () => {
   it('TUI line announces no isolation in one line', () => {

@@ -8,7 +8,7 @@ import {
   LIGHT_PALETTE,
   TERMINAL_PALETTE,
 } from '../../../../packages/core/src/ui/tokens.js';
-import { registerSessionCommands } from '../commands/solo.js';
+import { registerSessionCommands } from '../commands/session.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import { COMMAND_NAMES } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';

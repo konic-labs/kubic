@@ -45,6 +45,7 @@ import {
   removeLockFile,
   tightenStateDir,
 } from '../../../exec/src/lock-file.js';
+import type { RunMode } from '../permissions.js';
 import {
   type Context,
   type ConversationId,
@@ -58,7 +59,6 @@ import {
   UsageDoc,
   uuidv7,
 } from '../pi-boundary.js';
-import type { RunMode } from '../policy.js';
 import { bridgeToPiFileSystem } from './session-fs.js';
 
 // Session ids are path segments under the sessions root, so the character

@@ -3,6 +3,7 @@
 // `conversation.configure({ tools })` against the registry's registrations.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { DEFAULT_PERMISSIONS } from '../permissions.js';
 import {
   AgentDoc,
   BACKGROUND_CONTEXT,
@@ -13,9 +14,8 @@ import {
   MemoryStorage,
   type Storage,
 } from '../pi-boundary.js';
-import { DEFAULT_PERMISSIONS } from '../policy.js';
+import { bootLane, type Lane } from './boot.js';
 import { applyToolPolicy } from './policy.js';
-import { bootLane, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],

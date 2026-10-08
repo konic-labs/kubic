@@ -8,12 +8,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bootLane } from '../../../packages/agent/src/lane/boot.js';
 import {
   attachSession,
   createSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import { readSessionEntries } from '../../../packages/agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,

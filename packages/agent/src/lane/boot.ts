@@ -9,10 +9,10 @@ import type { ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
 import { withReadRoots } from '../../../exec/src/read-roots.js';
 import {
+  compactionSettings,
   createManualKeepScope,
   DEFAULT_RESERVE_TOKENS,
   type ManualKeepScope,
-  compactionSettings,
 } from '../compaction.js';
 import type { EscalationLadder, ThinkingInputs } from '../model-select.js';
 import {
@@ -20,6 +20,8 @@ import {
   resolveThinkingLevel,
   validateEscalation,
 } from '../model-select.js';
+import type { PermissionClasses } from '../permissions.js';
+import { toolsForClasses, validateClasses } from '../permissions.js';
 import {
   AgentDoc,
   BACKGROUND_CONTEXT,
@@ -35,8 +37,6 @@ import {
   type Registry,
   section,
 } from '../pi-boundary.js';
-import type { PermissionClasses } from '../policy.js';
-import { toolsForClasses, validateClasses } from '../policy.js';
 import {
   assembleSystemPrompt,
   escalatePinnedModel,
@@ -377,9 +377,7 @@ export async function escalateLaneModel(
   return result;
 }
 
-export async function bootLane(
-  options: LaneBootOptions,
-): Promise<Lane> {
+export async function bootLane(options: LaneBootOptions): Promise<Lane> {
   const context = options.context ?? BACKGROUND_CONTEXT;
   const kills = new OperationKillRegistry();
   const toolContext: KubicToolContext = {
@@ -626,9 +624,7 @@ export async function bootLane(
     defineExtension({
       name: 'kubic',
       tools: composeTools(baseTools, withPolicyContributions(options.policy)),
-      sections: [
-        section(PROMPT_SECTION, () => promptText, { tag: false }),
-      ],
+      sections: [section(PROMPT_SECTION, () => promptText, { tag: false })],
     }),
   );
 

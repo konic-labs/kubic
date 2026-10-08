@@ -48,7 +48,7 @@ import { createKubicProgram, runKubicProgram } from './cli/program.js';
 import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './cli/root-help.js';
 import { registerAnalysisCommands } from './commands/analysis.js';
 import { registerJournalCommands } from './commands/journal.js';
-import { registerSessionCommands } from './commands/solo.js';
+import { registerSessionCommands } from './commands/session.js';
 import { type CliConfigResult, configRefusalExit } from './config-runtime.js';
 
 // The root help: one text, printed by `--help`/`-h`

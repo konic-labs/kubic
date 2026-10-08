@@ -26,7 +26,7 @@ import {
 const BRIDGE = createNodeFileBridge('/');
 
 // The parsed `kubic trust` invocation (commander owns the argv:
-// apps/kubic/src/commands/solo.ts). Absent `path` means the cwd.
+// apps/kubic/src/commands/session.ts). Absent `path` means the cwd.
 export interface TrustCommandOptions {
   readonly path?: string;
   readonly revoke?: boolean;

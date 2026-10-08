@@ -120,7 +120,7 @@ afterEach(() => {
 
 describe('run guard flags', () => {
   // The value rules commander applies to --timeout/--max-turns
-  // (apps/kubic/src/commands/solo.ts wires them; a refusal exits 2 there —
+  // (apps/kubic/src/commands/session.ts wires them; a refusal exits 2 there —
   // pinned in solo.test.ts). A missing value is commander's own error.
   it.each(['abc', '0', '-5', '1.5'])('refuses --timeout %s', (value) => {
     expect(() => parseRunTimeout(value)).toThrow(/need a positive integer/);

@@ -6,19 +6,19 @@
 // a `conversation.configure({ tools: [...] })` — pi-durable stores tool
 // NAMES from the registration objects, and an array offers exactly those.
 
+import type { PermissionClasses } from '../permissions.js';
+import {
+  checkAgreement,
+  checkGrantable,
+  toolsForClasses,
+  validateClasses,
+} from '../permissions.js';
 import type {
   Context,
   Conversation,
   Registry,
   ToolRegistration,
 } from '../pi-boundary.js';
-import type { PermissionClasses } from '../policy.js';
-import {
-  checkAgreement,
-  checkGrantable,
-  toolsForClasses,
-  validateClasses,
-} from '../policy.js';
 
 export type { PermissionClasses };
 

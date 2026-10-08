@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import { DEFAULT_PERMISSIONS } from '../policy.js';
+import { DEFAULT_PERMISSIONS } from '../permissions.js';
 import type { LoadedSkill } from './skills.js';
 import {
   discoverSkills,

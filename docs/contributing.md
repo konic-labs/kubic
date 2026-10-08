@@ -12,7 +12,7 @@ Node >= 22.19 is the only requirement:
 
 ```sh
 npm ci
-npm run build                # tsc -> gitignored dist/
+npm run build                # esbuild bundle -> gitignored dist/kubic.js
 ./bin/kubic.js --version
 ```
 

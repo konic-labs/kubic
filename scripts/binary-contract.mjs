@@ -49,7 +49,7 @@ export const BUILTIN_ROLE_NAMES = [
 export const VERSION_SUFFIX = ' (license: MIT)';
 
 // Build output the committed bin wrapper loads (bin/kubic.js).
-export const DIST_ENTRY = 'dist/apps/kubic/src/main.js';
+export const DIST_ENTRY = 'dist/kubic.js';
 
 // Provider-failure pins: doctor's provider-down check line, and the
 // headless run's provider message.

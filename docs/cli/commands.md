@@ -8,7 +8,7 @@
 
 `kubic --version` (or `-V`) prints `kubic <version> (license: MIT)` —
 the version comes from the nearest `kubic` package manifest
-(`apps/kubic/package.json` for src runs, the repo root for `dist/` runs) —
+(the repo root's `package.json`, for src and `dist/` runs alike) —
 and exits 0.
 
 **`--help` is uniform across the commands.** Every command below answers

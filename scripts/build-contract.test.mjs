@@ -1,13 +1,14 @@
 // Build/install contract for the `kubic` binary.
 // Static repo state, no build needed: asserts the packaging story holds
-// together — `npm run build` emits runnable JS to gitignored dist/ with
-// no hand-rolled flags, and the committed `bin` wrapper exists,
-// is executable, and points at the real composition root.
+// together — `npm run build` bundles the CLI into gitignored dist/kubic.js with
+// no hand-rolled flags, tsc only typechecks, and the committed `bin` wrapper
+// exists, is executable, and loads that bundle.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { ENTRY, OUTFILE } from './build.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 
@@ -16,7 +17,7 @@ function rootManifest() {
 }
 
 describe('build/install contract', () => {
-  it('root manifest is ESM, exposes the kubic bin, and builds via config', () => {
+  it('root manifest is ESM, exposes the kubic bin, and builds via the bundler', () => {
     const manifest = rootManifest();
     assert.equal(
       manifest.type,
@@ -32,15 +33,10 @@ describe('build/install contract', () => {
       existsSync(join(ROOT, binTarget)),
       `"bin.kubic" target ${binTarget} must exist in the repo`,
     );
-    const buildScript = manifest.scripts?.build;
-    assert.ok(
-      typeof buildScript === 'string' && buildScript.length > 0,
-      'root package.json needs an "npm run build" script',
-    );
-    assert.doesNotMatch(
-      buildScript,
-      /--outDir|--noEmit|--declaration|--sourceMap/,
-      '"npm run build" takes no hand-rolled tsc flags — emit options live in tsconfig.build.json',
+    assert.equal(
+      manifest.scripts?.build,
+      'node scripts/build.mjs',
+      '"npm run build" runs the bundler script and takes no flags of its own',
     );
     assert.ok(
       typeof manifest.scripts?.kubic === 'string' &&
@@ -49,23 +45,41 @@ describe('build/install contract', () => {
     );
   });
 
-  it('tsconfig.build.json emits the repo tree to dist/', () => {
-    const buildPath = join(ROOT, 'tsconfig.build.json');
-    assert.ok(existsSync(buildPath), 'tsconfig.build.json must exist');
-    const build = JSON.parse(readFileSync(buildPath, 'utf8'));
-    assert.ok(
-      typeof build.extends === 'string' &&
-        build.extends.includes('tsconfig.base.json'),
-      'tsconfig.build.json must extend tsconfig.base.json',
-    );
-    assert.equal(
-      build.compilerOptions?.outDir,
-      'dist',
-      'build output must go to gitignored dist/',
+  it('esbuild is an exact-pinned devDependency', () => {
+    const pin = rootManifest().devDependencies?.esbuild ?? '';
+    assert.match(
+      pin,
+      /^\d+\.\d+\.\d+$/,
+      'esbuild must be pinned to one exact version (no ^ or ~)',
     );
   });
 
-  it('bin wrapper is executable, has a node shebang, loads the built main', () => {
+  it('tsc only typechecks: no build tsconfig, typecheck is noEmit', () => {
+    assert.equal(
+      existsSync(join(ROOT, 'tsconfig.build.json')),
+      false,
+      'tsconfig.build.json must not exist: tsc typechecks, the bundler emits',
+    );
+    assert.match(
+      rootManifest().scripts?.typecheck ?? '',
+      /--noEmit/,
+      '"npm run typecheck" must not emit',
+    );
+  });
+
+  it('the bundle is one file, from the composition root into dist/', () => {
+    assert.equal(
+      OUTFILE,
+      'dist/kubic.js',
+      'build output must go to gitignored dist/kubic.js',
+    );
+    assert.ok(
+      existsSync(join(ROOT, ENTRY)),
+      `bundle entry ${ENTRY} must exist`,
+    );
+  });
+
+  it('bin wrapper is executable, has a node shebang, loads the bundle', () => {
     const binTarget = rootManifest().bin.kubic;
     const abs = join(ROOT, binTarget);
     const mode = statSync(abs).mode;
@@ -80,8 +94,8 @@ describe('build/install contract', () => {
     );
     assert.match(
       content,
-      /dist\/apps\/kubic\/src\/main\.js/,
-      `${binTarget} must load the built composition root`,
+      /\.\.\/dist\/kubic\.js/,
+      `${binTarget} must load the built bundle`,
     );
   });
 

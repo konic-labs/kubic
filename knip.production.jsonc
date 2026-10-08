@@ -21,9 +21,10 @@
       // The vitest plugin would add every *.test.ts as an entry, which makes
       // any test import count as use. It is off here, so `ignore` below holds.
       "vitest": false,
-      // bin/kubic.js loads dist/apps/kubic/src/main.js, the tsc output of
-      // apps/kubic/src/main.ts, so the source entry is main.ts. scripts/*.mjs
-      // are repo tooling and are entries in their own right.
+      // bin/kubic.js loads dist/kubic.js, the esbuild bundle of
+      // apps/kubic/src/main.ts (scripts/build.mjs), so the source entry is
+      // main.ts. scripts/*.mjs are repo tooling and are entries in their own
+      // right.
       "entry": [
         "apps/kubic/src/main.ts",
         "bin/kubic.js",

@@ -46,8 +46,9 @@ describe('diff hunks', () => {
 });
 
 // Every emitted @@ header counts exactly the lines the hunk
-// prints for its side — same invariant as the exec test, checked on the
-// mirror so TUI hunks stay byte-equal to `kubic diff` hunks.
+// prints for its side — the invariant the exec test checks, here applied to
+// the mirror. Byte equality with exec is not checked in this package (it
+// cannot import exec).
 function hunkCountMismatches(
   lines: string[],
 ): Array<{ header: string; a: number; b: number }> {
@@ -111,7 +112,7 @@ describe('truthful hunk header counts', () => {
 });
 
 describe('diff view header + hunks', () => {
-  it('write+edit renders path header, op label, attribution, hunks', () => {
+  it('write+edit renders path header, op label, tool-call marker, hunks', () => {
     expect(renderDiffLines(WRITE_EDIT)).toEqual([
       'a.txt — write',
       '--- a/a.txt',

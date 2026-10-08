@@ -1,9 +1,9 @@
 // JournalView file→hunks + path filter.
 // The path filter mirrors `kubic diff --path` (host journal-cli.ts over
-// exec diffEntries): exact match on path. The flattened text
-// of a 2-file view equals `kubic diff` output line-for-line (the view
-// emits the CLI-identical ---/+++/tool-call/hunk blocks; the op label
-// lives on the op-labelled header, which the CLI does not print).
+// exec diffEntries): exact match on path. The snapshots here pin the layout
+// exec's renderDiff prints (---/+++, the `# toolCall=` marker, hunks). They
+// check the view's own copy, since this package cannot import exec. The op
+// label lives on the op-labelled header, which the CLI does not print.
 // Headless snapshots render directly (no VirtualTerminal in Pi 0.85.1).
 import { describe, expect, it } from 'vitest';
 import type { DiffFileChange } from './diff-view.js';
@@ -65,7 +65,7 @@ describe('journal filters (mirrors `kubic diff`)', () => {
 });
 
 describe('journal view', () => {
-  it('2-file text snapshot equals `kubic diff` text line-for-line', () => {
+  it('2-file text snapshot pins the layout kubic diff prints', () => {
     const text = renderJournalLines(changes().slice(0, 2)).join('\n');
     expect(text).toBe(
       [
@@ -134,7 +134,7 @@ describe('journal view', () => {
     expect(doc).toContain('+new');
   });
 
-  it('view-level path filter narrows the snapshot identically to the CLI', () => {
+  it('view-level path filter narrows the snapshot the way --path does', () => {
     const view = new JournalView(changes(), { filter: { path: 'a.txt' } });
     const doc = view.render(100).join('\n');
     expect(doc).toContain('--- a/a.txt');

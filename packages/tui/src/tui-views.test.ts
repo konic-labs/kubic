@@ -113,7 +113,8 @@ describe('diff panel', () => {
     expect(result.consumed).toBe(true);
     expect(result.quit).toBe(false);
     const frame = app.render(100).join('\n');
-    // The diff view's own header (op label) plus the CLI-identical block.
+    // The diff view's own header (op label) plus the block exec's renderDiff
+    // prints for the file.
     expect(frame).toContain('src/app.ts — edit');
     expect(frame).toContain('--- a/src/app.ts');
     expect(frame).toContain('+++ b/src/app.ts');

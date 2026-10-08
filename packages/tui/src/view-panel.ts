@@ -134,7 +134,7 @@ export class DiffPanel implements Component {
   }
 
   // The WHOLE document — every visible row with its own header
-  // and CLI-identical block, in journal order. The panel row is a ScrollView
+  // and the block kubic diff prints for it, in journal order. The panel row is a ScrollView
   // over this, so nothing is dropped and a long change is reachable by
   // scrolling; `render` returns the same lines for callers that render the
   // panel on its own.

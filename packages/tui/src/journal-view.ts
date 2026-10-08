@@ -1,11 +1,11 @@
 // JournalView: file→hunks journal diffs.
 // Text only. The path filter mirrors `kubic diff --path` (host
 // journal-cli.ts over exec diffEntries): exact match on path.
-// The flattened text is line-for-line equal to `kubic diff` output:
-// each file contributes the CLI-identical ---/+++/attribution/hunk
-// block (the op-labelled header is omitted here — the CLI
-// does not print it). Binary/missing blobs become placeholders via
-// diff-view.ts; this module never throws on them.
+// Each file contributes the ---/+++/`# toolCall=` marker/hunk block exec's
+// renderDiff prints for it (the op-labelled header is omitted here — the CLI
+// does not print it); the corrupt and content-not-captured markers are not
+// drawn. Binary/missing blobs become placeholders via diff-view.ts; this
+// module never throws on them.
 
 import type { DiffFileChange, DiffRenderOptions } from './diff-view.js';
 import { renderDiffLines } from './diff-view.js';
@@ -28,8 +28,8 @@ export function filterJournalChanges(
   );
 }
 
-// CLI-identical multi-file text (mirrors exec renderDiff joined per
-// file, including the `no changes` empty case from journal-cli.ts).
+// Multi-file text: the per-file blocks of exec's renderDiff, one after the
+// other, with the `no changes` empty case journal-cli.ts prints.
 export function renderJournalLines(
   changes: ReadonlyArray<DiffFileChange>,
   options: DiffRenderOptions = {},

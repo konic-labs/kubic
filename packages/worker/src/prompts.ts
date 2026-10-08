@@ -118,11 +118,3 @@ export function escalatePinnedModel(
     event,
   };
 }
-
-export interface SessionCacheCounters {
-  requests: number;
-  hits: number;
-  misses: number;
-  cacheRead: number;
-  cacheWrite: number;
-}

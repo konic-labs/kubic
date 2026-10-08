@@ -188,7 +188,6 @@ export type {
   HarnessSettings,
   HookRegistration,
   JsonObject,
-  SettledSubmissionRecord,
   SnapshotEvent,
   Storage,
   Submission,

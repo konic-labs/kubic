@@ -44,7 +44,7 @@ no isolation — docs and code must never imply otherwise.
 ### Spans and the debug channel (`spans.ts`, `run-spans.ts`)
 
 `spans.ts` is the span recorder (`SpanRecorder` over `SPAN_NAMES`), the
-`--debug` vocabulary (`DEBUG_CLASSES`, seven classes) and the transcript
+`--debug` vocabulary (seven classes) and the transcript
 sinks. `run-spans.ts` maps what the lane and the harness actually
 do onto it and `apps/kubic/src/headless-run.ts` drives it, so a real
 `kubic run` records `kubic.agent.run` → `kubic.lane.accept` /
@@ -126,7 +126,7 @@ committable. Pinned by `config.test.ts` and gated repo-wide by
 
 Exit codes: 0 ok, 1 fail, 2 usage, 6 provider. `DoctorStatus` is
 `pass|warn|fail|skip`; `collectDoctorChecks` folds `DoctorDeps` (provider
-and dep probes) into a `DoctorReport` of `DoctorCheck`s.
+and dep probes) into a report of `DoctorCheck`s.
 `probeSessionOverlap` adds the repo-level `session:overlap` note: warn
 when two or more sessions are recorded against the workspace — a
 disclosure of the end-of-run sweep's blind spot, never a block and never

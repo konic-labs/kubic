@@ -181,9 +181,7 @@ re-derives truth) when the index's
 size changed between its read and its rename (a writer that does not hold the
 lock), leaving the interleaved line in place and dropping its caches so the
 next pass re-derives truth. The blob sweep skips `*.tmp` names and blobs newer
-than the pass started. `liveLockHolder(lockPath)` is the read-only view: the
-pid when that process is alive, undefined for missing/torn/stale residue —
-what the read-time self-heal uses to step aside.
+than the pass started.
 
 Retention fast path: both bounds are proven from
 cache on every append — the tracked byte total (index + blobs) must be at or
@@ -310,18 +308,13 @@ faithful round-trip (the walk hash itself cannot make this call — at or
 under `HASH_CHUNK_BYTES` it IS the hash of the decode). A hash-only
 after-side is a designed absence, never `corrupt`.
 
-### Effects / replay (deleted, not wired)
+### Effects / replay
 
-There is **no Kubic-side replay kernel**. `effects.ts` (the `ToolCall`
-state machine, `EffectGate`, replay policies) and `checkpoint-store.ts`
-(`FileCheckpointStore`) were deleted: both reimplemented machinery the
-execution engine already owns — the tool-call machine and its replay
-policy, and the abort-aware admission gate. In Pi 1.0 that engine is
-`@earendil-works/pi-durable`'s `pi.tool` task over a
-`ToolRegistration` (`packages/worker/src/pi-boundary.ts` is the only file
-that may import it); the 0.87 `AgentHarnessTool.replay`,
-`planned → effect_pending → outcome_ready → completed` machine and
-`execution/effect-gate.ts` are gone.
+There is **no Kubic-side replay kernel**. The tool-call state machine, its
+replay policy and the abort-aware admission gate belong to the execution
+engine. In Pi 1.0 that engine is `@earendil-works/pi-durable`'s `pi.tool`
+task over a `ToolRegistration` (`packages/worker/src/pi-boundary.ts` is the
+only file that may import it), so Kubic keeps no copy of its own.
 
 What actually ships in Kubic:
 

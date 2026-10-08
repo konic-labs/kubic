@@ -15,10 +15,10 @@ TUI-side analogue of the worker Pi boundary.
 
 | Module | Exports |
 | --- | --- |
-| `tui-boundary.ts` | Sole presentation seam: re-exports `Component`, `Focusable`, `MouseRegionHandler`, `StackEntryOptions`, `Terminal`, `TUI` (types) and `CURSOR_MARKER`, `Editor`, `Markdown`, `MouseRegion`, `matchesKey`, `ScrollView`, `Text`, `TuiAltScreen`, `VStack` (values) from `@earendil-works/pi-tui`, each with a JUSTIFICATION block |
+| `tui-boundary.ts` | Sole presentation seam: re-exports `Component`, `Focusable`, `MouseRegionHandler`, `Terminal`, `TUI` (types) and `CURSOR_MARKER`, `Editor`, `Markdown`, `MouseRegion`, `matchesKey`, `ScrollView`, `Text`, `TuiAltScreen`, `VStack` (values) from `@earendil-works/pi-tui`, each with a JUSTIFICATION block |
 | `layout.ts` | `LayoutSlots`, `NARROW_COLUMNS`, `buildLayoutRoot`, `renderLayout` |
 | `screen.ts` | `Screen`, `bootScreen` (Pi's alt-screen with a `baseFilter` run over the base frame before the overlays are composited — the dimmed background) |
-| `status-bar.ts` | `StatusUsageCost`, `StatusUsage`, `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusBarState`, `StatusBarTheme`, `DEFAULT_STATUS_THEME`, `statusVisibleWidth`, `renderStatusLines`, `StatusBarOptions`, `StatusBar` |
+| `status-bar.ts` | `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusBarState`, `StatusBarOptions`, `StatusBar` |
 | `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptOp`, `TranscriptView` (block mode: `blocks`, `select`, `toggleBlock`, `blockLines`, `reveal` on the view), `createTranscriptView`, `replayTranscript` |
 | `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `AgentTreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
 | `editor-view.ts` | `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding, `insertText` at the cursor) |
@@ -45,7 +45,7 @@ depth `none`, so snapshots stay readable.
 | Module | Helpers |
 | --- | --- |
 | `ui/line.ts` | `fitLine` (cut with `…`, plain text stays escape-free), `padTo`, `exactWidth`, `leftRight` (right part keeps its room) |
-| `ui/surface.ts` | `fillLine` / `surfaceLines`: a background role edge to edge, kept through nested styles |
+| `ui/surface.ts` | `fillLine`: a background role edge to edge, kept through nested styles |
 | `ui/frame.ts` | `frameLines` (`┌─┐` box, heavy `┏┃┗` card or bare rules; title and right label in the top rule), `frameInnerWidth` |
 | `ui/marks.ts` | `badge` (inverse accent/waiting/ok/error cells, `[TEXT]` without colour; `key` caps), `gauge` (warn at 80%, err at 100%), `sectionLabel`, `rule` |
 | `ui/key-hints.ts` | `renderKeyHintRow`: keys fg1, labels fg2, whole hints dropped from the end when narrow, a right-aligned hint |

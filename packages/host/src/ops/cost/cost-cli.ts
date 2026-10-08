@@ -24,6 +24,7 @@ import {
   type CliTheme,
   createCliTheme,
 } from '../../../../core/src/cli/theme.js';
+import { redactSecretShapes } from '../../../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../../../exec/src/file-bridge.js';
 import { stripUnsafeCharacters } from '../../../../exec/src/runtime-exclude.js';
 import {
@@ -45,7 +46,6 @@ import {
   type Usage,
   UsageDoc,
 } from '../../../../worker/src/pi-boundary.js';
-import { redactSecretShapes } from '../../policy/secret-shapes.js';
 import { type RunUsage, SESSION_ID_PATTERN } from '../../run-cli.js';
 import {
   openReadOnlySessionStorage,

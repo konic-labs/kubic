@@ -9,12 +9,12 @@
 // Faux-only, zero network; no node:fs (sinks are injected).
 
 import { hostname } from 'node:os';
-import type { AuditSinkKind } from './enterprise.js';
 import {
   containsSecretShape,
   REDACTED_SECRET,
   redactSecretShapes,
-} from './secret-shapes.js';
+} from '../../../core/src/secret-shapes.js';
+import type { AuditSinkKind } from './enterprise.js';
 
 export const AUDIT_FIELDS = [
   'who',

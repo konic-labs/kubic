@@ -9,13 +9,13 @@ import { EXIT_OK, EXIT_USAGE } from '../../../core/src/cli/exit-codes.js';
 import { createLineLogger } from '../../../core/src/cli/logger.js';
 import { formatJson } from '../../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
+import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import {
   type EffectivePolicy,
   isToolAllowed,
   normalizeToolName,
   resolveEffectivePolicy,
 } from './enterprise.js';
-import { redactSecretShapes } from './secret-shapes.js';
 
 // The parsed `kubic policy` options (commander's `opts()`); `tool` is a
 // required option there, still checked here for direct callers.

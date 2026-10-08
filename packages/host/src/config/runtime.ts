@@ -19,6 +19,7 @@ import {
   type PermissionClasses,
   validateClasses,
 } from '../../../agents/src/policy.js';
+import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import {
   DEFAULT_RESERVE_TOKENS,
@@ -32,7 +33,6 @@ import {
   type PolicyInput,
   resolveEffectivePolicy,
 } from '../policy/enterprise.js';
-import { redactSecretShapes } from '../policy/secret-shapes.js';
 import { findProjectRoot } from '../project-root.js';
 import {
   type ApprovalsConfig,

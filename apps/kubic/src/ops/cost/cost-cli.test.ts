@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { REDACTED_SECRET } from '../../../../../packages/core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../../../../packages/exec/src/file-bridge.js';
 import { FAUX_PROVIDER_ID } from '../../../../../packages/host/src/faux-provider.js';
 import {
@@ -25,7 +26,6 @@ import {
   summarizePerAgentCost,
   toCostJson,
 } from '../../../../../packages/host/src/ops/cost/per-agent-cost.js';
-import { REDACTED_SECRET } from '../../../../../packages/host/src/policy/secret-shapes.js';
 import {
   attachSession,
   createSession,

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { REDACTED_SECRET } from '../../../core/src/secret-shapes.js';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
@@ -37,7 +38,6 @@ import {
   soloDecisionAudit,
   undoRestoreAudit,
 } from './audit-ledger.js';
-import { REDACTED_SECRET } from './secret-shapes.js';
 
 const roots: string[] = [];
 let driver: GitSandbox | undefined;

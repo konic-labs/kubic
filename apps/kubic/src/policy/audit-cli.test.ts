@@ -4,6 +4,10 @@
 // marker and stay inert.
 import { describe, expect, it } from 'vitest';
 import {
+  containsSecretShape,
+  REDACTED_SECRET,
+} from '../../../../packages/core/src/secret-shapes.js';
+import {
   AUDIT_FIELDS,
   EXAMPLE_AUDIT_RECORD,
   type OrgAuditRecord,
@@ -13,10 +17,6 @@ import {
   fullAccessEnabledAudit,
   undoRestoreAudit,
 } from '../../../../packages/host/src/policy/audit-ledger.js';
-import {
-  containsSecretShape,
-  REDACTED_SECRET,
-} from '../../../../packages/host/src/policy/secret-shapes.js';
 
 // Shape-matching but inert (FAUX marker, never a live key): exercises the
 // redaction path the way secret-shapes.test.ts does.

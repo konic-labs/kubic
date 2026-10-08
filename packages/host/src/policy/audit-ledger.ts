@@ -9,6 +9,7 @@
 
 import { basename, dirname, join, resolve } from 'node:path';
 import type { RunMode } from '../../../agents/src/policy.js';
+import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { AuditTableConfig } from '../config/config.js';
 import { matchableSecrets } from '../config/secrets.js';
@@ -24,7 +25,6 @@ import {
   type SyslogTransport,
   toCredentialSentinel,
 } from './audit.js';
-import { redactSecretShapes } from './secret-shapes.js';
 import {
   createUdpSyslogTransport,
   createUnixSyslogTransport,

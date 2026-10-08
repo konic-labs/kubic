@@ -1039,7 +1039,7 @@ its own generated help (`kubic sessions prune --help`).
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory): a relative path resolves against the invoking directory (never the sessions root) and must name an existing directory, otherwise create refuses with `kubic sessions create: --cwd <path>: no such directory` (exit 1) and creates nothing. `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
 
-| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, the kit table on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none — plus `role`/`agentId` keys on sessions that carry them. **`kubic sessions --json` with no subcommand is the same array**; `kubic sessions` without `--json` stays the usage error naming the subcommands. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
+| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, the kit table on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. **`kubic sessions --json` with no subcommand is the same array**; `kubic sessions` without `--json` stays the usage error naming the subcommands. A session written by Kubic on Pi 0.87 is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-pi-087-sessions)). |
 | `attach [--] <id> [--tail <n>] [--ids] [--json]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), the `pending work: <kind> <id> (<status>)` summary when a crashed run left unfinished durable work (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text and model-authored tool names are untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. `--ids` prefixes each transcript line with its entry id (` user: …`) — the id `kubic sessions fork --at` takes. `--json` prints the raw tail entries instead — one full untruncated entry JSON per line, for scripting. |
 
 | `fork [--] <id> [--at <entry>] [--tree] [--json]` | Fork a session into a **new** one and print the new id — `--json` prints one `{id, source, at}` document (`at` is `null` for `--tree`). The id works at once with `kubic run --session` / `kubic tui --session`. A **branch fork** (the default) cuts *at* an entry, inclusive — `--at <entry>` names it (`kubic sessions attach <id> --ids` prints them), default the source's newest — and the new session's lane is a pi-durable fork of the source's: it sees the history through that entry and the agent (model, thinking level) as of it, and nothing after it. **`--tree`** copies the whole session instead: every conversation and branch tip, the lane unchanged. Either way the new session has its **own** directory, lock and an empty journal, starts with **no usage** (the copied `pi.usage` documents are emptied, so `kubic cost` never counts the source's spend twice), and starts with **approvals enforced** — the source's posture, approvals and journal are not copied. The source is only read, under its own lock: forking a session another process holds live is **refused** (the lock refusal naming the holder, exit 1, nothing written), as is a missing or Pi 0.87 session (exit 1) and an `--at` entry the source does not have (exit 1). `--at` with `--tree` is a usage error (exit 2). |
@@ -1928,10 +1928,11 @@ manifest is written last, so a failed batch leaves a partial JSONL and no
 Reads real usage out of the durable session store, scoped to the current
 project by default: only sessions touching the invoking workspace are
 reported, with `--all` for the machine-global total the command used to
-print. Rows aggregate to the `--by` level (`request | session | project`,
-default `session`: one row per session and model), one `GROUP / ROLE / MODEL
-/ IN / OUT / CACHE-R / CACHE-W / COST` row each — the session's role and model, with
-input, output and prefix-cache counters split out — followed by
+print. The unit is the session: rows aggregate to the `--by` level
+(`request | session | project`, default `session`), one `GROUP / MODEL / IN
+/ OUT / CACHE-R / CACHE-W / COST` row each — a session that ran more than one
+model reads as one row per model, with input, output and prefix-cache
+counters split out — followed by
 `task total $<sum> (<n> <level>)`. The total is exactly the sum of the
 rows. Costs below $1 print at 4 decimals (`$0.0023`), $1 and above at 2.
 
@@ -1963,7 +1964,7 @@ prints `no cost rows` and exits 0.
 | `--session <id>` | Reads only this session. Ids follow the same `[A-Za-z0-9_-]` rule as `run`: anything else exits 2 before the store is touched, and an unknown session exits 1 (`error: unknown session: <id>`). An explicitly named session ignores the project scope. |
 | `--all` | Lifts the default project scope: report sessions from every project on the machine. |
 | `--by <level>` | Group rows at `request`, `session` (the default) or `project`. Anything else exits 2. |
-| `--json` | Prints the in-code `toCostJson` shape (`agents`, `taskTotal`) field-for-field — rows carry the same `agent`/`role`/`session`/`project`/`request` identity the table groups on. Exits 0. |
+| `--json` | Prints the in-code `toCostJson` shape (`rows`, `taskTotal`) field-for-field — rows carry the same `session`/`project`/`request` identity the table groups on. Exits 0. Pre-release change: the array was named `agents` before this change; Kubic has no published JSON contract yet, so the rename is not a versioned break. |
 
 ## `kubic policy --tool <name> [--json]`
 

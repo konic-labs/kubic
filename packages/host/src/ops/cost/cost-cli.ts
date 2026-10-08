@@ -1,15 +1,14 @@
 // `kubic cost [--session <id>] [--json]`.
-// Presentation only over per-agent cost rows: one table row per agent plus
-// the task total, or the in-code `toCostJson` shape under --json. Rows
+// Presentation only over session cost rows: one table row per aggregated row
+// plus the task total, or the in-code `toCostJson` shape under --json. Rows
 // arrive injected (faux in tests); the prod loader below reads real
 // session stats out of the session store — this module never invents
-// costs, and the task total is always Σ(per-agent) by construction.
+// costs, and the task total is always Σ(rows) by construction.
 //
-// Wires the cache lever here: the same rows
-// that carry tokens and cost also carry `cacheRead`/`cacheWrite`, so the
-// prefix hit-rate (lever 2, cache.ts) is measured over real usage rows
-// and reported on the readout. No new top-level --json field: the extra
-// per-row numbers are additive inside the existing `agents` entries.
+// The rows that carry tokens and cost also carry `cacheRead`/`cacheWrite`, so
+// the prefix hit-rate (cache.ts) is measured over real usage rows and reported
+// on the readout. No new top-level --json field: the extra per-row numbers are
+// additive inside the existing `rows` entries.
 
 import { join } from 'node:path';
 import {
@@ -54,23 +53,23 @@ import {
 import { defaultSessionsRoot } from '../../sessions-cli.js';
 import { transparentCachingNote } from './cache.js';
 import {
-  type AgentCostInput,
   type CostGroupBy,
   DEFAULT_COST_GROUP_BY,
   formatCostUsd,
   groupCostRows,
   isCostGroupBy,
-  type PerAgentCostSummary,
-  summarizePerAgentCost,
+  type SessionCostInput,
+  type SessionCostSummary,
+  summarizeSessionCost,
   toCostJson,
-} from './per-agent-cost.js';
+} from './session-cost.js';
 
 // The parsed `kubic cost` options (commander's `opts()`).
 export interface CostOptions {
   readonly session?: string;
   readonly json?: boolean;
   // `--all` lifts the default project scope; `--by`
-  // picks the aggregation level (default per-agent).
+  // picks the aggregation level (default session).
   readonly all?: boolean;
   readonly by?: string;
 }
@@ -87,7 +86,7 @@ export interface CostCommandDeps {
   loadRows: (
     sessionId?: string,
     query?: CostQuery,
-  ) => AgentCostInput[] | Promise<AgentCostInput[]>;
+  ) => SessionCostInput[] | Promise<SessionCostInput[]>;
   // The invoking workspace (the composition root's cwd): the default
   // project scope filters to sessions touching it. Absent means unscoped
   // (tests); prod always sets it.
@@ -239,7 +238,7 @@ export function totalSessionUsage(
 }
 
 // Prod loader: usage facts out of the session store, aggregated to the
-// `--by` level (default per-agent). One base fact per session
+// `--by` level (default session). One base fact per session
 // per usage bucket (each `provider/model`, and each tool that reported its
 // own spend, labelled `tool:<name>`), so the task total is still exactly
 // Σ(rows).
@@ -258,7 +257,7 @@ export async function loadSessionCostRows(
   sessionsRoot: string = defaultSessionsRoot(),
   sessionId?: string,
   query?: CostQuery,
-): Promise<AgentCostInput[]> {
+): Promise<SessionCostInput[]> {
   const by = query?.by ?? DEFAULT_COST_GROUP_BY;
   const store = openSessionStore(
     sessionsRoot,
@@ -292,21 +291,15 @@ export async function loadSessionCostRows(
               workspace,
             ),
           );
-  const rows: AgentCostInput[] = [];
+  const rows: SessionCostInput[] = [];
   for (const entry of scoped) {
     const isNamed = named !== undefined && entry.id === named.id;
     const project = entry.meta?.workspace ?? entry.meta?.cwd;
-    // Base identity every row below carries: the session id stays `agentId`
-    // (the stable contract), `agent`/`role` name what the session recorded
-    // about itself, and `session`/`project` locate the fact.
+    // Base identity every row below carries: the session and the project
+    // (its recorded workspace) locate the fact.
     const identity = {
-      agentId: entry.id,
       session: entry.id,
       ...(project === undefined ? {} : { project }),
-      ...(entry.meta?.agentId === undefined
-        ? {}
-        : { agent: entry.meta.agentId }),
-      ...(entry.meta?.role === undefined ? {} : { role: entry.meta.role }),
     } as const;
     if (entry.format === 'legacy') {
       // A named legacy id escaped above; a legacy listing entry reports as
@@ -406,7 +399,7 @@ export async function loadSessionCostRows(
             costUsd: num(row.usage.cost?.total),
             input: row.usage.input,
             output: row.usage.output,
-            // Lever 2: the real prefix-cache counters off the
+            // The real prefix-cache counters off the
             // session's usage rollup.
             cacheRead: row.usage.cacheRead,
             cacheWrite: row.usage.cacheWrite,
@@ -498,29 +491,27 @@ export async function readSessionRunUsage(
 }
 
 // Presentation over the grouped rows: the group column
-// names the `--by` level, then the session's role, the model, and the
-// separate in/out/cacheRead/cacheWrite counters the old combined-tokens
-// column hid. The kit table only on a coloured terminal, plain aligned text
-// otherwise. Role/agent/model values are operator- or model-authored, so
-// the display strips control characters (the stored rows keep them raw,
-// exactly like `sessions attach`).
+// names the `--by` level, then the model, and the separate
+// in/out/cacheRead/cacheWrite counters the old combined-tokens column hid.
+// The kit table only on a coloured terminal, plain aligned text otherwise.
+// Model values are model-authored, so the display strips control characters
+// (the stored rows keep them raw, exactly like `sessions attach`).
 function costTable(
-  summary: PerAgentCostSummary,
+  summary: SessionCostSummary,
   deps: CostCommandDeps,
   by: CostGroupBy,
 ): string {
   const groupHeader =
     by === 'request' ? 'REQUEST' : by === 'session' ? 'SESSION' : 'PROJECT';
-  const groupOf = (entry: AgentCostInput): string => {
+  const groupOf = (entry: SessionCostInput): string => {
     if (by === 'request') return `#${entry.request ?? '?'}`;
-    if (by === 'session') return entry.session ?? entry.agentId;
+    if (by === 'session') return entry.session ?? '(unknown)';
     return entry.project ?? '(unknown)';
   };
   const cell = (value: string): string =>
     stripUnsafeCharacters(value).replace(/\s+/g, ' ');
-  const rows = summary.perAgent.map((entry) => [
+  const rows = summary.rows.map((entry) => [
     cell(groupOf(entry)),
-    entry.role === undefined ? '-' : cell(entry.role),
     cell(entry.model),
     String(entry.input),
     String(entry.output),
@@ -532,7 +523,6 @@ function costTable(
     rows,
     [
       { header: groupHeader },
-      { header: 'ROLE' },
       { header: 'MODEL' },
       { header: 'IN', align: 'right' },
       { header: 'OUT', align: 'right' },
@@ -542,6 +532,13 @@ function costTable(
     ],
     { fancy: deps.fancy === true, theme: deps.theme ?? PLAIN },
   );
+}
+
+// The noun a level's count is reported in: `(1 session)`, `(2 sessions)`.
+function unitNoun(by: CostGroupBy, count: number): string {
+  const noun =
+    by === 'request' ? 'request' : by === 'session' ? 'session' : 'project';
+  return count === 1 ? noun : `${noun}s`;
 }
 
 // `kubic cost` over parsed options: commander (apps/kubic/src/commands/
@@ -565,7 +562,7 @@ export async function runCostCommand(
     );
     return EXIT_USAGE;
   }
-  // `--by` takes exactly the three levels; anything else is
+  // `--by` takes exactly the four levels; anything else is
   // a usage error, and the rejected value is argv-controlled, so it is
   // redacted like the session id above.
   const by =
@@ -580,7 +577,7 @@ export async function runCostCommand(
     );
     return EXIT_USAGE;
   }
-  let rows: AgentCostInput[];
+  let rows: SessionCostInput[];
   try {
     rows = await deps.loadRows(sessionId, {
       all: options.all === true,
@@ -603,7 +600,7 @@ export async function runCostCommand(
     );
     return EXIT_FAILED;
   }
-  const summary = summarizePerAgentCost(rows);
+  const summary = summarizeSessionCost(rows, by);
   if (json) {
     deps.out(formatJson(toCostJson(summary)));
     return EXIT_OK;
@@ -613,19 +610,17 @@ export async function runCostCommand(
     return EXIT_OK;
   }
   deps.out(costTable(summary, deps, by));
-  const unit =
-    by === 'request' ? 'requests' : by === 'session' ? 'sessions' : 'projects';
   deps.out(
     theme.bold(
-      `task total ${formatCostUsd(summary.taskTotal)} (${summary.perAgent.length} ${unit})`,
+      `task total ${formatCostUsd(summary.taskTotal)} (${summary.units} ${unitNoun(by, summary.units)})`,
     ),
   );
-  // Lever 2 over real usage rows: reported only when the
+  // Prefix-cache readout over real usage rows: reported only when the
   // rows actually carried cache counters, so an unmeasured readout never
   // shows a fabricated 0%.
   if (summary.cache !== null) {
     deps.out(
-      `cache: ${summary.cache.hits}/${summary.cache.total} ${unit} with prefix hits ` +
+      `cache: ${summary.cache.hits}/${summary.cache.total} ${unitNoun(by, summary.cache.total)} with prefix hits ` +
         `(${Math.round(summary.cache.rate * 100)}%)`,
     );
     deps.out(theme.muted(transparentCachingNote()));

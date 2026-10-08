@@ -30,21 +30,13 @@ function presentation(
 ): KubicPresentationState {
   return {
     session: { sessionId: SESSION, approvalsSkipped: false },
-    agents: new Map(),
-    lanes: new Map([
-      [
-        SESSION,
-        {
-          laneId: SESSION,
-          agentId: 'root',
-          status: 'running',
-          tools: [],
-          queued: [],
-          compacting: false,
-          ...over,
-        },
-      ],
-    ]),
+    lane: {
+      status: 'running',
+      tools: [],
+      queued: [],
+      compacting: false,
+      ...over,
+    },
     approvals: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     connection: { status: 'connected' },
@@ -67,7 +59,6 @@ function change(overrides: Partial<JournalChangeLike> = {}): JournalChangeLike {
   return {
     path: 'src/app.ts',
     op: 'edit',
-    agentId: 'root',
     toolCallId: 'tc-1',
     sessionId: SESSION,
     timestamp: 1,
@@ -122,7 +113,8 @@ describe('diff panel', () => {
     expect(result.consumed).toBe(true);
     expect(result.quit).toBe(false);
     const frame = app.render(100).join('\n');
-    // The diff view's own header (op label) plus the CLI-identical block.
+    // The diff view's own header (op label) plus the block exec's renderDiff
+    // prints for the file.
     expect(frame).toContain('src/app.ts — edit');
     expect(frame).toContain('--- a/src/app.ts');
     expect(frame).toContain('+++ b/src/app.ts');
@@ -379,18 +371,14 @@ describe('journal panel', () => {
     expect(app.render(100).join('\n')).not.toContain('--- a/src/app.ts');
   });
 
-  it('uses the filter journal-view.ts implements (path and agent)', () => {
+  it('uses the path filter journal-view.ts implements', () => {
     const app = appWithRun([
       change(),
-      change({ path: 'other/file.md', op: 'write', agentId: 'worker-1' }),
+      change({ path: 'other/file.md', op: 'write' }),
     ]);
     app.handleInput(OPEN_JOURNAL);
     app.setJournalFilter({ path: 'other/file.md' });
-    let frame = app.render(100).join('\n');
-    expect(frame).toContain('--- a/other/file.md');
-    expect(frame).not.toContain('--- a/src/app.ts');
-    app.setJournalFilter({ agent: 'worker-1' });
-    frame = app.render(100).join('\n');
+    const frame = app.render(100).join('\n');
     expect(frame).toContain('--- a/other/file.md');
     expect(frame).not.toContain('--- a/src/app.ts');
     app.setJournalFilter({});
@@ -418,7 +406,7 @@ describe('journal panel', () => {
 });
 
 describe('panel content is untrusted', () => {
-  it('strips control sequences from paths, attribution and file bodies', () => {
+  it('strips control sequences from paths, tool-call ids and file bodies', () => {
     // Both the row AND the run's own tool-call id carry controls (the id
     // comes back through the same lane event the tree reads), so this also
     // pins that the selection compares on the sanitized basis.
@@ -426,7 +414,6 @@ describe('panel content is untrusted', () => {
       [
         change({
           path: `evil${ESC}[2Jname.ts`,
-          agentId: `agent${BEL}x`,
           toolCallId: `tc${ESC}[31m`,
           before: `old${ESC}[2Jline\n`,
           after: `new${BEL}line\n`,
@@ -439,7 +426,6 @@ describe('panel content is untrusted', () => {
     // The readable words survive; no control byte from journal content does.
     expect(frame).toContain('evil');
     expect(frame).toContain('name.ts');
-    expect(frame).toContain('agent');
     expect(frame).not.toContain('no changes');
     expect(frame).not.toContain(`${ESC}[2J`);
     expect(frame).not.toContain(`${ESC}[31m`);

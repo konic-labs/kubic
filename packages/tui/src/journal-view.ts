@@ -1,11 +1,11 @@
 // JournalView: file→hunks journal diffs.
-// Text only. Filters mirror `kubic diff --path/--agent` (host
-// journal-cli.ts over exec diffEntries): exact match on path and agent.
-// The flattened text is line-for-line equal to `kubic diff` output:
-// each file contributes the CLI-identical ---/+++/attribution/hunk
-// block (the op-labelled header is omitted here — the CLI
-// does not print it). Binary/missing blobs become placeholders via
-// diff-view.ts; this module never throws on them.
+// Text only. The path filter mirrors `kubic diff --path` (host
+// journal-cli.ts over exec diffEntries): exact match on path.
+// Each file contributes the ---/+++/`# toolCall=` marker/hunk block exec's
+// renderDiff prints for it (the op-labelled header is omitted here — the CLI
+// does not print it); the corrupt and content-not-captured markers are not
+// drawn. Binary/missing blobs become placeholders via diff-view.ts; this
+// module never throws on them.
 
 import type { DiffFileChange, DiffRenderOptions } from './diff-view.js';
 import { renderDiffLines } from './diff-view.js';
@@ -14,29 +14,22 @@ import { Text } from './tui-boundary.js';
 
 export interface JournalFilter {
   readonly path?: string;
-  readonly agent?: string;
 }
 
 // Post-aggregation filter over one FileChange per path (assumes the
-// caller passes already-aggregated rows, at most one entry per path).
-// NOTE: this diverges from CLI diffEntries (exec journal-diff.ts),
-// which filters raw journal rows BEFORE aggregation: a path with
-// mixed-agent history keeps only matching rows there, while here the
-// agent predicate tests the aggregated row's last-agentId. Same exact-
-// match predicate otherwise: path (resp. agentId) equals the filter.
+// caller passes already-aggregated rows, at most one entry per path): exact
+// match on the path.
 export function filterJournalChanges(
   changes: ReadonlyArray<DiffFileChange>,
   filter: JournalFilter,
 ): DiffFileChange[] {
   return changes.filter(
-    (change) =>
-      (filter.path === undefined || change.path === filter.path) &&
-      (filter.agent === undefined || change.agentId === filter.agent),
+    (change) => filter.path === undefined || change.path === filter.path,
   );
 }
 
-// CLI-identical multi-file text (mirrors exec renderDiff joined per
-// file, including the `no changes` empty case from journal-cli.ts).
+// Multi-file text: the per-file blocks of exec's renderDiff, one after the
+// other, with the `no changes` empty case journal-cli.ts prints.
 export function renderJournalLines(
   changes: ReadonlyArray<DiffFileChange>,
   options: DiffRenderOptions = {},

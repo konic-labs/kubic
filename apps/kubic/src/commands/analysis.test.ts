@@ -100,7 +100,7 @@ async function kubic(argv: readonly string[], real = false): Promise<Run> {
 
 const COST_ROWS = [
   {
-    agentId: 'w-1',
+    session: 'w-1',
     model: 'cheap/small',
     costUsd: 0.2,
     input: 100,
@@ -478,11 +478,11 @@ describe('analysis commands: happy paths over the real handlers', () => {
   it('cost prints a table and the task total', async () => {
     const run = await kubic(['cost'], true);
     expect(run.code).toBe(0);
-    // Group + role + split counters at sub-cent precision.
+    // Group + model + split counters at sub-cent precision.
     expect(run.out[0]).toMatch(
-      /^SESSION +ROLE +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
+      /^SESSION +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
     );
-    expect(run.out[1]).toBe('task total $0.2000 (1 sessions)');
+    expect(run.out[1]).toBe('task total $0.2000 (1 session)');
     expect(run.err).toEqual([]);
   });
 
@@ -533,7 +533,7 @@ describe('analysis commands: happy paths over the real handlers', () => {
 
 describe('analysis commands: --json prints exactly one JSON document', () => {
   const shapes: Record<AnalysisName, readonly string[]> = {
-    cost: ['agents', 'taskTotal'],
+    cost: ['rows', 'taskTotal'],
     policy: ['decision', 'source', 'tool'],
     audit: [],
     eval: ['exitCode', 'ok', 'record'],

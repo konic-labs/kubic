@@ -6,18 +6,17 @@
 // Structural DiffFileChange mirrors exec FileChange
 // (packages/exec/src/journal-diff.ts) WITHOUT importing it: the tui
 // package must never import exec/host/worker implementation (dep-lint),
-// so only the fields this view reads are typed here. unifiedHunks
-// mirrors exec's algorithm line-for-line so TUI hunks equal
-// `kubic diff` hunks; the ---/+++/attribution block below is byte-equal
-// to exec renderDiff's per-file block (the op label lives on the
-// op-labelled header line, which the CLI does not print).
+// so only the fields this view reads are typed here. unifiedHunks is a copy
+// of exec's unifiedHunks (the TUI cannot import it); the per-file block below
+// follows exec's renderDiff: ---/+++, the `# toolCall=` marker, then hunks.
+// The op label lives on the op-labelled header line, which the CLI does not
+// print.
 
 export type DiffOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 
 export interface DiffFileChange {
   readonly path: string;
   readonly op: DiffOp;
-  readonly agentId: string;
   readonly toolCallId: string | null;
   readonly sessionId: string;
   readonly timestamp: number;
@@ -33,8 +32,8 @@ export interface DiffRenderOptions {
   readonly maxLines?: number;
   // `(file k/N)` appended to the op-labelled header, so a
   // multi-file panel says which file of how many it is showing. Only the TUI
-  // diff panel sets it — `kubic diff` parity output never carries it (the
-  // journal view drops the op-labelled header line entirely).
+  // diff panel sets it — `kubic diff` output never carries it (the journal
+  // view drops the op-labelled header line entirely).
   readonly fileOrdinal?: { readonly index: number; readonly total: number };
 }
 
@@ -129,15 +128,16 @@ function truncateLine(line: string, width: number): string {
   return `${line.slice(0, width - 1)}…`;
 }
 
-// Full single-file view: op-labelled header, then the CLI-identical
-// block (---/+++/attribution/hunks) so everything below line 0 matches
-// `kubic diff` exactly. Placeholders replace hunks for binary/missing
-// content — the view never throws on null or binary sides.
+// Full single-file view: op-labelled header, then the block exec's renderDiff
+// prints for the file (---/+++, the `# toolCall=` marker, then hunks). The
+// corrupt and content-not-captured markers renderDiff can add are not drawn
+// here. Placeholders replace hunks for binary/missing content — the view never
+// throws on null or binary sides.
 export function renderDiffLines(
   change: DiffFileChange,
   options: DiffRenderOptions = {},
 ): string[] {
-  const who = `agent=${change.agentId} toolCall=${change.toolCallId ?? 'none'}`;
+  const who = `toolCall=${change.toolCallId ?? 'none'}`;
   const flags = [
     change.unattributed ? 'unattributed' : null,
     change.reversible ? null : 'non-reversible',

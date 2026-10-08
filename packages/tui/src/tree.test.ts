@@ -1,17 +1,17 @@
-// AgentTreeView one-node + ToolOutput collapsing.
-// Solo-only: root + tool children, glyphs ✓/●/◌, keyboard+click toggle,
+// TreeView one-node + ToolOutput collapsing.
+// Solo-only: head row + tool children, glyphs ✓/●/◌, keyboard+click toggle,
 // truncation. Headless snapshots render directly (no VirtualTerminal in
 // Pi 0.85.1) like layout.test.ts.
 import { describe, expect, it } from 'vitest';
 import {
-  AgentTreeView,
   applyTreeSnapshot,
   collapsedSummary,
   createTreeState,
   renderTreeLines,
-  rootGlyph,
+  statusGlyph,
   type TreeLaneSnapshot,
   type TreeToolSnapshot,
+  TreeView,
   toggleTree,
   toolGlyph,
 } from './tree.js';
@@ -44,10 +44,10 @@ function lane(
 }
 
 describe('tree glyphs', () => {
-  it('maps root status to ◌/●/✓', () => {
-    expect(rootGlyph('idle')).toBe('◌');
-    expect(rootGlyph('running')).toBe('●');
-    expect(rootGlyph('done')).toBe('✓');
+  it('maps the head status to ◌/●/✓', () => {
+    expect(statusGlyph('idle')).toBe('◌');
+    expect(statusGlyph('running')).toBe('●');
+    expect(statusGlyph('done')).toBe('✓');
   });
 
   it('maps tool state to ●/✓', () => {
@@ -62,7 +62,7 @@ describe('tree glyphs', () => {
 });
 
 describe('tree lane feed', () => {
-  it('shows ● root with live children on start/finish', () => {
+  it('shows ● head with live children on start/finish', () => {
     const state = createTreeState();
     expect(renderTreeLines(state, 100)[0]).toBe('◌ solo');
     applyTreeSnapshot(state, lane('running', [tool('c1', 'bash')]));
@@ -120,7 +120,7 @@ describe('tree toggle input', () => {
   it('toggles on key and returns focus to the editor', () => {
     const state = createTreeState();
     let editorFocus = 0;
-    const view = new AgentTreeView(state, {
+    const view = new TreeView(state, {
       onFocusEditor: () => editorFocus++,
     });
     expect(view.isCollapsed()).toBe(false);
@@ -135,7 +135,7 @@ describe('tree toggle input', () => {
   it('toggles on click, chains wheel to the transcript', () => {
     const state = createTreeState();
     let editorFocus = 0;
-    const view = new AgentTreeView(state, {
+    const view = new TreeView(state, {
       onFocusEditor: () => editorFocus++,
     });
     const clicked = view.handleMouse({
@@ -174,7 +174,7 @@ describe('tree toggle input', () => {
 });
 
 describe('tree snapshots (headless, no VirtualTerminal)', () => {
-  function populated(): AgentTreeView {
+  function populated(): TreeView {
     const state = createTreeState();
     applyTreeSnapshot(
       state,
@@ -183,7 +183,7 @@ describe('tree snapshots (headless, no VirtualTerminal)', () => {
         tool('c2', 'bash'),
       ]),
     );
-    return new AgentTreeView(state);
+    return new TreeView(state);
   }
 
   it('snapshots the expanded tree', () => {
@@ -319,7 +319,7 @@ describe('tree tool detail', () => {
     expect(lines.join('\n')).not.toContain('✓');
   });
 
-  it('shows $cost and in/out tokens on the root row after usage', () => {
+  it('shows $cost and in/out tokens on the head row after usage', () => {
     // The tree renders the totals the state carries (the projector
     // sums the ledger and the usage rows; the tree never folds a raw row).
     const state = createTreeState();
@@ -447,7 +447,7 @@ describe('tree mutation hardening', () => {
   it('ignores non-toggle keys without toggling or refocusing', () => {
     const state = createTreeState();
     let editorFocus = 0;
-    const view = new AgentTreeView(state, {
+    const view = new TreeView(state, {
       onFocusEditor: () => editorFocus++,
     });
     view.handleInput('x');
@@ -475,15 +475,15 @@ describe('tree mutation hardening', () => {
         tool('c1', 'bash', { status: 'done', durationMs: 500 }),
       ]),
     );
-    const view = new AgentTreeView(state, { collapsed: true });
+    const view = new TreeView(state, { collapsed: true });
     expect(view.isCollapsed()).toBe(true);
     // One tool: singular 'call' — the duration is the projector's measurement,
     // carried in the snapshot.
     expect(view.render(100)).toEqual(['● solo', '  …1 call, 500ms']);
     expect(view.getState().tools[0]?.durationMs).toBe(500);
-    // The label option names the root when the view builds its own state.
-    expect(
-      new AgentTreeView(undefined, { label: 'lane-7' }).render(100),
-    ).toEqual(['◌ lane-7']);
+    // The label option names the head row when the view builds its own state.
+    expect(new TreeView(undefined, { label: 'lane-7' }).render(100)).toEqual([
+      '◌ lane-7',
+    ]);
   });
 });

@@ -31,29 +31,29 @@ classifiers and the license constants. It imports nothing internal —
 ### `KubicPresentationState` (`presentation.ts`)
 
 The event/presentation contract. Pure types: every field is a replicated
-value or a keyed service instance — no field requires the presentation to
-hold authority, and commands are narrow and typed. Deliberately absent: no
-`eval`-style command channel, no raw event stream, no path from the
-presentation to the harness.
+value — no field requires the presentation to hold authority, and commands
+are narrow and typed. One session, one lane: the state holds the session's
+facts and its single live lane, with no id-keyed collections. Deliberately
+absent: no `eval`-style command channel, no raw event stream, no path from
+the presentation to the harness.
 
 | Field | Type |
 | --- | --- |
-| `session` | object with `sessionId: string`, `model?: string`, `thinking?: string`, `approvalsSkipped: boolean` |
-| `agents` | `ReadonlyMap<string, AgentSummary>` |
-| `lanes` | `ReadonlyMap<string, LaneSnapshot>` |
+| `session` | `SessionSnapshot` |
+| `lane` | `LaneSnapshot` |
 | `approvals` | `readonly ApprovalRequest[]` |
 | `usage` | `UsageTotals` |
 | `connection` | object with `status: 'connected' \| 'disconnected' \| 'reconnecting'`, `detail?` |
 
-`PRESENTATION_STATE_FIELDS` pins exactly those six keys via
+`PRESENTATION_STATE_FIELDS` pins exactly those five keys via
 `satisfies Record<keyof KubicPresentationState, true>` — adding or
 removing a field breaks compilation, and the projector re-checks the same
 list at runtime before every hand-out.
 
 | Interface | Fields |
 | --- | --- |
-| `AgentSummary` | `agentId`, `role`, `status`, `workspace?` |
-| `LaneSnapshot` | `laneId`, `agentId`, `status: 'idle'\|'running'\|'done'`, `tools: LaneToolSnapshot[]`, `queued: string[]`, `compacting: boolean`, `fault?`, `retrying?` |
+| `SessionSnapshot` | `sessionId: string`, `model?: string`, `thinking?: string`, `workspace?: string`, `approvalsSkipped: boolean` |
+| `LaneSnapshot` | `status: 'idle'\|'running'\|'done'`, `tools: LaneToolSnapshot[]`, `queued: string[]`, `compacting: boolean`, `fault?`, `retrying?` |
 | `LaneToolSnapshot` | `toolCallId`, `toolName`, `status: 'running'\|'done'`, `isError`, `args?`, `entry?`, `durationMs?` |
 | `LaneImagePart` | `mimeType`, `data` (base64, no `data:` prefix), `filename?`, `bytes?` |
 | `ApprovalRequest` | `requestId`, `toolName?`, `capability?`, `detail?` |

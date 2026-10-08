@@ -26,21 +26,13 @@ function presentation(
 ): KubicPresentationState {
   return {
     session: { sessionId: SESSION, approvalsSkipped: false },
-    agents: new Map(),
-    lanes: new Map([
-      [
-        SESSION,
-        {
-          laneId: SESSION,
-          agentId: 'root',
-          status: 'running',
-          tools: [],
-          queued: [],
-          compacting: false,
-          ...over,
-        },
-      ],
-    ]),
+    lane: {
+      status: 'running',
+      tools: [],
+      queued: [],
+      compacting: false,
+      ...over,
+    },
     approvals: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     connection: { status: 'connected' },
@@ -398,8 +390,7 @@ describe('presentation seed (contracts only)', () => {
           sessionId: 'abc',
           approvalsSkipped: false,
         },
-        agents: new Map(),
-        lanes: new Map(),
+        lane: { status: 'idle', tools: [], queued: [], compacting: false },
         approvals: [],
         usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
         connection: { status: 'connected' },

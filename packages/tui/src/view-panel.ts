@@ -6,8 +6,8 @@
 // them.
 //
 // Sanitisation belongs HERE, at ingress (the finding, applied to the
-// list): journal rows come from tool calls — a path, an agent id and a
-// tool-call id are model-supplied strings, and the before/after bodies are
+// list): journal rows come from tool calls — a path and a tool-call id are
+// model-supplied strings, and the before/after bodies are
 // file content a tool read off disk. Whatever the model wrote into a file is
 // therefore untrusted terminal content, and it must be cleaned before any
 // render function sees it (renderDiffLines/renderJournalLines render the text
@@ -33,7 +33,6 @@ export type PanelMode = 'closed' | 'diff' | 'journal';
 export interface JournalChangeLike {
   readonly path: string;
   readonly op: DiffOp;
-  readonly agentId: string;
   readonly toolCallId: string | null;
   readonly sessionId: string;
   readonly timestamp: number;
@@ -48,19 +47,22 @@ export interface JournalChangeLike {
 // operator cannot tell apart from a broken view.
 export const PANEL_EMPTY_LINE = 'no changes';
 
-// Sanitise a journal row before it reaches a render function. Every string
-// field a tool call or the journal store can carry is cleaned; the non-string
-// fields are carried through untouched. A null body stays null —
+// Sanitise a journal row before it reaches a render function. The fields are
+// picked one by one, so a field the panels do not name (a stored attribution,
+// say) never reaches a render function at all. Every string field is cleaned;
+// the non-string fields are copied as they are. A null body stays null —
 // `create`/`delete` legitimately have one null side, and diff-view.ts renders
 // its own placeholder for those.
 function sanitizeJournalChange(change: JournalChangeLike): JournalChangeLike {
   return {
-    ...change,
     path: sanitizeLaneText(change.path),
-    agentId: sanitizeLaneText(change.agentId),
+    op: change.op,
     toolCallId:
       change.toolCallId === null ? null : sanitizeLaneText(change.toolCallId),
     sessionId: sanitizeLaneText(change.sessionId),
+    timestamp: change.timestamp,
+    unattributed: change.unattributed,
+    reversible: change.reversible,
     before: change.before === null ? null : sanitizeLaneText(change.before),
     after: change.after === null ? null : sanitizeLaneText(change.after),
   };
@@ -132,7 +134,7 @@ export class DiffPanel implements Component {
   }
 
   // The WHOLE document — every visible row with its own header
-  // and CLI-identical block, in journal order. The panel row is a ScrollView
+  // and the block kubic diff prints for it, in journal order. The panel row is a ScrollView
   // over this, so nothing is dropped and a long change is reachable by
   // scrolling; `render` returns the same lines for callers that render the
   // panel on its own.
@@ -168,7 +170,7 @@ export class DiffPanel implements Component {
 }
 
 // `J`-reachable journal view: the whole session journal, with the filters
-// journal-view.ts already implements (exact path / agent match).
+// journal-view.ts already implements (exact path match).
 export class JournalPanel implements Component {
   private readonly view: JournalView;
   private rows: JournalChangeLike[];
@@ -197,9 +199,7 @@ export class JournalPanel implements Component {
 
   visibleRows(): ReadonlyArray<JournalChangeLike> {
     return this.rows.filter(
-      (row) =>
-        (this.filter.path === undefined || row.path === this.filter.path) &&
-        (this.filter.agent === undefined || row.agentId === this.filter.agent),
+      (row) => this.filter.path === undefined || row.path === this.filter.path,
     );
   }
 

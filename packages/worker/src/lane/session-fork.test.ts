@@ -196,12 +196,12 @@ describe('kubic sessions fork: the store', () => {
     }
   });
 
-  it("a fork keeps the source's role and agent", async () => {
+  it("a fork keeps the source's workspace and cwd", async () => {
     const root = tmpRoot();
     const store = openSessionStore(root, createNodeFileBridge(root));
     const source = await createSession(
       store,
-      { id: 'src-1', cwd: '/repo', role: 'implementer', agentId: 'aaa' },
+      { id: 'src-1', cwd: '/repo/pkg', workspace: '/repo' },
       BACKGROUND_CONTEXT,
     );
     await source.release(BACKGROUND_CONTEXT);
@@ -216,6 +216,6 @@ describe('kubic sessions fork: the store', () => {
     const listed = await listSessions(store, BACKGROUND_CONTEXT);
     expect(
       listed.find((entry) => entry.id === 'src-1-fork')?.meta,
-    ).toMatchObject({ role: 'implementer', agentId: 'aaa' });
+    ).toMatchObject({ cwd: '/repo/pkg', workspace: '/repo' });
   });
 });

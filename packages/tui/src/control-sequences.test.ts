@@ -42,21 +42,13 @@ function presentation(
 ): KubicPresentationState {
   return {
     session: { sessionId: 's', approvalsSkipped: false },
-    agents: new Map(),
-    lanes: new Map([
-      [
-        's',
-        {
-          laneId: 's',
-          agentId: 'root',
-          status: 'running',
-          tools: [],
-          queued: [],
-          compacting: false,
-          ...over,
-        },
-      ],
-    ]),
+    lane: {
+      status: 'running',
+      tools: [],
+      queued: [],
+      compacting: false,
+      ...over,
+    },
     approvals: [],
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     connection: { status: 'connected' },
@@ -158,7 +150,7 @@ describe('terminal control sequences from lane content', () => {
 
   it('does not let a TREE toolName emit raw escapes (third-pass finding)', () => {
     // The second pass sanitized the transcript's toolCall cell, but the TREE
-    // path takes the lane event's `toolName` verbatim into AgentTreeState
+    // path takes the lane event's `toolName` verbatim into TreeState
     // (tree.ts). Both come from the same model-supplied name, so the tree is
     // the same class of untrusted input and was still a live leak.
     const app = createTuiApp({

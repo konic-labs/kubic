@@ -23,9 +23,9 @@ import {
   totalSessionUsage,
 } from '../../../../../packages/host/src/ops/cost/cost-cli.js';
 import {
-  summarizePerAgentCost,
+  summarizeSessionCost,
   toCostJson,
-} from '../../../../../packages/host/src/ops/cost/per-agent-cost.js';
+} from '../../../../../packages/host/src/ops/cost/session-cost.js';
 import {
   attachSession,
   createSession,
@@ -78,14 +78,14 @@ vi.mock(
 
 const ROWS = [
   {
-    agentId: 'worker-1',
+    session: 'sess-1',
     model: 'cheap/small',
     costUsd: 0.2,
     input: 100,
     output: 50,
   },
   {
-    agentId: 'worker-2',
+    session: 'sess-2',
     model: 'pro/large',
     costUsd: 0.3,
     input: 200,
@@ -122,18 +122,54 @@ describe('kubic cost text view', () => {
       },
     );
     expect(code).toBe(0);
-    // One plain (uncoloured, unboxed) table, then the task total.
-    // The group column, the worker's role, and the
-    // separate in/out/cache counters at sub-cent precision.
+    // One plain (uncoloured, unboxed) table, then the task total: the group
+    // column names the session, and the in/out/cache counters sit apart at
+    // sub-cent precision.
     expect(cap.lines[0]).toBe(
       [
-        'SESSION   ROLE  MODEL         IN  OUT  CACHE-R  CACHE-W     COST',
-        'worker-1  -     cheap/small  100   50        0        0  $0.2000',
-        'worker-2  -     pro/large    200   60        0        0  $0.3000',
+        'SESSION  MODEL         IN  OUT  CACHE-R  CACHE-W     COST',
+        'sess-1   cheap/small  100   50        0        0  $0.2000',
+        'sess-2   pro/large    200   60        0        0  $0.3000',
       ].join('\n'),
     );
     expect(cap.lines[1]).toBe('task total $0.5000 (2 sessions)');
     expect(cap.errs).toEqual([]);
+  });
+
+  it('counts a session with two buckets once in the total and the cache line', async () => {
+    const cap = capture();
+    const code = await runCostCommand(
+      {},
+      {
+        loadRows: () => [
+          {
+            session: 'sess-1',
+            model: 'cheap/small',
+            costUsd: 0.2,
+            input: 100,
+            output: 50,
+            cacheRead: 100,
+            cacheWrite: 0,
+          },
+          {
+            session: 'sess-1',
+            model: 'tool:bash',
+            costUsd: 0.3,
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+        ],
+        out: cap.out,
+        err: cap.err,
+      },
+    );
+    expect(code).toBe(0);
+    const text = cap.lines.join('\n');
+    expect(text).toContain('task total $0.5000 (1 session)');
+    expect(text).toContain('cache: 1/1 session with prefix hits');
+    expect(text).not.toContain('sessions');
   });
 
   it('draws the kit table only when fancy', async () => {
@@ -144,7 +180,8 @@ describe('kubic cost text view', () => {
     );
     expect(cap.lines.join('\n')).toMatch(/\n─+\n/);
     expect(cap.lines.join('\n')).not.toContain('┌');
-    expect(cap.lines[0]).toContain('worker-2');
+    expect(cap.lines[0]).toContain('SESSION');
+    expect(cap.lines.join('\n')).toContain('sess-2');
   });
 
   it('reports no cost rows on an empty rollup', async () => {
@@ -179,10 +216,10 @@ describe('kubic cost --json', () => {
     const head = cap.lines[0];
     if (head === undefined) throw new Error('missing cost --json line');
     const parsed: unknown = JSON.parse(head);
-    const expected = toCostJson(summarizePerAgentCost(ROWS));
+    const expected = toCostJson(summarizeSessionCost(ROWS));
     expect(parsed).toEqual(expected);
     expect(Object.keys(parsed as Record<string, unknown>).sort()).toEqual([
-      'agents',
+      'rows',
       'taskTotal',
     ]);
   });
@@ -200,10 +237,10 @@ describe('kubic cost --json', () => {
     const head = cap.lines[0];
     if (head === undefined) throw new Error('missing cost --json line');
     const parsed = JSON.parse(head) as {
-      agents: Array<{ costUsd: number }>;
+      rows: Array<{ costUsd: number }>;
       taskTotal: number;
     };
-    const parts = parsed.agents.reduce((acc, row) => acc + row.costUsd, 0);
+    const parts = parsed.rows.reduce((acc, row) => acc + row.costUsd, 0);
     expect(parts).toBeCloseTo(parsed.taskTotal);
   });
 });
@@ -274,7 +311,7 @@ describe('kubic cost usage', () => {
 describe('kubic cost cache aggregation', () => {
   const CACHED_ROWS = [
     {
-      agentId: 'sess-hit',
+      session: 'sess-hit',
       model: 'aggregate',
       costUsd: 0.4,
       input: 100,
@@ -283,7 +320,7 @@ describe('kubic cost cache aggregation', () => {
       cacheWrite: 0,
     },
     {
-      agentId: 'sess-miss',
+      session: 'sess-miss',
       model: 'aggregate',
       costUsd: 0.1,
       input: 80,
@@ -307,7 +344,7 @@ describe('kubic cost cache aggregation', () => {
     const text = [...cap.lines, ...cap.errs].join('\n');
     // 1 of 2 sessions had a cache read > 0: a real measurement over the
     // rows the loader returned, never an invented number. The unit follows
-    // the grouping level (per-agent by default).
+    // the grouping level (per session by default).
     expect(text).toMatch(/cache: 1\/2 sessions with prefix hits/);
     expect(text).toMatch(/50%/);
   });
@@ -335,14 +372,14 @@ describe('kubic cost cache aggregation', () => {
     const head = cap.lines[0];
     if (head === undefined) throw new Error('missing cost --json line');
     const parsed = JSON.parse(head) as {
-      agents: Array<Record<string, unknown>>;
+      rows: Array<Record<string, unknown>>;
       taskTotal: number;
     };
     // The documented top-level shape is untouched.
-    expect(Object.keys(parsed).sort()).toEqual(['agents', 'taskTotal']);
-    // The new aggregation is additive: inside the existing per-agent rows.
-    expect(parsed.agents[0]?.cacheRead).toBe(900);
-    expect(parsed.agents[1]?.cacheWrite).toBe(500);
+    expect(Object.keys(parsed).sort()).toEqual(['rows', 'taskTotal']);
+    // The new aggregation is additive: inside the existing per-row entries.
+    expect(parsed.rows[0]?.cacheRead).toBe(900);
+    expect(parsed.rows[1]?.cacheWrite).toBe(500);
     expect(parsed.taskTotal).toBeCloseTo(0.5);
   });
 
@@ -581,7 +618,7 @@ describe('kubic cost durable usage', () => {
     const rows = await loadSessionCostRows(root, session.id);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      agentId: session.id,
+      session: session.id,
       model: MODEL_REF,
     });
     expect(rows[0]?.input).toBeGreaterThan(0);
@@ -667,7 +704,6 @@ describe('kubic cost durable usage', () => {
       // rows (the session that could not be read, and its project).
       expect(rows).toEqual([
         {
-          agentId: session.id,
           session: session.id,
           project: '/work',
           model: '(locked)',
@@ -807,7 +843,7 @@ describe('kubic cost lock-free reads', () => {
       {
         loadRows: () => [
           {
-            agentId: 'sess-live',
+            session: 'sess-live',
             model: '(locked)',
             costUsd: 0,
             input: 0,
@@ -849,7 +885,7 @@ describe('kubic cost lock-free reads', () => {
     // Complete report: the intact usage row survives, the torn tail is
     // in-flight and skipped.
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.agentId).toBe(session.id);
+    expect(rows[0]?.session).toBe(session.id);
     expect(rows[0]?.model.startsWith('(')).toBe(false);
     expect(rows[0]?.input).toBeGreaterThan(0);
   });
@@ -871,10 +907,10 @@ describe('kubic cost lock-free reads', () => {
       const rows = await loadSessionCostRows(root, session.id);
       // The read rows stay; a zero marker row says they may be partial.
       const read = rows.find((row) => !row.model.startsWith('('));
-      expect(read).toMatchObject({ agentId: session.id });
+      expect(read).toMatchObject({ session: session.id });
       expect(read?.input).toBeGreaterThan(0);
       expect(rows.find((row) => row.model === '(live)')).toMatchObject({
-        agentId: session.id,
+        session: session.id,
         costUsd: 0,
         input: 0,
         output: 0,
@@ -939,8 +975,6 @@ describe('kubic cost project scope and grouping', () => {
       id: string;
       cwd: string;
       workspace?: string;
-      role?: string;
-      agentId?: string;
     },
   ): Promise<string> {
     const store = openSessionStore(root, createNodeFileBridge(root));
@@ -965,7 +999,7 @@ describe('kubic cost project scope and grouping', () => {
     const rows = await loadSessionCostRows(root, undefined, {
       workspace: '/proj-a',
     });
-    expect(rows.map((row) => row.agentId)).toEqual(['proj-a-1']);
+    expect(rows.map((row) => row.session)).toEqual(['proj-a-1']);
   });
 
   it('shows every project with --all', async () => {
@@ -984,7 +1018,7 @@ describe('kubic cost project scope and grouping', () => {
       workspace: '/proj-a',
       all: true,
     });
-    expect(rows.map((row) => row.agentId).sort()).toEqual([
+    expect(rows.map((row) => row.session).sort()).toEqual([
       'proj-a-1',
       'proj-b-1',
     ]);
@@ -1006,7 +1040,7 @@ describe('kubic cost project scope and grouping', () => {
     const fromSub = await loadSessionCostRows(root, undefined, {
       workspace: '/repo/sub',
     });
-    expect(fromSub.map((row) => row.agentId).sort()).toEqual([
+    expect(fromSub.map((row) => row.session).sort()).toEqual([
       'root-run',
       'sub-run',
     ]);
@@ -1014,24 +1048,22 @@ describe('kubic cost project scope and grouping', () => {
     const fromRoot = await loadSessionCostRows(root, undefined, {
       workspace: '/repo',
     });
-    expect(fromRoot.map((row) => row.agentId).sort()).toEqual([
+    expect(fromRoot.map((row) => row.session).sort()).toEqual([
       'root-run',
       'sub-run',
     ]);
   });
 
-  it("names a session's recorded role, agent and model", async () => {
+  it("names a session's project and model", async () => {
     const root = tmpRoot();
     await storedRun(root, {
-      id: 's-role',
+      id: 's-model',
       cwd: '/repo',
       workspace: '/repo',
-      role: 'implementer',
-      agentId: 'ccc',
     });
-    const rows = await loadSessionCostRows(root, 's-role');
-    expect(rows.map((row) => row.agent)).toEqual(['ccc']);
-    expect(rows.map((row) => row.role)).toEqual(['implementer']);
+    const rows = await loadSessionCostRows(root, 's-model');
+    expect(rows.map((row) => row.session)).toEqual(['s-model']);
+    expect(rows.map((row) => row.project)).toEqual(['/repo']);
     expect(rows.map((row) => row.model)).toEqual([MODEL_REF]);
   });
 
@@ -1045,6 +1077,15 @@ describe('kubic cost project scope and grouping', () => {
     });
     expect(rows.map((row) => row.session).sort()).toEqual(['s-one', 's-two']);
     const total = rows.reduce((acc, row) => acc + row.costUsd, 0);
+    const projectRows = await loadSessionCostRows(root, undefined, {
+      workspace: '/w',
+      by: 'project',
+    });
+    expect(total).toBeCloseTo(
+      projectRows.reduce((acc, row) => acc + row.costUsd, 0),
+    );
+    // The per-request rows carry each response's model spend; for these runs
+    // they must add up to the session total as well.
     const requestRows = await loadSessionCostRows(root, undefined, {
       workspace: '/w',
       by: 'request',
@@ -1094,10 +1135,10 @@ describe('kubic cost project scope and grouping', () => {
     }
     // Request rows carry the responses' own model spend: their sum matches
     // the session's model bucket (tools report no spend here).
-    const [agentRow] = await loadSessionCostRows(root, id);
-    expect(agentRow?.model).toBe(MODEL_REF);
+    const [sessionRow] = await loadSessionCostRows(root, id);
+    expect(sessionRow?.model).toBe(MODEL_REF);
     expect(rows.reduce((acc, row) => acc + row.costUsd, 0)).toBeCloseTo(
-      agentRow?.costUsd ?? NaN,
+      sessionRow?.costUsd ?? NaN,
     );
   });
 
@@ -1125,9 +1166,6 @@ describe('kubic cost project scope and grouping', () => {
       {
         loadRows: () => [
           {
-            agentId: 'w-1',
-            agent: 'aaa',
-            role: 'implementer',
             session: 'w-1',
             project: '/w',
             model: 'cheap/small',
@@ -1144,16 +1182,15 @@ describe('kubic cost project scope and grouping', () => {
     );
     expect(code).toBe(0);
     expect(out[0]).toMatch(
-      /^SESSION +ROLE +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
+      /^SESSION +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
     );
     const body = out.join('\n');
     expect(body).toMatch(/w-1/);
-    expect(body).toMatch(/implementer/);
     expect(body).toMatch(/12400/);
     expect(body).toMatch(/1900/);
     expect(body).toMatch(/4000/);
     expect(body).toMatch(/\$0\.0023/);
-    expect(body).toMatch(/task total \$0\.0023 \(1 sessions\)/);
+    expect(body).toMatch(/task total \$0\.0023 \(1 session\)/);
     expect(err).toEqual([]);
   });
 });

@@ -21,7 +21,7 @@ import {
   attachSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { SOLO_PROMPT_SECTION } from '../../../packages/agent/src/lane/solo.js';
+import { PROMPT_SECTION } from '../../../packages/agent/src/lane/solo.js';
 import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   entriesToTranscript,
@@ -92,7 +92,7 @@ async function committedPrompt(
       const messages = entry.model as unknown as
         | Array<{ sections?: Record<string, string | null> }>
         | undefined;
-      const prompt = messages?.[0]?.sections?.[SOLO_PROMPT_SECTION];
+      const prompt = messages?.[0]?.sections?.[PROMPT_SECTION];
       if (typeof prompt === 'string' && prompt !== '') return prompt;
     }
     return '';

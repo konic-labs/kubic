@@ -34,7 +34,7 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { FAUX_MODEL_REF } from '../../../packages/host/src/faux-provider.js';
 import {
-  SOLO_NOTICE_OPT_OUT_ENV,
+  NOTICE_OPT_OUT_ENV,
   soloTuiLine,
   soloWarningLines,
 } from '../../../packages/host/src/limits/solo-warning.js';
@@ -100,7 +100,7 @@ function warningLines(writes: readonly CapturedWrite[]): string[] {
 // Every test starts from the opt-out unset — independent of the developer's
 // own shell — and unstubAllEnvs restores whatever was there before.
 beforeEach(() => {
-  vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, undefined);
+  vi.stubEnv(NOTICE_OPT_OUT_ENV, undefined);
 });
 
 afterEach(() => {
@@ -202,12 +202,12 @@ describe('solo no-isolation notice suppression', () => {
   }
 
   it('KUBIC_NO_NOTICE=1 is the documented opt-out', async () => {
-    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, '1');
+    vi.stubEnv(NOTICE_OPT_OUT_ENV, '1');
     expect(warningLines(await runOnce('optout'))).toEqual([]);
   });
 
   it('KUBIC_NO_NOTICE must be explicitly truthy to opt out', async () => {
-    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, '0');
+    vi.stubEnv(NOTICE_OPT_OUT_ENV, '0');
     expect(warningLines(await runOnce('optout-zero'))).toEqual(
       soloWarningLines(),
     );
@@ -218,12 +218,12 @@ describe('solo no-isolation notice suppression', () => {
     // env var documents). Both are pinned here: a predicate that silently
     // dropped 'true' would leave an operator who wrote it still warned, and
     // this test is what makes that impossible.
-    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, 'true');
+    vi.stubEnv(NOTICE_OPT_OUT_ENV, 'true');
     expect(warningLines(await runOnce('optout-true'))).toEqual([]);
   });
 
   it('does not treat an unrecognized opt-out value as consent', async () => {
-    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, 'yes');
+    vi.stubEnv(NOTICE_OPT_OUT_ENV, 'yes');
     expect(warningLines(await runOnce('optout-word'))).toEqual(
       soloWarningLines(),
     );
@@ -396,7 +396,7 @@ describe('solo no-isolation notice on `kubic tui`', () => {
   });
 
   it('KUBIC_NO_NOTICE=1 is the documented opt-out', async () => {
-    vi.stubEnv(SOLO_NOTICE_OPT_OUT_ENV, '1');
+    vi.stubEnv(NOTICE_OPT_OUT_ENV, '1');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
     const pending = runTuiCommand(

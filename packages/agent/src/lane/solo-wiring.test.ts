@@ -19,7 +19,7 @@ import {
 import {
   assembleSoloPrompt,
   bootLane,
-  SOLO_PROMPT_SECTION,
+  PROMPT_SECTION,
   type Lane,
 } from './solo.js';
 
@@ -178,7 +178,7 @@ async function committedPrompt(solo: Lane): Promise<string> {
       sections?: Record<string, string | null>;
     }>
   )?.[0];
-  return message?.sections?.[SOLO_PROMPT_SECTION] ?? '';
+  return message?.sections?.[PROMPT_SECTION] ?? '';
 }
 
 describe('solo boot installs the extension stack in hook order', () => {
@@ -213,7 +213,7 @@ describe('solo boot installs the extension stack in hook order', () => {
     const kubic = solo.registry.snapshot().extension('kubic');
     expect(kubic?.tools).toHaveLength(18);
     expect(kubic?.sections?.map((section) => section.key)).toEqual([
-      SOLO_PROMPT_SECTION,
+      PROMPT_SECTION,
     ]);
     // The handlers are built per boot from the current options, never
     // captured once at module load: two boots, two fresh registrations.

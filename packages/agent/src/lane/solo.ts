@@ -66,19 +66,19 @@ import {
   withPermissionCheck,
 } from './wrap.js';
 
-const SOLO_LANE_NAME = 'main';
+const LANE_NAME = 'main';
 
 // The stable key of the one prompt section the solo extension installs.
 // pi-durable stores sections as positional `pi.system` entries keyed by
 // name, so a resumed session replays the same section instead of
 // appending a second one.
-export const SOLO_PROMPT_SECTION = 'kubic';
+export const PROMPT_SECTION = 'kubic';
 
 // Stable role seed for the assembled solo prompt. The
 // sentences match the pre ad-hoc prompt; the wiring delta is that
 // boot now appends the byte-stable `cwd:` / `tools:` / `meta:` lines
 // from prompts.ts instead of the `Working directory:` sentence.
-export const SOLO_ROLE = [
+export const DEFAULT_ROLE = [
   'You are a coding agent working in a terminal.',
   'Use the read, write, edit, grep, find, ls, and bash tools to inspect and change files.',
   'Keep answers short and technical.',
@@ -102,7 +102,7 @@ export interface SoloPromptInput {
 // positional `pi.system` entry.
 export function assembleSoloPrompt(input: SoloPromptInput): string {
   const full: SystemPromptInput = {
-    role: input.role ?? SOLO_ROLE,
+    role: input.role ?? DEFAULT_ROLE,
     cwd: input.cwd,
     toolNames: input.toolNames,
     metadata: input.metadata,
@@ -608,7 +608,7 @@ export async function bootLane(
       toolNames: effectiveToolNames,
       metadata: {
         agent: options.agentId,
-        lane: SOLO_LANE_NAME,
+        lane: LANE_NAME,
         model: effectiveId,
       },
       // Role prompt: the document's own text replaces
@@ -627,7 +627,7 @@ export async function bootLane(
       name: 'kubic',
       tools: composeTools(baseTools, withPolicyContributions(options.policy)),
       sections: [
-        section(SOLO_PROMPT_SECTION, () => promptText, { tag: false }),
+        section(PROMPT_SECTION, () => promptText, { tag: false }),
       ],
     }),
   );

@@ -18,7 +18,7 @@ import { dirname, isAbsolute, join, relative } from 'node:path';
 import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
-  SOLO_KEEP_RECENT_TOKENS,
+  KEEP_RECENT_TOKENS,
 } from '../../../agent/src/compaction.js';
 import {
   type PermissionClasses,
@@ -1271,7 +1271,7 @@ export function effectiveConfigView(
         runtime.compaction.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
       ),
       keepRecentTokens:
-        runtime.compaction.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+        runtime.compaction.keepRecentTokens ?? KEEP_RECENT_TOKENS,
       source: runtime.compaction.source,
     },
     model: runtime.model === undefined ? undefined : { ...runtime.model },

@@ -21,7 +21,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
-import { bootLane, SOLO_PROMPT_SECTION, type Lane } from './solo.js';
+import { bootLane, PROMPT_SECTION, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -148,7 +148,7 @@ async function promptOf(solo: Lane): Promise<string> {
       sections?: Record<string, string | null>;
     }>
   )?.[0];
-  return message?.sections?.[SOLO_PROMPT_SECTION] ?? '';
+  return message?.sections?.[PROMPT_SECTION] ?? '';
 }
 
 async function driveOneTurn(solo: Lane): Promise<void> {

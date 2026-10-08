@@ -21,7 +21,7 @@ import {
   SystemEntry,
 } from '../pi-boundary.js';
 import { DEFAULT_PERMISSIONS } from '../policy.js';
-import { bootLane, SOLO_PROMPT_SECTION, type Lane } from './solo.js';
+import { bootLane, PROMPT_SECTION, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -155,7 +155,7 @@ async function boot(extra: {
       sections?: Record<string, string | null>;
     }>
   )?.[0];
-  const prompt = message?.sections?.[SOLO_PROMPT_SECTION] ?? '';
+  const prompt = message?.sections?.[PROMPT_SECTION] ?? '';
   const offered = (await solo.conversation.agent(BACKGROUND_CONTEXT)).tools
     .map((tool) => tool.name)
     .sort();
@@ -272,7 +272,7 @@ describe('the prompt tools line is the same intersection the conversation offers
         }>
       )?.[0];
       return {
-        advertised: toolsLine(message?.sections?.[SOLO_PROMPT_SECTION] ?? ''),
+        advertised: toolsLine(message?.sections?.[PROMPT_SECTION] ?? ''),
         offered: (await solo.conversation.agent(BACKGROUND_CONTEXT)).tools
           .map((tool) => tool.name)
           .sort(),

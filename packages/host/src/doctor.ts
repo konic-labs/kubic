@@ -9,7 +9,7 @@
 import {
   DEFAULT_RESERVE_TOKENS,
   roomAfterCompaction,
-  SOLO_KEEP_RECENT_TOKENS,
+  KEEP_RECENT_TOKENS,
 } from '../../agent/src/compaction.js';
 import {
   describeUnsupported,
@@ -487,7 +487,7 @@ function roomChecks(probe: ContextRoomProbe): DoctorCheck[] {
     room: roomAfterCompaction(
       model.contextWindow,
       probe.reserveTokens ?? DEFAULT_RESERVE_TOKENS,
-      probe.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS,
+      probe.keepRecentTokens ?? KEEP_RECENT_TOKENS,
     ),
     custom,
   }));

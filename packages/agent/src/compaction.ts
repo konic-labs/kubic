@@ -48,7 +48,7 @@ export function effectiveReserveTokens(
 
 // Roughly how much recent context stays verbatim. 20000 matches
 // pi-durable's own default (pi-durable's `keepRecentTokens`).
-export const SOLO_KEEP_RECENT_TOKENS = 20000;
+export const KEEP_RECENT_TOKENS = 20000;
 
 // The kept window takes at most this share of the room below the reserve
 // (window - reserve). The system prompt and the tool definitions sit in the
@@ -69,7 +69,7 @@ export const MAX_KEEP_RECENT_FRACTION = 0.25;
  */
 export function effectiveKeepRecentTokens(
   contextWindow: number,
-  keepRecentTokens: number = SOLO_KEEP_RECENT_TOKENS,
+  keepRecentTokens: number = KEEP_RECENT_TOKENS,
   reserveTokens: number = DEFAULT_RESERVE_TOKENS,
 ): number {
   if (!(contextWindow > 0)) return keepRecentTokens;
@@ -99,7 +99,7 @@ const SUMMARY_ESTIMATE = 800;
 export function roomAfterCompaction(
   contextWindow: number,
   reserveTokens: number = DEFAULT_RESERVE_TOKENS,
-  keepRecentTokens: number = SOLO_KEEP_RECENT_TOKENS,
+  keepRecentTokens: number = KEEP_RECENT_TOKENS,
 ): number {
   return (
     contextWindow -
@@ -155,7 +155,7 @@ export function createManualKeepScope(): ManualKeepScope {
 // trigger — the behaviour the solo lane had before the Pi 1.0 migration — and
 // so a session that ends early never pays for a summary nobody needed. A
 // caller that wants the head start can still pass an explicit value.
-export const SOLO_BACKGROUND_TOKENS = 0;
+export const BACKGROUND_TOKENS = 0;
 
 export interface SoloCompactionSettingsOptions {
   enabled?: boolean;
@@ -182,10 +182,10 @@ export function soloCompactionSettings(
   options: SoloCompactionSettingsOptions,
 ): Partial<CompactionPolicy> {
   const configured = options.configuredReserveTokens ?? DEFAULT_RESERVE_TOKENS;
-  const configuredKeep = options.keepRecentTokens ?? SOLO_KEEP_RECENT_TOKENS;
+  const configuredKeep = options.keepRecentTokens ?? KEEP_RECENT_TOKENS;
   return {
     enabled: options.enabled ?? true,
-    backgroundTokens: options.backgroundTokens ?? SOLO_BACKGROUND_TOKENS,
+    backgroundTokens: options.backgroundTokens ?? BACKGROUND_TOKENS,
     // A window of 0/undefined (model unknown) has nothing to clamp against:
     // effectiveReserveTokens returns the configured reserve.
     get reserveTokens() {

@@ -11,7 +11,7 @@ import {
   effectiveReserveTokens,
   runCompactCommand,
   runManualCompaction,
-  SOLO_KEEP_RECENT_TOKENS,
+  KEEP_RECENT_TOKENS,
   SYSTEM_ENTRY_ESTIMATE,
 } from '../compaction.js';
 import {
@@ -274,7 +274,7 @@ describe('the kept window beside the real system prompt and tool set', () => {
         window - effectiveReserveTokens(window, DEFAULT_RESERVE_TOKENS);
       const keep = effectiveKeepRecentTokens(
         window,
-        SOLO_KEEP_RECENT_TOKENS,
+        KEEP_RECENT_TOKENS,
         DEFAULT_RESERVE_TOKENS,
       );
       expect(keep, `window ${window}`).toBeLessThan(blocking - systemTokens);

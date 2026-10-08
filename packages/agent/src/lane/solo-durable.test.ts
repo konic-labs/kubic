@@ -20,7 +20,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
-import { bootLane, SOLO_PROMPT_SECTION, type Lane } from './solo.js';
+import { bootLane, PROMPT_SECTION, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -167,7 +167,7 @@ describe('the boot against the real Kubic tools and compaction policy', () => {
       }>
     )?.[0];
     const line = /^tools: (.*)$/m.exec(
-      message?.sections?.[SOLO_PROMPT_SECTION] ?? '',
+      message?.sections?.[PROMPT_SECTION] ?? '',
     )?.[1];
     expect(line?.split(',').sort()).toEqual(
       agent.tools.map((tool) => tool.name).sort(),

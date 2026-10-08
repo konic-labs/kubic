@@ -21,8 +21,8 @@ import {
   roomAfterCompaction,
   runCompactCommand,
   runManualCompaction,
-  SOLO_BACKGROUND_TOKENS,
-  SOLO_KEEP_RECENT_TOKENS,
+  BACKGROUND_TOKENS,
+  KEEP_RECENT_TOKENS,
   type SoloCompactionLane,
   SYSTEM_ENTRY_ESTIMATE,
   soloCompactionSettings,
@@ -198,8 +198,8 @@ describe('soloCompactionSettings (the reserve is read live)', () => {
   it('defaults to the Kubic budget: enabled, 16384 reserve, 20000 keep-recent, background off', () => {
     const settings = soloCompactionSettings({ currentWindow: () => 200000 });
     expect(DEFAULT_RESERVE_TOKENS).toBe(16384);
-    expect(SOLO_KEEP_RECENT_TOKENS).toBe(20000);
-    expect(SOLO_BACKGROUND_TOKENS).toBe(0);
+    expect(KEEP_RECENT_TOKENS).toBe(20000);
+    expect(BACKGROUND_TOKENS).toBe(0);
     expect(settings.enabled).toBe(true);
     expect(settings.keepRecentTokens).toBe(20000);
     expect(settings.backgroundTokens).toBe(0);
@@ -445,7 +445,7 @@ describe('runManualCompaction (the TUI /compact path)', () => {
       models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
       compaction: soloCompactionSettings({
         configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
-        keepRecentTokens: SOLO_KEEP_RECENT_TOKENS,
+        keepRecentTokens: KEEP_RECENT_TOKENS,
         currentWindow: () => 100000,
       }),
       reply: () => text('a', 500),
@@ -630,7 +630,7 @@ describe('/compact focus instructions', () => {
 
 describe('effectiveKeepRecentTokens (the kept window scales with the window)', () => {
   it('keeps the configured window when the model window is unknown', () => {
-    expect(effectiveKeepRecentTokens(0)).toBe(SOLO_KEEP_RECENT_TOKENS);
+    expect(effectiveKeepRecentTokens(0)).toBe(KEEP_RECENT_TOKENS);
   });
 
   it('keeps a share of the room below the reserve on small and mid-size windows', () => {
@@ -649,7 +649,7 @@ describe('effectiveKeepRecentTokens (the kept window scales with the window)', (
 
   it('measures the room with the reserve it is given', () => {
     // A 1000-token reserve leaves 8192 - 1000 = 7192 below an 8k window.
-    expect(effectiveKeepRecentTokens(8192, SOLO_KEEP_RECENT_TOKENS, 1000)).toBe(
+    expect(effectiveKeepRecentTokens(8192, KEEP_RECENT_TOKENS, 1000)).toBe(
       1798,
     );
   });
@@ -663,7 +663,7 @@ describe('soloCompactionSettings (the kept window is read live)', () => {
     window = 200000;
     expect(settings.keepRecentTokens).toBe(20000);
     window = 0;
-    expect(settings.keepRecentTokens).toBe(SOLO_KEEP_RECENT_TOKENS);
+    expect(settings.keepRecentTokens).toBe(KEEP_RECENT_TOKENS);
   });
 });
 

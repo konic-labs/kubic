@@ -29,8 +29,8 @@ import { PromptCacheError } from '../prompts.js';
 import {
   assembleSoloPrompt,
   bootLane,
-  SOLO_PROMPT_SECTION,
-  SOLO_ROLE,
+  PROMPT_SECTION,
+  DEFAULT_ROLE,
   type Lane,
   splitSoloModelId,
 } from './solo.js';
@@ -237,7 +237,7 @@ function promptTextOf(entry: { model?: unknown }): string {
       | Array<{ sections?: Record<string, string | null> }>
       | undefined
   )?.[0];
-  return message?.sections?.[SOLO_PROMPT_SECTION] ?? '';
+  return message?.sections?.[PROMPT_SECTION] ?? '';
 }
 
 // The prompt sections the harness has committed, oldest first.
@@ -306,7 +306,7 @@ describe('solo boot on the durable harness', () => {
     const solo = await boot();
     await driveOneTurn(solo);
     const expected = assembleSoloPrompt({
-      role: SOLO_ROLE,
+      role: DEFAULT_ROLE,
       cwd: '/fake',
       toolNames: Object.keys((await import('../ops/registry.js')).OPERATIONS),
       metadata: { agent: 'root', lane: 'main', model: 'faux/big' },

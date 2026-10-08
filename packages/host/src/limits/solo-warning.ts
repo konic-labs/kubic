@@ -28,13 +28,13 @@ export function emitSoloWarning(out: (line: string) => void): void {
 export type SoloNoticeEnv = Record<string, string | undefined>;
 
 // The opt-out's environment variable.
-export const SOLO_NOTICE_OPT_OUT_ENV = 'KUBIC_NO_NOTICE';
+export const NOTICE_OPT_OUT_ENV = 'KUBIC_NO_NOTICE';
 
 // The emission decision, shared by `run` and `tui` so the two
 // surfaces cannot disagree: KUBIC_NO_NOTICE=1 is the documented operator
 // opt-out. A `--session` resume still announces: the rule is per process
 // start, not per session. `=0` is not an opt-out.
 export function shouldEmitSoloNotice(env: SoloNoticeEnv): boolean {
-  const optOut = env[SOLO_NOTICE_OPT_OUT_ENV];
+  const optOut = env[NOTICE_OPT_OUT_ENV];
   return optOut !== '1' && optOut !== 'true';
 }

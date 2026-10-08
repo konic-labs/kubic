@@ -47,7 +47,7 @@ import {
 } from './session-store.js';
 import {
   bootLane,
-  SOLO_PROMPT_SECTION,
+  PROMPT_SECTION,
   type LaneBootOptions,
   type Lane,
 } from './solo.js';
@@ -256,7 +256,7 @@ export async function laneSystemPrompt(
     const messages = entry.model as unknown as
       | Array<{ sections?: Record<string, string | null> }>
       | undefined;
-    const prompt = messages?.[0]?.sections?.[SOLO_PROMPT_SECTION];
+    const prompt = messages?.[0]?.sections?.[PROMPT_SECTION];
     if (typeof prompt === 'string' && prompt !== '') return prompt;
   }
   return '';

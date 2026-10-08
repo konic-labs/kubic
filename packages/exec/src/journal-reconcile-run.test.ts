@@ -282,8 +282,8 @@ describe('per-turn rebaseline', () => {
     beginReconciliation({
       store,
       root,
-      runId: 'sess-374',
-      sessionId: 'sess-374',
+      runId: 'sess-reconcile',
+      sessionId: 'sess-reconcile',
       agentId: 'root',
       now: () => NOW,
     });
@@ -307,7 +307,7 @@ describe('per-turn rebaseline', () => {
     ]);
     expect(entries.some((entry) => entry.path === 'keep.txt')).toBe(false);
     expect(
-      loadBaseline(dirname(store.indexPath), 'sess-374')?.['keep.txt'],
+      loadBaseline(dirname(store.indexPath), 'sess-reconcile')?.['keep.txt'],
     ).toBe(sha256Hex('operator edit\n'));
   });
 

@@ -30,8 +30,8 @@ describe('createSecretCommandRunner', () => {
 
   it('a missing binary rejects naming it', async () => {
     const run = createSecretCommandRunner();
-    await expect(run(['kubic-definitely-not-a-binary-224'])).rejects.toThrow(
-      /kubic-definitely-not-a-binary-224/,
+    await expect(run(['kubic-definitely-not-a-binary'])).rejects.toThrow(
+      /kubic-definitely-not-a-binary/,
     );
   });
 

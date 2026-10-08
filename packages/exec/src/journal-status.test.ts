@@ -314,7 +314,7 @@ describe('status repo ahead/behind, root and conflicts', () => {
   }
 
   it('reports the repo root and zero ahead/behind on a plain repo', () => {
-    const repo = createGitSandbox({ prefix: 'kubic-status-380-' });
+    const repo = createGitSandbox({ prefix: 'kubic-journal-status-' });
     repo.activate();
     commitFile(repo, 'a.txt', 'one\n');
     const state = journalStatus(seed(), repo.path).repo;
@@ -326,7 +326,7 @@ describe('status repo ahead/behind, root and conflicts', () => {
   });
 
   it('reports ahead/behind against a local upstream', () => {
-    const repo = createGitSandbox({ prefix: 'kubic-status-380-' });
+    const repo = createGitSandbox({ prefix: 'kubic-journal-status-' });
     repo.activate();
     const origin = tmpRoot('origin-');
     repo.git(['init', '--bare', '-q', origin]);
@@ -340,7 +340,7 @@ describe('status repo ahead/behind, root and conflicts', () => {
   });
 
   it('reports conflicted paths after a conflicting merge', () => {
-    const repo = createGitSandbox({ prefix: 'kubic-status-380-' });
+    const repo = createGitSandbox({ prefix: 'kubic-journal-status-' });
     repo.activate();
     commitFile(repo, 'f.txt', 'base\n');
     repo.git(['checkout', '-qb', 'feature']);

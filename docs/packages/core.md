@@ -13,10 +13,10 @@ classifiers and the license constants. It imports nothing internal —
 
 | Module | Exports |
 | --- | --- |
-| `presentation.ts` | `KubicPresentationState` and its sub-interfaces, `PRESENTATION_STATE_FIELDS`, `PRESENTATION_COMMANDS`, `isPresentationCommand` |
+| `presentation.ts` | `KubicPresentationState` and its sub-interfaces, `PRESENTATION_STATE_FIELDS`, `PRESENTATION_COMMANDS` |
 | `license.ts` | `KUBIC_LICENSE`, `KUBIC_LICENSE_FILE`, `formatVersionLine`, `formatLicenseDetail` |
 | `secret-keys.ts` | `isSecretEnvKey`, `redactSecretEnv`, `REDACTED_ENV_VALUE` — the secret env-key classifier the trajectory exporter records the run's environment through |
-| `secret-shapes.ts` | `containsSecretShape`, `findSecretShapes`, `redactSecretShapes`, `REDACTED_SECRET` — the shared secret-shape table (`sk-`, `AKIA`, `ghp_`, `xox-`, PEM, bearer) used by the lane redactor and the audit backstop |
+| `secret-shapes.ts` | `containsSecretShape`, `redactSecretShapes`, `REDACTED_SECRET` — the shared secret-shape table (`sk-`, `AKIA`, `ghp_`, `xox-`, PEM, bearer) used by the lane redactor and the audit backstop |
 | `secret-refs.ts` | `parseSecretRef`, `splitSecretCommand`, `SecretRef`, `SecretRefError` — the `$ENV_VAR` / `!command` secret-reference forms shared by the `models.json` parser and the request-time resolver |
 | `suggest.ts` | `suggest`, `editDistance` — "did you mean …?" for mistyped commands, providers and model ids |
 | `cli/exit-codes.ts` | The [exit-code table](../cli/exit-codes.md) as named constants and the `ExitCode` union, `CommandResult` (what a command handler returns), `CliUsageError`, `CliExitError`, `exitCodeForParseError` |

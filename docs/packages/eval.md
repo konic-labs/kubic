@@ -44,7 +44,7 @@ ci` clean, usage reconciliation, RL export fields untouched.
 | `categories.ts` | `EvalCategory`, `EVAL_CATEGORIES`, `isEvalCategory` |
 | `signals.ts` | `EvalSignals`, `GateSignal`, `computeSignals`, `gatesPass`, `patchQuality` |
 | `runner.ts` | `EvalRunnerErrorCode`, `EvalRunnerError`, `EvalTaskDeps`, `EvalTaskOptions`, `EvalTrajectoryOptions`, `EvalWorkspace`, `SuiteRunOutcome`, `runEvalTask`, `runEvalTrajectory` |
-| `cli.ts` | `BenchmarkResult`, `EvalCliDeps`, `EvalOptions`, `EVAL_DEFAULT_MODEL`, `runEvalCommand`, `runBenchmarkCommand` (both return a `CommandResult`; their exit codes are core's `EXIT_*`). The handlers take the options commander parses in `apps/kubic/src/commands/analysis.ts`; the benchmark matrix is assembled here over `EVAL_SUITES` |
+| `cli.ts` | `EvalCliDeps`, `EvalOptions`, `EVAL_DEFAULT_MODEL`, `runEvalCommand`, `runBenchmarkCommand` (both return a `CommandResult`; their exit codes are core's `EXIT_*`). The handlers take the options commander parses in `apps/kubic/src/commands/analysis.ts`; the benchmark matrix is assembled here over `EVAL_SUITES` |
 | `suites.test.ts` | Category/suite coverage test over `categories.ts` + `suites.ts` — eight categories in order, one suite each, stubs marked. There is no `matrix.ts`: matrix assembly is a function of `runBenchmarkCommand` |
 | `export-cli.ts` | `ExportCliDeps`, `ExportCommandOptions`, `DATASET_TYPES`, `runExportCommand` — single-trajectory describe/export plus the `--dataset` batch mode |
 | `rl/` | RL dataset export: `types`, `manifest`, `coding`, `tooluse`, `sft`, `grpo`, `dpo`, `preference`, `provenance`, `verifier`, `dataset` (`ExportDatasetType`; directory/glob in, streamed JSONL + `dataset/1` manifest out; incl. pairs/sft-grpo/tooluse-coding shapes) |

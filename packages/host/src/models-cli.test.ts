@@ -3,7 +3,7 @@
 // proves the selection chain end-to-end. Zero network: catalog reads are
 // local (refresh is an explicit, separate concern).
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -168,6 +168,112 @@ describe('kubic models', () => {
 });
 
 // `kubic models <provider>` and `--all`.
+describe('a models.json model whose contextWindow was defaulted', () => {
+  // `llama3` declares no window, so Kubic gives it the 8192 fallback; `qwen`
+  // declares its window and must not be flagged.
+  const DEFAULTED = {
+    providers: [
+      {
+        id: 'local',
+        name: 'Local',
+        baseUrl: 'http://localhost:11434/v1',
+        api: 'openai-completions',
+        models: [{ id: 'llama3' }, { id: 'qwen', contextWindow: 32768 }],
+      },
+    ],
+  };
+
+  it('is recorded with the fallback window it was given, and only that model', async () => {
+    const dir = tmpDir();
+    writeFileSync(join(dir, 'models.json'), JSON.stringify(DEFAULTED));
+    const assembled = await assembleModels(
+      dir,
+      { KUBIC_TRUST_PROJECT: '1' },
+      { home: tmpDir() },
+    );
+    expect(assembled.defaultedWindows).toEqual([
+      { provider: 'local', model: 'llama3', contextWindow: 8192 },
+    ]);
+  });
+
+  it('marks the model in the --json catalogue, and only that model', async () => {
+    const dir = tmpDir();
+    writeFileSync(join(dir, 'models.json'), JSON.stringify(DEFAULTED));
+    const assembled = await assembleModels(
+      dir,
+      { KUBIC_TRUST_PROJECT: '1' },
+      { home: tmpDir() },
+    );
+    const lines: string[] = [];
+    const code = (
+      await runModelsCommand(
+        { json: true },
+        {
+          models: assembled.models,
+          providers: assembled.providers,
+          defaultedWindows: assembled.defaultedWindows,
+          out: (line: string) => lines.push(line),
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(0);
+    const catalogue = JSON.parse(lines.join('\n')) as Array<{
+      id: string;
+      models: Array<{ id: string; contextWindowDefaulted?: boolean }>;
+    }>;
+    const local = catalogue.find((provider) => provider.id === 'local');
+    expect(
+      local?.models.find((model) => model.id === 'llama3')
+        ?.contextWindowDefaulted,
+    ).toBe(true);
+    expect(
+      local?.models.find((model) => model.id === 'qwen')
+        ?.contextWindowDefaulted,
+    ).toBeUndefined();
+  });
+});
+
+describe('a later models.json that declares the window replaces the default', () => {
+  const LOCAL = (models: unknown[]) => ({
+    providers: [
+      {
+        id: 'local',
+        name: 'Local',
+        baseUrl: 'http://localhost:11434/v1',
+        api: 'openai-completions',
+        models,
+      },
+    ],
+  });
+
+  it('clears the earlier fallback entry, and the effective window is the declared one', async () => {
+    // The global file leaves llama3 without a window; the trusted project file
+    // declares 32768 for the same model. The effective window is 32768, so the
+    // so the model is not defaulted.
+    const home = tmpDir();
+    mkdirSync(join(home, '.kubic', 'models'), { recursive: true });
+    writeFileSync(
+      join(home, '.kubic', 'models', 'models.json'),
+      JSON.stringify(LOCAL([{ id: 'llama3' }])),
+    );
+    const dir = tmpDir();
+    writeFileSync(
+      join(dir, 'models.json'),
+      JSON.stringify(LOCAL([{ id: 'llama3', contextWindow: 32768 }])),
+    );
+    const assembled = await assembleModels(
+      dir,
+      { KUBIC_TRUST_PROJECT: '1' },
+      { home },
+    );
+    expect(assembled.defaultedWindows).toEqual([]);
+    expect(
+      assembled.models.getModels('local').find((model) => model.id === 'llama3')
+        ?.contextWindow,
+    ).toBe(32768);
+  });
+});
+
 describe('kubic models provider filter', () => {
   function registry() {
     const models = createModels();

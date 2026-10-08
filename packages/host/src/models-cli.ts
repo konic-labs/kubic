@@ -17,6 +17,7 @@ import { suggest } from '../../core/src/suggest.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { parseModelFlag, selectModel } from '../../worker/src/model-select.js';
 import {
+  DEFAULT_CONTEXT_WINDOW,
   parseModelsJson,
   type RegisterCustomProvidersOptions,
   refuseBuiltinCollisions,
@@ -63,6 +64,14 @@ interface ModelsSource {
   readonly error?: string;
 }
 
+// A models.json model that declares no `contextWindow`: it runs with the
+// fallback window, which `kubic models` and `kubic doctor` report.
+export interface DefaultedWindow {
+  readonly provider: string;
+  readonly model: string;
+  readonly contextWindow: number;
+}
+
 export interface AssembledModels {
   readonly models: MutableModels;
   // Receipt lines: `loaded models.json: …` / `models.json ignored: …`.
@@ -70,6 +79,8 @@ export interface AssembledModels {
   readonly providers: ReadonlyMap<string, ProviderInfo>;
   // Every models.json that exists at a looked-up location, in load order.
   readonly sources: readonly ModelsSource[];
+  // The loaded models whose window is the fallback default.
+  readonly defaultedWindows: readonly DefaultedWindow[];
   // The providers the implicit first-available pick may use, preferred
   // first: the testing provider, models.json customs, then built-ins whose
   // auth is configured. A keyless built-in is never on this list.
@@ -143,6 +154,9 @@ export interface ModelsCommandDeps extends CliIo {
   // Origin + auth state per provider (from assembleModels). Without it every
   // registered provider is listed as-is.
   providers?: ReadonlyMap<string, ProviderInfo>;
+  // The models running on the fallback window (from assembleModels); each is
+  // marked in the catalogue.
+  defaultedWindows?: readonly DefaultedWindow[];
   // The configured model pin (`provider/id`), marked as the
   // default in the terminal view. Absent: the selection chain's own pick.
   defaultModel?: string;
@@ -203,6 +217,7 @@ export async function assembleModels(
   const notes: string[] = [];
   const sources: ModelsSource[] = [];
   const customs: string[] = [];
+  const defaultedWindows: DefaultedWindow[] = [];
   if (fauxProviderActive(env)) {
     registerFauxProvider(models);
     providers.set(FAUX_PROVIDER_ID, { origin: 'testing', usable: true });
@@ -244,6 +259,23 @@ export async function assembleModels(
         if (at !== -1) customs.splice(at, 1);
         customs.push(name);
         providers.set(name, { origin: path, usable: true });
+      }
+      for (const spec of specs) {
+        // A file that defines a provider replaces the earlier files' entries
+        // for it, so a fallback an earlier file left cannot survive.
+        for (let index = defaultedWindows.length - 1; index >= 0; index--) {
+          if (defaultedWindows[index]?.provider === spec.id) {
+            defaultedWindows.splice(index, 1);
+          }
+        }
+        for (const model of spec.models) {
+          if (model.contextWindow !== undefined) continue;
+          defaultedWindows.push({
+            provider: spec.id,
+            model: model.id,
+            contextWindow: DEFAULT_CONTEXT_WINDOW,
+          });
+        }
       }
       sources.push({
         path,
@@ -303,6 +335,7 @@ export async function assembleModels(
     notes,
     providers,
     sources,
+    defaultedWindows,
     fallbackProviders,
   };
 }
@@ -395,6 +428,9 @@ export async function runModelsCommand(
     }
   }
   const info = deps.providers;
+  const defaulted = new Set(
+    (deps.defaultedWindows ?? []).map((w) => `${w.provider}/${w.model}`),
+  );
   const catalog = deps.models.getProviders().map((provider) => {
     const known = info?.get(provider.id);
     return {
@@ -413,6 +449,9 @@ export async function runModelsCommand(
         id: m.id,
         name: m.name,
         contextWindow: m.contextWindow,
+        ...(defaulted.has(`${provider.id}/${m.id}`)
+          ? { contextWindowDefaulted: true }
+          : {}),
         thinking: getSupportedThinkingLevels(m),
         inputCost: m.cost.input,
         outputCost: m.cost.output,

@@ -469,6 +469,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...view,
         models: assembled.models,
         providers: assembled.providers,
+        defaultedWindows: assembled.defaultedWindows,
         // The configured pin is the default the view marks.
         ...(pin === undefined
           ? {}
@@ -690,6 +691,8 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           ? {}
           : { columns: process.stdout.columns }),
         probeProviders: () => providerProbesOf(assembled),
+        // Models on the fallback window: one warning each, naming the key.
+        probeModelWindows: () => assembled.defaultedWindows,
         checkDeps: () => [
           {
             id: 'node',

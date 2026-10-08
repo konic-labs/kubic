@@ -53,6 +53,7 @@ type DoctorReason =
   | 'unsupported-level'
   | 'detection-only'
   | 'sink-unreachable'
+  | 'window-default'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -83,10 +84,19 @@ export interface DepProbe {
   detail?: string;
 }
 
+// A models.json model that runs on the fallback context window.
+export interface ModelWindowProbe {
+  readonly provider: string;
+  readonly model: string;
+  readonly contextWindow: number;
+}
+
 export interface DoctorDeps extends CliIo {
   // The terminal width the grouped summary packs into.
   readonly columns?: number;
   probeProviders: () => ProviderProbe[];
+  // Models on the fallback context window: one warn each. Absent: no check.
+  probeModelWindows?: () => readonly ModelWindowProbe[];
   checkDeps: () => DepProbe[];
   loadPolicy: () => unknown;
   // The INSTALLED policy — the same posture object
@@ -411,6 +421,19 @@ function providerChecks(probes: ProviderProbe[]): DoctorCheck[] {
   });
 }
 
+// A model on the fallback window is a warning, never a failure: it runs, but
+// the gauge and the compaction threshold use a window the model may not have.
+// The detail names the key that declares the real one.
+function modelWindowChecks(probes: readonly ModelWindowProbe[]): DoctorCheck[] {
+  return probes.map((probe) => ({
+    id: `models-window:${probe.provider}/${probe.model}`,
+    label: `model ${probe.provider}/${probe.model} window`,
+    status: 'warn' as DoctorStatus,
+    reason: 'window-default' as DoctorReason,
+    detail: `window ${probe.contextWindow} is the default: set "contextWindow" for ${probe.model} in models.json (the gauge and compaction use it)`,
+  }));
+}
+
 function depChecks(probes: DepProbe[]): DoctorCheck[] {
   return probes.map((probe) => ({
     id: `dep:${probe.id}`,
@@ -521,6 +544,7 @@ export function collectDoctorChecks(
   // the limit aggregates at the end reuse these results and never re-call
   // the probes (a second call would double-bill expensive probes and let
   // a flaky probe answer differently twice).
+  checks.push(...modelWindowChecks(deps.probeModelWindows?.() ?? []));
   let providerProbes: ProviderProbe[] | undefined;
   let providerError: unknown;
   try {

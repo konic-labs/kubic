@@ -158,8 +158,9 @@ function optPositiveInt(
 }
 
 // Fail-safe defaults for a model that declares no window (small local
-// servers overflow above them).
-const DEFAULT_CONTEXT_WINDOW = 8192;
+// servers overflow above them). A model that relies on this default is
+// flagged by `kubic models` and `kubic doctor`.
+export const DEFAULT_CONTEXT_WINDOW = 8192;
 const DEFAULT_MAX_TOKENS = 2048;
 
 const MODALITIES = ['text', 'image'] as const;

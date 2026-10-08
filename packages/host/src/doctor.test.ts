@@ -263,6 +263,34 @@ describe('runDoctorCommand', () => {
     );
   });
 
+  it('warns, naming the contextWindow key, for a defaulted model window; exit stays 0', async () => {
+    const lines: string[] = [];
+    const deps: DoctorDeps = {
+      ...cleanDeps((line: string) => lines.push(line)),
+      probeModelWindows: () => [
+        { provider: 'local', model: 'llama3', contextWindow: 8192 },
+      ],
+    };
+    const code = (await runDoctorCommand({ json: true }, deps)).exitCode;
+    expect(code).toBe(0);
+    const report = JSON.parse(lines.join('\n')) as {
+      ok: boolean;
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    expect(report.ok).toBe(true);
+    const window = report.checks.find(
+      (check) => check.id === 'models-window:local/llama3',
+    );
+    expect(window).toMatchObject({ status: 'warn', reason: 'window-default' });
+    expect(window?.detail).toContain('contextWindow');
+    expect(window?.detail).toContain('8192');
+  });
+
   it('policy mismatch fails distinct naming the capability', async () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));

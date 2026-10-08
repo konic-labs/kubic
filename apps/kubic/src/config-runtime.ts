@@ -55,6 +55,10 @@ import {
 } from '../../../packages/host/src/config/trust-store.js';
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
 import {
+  FAUX_MODEL_ID,
+  FAUX_PROVIDER_ID,
+} from '../../../packages/host/src/faux-provider.js';
+import {
   type EffectivePolicy,
   hasModelPolicy,
   isModelAllowed,
@@ -80,7 +84,11 @@ import type {
   ModelStreamTuning,
   StreamTuningTables,
 } from '../../../packages/worker/src/stream-options.js';
-import { selectionOrigin, withSelectionOrigin } from './model-projection.js';
+import {
+  roleModelSelection,
+  selectionOrigin,
+  withSelectionOrigin,
+} from './model-projection.js';
 
 export interface CliConfigResult {
   // Present only when the load succeeded. A refusal leaves it undefined:
@@ -542,6 +550,30 @@ export function resolveRoleThinking(
   if (resolved === undefined) return undefined;
   return (
     roleModelEntry(resolved.models, provider, id)?.thinking ?? resolved.thinking
+  );
+}
+
+// The boot's model pick, one rule for every boot: a faux pin is the explicit
+// selection and otherwise the runtime pin is; the role default and the
+// fallbacks follow, under the same policy gate and role scope.
+export function selectBootModel(input: {
+  models: MutableModels;
+  fauxPinned: boolean;
+  pin: ModelSelection | undefined;
+  roleModel: string | undefined;
+  fallbackProviders: readonly string[] | undefined;
+  policy: EffectivePolicy | undefined;
+  roleScope?: RoleModelScope;
+}): ReturnType<typeof selectModel> {
+  return selectModelUnderPolicy(
+    input.models,
+    input.fauxPinned
+      ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+      : input.pin,
+    roleModelSelection(input.roleModel),
+    input.fallbackProviders,
+    input.policy,
+    input.roleScope,
   );
 }
 

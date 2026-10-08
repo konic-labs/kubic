@@ -54,9 +54,7 @@ import {
   redactSecretValues,
 } from '../../../packages/host/src/config/secrets.js';
 import {
-  FAUX_MODEL_ID,
   FAUX_NOTICE,
-  FAUX_PROVIDER_ID,
   invalidProviderMessage,
   providerOverrideFromEnv,
 } from '../../../packages/host/src/faux-provider.js';
@@ -185,12 +183,9 @@ import {
 import {
   resolveRoleThinking,
   roleModelScope,
-  selectModelUnderPolicy,
+  selectBootModel,
 } from './config-runtime.js';
-import {
-  hasExplicitModelSelection,
-  roleModelSelection,
-} from './model-projection.js';
+import { hasExplicitModelSelection } from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
 
 export interface HeadlessRunOptions {
@@ -1433,20 +1428,17 @@ async function runHeadlessPromptImpl(
       // Enterprise policy gates the explicit/role
       // selection and the implicit provider pool the same way on this
       // path and on `kubic tui`.
-      const explicitSelection = fauxPinned
-        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-        : deps.model;
-      const roleSelection = roleModelSelection(role?.resolved.model);
-      model = selectModelUnderPolicy(
+      model = selectBootModel({
         models,
-        explicitSelection,
-        roleSelection,
+        fauxPinned,
+        pin: deps.model,
+        roleModel: role?.resolved.model,
         fallbackProviders,
-        enterprisePolicy,
+        policy: enterprisePolicy,
         // The role's allowed set gates the
         // explicit/role selection and the implicit pick alike.
-        roleModelScope(role?.resolved),
-      );
+        roleScope: roleModelScope(role?.resolved),
+      });
     } catch (error) {
       if (error instanceof ModelSelectError) {
         return finished(

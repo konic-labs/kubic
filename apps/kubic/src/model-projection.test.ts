@@ -2,10 +2,6 @@
 // boots hand to the policy-gated pick. The prod-path tests prove the wiring;
 // these prove the order.
 import { describe, expect, it } from 'vitest';
-import {
-  FAUX_MODEL_ID,
-  FAUX_PROVIDER_ID,
-} from '../../../packages/host/src/faux-provider.js';
 import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
 import {
   createModels,
@@ -13,7 +9,7 @@ import {
   fauxProvider,
   type MutableModels,
 } from '../../../packages/worker/src/pi-boundary.js';
-import { selectModelUnderPolicy } from './config-runtime.js';
+import { selectBootModel } from './config-runtime.js';
 import {
   hasExplicitModelSelection,
   roleModelSelection,
@@ -92,16 +88,7 @@ describe('the boot selection the policy gate receives', () => {
     pin: { provider: string; id: string } | undefined;
     roleModel: string | undefined;
     fallbackProviders: readonly string[] | undefined;
-  }) =>
-    selectModelUnderPolicy(
-      input.models,
-      input.fauxPinned
-        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-        : input.pin,
-      roleModelSelection(input.roleModel),
-      input.fallbackProviders,
-      undefined,
-    );
+  }) => selectBootModel({ ...input, policy: undefined });
 
   it('pins the faux provider over every other selection', () => {
     const picked = pick({

@@ -296,6 +296,7 @@ import {
   resolveRoleThinking,
   roleModelScope,
   type runtimeLaneDeps,
+  selectBootModel,
   selectModelUnderPolicy,
 } from './config-runtime.js';
 import {
@@ -303,10 +304,7 @@ import {
   composePromptSections,
   NO_ASSISTANT_TEXT_SUMMARY,
 } from './headless-run.js';
-import {
-  hasExplicitModelSelection,
-  roleModelSelection,
-} from './model-projection.js';
+import { hasExplicitModelSelection } from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
 import { formatScopedModels } from './scoped-models.js';
 import { readTuiWorkspace } from './tui-workspace.js';
@@ -1398,22 +1396,17 @@ export async function bootTuiLane(
     // and the provider pool. The explicit-selection predicate is the
     // rule: any pin (faux, runtime or role) switches a resumed session
     // whose stored model differs, the default pick never does.
-    const model = (() => {
-      const explicitSelection = fauxPinned
-        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-        : options.model;
-      const roleSelection = roleModelSelection(selectedRole?.resolved.model);
-      return selectModelUnderPolicy(
-        models,
-        explicitSelection,
-        roleSelection,
-        assembled?.fallbackProviders,
-        enterprisePolicy,
-        // The role's allowed set: the same gate
-        // `kubic run` applies, so a scoped role boots in-set on both.
-        roleModelScope(selectedRole?.resolved),
-      );
-    })();
+    const model = selectBootModel({
+      models,
+      fauxPinned,
+      pin: options.model,
+      roleModel: selectedRole?.resolved.model,
+      fallbackProviders: assembled?.fallbackProviders,
+      policy: enterprisePolicy,
+      // The role's allowed set: the same gate
+      // `kubic run` applies, so a scoped role boots in-set on both.
+      roleScope: roleModelScope(selectedRole?.resolved),
+    });
     const explicitModel = hasExplicitModelSelection({
       fauxPinned,
       pin: options.model,

@@ -9,18 +9,12 @@ import {
   findSlashCommand,
   helpLines,
   matchingSlashCommands,
+  parseKnownSlashCommand,
   parseSlashCommand,
-  SLASH_COMMAND_NAMES,
   SLASH_COMMANDS,
   SlashCommandAutocomplete,
   skillCommandSpecs,
 } from './slash-commands.js';
-
-// A draft is a command this TUI knows: it parses, and its name is registered.
-const knownDraft = (draft: string): boolean => {
-  const parsed = parseSlashCommand(draft);
-  return parsed !== undefined && SLASH_COMMAND_NAMES.has(parsed.name);
-};
 
 describe('slash-command registry', () => {
   it('lists the shipped commands exactly once, each with usage and summary', () => {
@@ -92,11 +86,15 @@ describe('slash-command registry', () => {
   });
 
   it('knows which drafts are commands and which are prompts', () => {
-    expect(knownDraft('/help')).toBe(true);
-    expect(knownDraft('/quit')).toBe(true);
-    expect(knownDraft('/foo')).toBe(false);
-    expect(knownDraft('/help me')).toBe(true);
-    expect(knownDraft('please /help')).toBe(false);
+    expect(parseKnownSlashCommand('/help')?.name).toBe('help');
+    expect(parseKnownSlashCommand('/quit')?.name).toBe('quit');
+    expect(parseKnownSlashCommand('/foo')).toBeUndefined();
+    expect(parseKnownSlashCommand('/help me')).toEqual({
+      name: 'help',
+      argument: 'me',
+    });
+    expect(parseKnownSlashCommand('please /help')).toBeUndefined();
+    expect(parseKnownSlashCommand('//help')).toBeUndefined();
   });
 
   it('matches completions by the command prefix only', () => {

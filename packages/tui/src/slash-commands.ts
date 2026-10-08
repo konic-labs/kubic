@@ -232,6 +232,17 @@ export function parseSlashCommand(
   };
 }
 
+// The command a draft runs, when the registry knows its name. A prompt, a
+// `//` line and an unregistered name are all `undefined`.
+export function parseKnownSlashCommand(
+  input: string,
+): ParsedSlashCommand | undefined {
+  const parsed = parseSlashCommand(input);
+  return parsed !== undefined && SLASH_COMMAND_NAMES.has(parsed.name)
+    ? parsed
+    : undefined;
+}
+
 // The commands whose name starts with the draft's command prefix (`'he'` →
 // `/help`), for the autocomplete.
 export function matchingSlashCommands(

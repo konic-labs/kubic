@@ -58,15 +58,17 @@ function capture() {
 describe('kubic audit secret backstop', () => {
   it('prints zero secret-shaped values on a faux-seeded fixture', async () => {
     const cap = capture();
-    const code = await runAuditCommand(
-      {},
-      {
-        loadRecords: seeded,
-        secrets: [FAUX_LISTED],
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runAuditCommand(
+        {},
+        {
+          loadRecords: seeded,
+          secrets: [FAUX_LISTED],
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = cap.lines.join('\n');
     expect(containsSecretShape(text)).toBe(false);
@@ -77,15 +79,17 @@ describe('kubic audit secret backstop', () => {
 
   it('redacts the same way under --json', async () => {
     const cap = capture();
-    const code = await runAuditCommand(
-      { json: true },
-      {
-        loadRecords: seeded,
-        secrets: [FAUX_LISTED],
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runAuditCommand(
+        { json: true },
+        {
+          loadRecords: seeded,
+          secrets: [FAUX_LISTED],
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = cap.lines.join('\n');
     expect(containsSecretShape(text)).toBe(false);
@@ -137,10 +141,12 @@ describe('kubic audit query', () => {
 
   it('filters on posture and result', async () => {
     const cap = capture();
-    const code = await runAuditCommand(
-      { posture: 'full-access', result: 'deny' },
-      { loadRecords: () => TWO, out: cap.out, err: cap.err },
-    );
+    const code = (
+      await runAuditCommand(
+        { posture: 'full-access', result: 'deny' },
+        { loadRecords: () => TWO, out: cap.out, err: cap.err },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     // One table: the header plus the one matching record.
     expect(cap.lines).toHaveLength(1);
@@ -169,10 +175,12 @@ describe('kubic audit query', () => {
       },
     ];
     const cap = capture();
-    const code = await runAuditCommand(
-      { session: 's-1', json: true },
-      { loadRecords: () => rows, out: cap.out, err: cap.err },
-    );
+    const code = (
+      await runAuditCommand(
+        { session: 's-1', json: true },
+        { loadRecords: () => rows, out: cap.out, err: cap.err },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const printed = JSON.parse(cap.lines[0] ?? '[]') as OrgAuditRecord[];
     expect(printed.map((record) => record.what)).toEqual([
@@ -183,24 +191,28 @@ describe('kubic audit query', () => {
 
   it('exits 2 on a whitespace-only session filter, like the other filters', async () => {
     const cap = capture();
-    const code = await runAuditCommand(
-      { session: '   ' },
-      { loadRecords: () => TWO, out: cap.out, err: cap.err },
-    );
+    const code = (
+      await runAuditCommand(
+        { session: '   ' },
+        { loadRecords: () => TWO, out: cap.out, err: cap.err },
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(cap.errs.join('\n')).toMatch(/session/);
   });
 
   it('reports no audit records on an empty store', async () => {
     const cap = capture();
-    const code = await runAuditCommand(
-      {},
-      {
-        loadRecords: () => [],
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runAuditCommand(
+        {},
+        {
+          loadRecords: () => [],
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(cap.lines).toEqual(['no audit records']);
   });
@@ -229,10 +241,12 @@ it('returns the privileged-action rows under --json with every field', async () 
     },
   ];
   const cap = capture();
-  const code = await runAuditCommand(
-    { json: true },
-    { loadRecords: () => records, out: cap.out, err: cap.err },
-  );
+  const code = (
+    await runAuditCommand(
+      { json: true },
+      { loadRecords: () => records, out: cap.out, err: cap.err },
+    )
+  ).exitCode;
   expect(code).toBe(0);
   const parsed = JSON.parse(cap.lines.join('\n')) as OrgAuditRecord[];
   expect(parsed.map((row) => row.what)).toEqual([
@@ -247,14 +261,16 @@ it('returns the privileged-action rows under --json with every field', async () 
 describe('kubic audit usage', () => {
   it('exits 2 on an unknown result, naming the choices', async () => {
     const cap = capture();
-    const code = await runAuditCommand(
-      { result: 'maybe' },
-      {
-        loadRecords: seeded,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runAuditCommand(
+        { result: 'maybe' },
+        {
+          loadRecords: seeded,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(cap.lines).toEqual([]);
     expect(cap.errs).toEqual([
@@ -269,15 +285,17 @@ describe('kubic audit usage', () => {
 describe('kubic audit prod secrets wiring', () => {
   it('redacts a listed-inventory value supplied via the prod loadSecrets hook', async () => {
     const cap = capture();
-    const code = await runAuditCommand(
-      { json: true },
-      {
-        loadRecords: seeded,
-        loadSecrets: () => [FAUX_LISTED],
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runAuditCommand(
+        { json: true },
+        {
+          loadRecords: seeded,
+          loadSecrets: () => [FAUX_LISTED],
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = cap.lines.join('\n');
     expect(text).not.toContain(FAUX_LISTED);
@@ -286,14 +304,16 @@ describe('kubic audit prod secrets wiring', () => {
 
   it('redacts secret-shaped material in unknown filter-value errors', async () => {
     const cap = capture();
-    const code = await runAuditCommand(
-      { result: FAUX_SHAPED },
-      {
-        loadRecords: seeded,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
+    const code = (
+      await runAuditCommand(
+        { result: FAUX_SHAPED },
+        {
+          loadRecords: seeded,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(2);
     const text = cap.errs.join('\n');
     expect(text).not.toContain(FAUX_SHAPED);

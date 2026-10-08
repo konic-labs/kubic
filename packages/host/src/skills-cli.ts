@@ -10,6 +10,11 @@
 
 import type { PermissionClasses } from '../../agents/src/policy.js';
 import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
+import {
+  type CommandResult,
+  EXIT_FAILED,
+  EXIT_OK,
+} from '../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
@@ -49,7 +54,7 @@ function errorText(error: unknown): string {
 export function runSkillsCommand(
   options: SkillsCommandOptions,
   deps: SkillsCommandDeps,
-): number {
+): CommandResult {
   const log = diagnosticsOf(deps);
   let role: string | undefined;
   let roleSkills: string[] | undefined;
@@ -59,14 +64,14 @@ export function runSkillsCommand(
       log.error(
         `unknown role '${options.role}' (no role resolution in this context)`,
       );
-      return 1;
+      return { exitCode: EXIT_FAILED };
     }
     let gate: SkillsRoleGate;
     try {
       gate = deps.resolveRole(options.role);
     } catch (error) {
       log.error(errorText(error));
-      return 1;
+      return { exitCode: EXIT_FAILED };
     }
     role = gate.name;
     roleSkills = gate.skills;
@@ -92,11 +97,11 @@ export function runSkillsCommand(
   const rows = summarizeSkills(booted);
   if (options.json === true) {
     deps.out(formatJson(rows));
-    return 0;
+    return { exitCode: EXIT_OK };
   }
   if (rows.length === 0) {
     log.info('no skills discovered');
-    return 0;
+    return { exitCode: EXIT_OK };
   }
   const theme = themeOf(deps);
   deps.out(
@@ -118,5 +123,5 @@ export function runSkillsCommand(
       { fancy: deps.fancy === true, theme },
     ),
   );
-  return 0;
+  return { exitCode: EXIT_OK };
 }

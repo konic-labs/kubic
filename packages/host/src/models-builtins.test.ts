@@ -149,14 +149,16 @@ describe('built-in providers', () => {
     const assembled = await assemble({ ANTHROPIC_API_KEY: 'x' });
     const lines: string[] = [];
     expect(
-      await runModelsCommand(
-        { json: true },
-        {
-          models: assembled.models,
-          providers: assembled.providers,
-          out: (l: string) => lines.push(l),
-        },
-      ),
+      (
+        await runModelsCommand(
+          { json: true },
+          {
+            models: assembled.models,
+            providers: assembled.providers,
+            out: (l: string) => lines.push(l),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     const catalog = JSON.parse(lines.join('\n')) as Array<{
       id: string;
@@ -196,10 +198,12 @@ describe('built-in providers', () => {
     const assembled = await assemble({});
     const lines: string[] = [];
     expect(
-      await runModelsCommand(
-        { resolve: 'anthropic/claude-sonnet-4-6' },
-        { models: assembled.models, out: (l: string) => lines.push(l) },
-      ),
+      (
+        await runModelsCommand(
+          { resolve: 'anthropic/claude-sonnet-4-6' },
+          { models: assembled.models, out: (l: string) => lines.push(l) },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(lines.join('\n')).toContain('selected anthropic/claude-sonnet-4-6');
   });
@@ -284,14 +288,16 @@ describe('chat-only model lists', () => {
     expect(nonChatOnly.size).toBeGreaterThan(0);
     const lines: string[] = [];
     expect(
-      await runModelsCommand(
-        { json: true },
-        {
-          models: assembled.models,
-          providers: assembled.providers,
-          out: (line: string) => lines.push(line),
-        },
-      ),
+      (
+        await runModelsCommand(
+          { json: true },
+          {
+            models: assembled.models,
+            providers: assembled.providers,
+            out: (line: string) => lines.push(line),
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     const catalog = JSON.parse(lines.join('\n')) as Array<{
       id: string;

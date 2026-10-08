@@ -15,6 +15,7 @@ import { createSocket } from 'node:dgram';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type CommandResult,
   EXIT_FAILED,
   EXIT_USAGE,
 } from '../../../packages/core/src/cli/exit-codes.js';
@@ -602,7 +603,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         debug(
           `error: invalid --session id ${JSON.stringify(doctorSession)} (use [A-Za-z0-9_-])`,
         );
-        return EXIT_USAGE;
+        return { exitCode: EXIT_USAGE };
       }
       const sessionsRoot = defaultSessionsRoot();
       const doctorSessionDir =
@@ -844,7 +845,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // instead of printing a decision a run would never enforce.
       if (cliConfig.runtime === undefined && cliConfig.error !== undefined) {
         debug(`error: ${cliConfig.error}`);
-        return EXIT_FAILED;
+        return { exitCode: EXIT_FAILED };
       }
       // The tool policy a run from THIS cwd actually installs:
       // the enterprise policy merged with the same installed class
@@ -985,8 +986,8 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
   };
 
   // A usage refusal the handler never sees: one `error:` line, exit 2.
-  function usageError(message: string): number {
+  function usageError(message: string): CommandResult {
     createLineLogger(debug, { theme: stderrTheme() }).error(message);
-    return EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
 }

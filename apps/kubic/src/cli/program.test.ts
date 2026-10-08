@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CliExitError,
   CliUsageError,
+  type ExitCode,
 } from '../../../../packages/core/src/cli/exit-codes.js';
 import { registerAnalysisCommands } from '../commands/analysis.js';
 import { registerJournalCommands } from '../commands/journal.js';
@@ -36,8 +37,9 @@ const CONFIG = {} as CliConfigResult;
 function context(
   rest: readonly string[],
   runners: Partial<DispatchRunners> = {},
-): { ctx: CommandContext; code: () => number } {
-  let code = 0;
+): { ctx: CommandContext; code: () => ExitCode; finished: () => boolean } {
+  let code: ExitCode = 0;
+  let finished = false;
   const fallback = () => 0;
   const all = new Proxy(runners, {
     get: (target, key: string) =>
@@ -50,11 +52,13 @@ function context(
       rest,
       out: () => {},
       err: () => {},
-      setExitCode: (next) => {
-        code = next;
+      finish: (result) => {
+        code = result.exitCode;
+        finished = true;
       },
     },
     code: () => code,
+    finished: () => finished,
   };
 }
 
@@ -63,7 +67,8 @@ describe('kubic program (commander contracts)', () => {
     for (const flag of ['--help', '-h']) {
       const { out, err, channels } = io();
       const code = await runKubicProgram(program(channels), [flag], channels, {
-        code: () => 99,
+        code: () => 6,
+        finished: () => true,
       });
       expect(code, flag).toBe(0);
       expect(out, flag).toEqual(['usage: kubic <x>']);
@@ -76,7 +81,8 @@ describe('kubic program (commander contracts)', () => {
       const { out, channels } = io();
       expect(
         await runKubicProgram(program(channels), [flag], channels, {
-          code: () => 99,
+          code: () => 6,
+          finished: () => true,
         }),
       ).toBe(0);
       expect(out).toEqual(['kubic 1.2.3 (license: MIT)']);
@@ -90,7 +96,10 @@ describe('kubic program (commander contracts)', () => {
       .option('--limit <n>', 'max rows')
       .action(() => {});
     expect(
-      await runKubicProgram(p, ['demo', '--nope'], channels, { code: () => 0 }),
+      await runKubicProgram(p, ['demo', '--nope'], channels, {
+        code: () => 0,
+        finished: () => true,
+      }),
     ).toBe(2);
     expect(out).toEqual([]);
     expect(err).toHaveLength(1);
@@ -99,6 +108,7 @@ describe('kubic program (commander contracts)', () => {
     expect(
       await runKubicProgram(p, ['demo', '--limit'], channels, {
         code: () => 0,
+        finished: () => true,
       }),
     ).toBe(2);
     expect(err[0]).toMatch(/^error: option '--limit <n>' argument missing/);
@@ -109,7 +119,10 @@ describe('kubic program (commander contracts)', () => {
     const p = program(channels);
     p.command('demo').description('a demo').option('--json', 'machine output');
     expect(
-      await runKubicProgram(p, ['demo', '-h'], channels, { code: () => 1 }),
+      await runKubicProgram(p, ['demo', '-h'], channels, {
+        code: () => 1,
+        finished: () => true,
+      }),
     ).toBe(0);
     const text = out.join('\n');
     expect(text).toContain('Usage: kubic demo');
@@ -118,18 +131,18 @@ describe('kubic program (commander contracts)', () => {
 
   it('root options are positional: `kubic demo -V` reaches the command', async () => {
     const { out, channels } = io();
-    const { ctx, code } = context(['-V']);
+    const { ctx, code, finished } = context(['-V']);
     const p = program(channels);
     let seen: { verbose?: true } = {};
     p.command('demo')
       .option('-V, --verbose')
       .action((opts) => {
         seen = opts;
-        ctx.setExitCode(7);
+        ctx.finish({ exitCode: 5 });
       });
-    expect(await runKubicProgram(p, ['demo', '-V'], channels, { code })).toBe(
-      7,
-    );
+    expect(
+      await runKubicProgram(p, ['demo', '-V'], channels, { code, finished }),
+    ).toBe(5);
     expect(seen).toEqual({ verbose: true });
     expect(out).toEqual([]);
   });
@@ -145,7 +158,10 @@ describe('kubic program (commander contracts)', () => {
         throw error;
       });
       expect(
-        await runKubicProgram(p, ['demo'], channels, { code: () => 0 }),
+        await runKubicProgram(p, ['demo'], channels, {
+          code: () => 0,
+          finished: () => true,
+        }),
       ).toBe(expected ?? 5);
       expect(err).toEqual([`error: ${error.message}`]);
     }
@@ -158,8 +174,37 @@ describe('kubic program (commander contracts)', () => {
       throw new Error('boom');
     });
     await expect(
-      runKubicProgram(p, ['demo'], channels, { code: () => 0 }),
+      runKubicProgram(p, ['demo'], channels, {
+        code: () => 0,
+        finished: () => true,
+      }),
     ).rejects.toThrow('boom');
+  });
+
+  it('an action that finishes without a result is an internal error, exit 1', async () => {
+    const { err, channels } = io();
+    const p = program(channels);
+    // A fake command that returns without calling CommandContext.finish.
+    let finished = false;
+    p.command('demo').action(() => {});
+    expect(
+      await runKubicProgram(p, ['demo'], channels, {
+        code: () => 0,
+        finished: () => finished,
+      }),
+    ).toBe(1);
+    expect(err).toEqual([
+      "error: internal error: command 'demo' finished without a result",
+    ]);
+    finished = true;
+    err.length = 0;
+    expect(
+      await runKubicProgram(p, ['demo'], channels, {
+        code: () => 0,
+        finished: () => finished,
+      }),
+    ).toBe(0);
+    expect(err).toEqual([]);
   });
 
   it('has no implicit `help` command (it is an unknown command: usage)', async () => {
@@ -167,7 +212,10 @@ describe('kubic program (commander contracts)', () => {
     const p = program(channels);
     p.command('demo').action(() => {});
     expect(
-      await runKubicProgram(p, ['help'], channels, { code: () => 0 }),
+      await runKubicProgram(p, ['help'], channels, {
+        code: () => 0,
+        finished: () => true,
+      }),
     ).toBe(2);
   });
 });
@@ -264,6 +312,7 @@ describe('command registry', () => {
       }
       const code = await runKubicProgram(p, argv, channels, {
         code: () => 0,
+        finished: () => true,
       });
       return { code, out, err, calls };
     }
@@ -310,7 +359,10 @@ describe('command registry', () => {
       .option('--json', 'json')
       .action(() => {});
     expect(
-      await runKubicProgram(p, ['demo', '--jsn'], channels, { code: () => 0 }),
+      await runKubicProgram(p, ['demo', '--jsn'], channels, {
+        code: () => 0,
+        finished: () => true,
+      }),
     ).toBe(2);
     expect(err).toEqual(["error: unknown option '--jsn'"]);
   });

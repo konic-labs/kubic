@@ -53,14 +53,16 @@ describe('session journal reachability', () => {
     const root = tmpDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
     const o = out();
-    const code = await runJournalCommand(
-      { command: 'diff', session: 'sess-1' },
-      {
-        root,
-        sessionsRoot,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff', session: 'sess-1' },
+        {
+          root,
+          sessionsRoot,
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(o.lines.join('\n')).toContain('a.txt');
   });
@@ -78,23 +80,27 @@ describe('session journal reachability', () => {
     };
     const diffOut = out();
     expect(
-      await runJournalCommand(
-        { command: 'diff', session: 'sess-1' },
-        {
-          ...deps,
-          out: diffOut.write,
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'diff', session: 'sess-1' },
+          {
+            ...deps,
+            out: diffOut.write,
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     const undoOut = out();
     expect(
-      await runJournalCommand(
-        { command: 'undo', dryRun: true, session: 'sess-1' },
-        {
-          ...deps,
-          out: undoOut.write,
-        },
-      ),
+      (
+        await runJournalCommand(
+          { command: 'undo', dryRun: true, session: 'sess-1' },
+          {
+            ...deps,
+            out: undoOut.write,
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     // Same store: diff shows the session's file, dry-run plans its restore.
     expect(diffOut.lines.join('\n')).toContain('a.txt');
@@ -109,10 +115,12 @@ describe('session journal reachability', () => {
     const root = tmpDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
     const o = out();
-    const code = await runJournalCommand(
-      { command: 'diff', session: 'journal:sess-1' },
-      { root, sessionsRoot, out: o.write },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff', session: 'journal:sess-1' },
+        { root, sessionsRoot, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(o.lines.join('\n')).toContain('a.txt');
   });

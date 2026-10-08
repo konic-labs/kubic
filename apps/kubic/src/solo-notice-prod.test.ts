@@ -324,7 +324,7 @@ describe('solo no-isolation notice on `kubic tui`', () => {
     expect(frame).toContain(soloTuiLine());
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     // The restored main screen renders the same live root, so the operator
     // reads the same line after quitting as in the alt-screen.
     expect(lines.join('\n')).toContain(soloTuiLine());
@@ -348,7 +348,7 @@ describe('solo no-isolation notice on `kubic tui`', () => {
     expect(frame).toContain(soloTuiLine());
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('prints the full notice on /safety after a turn', async () => {
@@ -389,7 +389,7 @@ describe('solo no-isolation notice on `kubic tui`', () => {
     expect(second).toContain('there is no containment');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     // The first screen (and its isolation row) left with the first prompt —
     // `/safety` above is how the line is reached after that.
     expect(lines.join('\n')).toContain('approvals on');
@@ -414,7 +414,7 @@ describe('solo no-isolation notice on `kubic tui`', () => {
     await waitFor(() => fake.started() === 1);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.writes.join('')).not.toContain('no isolation');
     expect(lines.join('\n')).not.toContain('no isolation');
   });

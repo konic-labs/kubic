@@ -328,7 +328,7 @@ describe('configured ladder on the TUI lane', () => {
     );
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('the runner drain reports recorded climbs exactly once', async () => {

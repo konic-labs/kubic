@@ -6,9 +6,11 @@
 // Exit codes: 0 pass/completed, 1 evaluated-and-failed, 2 usage/error.
 
 import {
+  type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
+  type ExitCode,
 } from '../../core/src/cli/exit-codes.js';
 import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
@@ -25,10 +27,6 @@ import {
   runEvalTrajectory,
 } from './runner.js';
 import { resolveSuites } from './suites.js';
-
-export const EVAL_EXIT_OK = EXIT_OK;
-export const EVAL_EXIT_FAILED = EXIT_FAILED;
-export const EVAL_EXIT_USAGE = EXIT_USAGE;
 
 // The documented default model of a record (`--model` unset).
 // The registered id of the shipped testing provider: the
@@ -152,7 +150,7 @@ function emitRecord(
     out(
       formatJson({
         ok: record.success,
-        exitCode: record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED,
+        exitCode: record.success ? EXIT_OK : EXIT_FAILED,
         record,
       }),
     );
@@ -168,34 +166,34 @@ function emitError(
   log: CliLogger,
   error: unknown,
   json: boolean,
-): number {
+): ExitCode {
   if (error instanceof EvalRunnerError) {
     if (json) {
       out(
         formatJson({
           ok: false,
-          exitCode: EVAL_EXIT_USAGE,
+          exitCode: EXIT_USAGE,
           error: { code: error.code, message: error.message },
         }),
       );
     } else {
       log.error(`[${error.code}] ${error.message}`);
     }
-    return EVAL_EXIT_USAGE;
+    return EXIT_USAGE;
   }
   const message = error instanceof Error ? error.message : String(error);
   if (json) {
     out(
       formatJson({
         ok: false,
-        exitCode: EVAL_EXIT_FAILED,
+        exitCode: EXIT_FAILED,
         error: { code: 'eval-failed', message },
       }),
     );
   } else {
     log.error(message);
   }
-  return EVAL_EXIT_FAILED;
+  return EXIT_FAILED;
 }
 
 // `--trajectory` takes a file path like `export` and
@@ -265,47 +263,51 @@ function loadTrajectoryInput(value: string, deps: EvalCliDeps): unknown {
 export async function runEvalCommand(
   options: EvalOptions,
   deps: EvalCliDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const log = loggerFor(options, deps);
   const parsed = normalize(options);
   if (typeof parsed === 'string') {
     log.error(parsed);
-    return EVAL_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   if (parsed.suite === undefined) {
     log.error("required option '--suite <id>' not specified");
-    return EVAL_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   // The selector is a suite id or a category alias
   // (`--suite swe`). eval scores ONE record, so a category with more than
   // one suite is refused by name rather than silently picking one.
   const selected = resolveSuites(parsed.suite);
   if (selected === undefined) {
-    return emitError(
-      deps.out,
-      log,
-      new EvalRunnerError(
-        'unknown-suite',
-        `unknown suite ${JSON.stringify(parsed.suite)}`,
+    return {
+      exitCode: emitError(
+        deps.out,
+        log,
+        new EvalRunnerError(
+          'unknown-suite',
+          `unknown suite ${JSON.stringify(parsed.suite)}`,
+        ),
+        parsed.json,
       ),
-      parsed.json,
-    );
+    };
   }
   if (selected.length !== 1) {
-    return emitError(
-      deps.out,
-      log,
-      new EvalRunnerError(
-        'ambiguous-suite',
-        `--suite ${JSON.stringify(parsed.suite)} matches ${selected.length} suites — kubic eval scores one record; name the suite id`,
+    return {
+      exitCode: emitError(
+        deps.out,
+        log,
+        new EvalRunnerError(
+          'ambiguous-suite',
+          `--suite ${JSON.stringify(parsed.suite)} matches ${selected.length} suites — kubic eval scores one record; name the suite id`,
+        ),
+        parsed.json,
       ),
-      parsed.json,
-    );
+    };
   }
   const suiteId = (selected[0] as { id: string }).id;
   if (parsed.task === undefined && parsed.trajectory === undefined) {
     log.error('one of --task <prompt> or --trajectory <json> is required');
-    return EVAL_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   try {
     if (parsed.trajectory !== undefined) {
@@ -314,7 +316,7 @@ export async function runEvalCommand(
         payload = loadTrajectoryInput(parsed.trajectory, deps);
       } catch (error) {
         if (error instanceof EvalRunnerError) {
-          return emitError(deps.out, log, error, parsed.json);
+          return { exitCode: emitError(deps.out, log, error, parsed.json) };
         }
         throw error;
       }
@@ -327,7 +329,7 @@ export async function runEvalCommand(
         size: parsed.size,
       });
       emitRecord(deps.out, record, parsed.json);
-      return record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
+      return { exitCode: record.success ? EXIT_OK : EXIT_FAILED };
     }
     const provenance = forTask(parsed);
     const record = await runEvalTask(
@@ -341,9 +343,9 @@ export async function runEvalCommand(
       deps,
     );
     emitRecord(deps.out, record, parsed.json);
-    return record.success ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
+    return { exitCode: record.success ? EXIT_OK : EXIT_FAILED };
   } catch (error) {
-    return emitError(deps.out, log, error, parsed.json);
+    return { exitCode: emitError(deps.out, log, error, parsed.json) };
   }
 }
 
@@ -374,12 +376,12 @@ export interface BenchmarkResult {
 export async function runBenchmarkCommand(
   options: EvalOptions,
   deps: EvalCliDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const log = loggerFor(options, deps);
   const parsed = normalize(options);
   if (typeof parsed === 'string') {
     log.error(parsed);
-    return EVAL_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   const provenance = forTask(parsed);
   // Validate provenance once, before the matrix. A stub-only
@@ -390,7 +392,7 @@ export async function runBenchmarkCommand(
     checkEvalProvenance({ ...provenance, size: parsed.size });
   } catch (error) {
     if (error instanceof EvalRunnerError) {
-      return emitError(deps.out, log, error, parsed.json);
+      return { exitCode: emitError(deps.out, log, error, parsed.json) };
     }
     throw error;
   }
@@ -398,15 +400,17 @@ export async function runBenchmarkCommand(
   // (`--suite swe` → every swe-category suite), or `all`/absent.
   const selected = resolveSuites(parsed.suite);
   if (selected === undefined) {
-    return emitError(
-      deps.out,
-      log,
-      new EvalRunnerError(
-        'unknown-suite',
-        `unknown suite ${JSON.stringify(parsed.suite)}`,
+    return {
+      exitCode: emitError(
+        deps.out,
+        log,
+        new EvalRunnerError(
+          'unknown-suite',
+          `unknown suite ${JSON.stringify(parsed.suite)}`,
+        ),
+        parsed.json,
       ),
-      parsed.json,
-    );
+    };
   }
   const results: BenchmarkResult[] = [];
   for (const suite of selected) {
@@ -463,7 +467,7 @@ export async function runBenchmarkCommand(
         deps.out(
           formatJson({
             ok: false,
-            exitCode: EVAL_EXIT_USAGE,
+            exitCode: EXIT_USAGE,
             error: { code, message },
             results,
           }),
@@ -473,28 +477,30 @@ export async function runBenchmarkCommand(
       } else {
         log.error(message);
       }
-      return EVAL_EXIT_USAGE;
+      return { exitCode: EXIT_USAGE };
     }
   }
   const executed = results.filter((r) => !r.skipped);
   // A matrix with no executable suite proves nothing — it is a
   // refusal (exit 2), never `benchmark ok` over an empty run.
   if (executed.length === 0) {
-    return emitError(
-      deps.out,
-      log,
-      new EvalRunnerError(
-        'no-executable-suites',
-        'benchmark: no executable suites selected',
+    return {
+      exitCode: emitError(
+        deps.out,
+        log,
+        new EvalRunnerError(
+          'no-executable-suites',
+          'benchmark: no executable suites selected',
+        ),
+        parsed.json,
       ),
-      parsed.json,
-    );
+    };
   }
   const allOk = executed.every((r) => r.success);
-  const exit = allOk ? EVAL_EXIT_OK : EVAL_EXIT_FAILED;
+  const exit = allOk ? EXIT_OK : EXIT_FAILED;
   if (parsed.json) {
     deps.out(formatJson({ ok: allOk, exitCode: exit, results }));
-    return exit;
+    return { exitCode: exit };
   }
   const theme = deps.theme ?? PLAIN;
   const status = (r: BenchmarkResult): string =>
@@ -512,5 +518,5 @@ export async function runBenchmarkCommand(
   );
   const verdict = `benchmark ${allOk ? 'ok' : 'FAILED'}: ${executed.filter((r) => r.success).length}/${executed.length} suites passed, ${results.length - executed.length} stub(s) skipped`;
   deps.out(allOk ? theme.success(verdict) : theme.error(verdict));
-  return exit;
+  return { exitCode: exit };
 }

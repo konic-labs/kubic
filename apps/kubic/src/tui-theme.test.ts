@@ -197,7 +197,7 @@ describe('kubic tui rejects a bad theme at boot', () => {
       colorLevel: 'none',
       theme: join(root, 'missing.json'),
     };
-    const exit = await runTuiCommand({}, deps);
+    const exit = (await runTuiCommand({}, deps)).exitCode;
     expect(exit).toBe(2);
     expect(created).toBe(0);
     expect(errors).toHaveLength(1);
@@ -238,7 +238,7 @@ describe('kubic tui rejects a bad theme at boot', () => {
     expect(tuiTheme().accent('x')).toBe('\u001b[38;2;38;139;210mx\u001b[39m');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 });
 
@@ -311,6 +311,6 @@ describe('/theme in the TUI', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 });

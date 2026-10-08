@@ -41,14 +41,16 @@ function cleanDeps(out: (line: string) => void): DoctorDeps {
 describe('policy:detection-only and enterprise checks', () => {
   it('the default install names network=none as detection-only, exit stays 0', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { json: true },
-      {
-        ...cleanDeps((line: string) => lines.push(line)),
-        installedPolicy: () =>
-          installedPolicyPosture({ workspace: process.cwd() }),
-      },
-    );
+    const code = (
+      await runDoctorCommand(
+        { json: true },
+        {
+          ...cleanDeps((line: string) => lines.push(line)),
+          installedPolicy: () =>
+            installedPolicyPosture({ workspace: process.cwd() }),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const report = JSON.parse(lines.join('\n')) as {
       checks: Array<{
@@ -93,16 +95,18 @@ describe('policy:detection-only and enterprise checks', () => {
       },
     ]).policy;
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { json: true },
-      {
-        ...cleanDeps((line: string) => lines.push(line)),
-        installedPolicy: () =>
-          installedPolicyPosture({ workspace: process.cwd() }),
-        enterpriseChecks: () =>
-          enterpriseDoctorChecks(policy, { syslogAvailable: true }),
-      },
-    );
+    const code = (
+      await runDoctorCommand(
+        { json: true },
+        {
+          ...cleanDeps((line: string) => lines.push(line)),
+          installedPolicy: () =>
+            installedPolicyPosture({ workspace: process.cwd() }),
+          enterpriseChecks: () =>
+            enterpriseDoctorChecks(policy, { syslogAvailable: true }),
+        },
+      )
+    ).exitCode;
     // The unenforceable allowlist (no domains) is a fail, so the exit flips.
     expect(code).toBe(1);
     const report = JSON.parse(lines.join('\n')) as {
@@ -129,15 +133,17 @@ describe('policy:detection-only and enterprise checks', () => {
 
   it('a throwing enterprise probe is a named fail, never a crash', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { json: true },
-      {
-        ...cleanDeps((line: string) => lines.push(line)),
-        enterpriseChecks: () => {
-          throw new Error('policy disk gone');
+    const code = (
+      await runDoctorCommand(
+        { json: true },
+        {
+          ...cleanDeps((line: string) => lines.push(line)),
+          enterpriseChecks: () => {
+            throw new Error('policy disk gone');
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(code).toBe(1);
     const report = JSON.parse(lines.join('\n')) as {
       checks: Array<{
@@ -159,10 +165,12 @@ describe('policy:detection-only and enterprise checks', () => {
 describe('runDoctorCommand', () => {
   it('clean run passes with exit 0', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      {},
-      cleanDeps((line: string) => lines.push(line)),
-    );
+    const code = (
+      await runDoctorCommand(
+        {},
+        cleanDeps((line: string) => lines.push(line)),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('0 fail');
   });
@@ -174,10 +182,12 @@ describe('runDoctorCommand', () => {
       cleanDeps((line: string) => textLines.push(line)),
     );
     const jsonLines: string[] = [];
-    const code = await runDoctorCommand(
-      { json: true },
-      cleanDeps((line: string) => jsonLines.push(line)),
-    );
+    const code = (
+      await runDoctorCommand(
+        { json: true },
+        cleanDeps((line: string) => jsonLines.push(line)),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const report = JSON.parse(jsonLines.join('\n')) as {
       ok: boolean;
@@ -223,17 +233,21 @@ describe('runDoctorCommand', () => {
       ],
     });
     const textLines: string[] = [];
-    const textCode = await runDoctorCommand(
-      {},
-      deps((line: string) => textLines.push(line)),
-    );
+    const textCode = (
+      await runDoctorCommand(
+        {},
+        deps((line: string) => textLines.push(line)),
+      )
+    ).exitCode;
     expect(textCode).toBe(6);
     expect(textLines.join('\n')).toContain('provider-down');
     const jsonLines: string[] = [];
-    const jsonCode = await runDoctorCommand(
-      { json: true },
-      deps((line: string) => jsonLines.push(line)),
-    );
+    const jsonCode = (
+      await runDoctorCommand(
+        { json: true },
+        deps((line: string) => jsonLines.push(line)),
+      )
+    ).exitCode;
     expect(jsonCode).toBe(6);
     const report = JSON.parse(jsonLines.join('\n')) as {
       ok: boolean;
@@ -253,7 +267,7 @@ describe('runDoctorCommand', () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.loadPolicy = () => ({ route: 'ask-user', autoApprove: ['bogus-cap'] });
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(1);
     const text = lines.join('\n');
     expect(text).toContain('policy-mismatch');
@@ -262,10 +276,12 @@ describe('runDoctorCommand', () => {
 
   it('--skip reports skipped checks and still passes clean', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { skip: ['policy:approvals'] },
-      cleanDeps((line: string) => lines.push(line)),
-    );
+    const code = (
+      await runDoctorCommand(
+        { skip: ['policy:approvals'] },
+        cleanDeps((line: string) => lines.push(line)),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('SKIP policy:approvals (skipped)');
@@ -274,10 +290,12 @@ describe('runDoctorCommand', () => {
 
   it('unknown --skip id is a usage error', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { skip: ['nope:missing'] },
-      cleanDeps((line: string) => lines.push(line)),
-    );
+    const code = (
+      await runDoctorCommand(
+        { skip: ['nope:missing'] },
+        cleanDeps((line: string) => lines.push(line)),
+      )
+    ).exitCode;
     expect(code).toBe(2);
     expect(lines.join('\n')).toContain('unknown check');
   });
@@ -305,15 +323,17 @@ describe('runDoctorCommand', () => {
       { home: dir },
     );
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      {},
-      {
-        out: (line: string) => lines.push(line),
-        probeProviders: () => providerProbesOf(assembled),
-        checkDeps: () => [{ id: 'node', ok: true, detail: 'test runtime' }],
-        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-      },
-    );
+    const code = (
+      await runDoctorCommand(
+        {},
+        {
+          out: (line: string) => lines.push(line),
+          probeProviders: () => providerProbesOf(assembled),
+          checkDeps: () => [{ id: 'node', ok: true, detail: 'test runtime' }],
+          loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('0 fail');
   });
@@ -324,7 +344,7 @@ describe('runDoctorCommand', () => {
     deps.probeProviders = () => {
       throw new Error('probe exploded');
     };
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(6);
     const text = lines.join('\n');
     expect(text).toContain('FAIL');
@@ -333,10 +353,12 @@ describe('runDoctorCommand', () => {
 
   it('reports the MIT license as a passing check', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      {},
-      cleanDeps((line: string) => lines.push(line)),
-    );
+    const code = (
+      await runDoctorCommand(
+        {},
+        cleanDeps((line: string) => lines.push(line)),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('PASS license:kubic (ok)');
   });
@@ -347,7 +369,7 @@ describe('runDoctorCommand mutation hardening', () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.probeProviders = () => [{ id: 'local', reachable: true }];
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(0);
     // Honesty: the default probe never dialled, and the line says
     // so — a fabricated "reachable" would be a claim nothing measured.
@@ -376,7 +398,7 @@ describe('runDoctorCommand mutation hardening', () => {
         detail: 'ECONNREFUSED 127.0.0.1:11434',
       },
     ];
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(6);
     expect(lines.join('\n')).toContain(
       'FAIL provider:local (provider-down): ECONNREFUSED 127.0.0.1:11434',
@@ -390,7 +412,7 @@ describe('runDoctorCommand mutation hardening', () => {
       { id: 'node', ok: true },
       { id: 'git', ok: false },
     ];
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(1);
     const text = lines.join('\n');
     expect(text).toContain('PASS dep:node (ok): present');
@@ -403,7 +425,7 @@ describe('runDoctorCommand mutation hardening', () => {
     deps.checkDeps = () => {
       throw new Error('deps exploded');
     };
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain(
       'FAIL dep:check (deps-missing): deps exploded',
@@ -416,7 +438,7 @@ describe('runDoctorCommand mutation hardening', () => {
     deps.loadPolicy = () => {
       throw new Error('policy disk gone');
     };
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain(
       'FAIL policy:approvals (policy-mismatch): policy disk gone',
@@ -427,7 +449,7 @@ describe('runDoctorCommand mutation hardening', () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.loadPolicy = () => ({ route: 'deny', autoApprove: ['network'] });
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(1);
     expect(lines.join('\n')).toContain('route=deny ignores autoApprove');
   });
@@ -436,7 +458,7 @@ describe('runDoctorCommand mutation hardening', () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));
     deps.loadPolicy = () => ({ route: 'deny', autoApprove: [] });
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain(
       'PASS policy:approvals (ok): route=deny, 0 auto-approved',
@@ -450,7 +472,7 @@ describe('runDoctorCommand mutation hardening', () => {
       route: 'ask-user',
       autoApprove: ['requires:exec'],
     });
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain(
       'PASS policy:approvals (ok): route=ask-user, 1 auto-approved',
@@ -459,10 +481,12 @@ describe('runDoctorCommand mutation hardening', () => {
 
   it('skips a comma list with whitespace around each id', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { skip: ['dep:node, policy:approvals'] },
-      cleanDeps((line: string) => lines.push(line)),
-    );
+    const code = (
+      await runDoctorCommand(
+        { skip: ['dep:node, policy:approvals'] },
+        cleanDeps((line: string) => lines.push(line)),
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('SKIP dep:node (skipped)');
@@ -479,7 +503,7 @@ describe('runDoctorCommand mutation hardening', () => {
     deps.probeProviders = () => {
       throw 'string boom';
     };
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     expect(code).toBe(6);
     expect(lines.join('\n')).toContain(
       'FAIL provider:probe (provider-down): string boom',
@@ -493,16 +517,18 @@ describe('runDoctorCommand mutation hardening', () => {
 describe('state permissions', () => {
   it('warns on a world-readable sessions root, and passes when private', async () => {
     const loose: string[] = [];
-    const looseCode = await runDoctorCommand(
-      {},
-      {
-        ...cleanDeps((line: string) => loose.push(line)),
-        probeStatePermissions: () => ({
-          path: '/home/u/.kubic/sessions',
-          mode: 0o755,
-        }),
-      },
-    );
+    const looseCode = (
+      await runDoctorCommand(
+        {},
+        {
+          ...cleanDeps((line: string) => loose.push(line)),
+          probeStatePermissions: () => ({
+            path: '/home/u/.kubic/sessions',
+            mode: 0o755,
+          }),
+        },
+      )
+    ).exitCode;
     expect(looseCode).toBe(0);
     const text = loose.join('\n');
     expect(text).toContain('state:permissions');
@@ -510,13 +536,15 @@ describe('state permissions', () => {
     expect(text).toMatch(/\/home\/u\/\.kubic\/sessions is 755 .*chmod 700/);
 
     const clean: string[] = [];
-    const cleanCode = await runDoctorCommand(
-      { json: true },
-      {
-        ...cleanDeps((line: string) => clean.push(line)),
-        probeStatePermissions: () => undefined,
-      },
-    );
+    const cleanCode = (
+      await runDoctorCommand(
+        { json: true },
+        {
+          ...cleanDeps((line: string) => clean.push(line)),
+          probeStatePermissions: () => undefined,
+        },
+      )
+    ).exitCode;
     expect(cleanCode).toBe(0);
     const report = JSON.parse(clean.join('\n')) as {
       checks: Array<{ id: string; status: string; detail: string }>;
@@ -547,10 +575,12 @@ describe('doctor probes run once and --skip clears aggregates', () => {
     skip: string[],
   ): Promise<{ code: number; checks: CheckRow[] }> {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { json: true, skip },
-      { ...deps, out: (line: string) => lines.push(line) },
-    );
+    const code = (
+      await runDoctorCommand(
+        { json: true, skip },
+        { ...deps, out: (line: string) => lines.push(line) },
+      )
+    ).exitCode;
     const parsed = JSON.parse(lines.join('\n')) as { checks: CheckRow[] };
     return { code, checks: parsed.checks };
   }
@@ -642,10 +672,12 @@ describe('full-access sessions', () => {
     deps: Partial<DoctorDeps>,
   ): Promise<{ code: number; checks: CheckView[] }> {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      { json: true },
-      { ...cleanDeps((line: string) => lines.push(line)), ...deps },
-    );
+    const code = (
+      await runDoctorCommand(
+        { json: true },
+        { ...cleanDeps((line: string) => lines.push(line)), ...deps },
+      )
+    ).exitCode;
     const report = JSON.parse(lines.join('\n')) as { checks: CheckView[] };
     return { code, checks: report.checks };
   }
@@ -787,10 +819,12 @@ describe('audit sink checks', () => {
 describe('doctor rendering modes', () => {
   it('prints the grouped summary when the output is fancy', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      {},
-      { ...cleanDeps((line: string) => lines.push(line)), fancy: true },
-    );
+    const code = (
+      await runDoctorCommand(
+        {},
+        { ...cleanDeps((line: string) => lines.push(line)), fancy: true },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines[0]).toMatch(/^■ kubic doctor · \d+ checks/);
     expect(lines.some((line) => line.startsWith('PASS '))).toBe(false);

@@ -1,11 +1,11 @@
 // `kubic setup`. The prompt frame is
 // faked: every question the wizard asks is answered from a script.
 import { describe, expect, it } from 'vitest';
+import { EXIT_CANCELLED } from '../../core/src/cli/exit-codes.js';
 import { createLineLogger } from '../../core/src/cli/logger.js';
 import type { SelectChoice } from '../../core/src/cli/prompt.js';
 import {
   runSetupCommand,
-  SETUP_EXIT_CANCELLED,
   type SetupDeps,
   type SetupProviderChoice,
 } from './setup-cli.js';
@@ -100,7 +100,7 @@ function rig(
 describe('kubic setup', () => {
   it('one detected provider: model and thinking, then saves [model]', async () => {
     const r = rig(['sonnet', 'high']);
-    expect(await runSetupCommand({}, r.deps)).toBe(0);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(0);
     expect(r.steps).toEqual([
       'intro kubic setup',
       'Provider  anthropic — key from ANTHROPIC_API_KEY',
@@ -122,7 +122,7 @@ describe('kubic setup', () => {
       providers: [ANTHROPIC, OPENAI],
       current: 'openai/gpt-x',
     });
-    expect(await runSetupCommand({}, r.deps)).toBe(0);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(0);
     expect(r.asked[0]).toBe('Provider [anthropic,openai] openai');
     expect(r.asked[1]).toBe('Default model [gpt-x] gpt-x');
     expect(r.written()).toContain('provider = "openai"');
@@ -130,7 +130,7 @@ describe('kubic setup', () => {
 
   it('skips the thinking question for a model without thinking', async () => {
     const r = rig(['haiku']);
-    expect(await runSetupCommand({}, r.deps)).toBe(0);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(0);
     expect(r.asked).toEqual(['Default model [sonnet,haiku] -']);
     expect(r.written()).toBe('[model]\nprovider = "anthropic"\nid = "haiku"\n');
   });
@@ -147,21 +147,21 @@ describe('kubic setup', () => {
 
   it('a cancelled question writes nothing and exits 130', async () => {
     const r = rig([null]);
-    expect(await runSetupCommand({}, r.deps)).toBe(SETUP_EXIT_CANCELLED);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(EXIT_CANCELLED);
     expect(r.written()).toBeUndefined();
     expect(r.ended()).toMatch(/^cancel setup cancelled/);
   });
 
   it('no provider with a key: names the fix, writes nothing, exits 6', async () => {
     const r = rig([], { providers: [] });
-    expect(await runSetupCommand({}, r.deps)).toBe(6);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(6);
     expect(r.written()).toBeUndefined();
     expect(r.ended()).toContain('export ANTHROPIC_API_KEY=');
   });
 
   it('a frozen enterprise model asks no model question', async () => {
     const r = rig([], { enterpriseModel: 'corp/approved' });
-    expect(await runSetupCommand({}, r.deps)).toBe(0);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(0);
     expect(r.asked).toEqual([]);
     expect(r.steps).toContain(
       'Model  corp/approved — pinned by enterprise policy',
@@ -178,7 +178,7 @@ describe('kubic setup', () => {
         return answer === null ? false : answer;
       },
     });
-    expect(await runSetupCommand({}, r.deps)).toBe(0);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(0);
     expect(r.asked.at(-1)).toBe('confirm Trust project /repo?');
     expect(decisions).toEqual([true]);
     expect(r.steps).toContain('Project trusted');
@@ -191,13 +191,13 @@ describe('kubic setup', () => {
         return false;
       },
     });
-    expect(await runSetupCommand({}, r.deps)).toBe(SETUP_EXIT_CANCELLED);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(EXIT_CANCELLED);
     expect(r.written()).toBeUndefined();
   });
 
   it('refuses off a terminal with the manual alternative (exit 2)', async () => {
     const r = rig([], { interactive: false });
-    expect(await runSetupCommand({}, r.deps)).toBe(2);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(2);
     expect(r.errors[0]).toMatch(/kubic setup is interactive/);
   });
 
@@ -207,7 +207,7 @@ describe('kubic setup', () => {
         throw new Error('read-only file system');
       },
     });
-    expect(await runSetupCommand({}, r.deps)).toBe(1);
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(1);
     expect(r.errors[0]).toMatch(/could not write .*read-only file system/);
   });
 });

@@ -108,7 +108,7 @@ describe('git guard + CLI + reconciliation', () => {
         '? new.txt\0',
       ].join(''),
     );
-    expect(await runGitCommand({ command: 'status' }, deps)).toBe(0);
+    expect((await runGitCommand({ command: 'status' }, deps)).exitCode).toBe(0);
     expect(lines).toContain('branch main (ahead 1)');
     expect(lines).toContain('staged: staged.txt');
     expect(lines).toContain('untracked: new.txt');
@@ -122,7 +122,7 @@ describe('git guard + CLI + reconciliation', () => {
         'u UU N... 100644 100644 100644 100644 1111111 2222222 3333333 cl.txt\0',
       ].join(''),
     );
-    expect(await runGitCommand({ command: 'status' }, deps)).toBe(0);
+    expect((await runGitCommand({ command: 'status' }, deps)).exitCode).toBe(0);
     expect(lines).toContain('conflicts: cl.txt');
     expect(lines.some((line) => line.includes('staged:'))).toBe(false);
     expect(lines.some((line) => line.includes('modified:'))).toBe(false);
@@ -132,7 +132,7 @@ describe('git guard + CLI + reconciliation', () => {
     const { lines, deps } = fakeGitCli(
       '# branch.oid abc1234\0# branch.head (detached)\0',
     );
-    expect(await runGitCommand({ command: 'status' }, deps)).toBe(0);
+    expect((await runGitCommand({ command: 'status' }, deps)).exitCode).toBe(0);
     expect(lines).toContain('branch (detached HEAD)');
   });
 
@@ -243,26 +243,37 @@ describe('kubic git over a real repo (typed requests)', () => {
     writeFileSync(join(root, 'a.txt'), 'a\n');
     writeFileSync(join(root, 'b.txt'), 'b\n');
     expect(
-      await runGitCommand({ command: 'stage', paths: ['a.txt'] }, { env, out }),
+      (
+        await runGitCommand(
+          { command: 'stage', paths: ['a.txt'] },
+          { env, out },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(lines).toEqual(['staged a.txt']);
     lines.length = 0;
     expect(
-      await runGitCommand(
-        { command: 'commit', message: 'feat: add a' },
-        { env, out },
-      ),
+      (
+        await runGitCommand(
+          { command: 'commit', message: 'feat: add a' },
+          { env, out },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/^committed [0-9a-f]{8} \(1 file\(s\)\)$/);
     lines.length = 0;
-    expect(await runGitCommand({ command: 'log' }, { env, out })).toBe(0);
+    expect(
+      (await runGitCommand({ command: 'log' }, { env, out })).exitCode,
+    ).toBe(0);
     // Plain aligned table: header plus one row, no box characters.
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/^SHA\s+DATE\s+AUTHOR\s+MESSAGE$/);
     expect(lines[1]).toMatch(/^[0-9a-f]{8}\s+\S.*\s+tester\s+feat: add a$/);
     lines.length = 0;
-    expect(await runGitCommand({ command: 'status' }, { env, out })).toBe(0);
+    expect(
+      (await runGitCommand({ command: 'status' }, { env, out })).exitCode,
+    ).toBe(0);
     expect(lines).toEqual(['branch main', 'untracked: b.txt']);
   });
 
@@ -273,7 +284,7 @@ describe('kubic git over a real repo (typed requests)', () => {
     const docs: unknown[] = [];
     const run = async (request: Parameters<typeof runGitCommand>[0]) => {
       lines.length = 0;
-      expect(await runGitCommand(request, { env, out })).toBe(0);
+      expect((await runGitCommand(request, { env, out })).exitCode).toBe(0);
       expect(lines).toHaveLength(1);
       docs.push(JSON.parse(lines[0] ?? ''));
     };
@@ -303,11 +314,14 @@ describe('kubic git over a real repo (typed requests)', () => {
   it('a fresh repo (unborn branch) has an empty history, not a failure', async () => {
     const { root, lines, out } = repo();
     const env = new NodeExecutionEnv(root);
-    expect(await runGitCommand({ command: 'log' }, { env, out })).toBe(0);
+    expect(
+      (await runGitCommand({ command: 'log' }, { env, out })).exitCode,
+    ).toBe(0);
     expect(lines).toEqual(['no commits']);
     lines.length = 0;
     expect(
-      await runGitCommand({ command: 'log', json: true }, { env, out }),
+      (await runGitCommand({ command: 'log', json: true }, { env, out }))
+        .exitCode,
     ).toBe(0);
     expect(lines).toEqual(['[]']);
   });

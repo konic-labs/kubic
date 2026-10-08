@@ -5,7 +5,11 @@
 // enterprise allow is denied.
 
 import { describeUnsupported } from '../../../agents/src/policy.js';
-import { EXIT_OK, EXIT_USAGE } from '../../../core/src/cli/exit-codes.js';
+import {
+  type CommandResult,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../../core/src/cli/exit-codes.js';
 import { createLineLogger } from '../../../core/src/cli/logger.js';
 import { formatJson } from '../../../core/src/cli/output.js';
 import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
@@ -114,7 +118,7 @@ function decisionSource(
 export async function runPolicyCommand(
   options: PolicyOptions,
   deps: PolicyCommandDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const json = options.json === true;
   const theme = json ? PLAIN : (deps.theme ?? PLAIN);
   const log = createLineLogger(deps.err, {
@@ -122,12 +126,12 @@ export async function runPolicyCommand(
   });
   if (options.tool === undefined) {
     log.error("required option '--tool <name>' not specified");
-    return EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   const tool = options.tool.trim();
   if (tool === '') {
     log.error('--tool needs a non-empty value');
-    return EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   const policy = await deps.resolvePolicy();
   const decision = isToolAllowed(policy, tool) ? 'allow' : 'deny';
@@ -145,11 +149,11 @@ export async function runPolicyCommand(
         ...(unsupported.length === 0 ? {} : { unsupported }),
       }),
     );
-    return EXIT_OK;
+    return { exitCode: EXIT_OK };
   }
   for (const entry of unsupported) log.warn(describeUnsupported(entry));
   const word =
     decision === 'allow' ? theme.success(decision) : theme.error(decision);
   deps.out(`${word} ${safeTool} (${source})`);
-  return EXIT_OK;
+  return { exitCode: EXIT_OK };
 }

@@ -378,15 +378,17 @@ describe('audit ledger', () => {
       soloDecisionAudit({ ...decision, posture: 'full-access' }),
     );
     const lines: string[] = [];
-    const code = await runAuditCommand(
-      { posture: 'full-access', json: true },
-      {
-        loadRecords: () => readAuditLedger(dir),
-        loadSecrets: () => [],
-        out: (line) => lines.push(line),
-        err: (line) => lines.push(line),
-      },
-    );
+    const code = (
+      await runAuditCommand(
+        { posture: 'full-access', json: true },
+        {
+          loadRecords: () => readAuditLedger(dir),
+          loadSecrets: () => [],
+          out: (line) => lines.push(line),
+          err: (line) => lines.push(line),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const parsed = JSON.parse(lines.join('\n')) as { posture: string }[];
     expect(parsed.map((record) => record.posture)).toEqual(['full-access']);

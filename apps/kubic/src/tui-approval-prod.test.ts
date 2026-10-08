@@ -186,7 +186,7 @@ describe('allow once is not a session approval', () => {
     await waitFor(() => fake.frame.includes('both calls done'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(asks).toBe(2);
   });
 });
@@ -230,7 +230,7 @@ describe('approval card on the kubic tui path', () => {
     // Quit cleanly: restore + exit 0.
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.frame).toContain('?1049l');
     // The refusal reason never appeared: the call was really approved, and
@@ -274,7 +274,7 @@ describe('approval card on the kubic tui path', () => {
     // Now a clean quit.
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.frame).toContain('?1049l');
     // The restored main screen carries the continued turn and no card
@@ -304,7 +304,7 @@ describe('approval card on the kubic tui path', () => {
     await waitFor(() => fake.counts.started === 1);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.frame).toContain('?1049l');
     expect(fake.frame).toContain('?2026h');
@@ -346,7 +346,7 @@ describe('approval card on the kubic tui path', () => {
     // and the process exits 0.
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.frame).toContain('?1049l');
   });
@@ -382,7 +382,7 @@ describe('approval card on the kubic tui path', () => {
     await waitFor(() => fake.frame.includes('narrow done'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });
 
@@ -430,7 +430,7 @@ describe('approval card on the kubic tui path', () => {
     await waitFor(() => fake.frame.includes('armed turn done'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   // A padded 400-char command reaches the card whole — the
@@ -481,6 +481,6 @@ describe('approval card on the kubic tui path', () => {
     await waitFor(() => fake.frame.includes('padded turn done'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 });

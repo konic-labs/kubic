@@ -217,7 +217,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('all done, boss'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
     expect(doc).toContain('▌ say done');
     expect(doc).toContain('all done, boss');
@@ -254,7 +254,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => /in [1-9]\d* out [1-9]\d*/.test(fake.writes.join('')));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
     // The tree reflects the tool call: the runner's sink folds the event into
     // the projector and the app applies the state, so the tree's
@@ -349,7 +349,7 @@ describe('kubic tui prompt loop', () => {
       release();
       fake.feed('\x03'); // idle again: Ctrl-C quits
       fake.feed('\x03');
-      expect(await pending).toBe(0);
+      expect((await pending).exitCode).toBe(0);
       // The released turn keeps settling in the background after the loop
       // quits; wait for its result to reach the session log so afterEach's
       // rmSync is not raced by a late append that recreates the temp root.
@@ -404,7 +404,7 @@ describe('kubic tui prompt loop', () => {
     // Now idle: Ctrl-C quits, restoring the main screen exactly once.
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');
   });
@@ -456,7 +456,7 @@ describe('kubic tui prompt loop', () => {
     expect(answered.at(-1) ?? '').not.toContain('queued: second prompt');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
     // Both prompts are in the transcript, and the model ran twice: the
     // queued follow-up really was delivered after settlement.
@@ -515,7 +515,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('third answer'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(calls()).toBe(3);
   });
 
@@ -568,7 +568,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('steered answer'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain('use pnpm');
     // A steer is not a queued follow-up: no queued row was ever drawn.
@@ -613,7 +613,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('first answer'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(calls()).toBe(1);
   });
 
@@ -664,7 +664,7 @@ describe('kubic tui prompt loop', () => {
     // The session is alive and idle again: a second Ctrl-C quits.
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });
 
@@ -723,7 +723,7 @@ describe('kubic tui prompt loop', () => {
     const entries = page.items;
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     // The summarizer saw the operator's instructions (and the agent turn
     // never saw the command text).
     expect(seen).toHaveLength(1);
@@ -806,7 +806,7 @@ describe('kubic tui prompt loop', () => {
     expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('cancels a running compaction with Ctrl-C and says so', async () => {
@@ -854,7 +854,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('compaction cancelled'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });
 
@@ -906,7 +906,7 @@ describe('kubic tui prompt loop', () => {
     expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     // The frames drawn after the Enter carry the draft (the
     // typing that preceded the clear is outside the slice, so this proves
     // the restore rather than the input).
@@ -962,7 +962,7 @@ describe('kubic tui prompt loop', () => {
     expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.writes.slice(refusedAt).join('')).toContain(
       '/model faux/other',
     );
@@ -1022,7 +1022,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('third answer'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
     expect(doc).toContain('▌ second prompt');
     expect(doc).toContain('▌ third prompt');
@@ -1119,7 +1119,7 @@ describe('kubic tui prompt loop', () => {
     ).toHaveLength(0);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('refuses /thinking and the cycle key while a turn runs', async () => {
@@ -1177,7 +1177,7 @@ describe('kubic tui prompt loop', () => {
     expect(fake.counts.stopped).toBe(0);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.writes.slice(refusedAt).join('')).toContain('/thinking high');
   });
 
@@ -1224,7 +1224,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('diff: panel open'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     // Not one of the commands spent a model call.
     expect(calls()).toBe(0);
   });
@@ -1282,7 +1282,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('first answer'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(calls()).toBe(1);
   });
 
@@ -1311,7 +1311,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('help: 19 commands'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(calls()).toBe(0);
   });
 
@@ -1403,7 +1403,7 @@ describe('kubic tui prompt loop', () => {
       );
       await waitFor(() => fake.counts.started === 1);
       for (const press of presses) fake.feed(press);
-      expect(await pending).toBe(0);
+      expect((await pending).exitCode).toBe(0);
       expect(fake.counts.stopped).toBe(1);
     }
   });
@@ -1444,7 +1444,7 @@ describe('kubic tui prompt loop', () => {
     expect(fake.counts.stopped).toBe(0);
     // Second Ctrl-C while the cancel is still draining quits.
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');
     release();
@@ -1468,7 +1468,7 @@ describe('kubic tui prompt loop', () => {
     );
     await waitFor(() => fake.counts.started === 1);
     process.stdin.emit('end');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');
     // The listener is removed with the screen: a second EOF is inert and
@@ -1529,7 +1529,7 @@ describe('kubic tui prompt loop', () => {
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });
 
@@ -1550,7 +1550,7 @@ describe('kubic tui prompt loop', () => {
       );
       await waitFor(() => fake.counts.started === 1);
       for (const press of key) fake.feed(press);
-      expect(await pending).toBe(0);
+      expect((await pending).exitCode).toBe(0);
       expect(fake.counts.stopped).toBe(1);
       expect(lines.join('\n')).toContain('approvals on');
     }
@@ -1576,7 +1576,7 @@ describe('kubic tui prompt loop', () => {
     await waitFor(() => fake.writes.join('').includes('answered'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
     // The header above the transcript, the status line below.
     const order = ['approvals on', '▌ a question', 'answered', ' ready '].map(
@@ -1621,7 +1621,7 @@ describe('the header facts on the live loop', () => {
     expect(reads).toBe(2);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('repaints the clock only when its minute changes, and stops it on quit', async () => {
@@ -1657,7 +1657,7 @@ describe('the header facts on the live loop', () => {
       );
       fake.feed('\x03');
       fake.feed('\x03');
-      expect(await pending).toBe(0);
+      expect((await pending).exitCode).toBe(0);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
@@ -1697,6 +1697,6 @@ describe('the turn receipt on the live loop', () => {
       ),
     );
     fake.feed('\x04');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 });

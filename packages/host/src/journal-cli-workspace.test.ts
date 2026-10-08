@@ -86,11 +86,13 @@ async function run(
 ): Promise<{ code: number; lines: string[]; errs: string[] }> {
   const lines: string[] = [];
   const errs: string[] = [];
-  const code = await runJournalCommand(request, {
-    ...deps,
-    out: (l) => lines.push(l),
-    err: (l) => errs.push(l),
-  });
+  const code = (
+    await runJournalCommand(request, {
+      ...deps,
+      out: (l) => lines.push(l),
+      err: (l) => errs.push(l),
+    })
+  ).exitCode;
   return { code, lines, errs };
 }
 
@@ -323,16 +325,18 @@ describe('journal commands step aside for a live session', () => {
   ): Promise<{ code: number; lines: string[]; errs: string[] }> {
     const lines: string[] = [];
     const errs: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'log', session: id },
-      {
-        root,
-        sessionsRoot,
-        retentionDays: 1,
-        out: (l) => lines.push(l),
-        err: (l) => errs.push(l),
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log', session: id },
+        {
+          root,
+          sessionsRoot,
+          retentionDays: 1,
+          out: (l) => lines.push(l),
+          err: (l) => errs.push(l),
+        },
+      )
+    ).exitCode;
     return { code, lines, errs };
   }
 

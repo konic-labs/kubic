@@ -204,7 +204,7 @@ describe('scoped role set on the TUI lane', () => {
     );
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('reports the allow-all set when the lane has no role', async () => {
@@ -232,6 +232,6 @@ describe('scoped role set on the TUI lane', () => {
     );
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 });

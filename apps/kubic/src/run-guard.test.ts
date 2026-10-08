@@ -141,16 +141,18 @@ describe('run guard flags', () => {
   it('accepts the largest usable --timeout', async () => {
     const o = out();
     const seen: { options?: unknown } = {};
-    const exit = await runRunCommand(
-      { prompt: 'hi', timeoutMs: 2147483647 },
-      {
-        out: o.write,
-        run: async (_prompt: string, options: unknown) => {
-          seen.options = options;
-          return completedResult();
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hi', timeoutMs: 2147483647 },
+        {
+          out: o.write,
+          run: async (_prompt: string, options: unknown) => {
+            seen.options = options;
+            return completedResult();
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(seen.options).toEqual({
       sessionId: undefined,
@@ -162,17 +164,19 @@ describe('run guard flags', () => {
   it('forwards --timeout/--max-turns to the runner', async () => {
     const o = out();
     const seen: { prompt?: string; options?: unknown } = {};
-    const exit = await runRunCommand(
-      { prompt: 'hi', timeoutMs: 60000, maxTurns: 10 },
-      {
-        out: o.write,
-        run: async (prompt: string, options: unknown) => {
-          seen.prompt = prompt;
-          seen.options = options;
-          return completedResult();
+    const exit = (
+      await runRunCommand(
+        { prompt: 'hi', timeoutMs: 60000, maxTurns: 10 },
+        {
+          out: o.write,
+          run: async (prompt: string, options: unknown) => {
+            seen.prompt = prompt;
+            seen.options = options;
+            return completedResult();
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(seen.prompt).toBe('hi');
     expect(seen.options).toEqual({
@@ -239,18 +243,20 @@ describe('run guard mapping', () => {
     // own --timeout wiring, faux provider, real wall clock — the envelope
     // names `timeout` and the exit code is 1, never the turn-limit code.
     const o = out();
-    const exit = await runRunCommand(
-      { prompt: 'think forever', timeoutMs: 60, json: true },
-      {
-        out: o.write,
-        run: (prompt, options) =>
-          runHeadlessPrompt(prompt, options, {
-            sessionsRoot: tmpRoot(),
-            models: hangingModels(),
-            env: new FakeExecutionEnv({}),
-          }),
-      },
-    );
+    const exit = (
+      await runRunCommand(
+        { prompt: 'think forever', timeoutMs: 60, json: true },
+        {
+          out: o.write,
+          run: (prompt, options) =>
+            runHeadlessPrompt(prompt, options, {
+              sessionsRoot: tmpRoot(),
+              models: hangingModels(),
+              env: new FakeExecutionEnv({}),
+            }),
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     expect(o.lines).toHaveLength(1);
     const envelope = JSON.parse(o.lines[0] as string) as {

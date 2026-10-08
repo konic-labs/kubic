@@ -8,6 +8,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import type {
+  CommandResult,
+  ExitCode,
+} from '../../../../packages/core/src/cli/exit-codes.js';
 import {
   runBenchmarkCommand,
   runEvalCommand,
@@ -68,32 +72,35 @@ async function kubic(argv: readonly string[], real = false): Promise<Run> {
   const handlers = realRunners(channels);
   const record =
     (name: AnalysisName) =>
-    (options: unknown): number | Promise<number> => {
+    (options: unknown): CommandResult | Promise<CommandResult> => {
       calls.push({ name, options });
-      if (!real) return 0;
+      if (!real) return { exitCode: 0 };
       const runner = handlers[name] as (
         options: unknown,
         config: CliConfigResult,
-      ) => number | Promise<number>;
+      ) => CommandResult | Promise<CommandResult>;
       return runner(options, CONFIG);
     };
   const runners = Object.fromEntries(
     ANALYSIS.map((name) => [name, record(name)]),
   ) as unknown as DispatchRunners;
-  let exitCode = 0;
+  let exitCode: ExitCode = 0;
+  let finished = false;
   const ctx: CommandContext = {
     config: CONFIG,
     runners,
     rest: argv.slice(1),
     out: channels.out,
     err: channels.err,
-    setExitCode: (code) => {
-      exitCode = code;
+    finish: (result) => {
+      exitCode = result.exitCode;
+      finished = true;
     },
   };
   registerAnalysisCommands(program, ctx);
   const code = await runKubicProgram(program, argv, channels, {
     code: () => exitCode,
+    finished: () => finished,
   });
   return { code, out, err, calls };
 }

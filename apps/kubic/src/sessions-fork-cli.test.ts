@@ -59,7 +59,7 @@ function cli(root: string) {
         sessionsRoot: root,
         out: (line) => out.push(line),
         logger: createLineLogger((line: string) => err.push(line)),
-      }),
+      }).then((result) => result.exitCode),
   };
 }
 
@@ -155,7 +155,7 @@ describe('kubic sessions fork', () => {
           }),
           sessions: async (invocation: SessionsInvocation) => {
             seen.push(invocation);
-            return 0;
+            return { exitCode: 0 };
           },
         },
       },

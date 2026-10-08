@@ -7,6 +7,10 @@
 // test files; this file pins argv → options and the exit-code mapping.
 
 import { describe, expect, it } from 'vitest';
+import type {
+  CommandResult,
+  ExitCode,
+} from '../../../../packages/core/src/cli/exit-codes.js';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
 import type { CliConfigResult } from '../config-runtime.js';
@@ -33,7 +37,7 @@ interface Result {
 
 async function kubic(
   argv: readonly string[],
-  answer: number | ((key: Key, input: unknown) => number) = 0,
+  answer: ExitCode | ((key: Key, input: unknown) => ExitCode) = 0,
 ): Promise<Result> {
   const out: string[] = [];
   const err: string[] = [];
@@ -46,12 +50,15 @@ async function kubic(
     versionLine: 'kubic 0.0.0 (license: MIT)',
     rootHelp: 'usage: kubic <…>',
   });
-  let code = 0;
+  let code: ExitCode = 0;
+  let finished = false;
   const runner =
     (key: Key) =>
-    (input: unknown): number => {
+    (input: unknown): CommandResult => {
       calls.push({ key, input });
-      return typeof answer === 'number' ? answer : answer(key, input);
+      return {
+        exitCode: typeof answer === 'number' ? answer : answer(key, input),
+      };
     };
   const runners = {
     run: runner('run'),
@@ -68,13 +75,15 @@ async function kubic(
     runners,
     rest: argv.slice(1),
     ...channels,
-    setExitCode: (next) => {
-      code = next;
+    finish: (result) => {
+      code = result.exitCode;
+      finished = true;
     },
   };
   registerSoloCommands(program, ctx);
   const exit = await runKubicProgram(program, argv, channels, {
     code: () => code,
+    finished: () => finished,
   });
   return { code: exit, out, err, calls };
 }
@@ -271,7 +280,7 @@ describe('kubic run', () => {
   });
 
   it('returns the runner exit code (the terminus map)', async () => {
-    for (const exit of [0, 1, 3, 4, 5, 6]) {
+    for (const exit of [0, 1, 3, 4, 5, 6] as const) {
       expect((await kubic(['run', '-p', 'x'], exit)).code).toBe(exit);
     }
   });

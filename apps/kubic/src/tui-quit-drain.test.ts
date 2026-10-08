@@ -18,6 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CommandResult } from '../../../packages/core/src/cli/exit-codes.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
@@ -189,7 +190,7 @@ function start(
   extra: Partial<TuiRunDeps> = {},
 ): {
   fake: ReturnType<typeof recordingTerminal>;
-  exit: Promise<number>;
+  exit: Promise<CommandResult>;
 } {
   const fake = recordingTerminal();
   const exit = runTuiCommand(
@@ -239,7 +240,7 @@ describe('quitting mid-turn drains the operation', () => {
     // and drains.
     await waitFor(() => fake.writes.join('').includes('cancelling'));
     fake.feed('\x03'); // second press (Ctrl-C): quit and drain
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     await waitFor(() => !alive(pid), 500);
     expect(existsSync(join(h.workspace, 'late.txt'))).toBe(false);
     const opId = h.admitted[0] ?? '';
@@ -291,7 +292,7 @@ describe('quitting mid-turn drains the operation', () => {
       h.events.push('kill:2');
     });
     fake.feed('\x04'); // Ctrl-D on an empty draft quits
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(h.events).toEqual([`abort:${opId}`, 'kill:1', 'kill:2', 'close']);
   });
 
@@ -320,7 +321,7 @@ describe('quitting mid-turn drains the operation', () => {
     });
     process.emit('SIGINT');
     // A signalled quit exits 128+signo (SIGINT → 130).
-    expect(await exit).toBe(130);
+    expect((await exit).exitCode).toBe(130);
     const sessionId = h.boots[0]?.sessionId ?? '';
     const paths = new FileJournalStore(
       join(h.sessionsRoot, sessionId, 'journal'),
@@ -362,7 +363,7 @@ describe('quitting mid-turn drains the operation', () => {
     // ending the wait); the injected clock must fire it.
     await waitFor(() => timers.length === 2);
     timers[1]?.fire();
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(timers.every((timer) => timer.ms === 1234)).toBe(true);
   });
@@ -409,7 +410,7 @@ describe('quitting mid-turn drains the operation', () => {
     // handed out; fire it so the quit can finish.
     await waitFor(() => timers.length === 2);
     timers[1]?.();
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
   });
 
@@ -433,9 +434,11 @@ describe('quitting mid-turn drains the operation', () => {
         };
       };
     }
-    const settled = async (exit: Promise<number>): Promise<number | 'hung'> =>
+    const settled = async (
+      exit: Promise<CommandResult>,
+    ): Promise<number | 'hung'> =>
       Promise.race([
-        exit,
+        exit.then((result) => result.exitCode),
         new Promise<'hung'>((resolve) => setTimeout(resolve, 1500, 'hung')),
       ]);
 
@@ -607,7 +610,7 @@ describe('quitting mid-turn drains the operation', () => {
     // and drains.
     await waitFor(() => fake.writes.join('').includes('cancelling'));
     fake.feed('\x03'); // second press (Ctrl-C): quit and drain
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(sweeps).toBe(0);
   });
@@ -639,7 +642,7 @@ describe('quitting mid-turn drains the operation', () => {
     // The close's own fresh bound is the second timer.
     await waitFor(() => timers.length === 2);
     timers[1]?.();
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(h.events.at(-1)).toBe('close');
   });
 });
@@ -688,7 +691,7 @@ describe('quitting after a settled turn leaves kept background jobs alone', () =
     pids.push(bg);
     expect(alive(bg)).toBe(true);
     fake.feed('\x04'); // Ctrl-D quits while idle: nothing is in flight
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(alive(bg)).toBe(true);
   });

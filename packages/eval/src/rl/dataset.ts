@@ -13,6 +13,7 @@
 // second pass loads one group at a time and appends each record as it is
 // built. Peak memory is one group, not the dataset.
 import { join } from 'node:path';
+import type { ExitCode } from '../../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../../core/src/cli/output.js';
 import {
   parseTrajectoryExportJSON,
@@ -75,16 +76,16 @@ export type DatasetErrorCode =
 
 export class DatasetError extends Error {
   readonly code: DatasetErrorCode;
-  readonly exitCode: number;
+  readonly exitCode: ExitCode;
 
-  constructor(code: DatasetErrorCode, message: string, exitCode: number) {
+  constructor(code: DatasetErrorCode, message: string, exitCode: ExitCode) {
     super(message);
     this.name = 'DatasetError';
     this.code = code;
     this.exitCode = exitCode;
   }
 
-  toJSON(): { error: { code: string; message: string; exitCode: number } } {
+  toJSON(): { error: { code: string; message: string; exitCode: ExitCode } } {
     return {
       error: {
         code: this.code,

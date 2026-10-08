@@ -3,17 +3,19 @@
 // builders with honest messages; provider-down maps to exit 6; --json
 // matches the envelope shape. Faux-only: injected values, no I/O.
 import { describe, expect, it } from 'vitest';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_PROVIDER,
+} from '../../../core/src/cli/exit-codes.js';
 import { MCP_ARRIVAL_REQUIREMENTS } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
 import { runDoctorCommand } from '../doctor.js';
-import { RUN_EXIT_PROVIDER_PROBE_FAILED } from '../run-cli.js';
+import { mapTerminusToExitCode } from '../run-cli.js';
 import {
   buildLimitsJsonReport,
   collectLimitChecks,
   depsLimitCheck,
-  LIMITS_DOCTOR_EXIT_FAIL,
-  LIMITS_DOCTOR_EXIT_OK,
-  LIMITS_DOCTOR_EXIT_PROVIDER,
   limitsDoctorExit,
   policyEnforceabilityCheck,
   providerAvailabilityCheck,
@@ -159,33 +161,35 @@ describe('exit mapping', () => {
   }
 
   it('provider failure exits 6, matching kubic run', () => {
-    expect(LIMITS_DOCTOR_EXIT_PROVIDER).toBe(6);
-    expect(LIMITS_DOCTOR_EXIT_PROVIDER).toBe(RUN_EXIT_PROVIDER_PROBE_FAILED);
+    expect(EXIT_PROVIDER).toBe(6);
+    expect(limitsDoctorExit([fail('provider-down')])).toBe(
+      mapTerminusToExitCode('provider_probe_failed'),
+    );
     expect(limitsDoctorExit([fail('provider-down')])).toBe(6);
   });
 
   it('other failures exit 1 and clean exits 0', () => {
-    expect(limitsDoctorExit([fail('policy-mismatch')])).toBe(
-      LIMITS_DOCTOR_EXIT_FAIL,
-    );
-    expect(limitsDoctorExit([])).toBe(LIMITS_DOCTOR_EXIT_OK);
+    expect(limitsDoctorExit([fail('policy-mismatch')])).toBe(EXIT_FAILED);
+    expect(limitsDoctorExit([])).toBe(EXIT_OK);
   });
 
   it('warn notices alone never flip the exit code', () => {
-    expect(limitsDoctorExit(staticLimitChecks())).toBe(LIMITS_DOCTOR_EXIT_OK);
+    expect(limitsDoctorExit(staticLimitChecks())).toBe(EXIT_OK);
   });
 
   it('a clean run with warn notices exits 0 end-to-end', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      {},
-      {
-        out: (line: string) => lines.push(line),
-        probeProviders: () => [{ id: 'local', reachable: true }],
-        checkDeps: () => [{ id: 'node', ok: true }],
-        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-      },
-    );
+    const code = (
+      await runDoctorCommand(
+        {},
+        {
+          out: (line: string) => lines.push(line),
+          probeProviders: () => [{ id: 'local', reachable: true }],
+          checkDeps: () => [{ id: 'node', ok: true }],
+          loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('WARN limit:solo-no-isolation');
@@ -194,17 +198,19 @@ describe('exit mapping', () => {
 
   it('provider-down exits 6 end-to-end via runDoctorCommand', async () => {
     const lines: string[] = [];
-    const code = await runDoctorCommand(
-      {},
-      {
-        out: (line: string) => lines.push(line),
-        probeProviders: () => [{ id: 'local', reachable: false }],
-        checkDeps: () => [{ id: 'node', ok: true }],
-        loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
-      },
-    );
+    const code = (
+      await runDoctorCommand(
+        {},
+        {
+          out: (line: string) => lines.push(line),
+          probeProviders: () => [{ id: 'local', reachable: false }],
+          checkDeps: () => [{ id: 'node', ok: true }],
+          loadPolicy: () => ({ route: 'ask-user', autoApprove: [] }),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(6);
-    expect(code).toBe(RUN_EXIT_PROVIDER_PROBE_FAILED);
+    expect(code).toBe(EXIT_PROVIDER);
     expect(lines.join('\n')).toContain('provider-down');
   });
 });

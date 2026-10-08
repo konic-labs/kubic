@@ -11,6 +11,7 @@
 // handler's semantics, so a secret-shaped value is redacted before it is
 // echoed and replay/export/eval keep their `--json` error envelopes.
 
+import type { CommandResult } from '../../../../packages/core/src/cli/exit-codes.js';
 import {
   EVAL_DEFAULT_MODEL,
   type EvalOptions,
@@ -27,11 +28,11 @@ import type { CommandRegistrar, KubicProgram } from '../cli/context.js';
 import type { CliConfigResult } from '../config-runtime.js';
 
 // One analysis runner: commander's parsed options plus the process-wide
-// config load in, the exit code out (production wiring: ../prod-runners.ts).
+// config load in, the command's result out (production wiring: ../prod-runners.ts).
 type AnalysisRunner<Options> = (
   options: Options,
   config: CliConfigResult,
-) => number | Promise<number>;
+) => CommandResult | Promise<CommandResult>;
 
 export interface AnalysisRunners {
   readonly cost: AnalysisRunner<CostOptions>;
@@ -87,8 +88,8 @@ function command(
 
 export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
   const { config, runners } = ctx;
-  const done = (code: number): void => {
-    ctx.setExitCode(code);
+  const done = (result: CommandResult): void => {
+    ctx.finish(result);
   };
 
   command(

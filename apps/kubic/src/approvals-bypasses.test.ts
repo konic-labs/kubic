@@ -528,7 +528,7 @@ describe('autoApprove never answers an always-ask capability', () => {
 
   it('doctor warns by name on the policy:approvals line and counts only effective entries', async () => {
     const { lines, deps } = doctorLines([KUBIC_STATE_WRITE]);
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     const line = lines.find((l) => l.includes('policy:approvals')) ?? '';
     expect(line).toContain('WARN');
     expect(line).toContain('kubic-state-write always asks');
@@ -616,7 +616,7 @@ describe('autoApprove never answers an always-ask capability', () => {
 
   it('doctor still passes a policy with no always-ask entry', async () => {
     const { lines, deps } = doctorLines(['network']);
-    const code = await runDoctorCommand({}, deps);
+    const code = (await runDoctorCommand({}, deps)).exitCode;
     const line = lines.find((l) => l.includes('policy:approvals')) ?? '';
     expect(line).toContain('PASS');
     expect(line).toContain('1 auto-approved');

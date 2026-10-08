@@ -172,23 +172,25 @@ describe('replay re-execution consumes the effective config', () => {
     const lockPath = join(root, 'pins.json');
     writeFileSync(lockPath, JSON.stringify({ models: { faux: ['m1'] } }));
     let captured: ReplayRuntimeDeps | undefined;
-    const exit = await runReplayCommand(
-      {
-        trajectory: trajPath,
-        tier: 'deterministic',
-        model: 'faux/m1',
-        lockfile: lockPath,
-      },
-      {
-        out: () => {},
-        err: () => {},
-        run: async (_request, runtime) => {
-          captured = runtime;
-          return { terminus: 'completed', summary: 'replayed' };
+    const exit = (
+      await runReplayCommand(
+        {
+          trajectory: trajPath,
+          tier: 'deterministic',
+          model: 'faux/m1',
+          lockfile: lockPath,
         },
-      },
-      RUNTIME,
-    );
+        {
+          out: () => {},
+          err: () => {},
+          run: async (_request, runtime) => {
+            captured = runtime;
+            return { terminus: 'completed', summary: 'replayed' };
+          },
+        },
+        RUNTIME,
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(captured).toEqual(RUNTIME);
     expect(captured?.policySource).toBe('config');

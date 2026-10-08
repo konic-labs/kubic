@@ -19,7 +19,7 @@ classifiers and the license constants. It imports nothing internal —
 | `secret-shapes.ts` | `containsSecretShape`, `findSecretShapes`, `redactSecretShapes`, `REDACTED_SECRET` — the shared secret-shape table (`sk-`, `AKIA`, `ghp_`, `xox-`, PEM, bearer) used by the lane redactor and the audit backstop |
 | `secret-refs.ts` | `parseSecretRef`, `splitSecretCommand`, `SecretRef`, `SecretRefError` — the `$ENV_VAR` / `!command` secret-reference forms shared by the `models.json` parser and the request-time resolver |
 | `suggest.ts` | `suggest`, `editDistance` — "did you mean …?" for mistyped commands, providers and model ids |
-| `cli/exit-codes.ts` | The [exit-code table](../cli/exit-codes.md) as named constants, `CliUsageError`, `CliExitError`, `exitCodeForParseError` |
+| `cli/exit-codes.ts` | The [exit-code table](../cli/exit-codes.md) as named constants and the `ExitCode` union, `CommandResult` (what a command handler returns), `CliUsageError`, `CliExitError`, `exitCodeForParseError` |
 | `cli/logger.ts` | `createLogger`, `createLineLogger`, `debugEnabled` — leveled diagnostics, always on stderr |
 | `cli/output.ts` | `formatJson`, `outputModeFor` — the `--json` rule |
 | `cli/kit.ts`, `cli/table.ts`, `cli/spinner.ts`, `cli/prompt.ts`, `cli/theme.ts`, `cli/width.ts` | The CLI output kit: headings, status marks, receipts, tables, a TTY-only spinner, prompts that never run non-interactively, the CLI theme and display-width helpers |

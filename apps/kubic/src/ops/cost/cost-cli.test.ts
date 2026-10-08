@@ -12,6 +12,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../../../../packages/core/src/cli/exit-codes.js';
 import { REDACTED_SECRET } from '../../../../../packages/core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../../../../packages/exec/src/file-bridge.js';
 import { FAUX_PROVIDER_ID } from '../../../../../packages/host/src/faux-provider.js';
@@ -113,15 +118,17 @@ function capture() {
 describe('kubic cost text view', () => {
   it('prints one row per session plus the task total', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      {},
-      {
-        loadRows: () => ROWS,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runCostCommand(
+        {},
+        {
+          loadRows: () => ROWS,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     // One plain (uncoloured, unboxed) table, then the task total: the group
     // column names the session, and the in/out/cache counters sit apart at
     // sub-cent precision.
@@ -138,34 +145,36 @@ describe('kubic cost text view', () => {
 
   it('counts a session with two buckets once in the total and the cache line', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      {},
-      {
-        loadRows: () => [
-          {
-            session: 'sess-1',
-            model: 'cheap/small',
-            costUsd: 0.2,
-            input: 100,
-            output: 50,
-            cacheRead: 100,
-            cacheWrite: 0,
-          },
-          {
-            session: 'sess-1',
-            model: 'tool:bash',
-            costUsd: 0.3,
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-          },
-        ],
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runCostCommand(
+        {},
+        {
+          loadRows: () => [
+            {
+              session: 'sess-1',
+              model: 'cheap/small',
+              costUsd: 0.2,
+              input: 100,
+              output: 50,
+              cacheRead: 100,
+              cacheWrite: 0,
+            },
+            {
+              session: 'sess-1',
+              model: 'tool:bash',
+              costUsd: 0.3,
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+            },
+          ],
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     const text = cap.lines.join('\n');
     expect(text).toContain('task total $0.5000 (1 session)');
     expect(text).toContain('cache: 1/1 session with prefix hits');
@@ -186,15 +195,17 @@ describe('kubic cost text view', () => {
 
   it('reports no cost rows on an empty rollup', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      {},
-      {
-        loadRows: () => [],
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runCostCommand(
+        {},
+        {
+          loadRows: () => [],
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(cap.lines).toEqual(['no cost rows']);
   });
 });
@@ -202,15 +213,17 @@ describe('kubic cost text view', () => {
 describe('kubic cost --json', () => {
   it('matches the in-code toCostJson shape field-for-field', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      { json: true },
-      {
-        loadRows: () => ROWS,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runCostCommand(
+        { json: true },
+        {
+          loadRows: () => ROWS,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(cap.lines).toHaveLength(1);
     expect(cap.errs).toEqual([]);
     const head = cap.lines[0];
@@ -251,18 +264,20 @@ describe('kubic cost usage', () => {
   it('exits 2 on an invalid session id before any store is touched', async () => {
     let touched = false;
     const cap = capture();
-    const code = await runCostCommand(
-      { session: '../evil' },
-      {
-        loadRows: () => {
-          touched = true;
-          return ROWS;
+    const code = (
+      await runCostCommand(
+        { session: '../evil' },
+        {
+          loadRows: () => {
+            touched = true;
+            return ROWS;
+          },
+          out: cap.out,
+          err: cap.err,
         },
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(2);
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_USAGE);
     expect(touched).toBe(false);
     expect(cap.lines).toEqual([]);
     expect(cap.errs).toEqual([
@@ -273,36 +288,40 @@ describe('kubic cost usage', () => {
   it('forwards the session id to the loader', async () => {
     let seen: string | undefined;
     const cap = capture();
-    const code = await runCostCommand(
-      { session: 'sess-1' },
-      {
-        loadRows: (sessionId) => {
-          seen = sessionId;
-          return ROWS;
+    const code = (
+      await runCostCommand(
+        { session: 'sess-1' },
+        {
+          loadRows: (sessionId) => {
+            seen = sessionId;
+            return ROWS;
+          },
+          out: cap.out,
+          err: cap.err,
         },
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(0);
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(seen).toBe('sess-1');
   });
 
   it('exits 1 when the session is unknown', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      { session: 'missing' },
-      {
-        loadRows: () => {
-          const error = new Error('unknown session: missing');
-          error.name = 'SessionAttachError';
-          throw error;
+    const code = (
+      await runCostCommand(
+        { session: 'missing' },
+        {
+          loadRows: () => {
+            const error = new Error('unknown session: missing');
+            error.name = 'SessionAttachError';
+            throw error;
+          },
+          out: cap.out,
+          err: cap.err,
         },
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(1);
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     expect(cap.lines).toEqual([]);
     expect(cap.errs).toEqual(['error: unknown session: missing']);
   });
@@ -332,15 +351,17 @@ describe('kubic cost cache aggregation', () => {
 
   it('reports the prefix hit-rate from the real usage rows it loaded', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      {},
-      {
-        loadRows: () => CACHED_ROWS,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runCostCommand(
+        {},
+        {
+          loadRows: () => CACHED_ROWS,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     const text = [...cap.lines, ...cap.errs].join('\n');
     // 1 of 2 sessions had a cache read > 0: a real measurement over the
     // rows the loader returned, never an invented number. The unit follows
@@ -360,15 +381,17 @@ describe('kubic cost cache aggregation', () => {
 
   it('keeps the --json top-level shape field-for-field and adds cache per row', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      { json: true },
-      {
-        loadRows: () => CACHED_ROWS,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runCostCommand(
+        { json: true },
+        {
+          loadRows: () => CACHED_ROWS,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     const head = cap.lines[0];
     if (head === undefined) throw new Error('missing cost --json line');
     const parsed = JSON.parse(head) as {
@@ -400,19 +423,21 @@ describe('kubic cost secret backstop', () => {
 
   it('redacts a secret-shaped session id in the unknown-session error', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      { session: SHAPED_SESSION },
-      {
-        loadRows: () => {
-          const error = new Error(`unknown session: ${SHAPED_SESSION}`);
-          error.name = 'SessionAttachError';
-          throw error;
+    const code = (
+      await runCostCommand(
+        { session: SHAPED_SESSION },
+        {
+          loadRows: () => {
+            const error = new Error(`unknown session: ${SHAPED_SESSION}`);
+            error.name = 'SessionAttachError';
+            throw error;
+          },
+          out: cap.out,
+          err: cap.err,
         },
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(1);
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     const text = [...cap.lines, ...cap.errs].join('\n');
     expect(text).not.toContain(SHAPED_SESSION);
     expect(text).toContain(REDACTED_SECRET);
@@ -420,17 +445,19 @@ describe('kubic cost secret backstop', () => {
 
   it('redacts secret-shaped material in store error messages', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      {},
-      {
-        loadRows: () => {
-          throw new Error(`store boom ${SHAPED_SESSION}`);
+    const code = (
+      await runCostCommand(
+        {},
+        {
+          loadRows: () => {
+            throw new Error(`store boom ${SHAPED_SESSION}`);
+          },
+          out: cap.out,
+          err: cap.err,
         },
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(1);
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_FAILED);
     const text = [...cap.lines, ...cap.errs].join('\n');
     expect(text).not.toContain(SHAPED_SESSION);
     expect(text).toContain(REDACTED_SECRET);
@@ -441,15 +468,17 @@ describe('kubic cost secret backstop', () => {
     // and lands in the invalid-id echo — which must not carry it.
     const shaped = 'Bearer abcdefghij1234567890';
     const cap = capture();
-    const code = await runCostCommand(
-      { session: shaped },
-      {
-        loadRows: () => ROWS,
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(2);
+    const code = (
+      await runCostCommand(
+        { session: shaped },
+        {
+          loadRows: () => ROWS,
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_USAGE);
     const text = [...cap.lines, ...cap.errs].join('\n');
     expect(text).not.toContain(shaped);
     expect(text).toContain(REDACTED_SECRET);
@@ -838,23 +867,25 @@ describe('kubic cost lock-free reads', () => {
 
   it('exits 0 and reports the locked session in the text view', async () => {
     const cap = capture();
-    const code = await runCostCommand(
-      {},
-      {
-        loadRows: () => [
-          {
-            session: 'sess-live',
-            model: '(locked)',
-            costUsd: 0,
-            input: 0,
-            output: 0,
-          },
-        ],
-        out: cap.out,
-        err: cap.err,
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runCostCommand(
+        {},
+        {
+          loadRows: () => [
+            {
+              session: 'sess-live',
+              model: '(locked)',
+              costUsd: 0,
+              input: 0,
+              output: 0,
+            },
+          ],
+          out: cap.out,
+          err: cap.err,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(cap.lines.join('\n')).toContain('(locked)');
     expect(cap.errs).toEqual([]);
   });
@@ -1145,15 +1176,17 @@ describe('kubic cost project scope and grouping', () => {
   it('exits 2 on an invalid --by level', async () => {
     const out: string[] = [];
     const err: string[] = [];
-    const code = await runCostCommand(
-      { by: 'model' },
-      {
-        loadRows: () => [],
-        out: (line) => out.push(line),
-        err: (line) => err.push(line),
-      },
-    );
-    expect(code).toBe(2);
+    const code = (
+      await runCostCommand(
+        { by: 'model' },
+        {
+          loadRows: () => [],
+          out: (line) => out.push(line),
+          err: (line) => err.push(line),
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_USAGE);
     expect(err.join('\n')).toMatch(/invalid --by/);
     expect(out).toEqual([]);
   });
@@ -1161,26 +1194,28 @@ describe('kubic cost project scope and grouping', () => {
   it('prints in/out/cache columns at sub-cent precision with a total that equals the rows', async () => {
     const out: string[] = [];
     const err: string[] = [];
-    const code = await runCostCommand(
-      {},
-      {
-        loadRows: () => [
-          {
-            session: 'w-1',
-            project: '/w',
-            model: 'cheap/small',
-            costUsd: 0.0023,
-            input: 12400,
-            output: 1900,
-            cacheRead: 4000,
-            cacheWrite: 200,
-          },
-        ],
-        out: (line) => out.push(line),
-        err: (line) => err.push(line),
-      },
-    );
-    expect(code).toBe(0);
+    const code = (
+      await runCostCommand(
+        {},
+        {
+          loadRows: () => [
+            {
+              session: 'w-1',
+              project: '/w',
+              model: 'cheap/small',
+              costUsd: 0.0023,
+              input: 12400,
+              output: 1900,
+              cacheRead: 4000,
+              cacheWrite: 200,
+            },
+          ],
+          out: (line) => out.push(line),
+          err: (line) => err.push(line),
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(EXIT_OK);
     expect(out[0]).toMatch(
       /^SESSION +MODEL +IN +OUT +CACHE-R +CACHE-W +COST$/m,
     );

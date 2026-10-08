@@ -144,13 +144,15 @@ describe('session lock, prod paths', () => {
     const kill = stubKill(true);
     try {
       const lines: string[] = [];
-      const code = await runSessionsCommand(
-        { command: 'attach', id: id },
-        {
-          sessionsRoot: root,
-          out: (line) => lines.push(line),
-        },
-      );
+      const code = (
+        await runSessionsCommand(
+          { command: 'attach', id: id },
+          {
+            sessionsRoot: root,
+            out: (line) => lines.push(line),
+          },
+        )
+      ).exitCode;
       expect(code).toBe(1);
       const text = lines.join('\n');
       expect(text).toContain(String(FAKE_PID));

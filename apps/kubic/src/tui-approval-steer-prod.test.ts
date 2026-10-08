@@ -175,7 +175,7 @@ describe('steering an approval in the TUI', () => {
     expect(ran).not.toContain('rm -rf build/');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('`c` denies with a comment the model reads', async () => {
@@ -211,6 +211,6 @@ describe('steering an approval in the TUI', () => {
     expect(JSON.stringify(env.calls)).not.toContain('rm -rf build/');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 });

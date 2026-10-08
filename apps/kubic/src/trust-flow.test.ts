@@ -58,7 +58,7 @@ describe('kubic trust → kubic run → kubic trust --revoke', () => {
     expect(before.trust.decision).toBe(null);
 
     // `kubic trust` in the repo…
-    expect(runTrustCommand({}, deps)).toBe(0);
+    expect(runTrustCommand({}, deps).exitCode).toBe(0);
     expect(store.get(project)).toBe(true);
 
     // …then `kubic run` there loads the project layer with NO env var.
@@ -70,7 +70,7 @@ describe('kubic trust → kubic run → kubic trust --revoke', () => {
     expect(after.trust.decision).toBe(true);
 
     // `kubic trust --revoke` brings the refusal back.
-    expect(runTrustCommand({ revoke: true }, deps)).toBe(0);
+    expect(runTrustCommand({ revoke: true }, deps).exitCode).toBe(0);
     const revoked = loadCliConfig({ cwd: project, home, env: {} });
     expect(revoked.runtime).toBeUndefined();
     expect(revoked.error).toContain('refused pre-trust');

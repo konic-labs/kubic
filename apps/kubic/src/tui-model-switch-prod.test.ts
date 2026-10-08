@@ -174,7 +174,7 @@ describe('/model on the kubic tui path', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(sessionId).not.toBe('');
     // The session recorded the new model, so an attach resumes on it.
@@ -213,7 +213,7 @@ describe('/model on the kubic tui path', () => {
     await waitFor(() => fake.frame.includes('model: alt/m1'));
     // Ctrl-D quits on the empty editor and leaves the notice row as it was.
     fake.feed('\x04');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     const doc = lines.join('\n');
     expect(doc).toContain('switched');
     // The editor row at quit is empty: nothing resurrected the command.
@@ -276,7 +276,7 @@ describe('/model on the kubic tui path', () => {
     );
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     // The status line carries the live level, not the boot one.
     expect(lines.join('\n')).toMatch(/● \S+ · off/);
   });
@@ -318,7 +318,7 @@ describe('/model on the kubic tui path', () => {
     await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(lines.join('\n')).toContain('faux/small');
     // The picker switched the real lane: a fresh attach resumes on it.
     expect(await storedModel(sessionsRoot, sessionId)).toMatchObject({
@@ -371,7 +371,7 @@ describe('/model on the kubic tui path', () => {
     await waitFor(() => fake.frame.includes('model: faux/small (switched)'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(await storedModel(sessionsRoot, sessionId)).toMatchObject({
       provider: 'faux',
       modelId: 'small',
@@ -414,7 +414,7 @@ describe('/model on the kubic tui path', () => {
     fake.feed('\x1b');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
   });
 
   it('cancels the picker with Esc, leaving the model alone', async () => {
@@ -444,7 +444,7 @@ describe('/model on the kubic tui path', () => {
     await waitFor(() => fake.frame.includes('(picker cancelled)'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     // Still the boot model.
     expect(lines.join('\n')).toContain('faux/big');
     expect(lines.join('\n')).not.toContain('faux/small');
@@ -496,7 +496,7 @@ describe('/model on the kubic tui path', () => {
 
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(lines.join('\n')).toContain('approvals on');
   });
 });
@@ -544,7 +544,7 @@ describe('tui audit identity', () => {
     await waitFor(() => fake.frame.includes('after deny'));
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
 
     const records = readAuditLedger(auditLedgerDir(workspace));
     const record = records.find((r) => r.what === 'tool:bash');

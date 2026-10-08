@@ -6,17 +6,18 @@
 // writes nothing.
 
 import {
+  type CommandResult,
+  EXIT_CANCELLED,
+  EXIT_FAILED,
   EXIT_OK,
   EXIT_PROVIDER,
   EXIT_USAGE,
+  type ExitCode,
 } from '../../core/src/cli/exit-codes.js';
 import type { SelectChoice } from '../../core/src/cli/prompt.js';
 import { type CliIo, diagnosticsOf } from './cli-io.js';
 import { upsertModelTable } from './config/toml-model.js';
 import { formatContext } from './models-render.js';
-
-/** Exit code of a setup the user cancelled (Ctrl-C / Esc): 128 + SIGINT. */
-export const SETUP_EXIT_CANCELLED = 130;
 
 interface SetupModelChoice {
   readonly id: string;
@@ -94,19 +95,19 @@ function defaultThinking(levels: readonly string[]): string {
 export async function runSetupCommand(
   _options: SetupCommandOptions,
   deps: SetupDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const log = diagnosticsOf(deps);
   if (!deps.interactive) {
     log.error(
       'kubic setup is interactive: run it in a terminal, or set [model] provider/id in ~/.kubic/config.toml (or KUBIC_MODEL=<provider/id>)',
     );
-    return EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   const ui = await deps.ui();
   ui.intro('kubic setup');
-  const cancelled = (): number => {
+  const cancelled = (): ExitCode => {
     ui.cancel('setup cancelled — nothing was written');
-    return SETUP_EXIT_CANCELLED;
+    return EXIT_CANCELLED;
   };
 
   let model: { provider: string; id: string; thinking?: string } | undefined;
@@ -115,7 +116,7 @@ export async function runSetupCommand(
   } else {
     if (deps.providers.length === 0) {
       ui.cancel(NO_KEY_LINES.join('\n'));
-      return EXIT_PROVIDER;
+      return { exitCode: EXIT_PROVIDER };
     }
     let provider = deps.providers[0] as SetupProviderChoice;
     if (deps.providers.length === 1) {
@@ -137,13 +138,13 @@ export async function runSetupCommand(
           ? currentProvider
           : undefined,
       );
-      if (picked === null) return cancelled();
+      if (picked === null) return { exitCode: cancelled() };
       provider =
         deps.providers.find((choice) => choice.id === picked) ?? provider;
     }
     if (provider.models.length === 0) {
       log.error(`provider '${provider.id}' lists no chat models`);
-      return EXIT_PROVIDER;
+      return { exitCode: EXIT_PROVIDER };
     }
     const currentId = deps.current?.startsWith(`${provider.id}/`)
       ? deps.current.slice(provider.id.length + 1)
@@ -159,7 +160,7 @@ export async function runSetupCommand(
         ? currentId
         : undefined,
     );
-    if (id === null) return cancelled();
+    if (id === null) return { exitCode: cancelled() };
     const chosen = provider.models.find((choice) => choice.id === id);
     const levels = chosen?.thinking ?? [];
     let thinking: string | undefined;
@@ -169,7 +170,7 @@ export async function runSetupCommand(
         levels.map((level) => ({ value: level, label: level })),
         defaultThinking(levels),
       );
-      if (picked === null) return cancelled();
+      if (picked === null) return { exitCode: cancelled() };
       thinking = picked;
     }
     model = {
@@ -186,7 +187,7 @@ export async function runSetupCommand(
       if (answer === null) cancelledTrust = true;
       return answer;
     });
-    if (cancelledTrust) return cancelled();
+    if (cancelledTrust) return { exitCode: cancelled() };
     if (decision !== undefined) {
       ui.step(
         decision
@@ -198,7 +199,7 @@ export async function runSetupCommand(
 
   if (model === undefined) {
     ui.outro('nothing to save — run kubic to start');
-    return EXIT_OK;
+    return { exitCode: EXIT_OK };
   }
   const updated = upsertModelTable(deps.readConfig() ?? '', model);
   try {
@@ -207,8 +208,8 @@ export async function runSetupCommand(
     log.error(
       `could not write ${deps.configPath}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return 1;
+    return { exitCode: EXIT_FAILED };
   }
   ui.outro(`saved to ${deps.configPath} — run kubic to start`);
-  return EXIT_OK;
+  return { exitCode: EXIT_OK };
 }

@@ -144,15 +144,17 @@ describe('read-time journal self-heal', () => {
 
     const loaded = loadedWithRetention('7');
     const o = out();
-    const code = await runJournalCommand(
-      { command: 'log', session: 'sess-1' },
-      {
-        root,
-        sessionsRoot,
-        retentionDays: sessionRetentionDays(loaded),
-        out: o.write,
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log', session: 'sess-1' },
+        {
+          root,
+          sessionsRoot,
+          retentionDays: sessionRetentionDays(loaded),
+          out: o.write,
+        },
+      )
+    ).exitCode;
 
     expect(code).toBe(0);
     const lines = indexLines(journalDir);
@@ -196,21 +198,23 @@ describe('read-time journal self-heal', () => {
 
     const loaded = loadedWithRetention('7');
     const o = out();
-    const code = await runJournalCommand(
-      { command: 'log' },
-      {
-        root,
-        sessionsRoot,
-        // Both sessions were recorded for this workspace.
-        sessionWorkspaces: async () =>
-          new Map([
-            ['sess-old', root],
-            ['sess-new', root],
-          ]),
-        retentionDays: sessionRetentionDays(loaded),
-        out: o.write,
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log' },
+        {
+          root,
+          sessionsRoot,
+          // Both sessions were recorded for this workspace.
+          sessionWorkspaces: async () =>
+            new Map([
+              ['sess-old', root],
+              ['sess-new', root],
+            ]),
+          retentionDays: sessionRetentionDays(loaded),
+          out: o.write,
+        },
+      )
+    ).exitCode;
 
     expect(code).toBe(0);
     // No `err` channel given: the fallback note lands on `out`.
@@ -234,14 +238,16 @@ describe('read-time journal self-heal', () => {
     expect(sessionRetentionDays(loaded)).toBeUndefined();
 
     const o = out();
-    const code = await runJournalCommand(
-      { command: 'log', session: 'sess-1' },
-      {
-        root,
-        sessionsRoot,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log', session: 'sess-1' },
+        {
+          root,
+          sessionsRoot,
+          out: o.write,
+        },
+      )
+    ).exitCode;
 
     expect(code).toBe(0);
     expect(treeSnapshot(journalDir)).toBe(before);
@@ -266,14 +272,16 @@ describe('read-time journal self-heal', () => {
     expect(sessionRetentionDays(loaded)).toBeUndefined();
 
     const o = out();
-    const code = await runJournalCommand(
-      { command: 'log', session: 'sess-1' },
-      {
-        root,
-        sessionsRoot,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log', session: 'sess-1' },
+        {
+          root,
+          sessionsRoot,
+          out: o.write,
+        },
+      )
+    ).exitCode;
 
     expect(code).toBe(0);
     expect(treeSnapshot(journalDir)).toBe(before);
@@ -288,15 +296,17 @@ describe('read-time journal self-heal', () => {
     expect(sessionRetentionDays(loaded)).toBe(0);
 
     const o = out();
-    const code = await runJournalCommand(
-      { command: 'log', session: 'sess-1' },
-      {
-        root,
-        sessionsRoot,
-        retentionDays: sessionRetentionDays(loaded),
-        out: o.write,
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log', session: 'sess-1' },
+        {
+          root,
+          sessionsRoot,
+          retentionDays: sessionRetentionDays(loaded),
+          out: o.write,
+        },
+      )
+    ).exitCode;
 
     expect(code).toBe(0);
     expect(treeSnapshot(journalDir)).toBe(before);
@@ -312,15 +322,17 @@ describe('read-time journal self-heal', () => {
     const loaded = loadedWithRetention('7');
 
     const o = out();
-    const code = await runJournalCommand(
-      { command: 'log' },
-      {
-        journalDir,
-        root,
-        retentionDays: sessionRetentionDays(loaded),
-        out: o.write,
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log' },
+        {
+          journalDir,
+          root,
+          retentionDays: sessionRetentionDays(loaded),
+          out: o.write,
+        },
+      )
+    ).exitCode;
 
     expect(code).toBe(0);
     expect(treeSnapshot(journalDir)).toBe(before);
@@ -333,15 +345,17 @@ describe('read-time journal self-heal', () => {
     const loaded = loadedWithRetention('7');
 
     const o = out();
-    const code = await runJournalCommand(
-      { command: 'log', session: 'ghost' },
-      {
-        root,
-        sessionsRoot,
-        retentionDays: sessionRetentionDays(loaded),
-        out: o.write,
-      },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'log', session: 'ghost' },
+        {
+          root,
+          sessionsRoot,
+          retentionDays: sessionRetentionDays(loaded),
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(o.lines).toContain('journal is empty');
     // Enforcement on a store with no index writes nothing — not even the dir.

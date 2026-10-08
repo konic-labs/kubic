@@ -131,13 +131,15 @@ describe('solo decisions land in the repo ledger', () => {
     await installed.ask(DESTRUCTIVE);
     for (const cwd of [repo, sub]) {
       const io = capture();
-      const code = await runAuditCommand(
-        { json: true },
-        {
-          ...io.deps,
-          loadRecords: () => readAuditLedger(auditLedgerDirFor(cwd)),
-        },
-      );
+      const code = (
+        await runAuditCommand(
+          { json: true },
+          {
+            ...io.deps,
+            loadRecords: () => readAuditLedger(auditLedgerDirFor(cwd)),
+          },
+        )
+      ).exitCode;
       expect(code).toBe(0);
       expect(JSON.parse(io.out.join('\n'))).toHaveLength(1);
     }
@@ -198,10 +200,12 @@ describe('an unreadable ledger is an error, not an empty trail', () => {
     chmodded.push(file);
     expect(() => readAuditLedger(dir)).toThrow(/audit\.jsonl/);
     const io = capture();
-    const code = await runAuditCommand(
-      {},
-      { ...io.deps, loadRecords: () => readAuditLedger(dir) },
-    );
+    const code = (
+      await runAuditCommand(
+        {},
+        { ...io.deps, loadRecords: () => readAuditLedger(dir) },
+      )
+    ).exitCode;
     expect(code).toBe(1);
     expect(io.err.join('\n')).toContain(file);
     expect(io.out).toEqual([]);

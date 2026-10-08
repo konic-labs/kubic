@@ -84,7 +84,7 @@ async function firstFrame(
   }
   const frame = fake.writes.join('');
   fake.feed('\x04');
-  expect(await exit).toBe(0);
+  expect((await exit).exitCode).toBe(0);
   return frame;
 }
 

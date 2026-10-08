@@ -17,9 +17,11 @@
 // provenance — never an emitted record).
 
 import {
+  type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
+  type ExitCode,
 } from '../../core/src/cli/exit-codes.js';
 import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
 import { formatJson } from '../../core/src/cli/output.js';
@@ -48,10 +50,6 @@ import {
 import { buildSftRecord, validateSftRecord } from './rl/sft.js';
 import { buildToolUseRecord, validateToolUseRecord } from './rl/tooluse.js';
 import { RlProvenanceError } from './rl/types.js';
-
-export const EXPORT_EXIT_OK = EXIT_OK;
-export const EXPORT_EXIT_FAILED = EXIT_FAILED;
-export const EXPORT_EXIT_USAGE = EXIT_USAGE;
 
 export interface ExportCliDeps {
   readFile: (path: string) => string;
@@ -234,20 +232,20 @@ function describeJson(exported: TrajectoryExport): unknown {
 export async function runExportCommand(
   options: ExportCommandOptions,
   deps: ExportCliDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const log: CliLogger = createLineLogger(deps.err, {
     theme: options.json === true ? PLAIN : (deps.errTheme ?? PLAIN),
   });
   const parsed = normalize(options);
   if (typeof parsed === 'string') {
     log.error(parsed);
-    return EXPORT_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   const fail = (
     code: string,
     message: string,
-    exitCode: number = EXPORT_EXIT_USAGE,
-  ): number => {
+    exitCode: ExitCode = EXIT_USAGE,
+  ): ExitCode => {
     if (parsed.json) {
       deps.out(
         formatJson({
@@ -271,10 +269,12 @@ export async function runExportCommand(
       writeFile === undefined ||
       appendFile === undefined
     ) {
-      return fail(
-        'dataset-unsupported',
-        'dataset export needs the filesystem deps (listDir/writeFile/appendFile)',
-      );
+      return {
+        exitCode: fail(
+          'dataset-unsupported',
+          'dataset export needs the filesystem deps (listDir/writeFile/appendFile)',
+        ),
+      };
     }
     const fs: DatasetFs = {
       listDir,
@@ -293,7 +293,7 @@ export async function runExportCommand(
         deps.out(
           formatJson({
             ok: true,
-            exitCode: EXPORT_EXIT_OK,
+            exitCode: EXIT_OK,
             type: manifest.type,
             dataset: manifest.dataset,
             out: manifest.out,
@@ -309,25 +309,28 @@ export async function runExportCommand(
           `dataset: ${manifest.records} record(s) from ${manifest.files} file(s), ${excluded} excluded, manifest: ${manifest.manifest}`,
         );
       }
-      return EXPORT_EXIT_OK;
+      return { exitCode: EXIT_OK };
     } catch (error) {
       if (error instanceof DatasetError) {
-        return fail(error.code, error.message, error.exitCode);
+        return { exitCode: fail(error.code, error.message, error.exitCode) };
       }
       // Mirror the single-file path: an unexpected failure (an --out that
       // names a directory, EACCES/ENOSPC on the JSONL or the manifest) is
       // `export-failed` (exit 1) with its envelope, never a raw throw past
       // the command's error contract.
-      return fail(
-        'export-failed',
-        error instanceof Error ? error.message : String(error),
-        EXPORT_EXIT_FAILED,
-      );
+      return {
+        exitCode: fail(
+          'export-failed',
+          error instanceof Error ? error.message : String(error),
+          EXIT_FAILED,
+        ),
+      };
     }
   }
 
   const loaded = loadExport(deps.readFile, parsed.trajectory as string);
-  if (!('exported' in loaded)) return fail(loaded.code, loaded.message);
+  if (!('exported' in loaded))
+    return { exitCode: fail(loaded.code, loaded.message) };
   const exported = loaded.exported;
 
   // No --type: validate + describe the trajectory export itself.
@@ -336,23 +339,23 @@ export async function runExportCommand(
       deps.out(
         formatJson({
           ok: true,
-          exitCode: EXPORT_EXIT_OK,
+          exitCode: EXIT_OK,
           trajectory: describeJson(exported),
         }),
       );
     } else {
       for (const line of describeText(exported)) deps.out(line);
     }
-    return EXPORT_EXIT_OK;
+    return { exitCode: EXIT_OK };
   }
 
   const type = parsed.type;
-  const emitRecord = (record: unknown): number => {
+  const emitRecord = (record: unknown): ExitCode => {
     if (parsed.json) {
       deps.out(
         formatJson({
           ok: true,
-          exitCode: EXPORT_EXIT_OK,
+          exitCode: EXIT_OK,
           type,
           record,
         }),
@@ -360,14 +363,14 @@ export async function runExportCommand(
     } else {
       deps.out(canonicalJson(record));
     }
-    return EXPORT_EXIT_OK;
+    return EXIT_OK;
   };
-  const emitExcluded = (excluded: unknown): number => {
+  const emitExcluded = (excluded: unknown): ExitCode => {
     if (parsed.json) {
       deps.out(
         formatJson({
           ok: true,
-          exitCode: EXPORT_EXIT_OK,
+          exitCode: EXIT_OK,
           type,
           excluded,
         }),
@@ -377,22 +380,22 @@ export async function runExportCommand(
       const reason = (excluded as { reason?: unknown }).reason;
       deps.out(`excluded: ${String(tag)} — ${String(reason)}`);
     }
-    return EXPORT_EXIT_OK;
+    return EXIT_OK;
   };
-  const emitInvalid = (errors: string[]): number => {
+  const emitInvalid = (errors: string[]): ExitCode => {
     const message = `record failed validation: ${errors.join('; ')}`;
     if (parsed.json) {
       deps.out(
         formatJson({
           ok: false,
-          exitCode: EXPORT_EXIT_FAILED,
+          exitCode: EXIT_FAILED,
           error: { code: 'invalid-record', message },
         }),
       );
     } else {
       log.error(`[invalid-record] ${message}`);
     }
-    return EXPORT_EXIT_FAILED;
+    return EXIT_FAILED;
   };
 
   try {
@@ -400,62 +403,65 @@ export async function runExportCommand(
       case 'sft': {
         const record = buildSftRecord(exported);
         const checked = validateSftRecord(record);
-        if (!checked.valid) return emitInvalid(checked.errors);
-        return emitRecord(record);
+        if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
+        return { exitCode: emitRecord(record) };
       }
       case 'tooluse': {
         const record = buildToolUseRecord(exported);
         const checked = validateToolUseRecord(record);
-        if (!checked.valid) return emitInvalid(checked.errors);
-        return emitRecord(record);
+        if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
+        return { exitCode: emitRecord(record) };
       }
       case 'coding': {
         const record = buildCodingRecord(exported);
         const checked = validateCodingRecord(record);
-        if (!checked.valid) return emitInvalid(checked.errors);
-        return emitRecord(record);
+        if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
+        return { exitCode: emitRecord(record) };
       }
       case 'dpo':
       case 'preference':
       case 'grpo': {
         const other = loadExport(deps.readFile, parsed.against as string);
-        if (!('exported' in other)) return fail(other.code, other.message);
+        if (!('exported' in other))
+          return { exitCode: fail(other.code, other.message) };
         if (type === 'grpo') {
           const group = buildGrpoGroup([exported, other.exported]);
           const checked = validateGrpoGroup(group);
-          if (!checked.valid) return emitInvalid(checked.errors);
-          return emitRecord(group);
+          if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
+          return { exitCode: emitRecord(group) };
         }
         if (type === 'dpo') {
           const built = buildDpoRecord(exported, other.exported);
-          if (built.record === null) return emitExcluded(built.excluded);
+          if (built.record === null)
+            return { exitCode: emitExcluded(built.excluded) };
           const checked = validateDpoRecord(built.record);
-          if (!checked.valid) return emitInvalid(checked.errors);
-          return emitRecord(built.record);
+          if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
+          return { exitCode: emitRecord(built.record) };
         }
         const built = buildPreferencePair(exported, other.exported);
-        if (built.pair === null) return emitExcluded(built.excluded);
+        if (built.pair === null)
+          return { exitCode: emitExcluded(built.excluded) };
         const checked = validatePreferencePair(built.pair);
-        if (!checked.valid) return emitInvalid(checked.errors);
-        return emitRecord(built.pair);
+        if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
+        return { exitCode: emitRecord(built.pair) };
       }
     }
   } catch (error) {
     if (error instanceof RlProvenanceError) {
-      return fail('rl-refused', error.message);
+      return { exitCode: fail('rl-refused', error.message) };
     }
     const message = error instanceof Error ? error.message : String(error);
     if (parsed.json) {
       deps.out(
         formatJson({
           ok: false,
-          exitCode: EXPORT_EXIT_FAILED,
+          exitCode: EXIT_FAILED,
           error: { code: 'export-failed', message },
         }),
       );
     } else {
       log.error(message);
     }
-    return EXPORT_EXIT_FAILED;
+    return { exitCode: EXIT_FAILED };
   }
 }

@@ -10,13 +10,18 @@
 
 import type { RunMode } from '../../agents/src/policy.js';
 import {
+  type CommandResult,
   EXIT_APPROVAL,
+  EXIT_CANCELLED,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_PROVIDER,
   EXIT_TURN_LIMIT,
   EXIT_USAGE,
   EXIT_WORKSPACE,
+  type ExitCode,
+  INTERRUPT_EXIT_CODES,
+  isInterruptSignal,
 } from '../../core/src/cli/exit-codes.js';
 import {
   type ClassifiedFailure,
@@ -30,14 +35,6 @@ import {
 } from '../../worker/src/lane/settle.js';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
-
-export const RUN_EXIT_OK = EXIT_OK;
-export const RUN_EXIT_FAILED = EXIT_FAILED;
-export const RUN_EXIT_USAGE = EXIT_USAGE;
-export const RUN_EXIT_TURN_LIMIT = EXIT_TURN_LIMIT;
-export const RUN_EXIT_APPROVAL_DENIED = EXIT_APPROVAL;
-export const RUN_EXIT_WORKSPACE_UNAVAILABLE = EXIT_WORKSPACE;
-export const RUN_EXIT_PROVIDER_PROBE_FAILED = EXIT_PROVIDER;
 
 export type RunTerminusKind =
   | 'completed'
@@ -53,53 +50,43 @@ export type RunTerminusKind =
   | 'provider_transient'
   | 'provider_auth';
 
-// POSIX 128+signo for the interrupts a headless run handles,
-// the same convention `kubic tui` pins for a signalled quit.
-const INTERRUPT_SIGNAL_NUMBER: Readonly<Record<string, number>> = {
-  SIGHUP: 1,
-  SIGINT: 2,
-  SIGTERM: 15,
-};
-
-// 's table names six codes; a run's finer terminus rides on the `--json`
-// status. `timeout` is a plain task failure (1), and `turn_limit` (the
-// `--max-turns` guard) has its own code (3). `cancelled` keeps POSIX
-// 128+signo (SIGHUP 129, SIGINT 130, SIGTERM 143; SIGINT when no signal is
-// known) so a signalled run reads like a signalled process.
-const INTERRUPT_EXIT_DEFAULT = 128 + 2;
-
+// The exit-code table names six codes; a run's finer terminus rides on the
+// `--json` status. `timeout` is a plain task failure (1), and `turn_limit`
+// (the `--max-turns` guard) has its own code (3).
 export function mapTerminusToExitCode(
   terminus: RunTerminusKind,
   signal?: string,
-): number {
+): ExitCode {
   switch (terminus) {
     case 'completed':
-      return RUN_EXIT_OK;
+      return EXIT_OK;
     case 'failed':
     case 'timeout':
-      return RUN_EXIT_FAILED;
+      return EXIT_FAILED;
     case 'usage':
-      return RUN_EXIT_USAGE;
+      return EXIT_USAGE;
     case 'turn_limit':
-      return RUN_EXIT_TURN_LIMIT;
-    case 'cancelled': {
-      const number =
-        signal === undefined ? undefined : INTERRUPT_SIGNAL_NUMBER[signal];
-      return number === undefined ? INTERRUPT_EXIT_DEFAULT : 128 + number;
-    }
+      return EXIT_TURN_LIMIT;
+    // `cancelled` keeps POSIX 128+signo (SIGHUP 129, SIGINT 130, SIGTERM 143;
+    // SIGINT when no signal is known) so a signalled run reads like a
+    // signalled process.
+    case 'cancelled':
+      return signal !== undefined && isInterruptSignal(signal)
+        ? INTERRUPT_EXIT_CODES[signal]
+        : EXIT_CANCELLED;
     case 'approval_denied':
     case 'approval_timed_out':
-      return RUN_EXIT_APPROVAL_DENIED;
+      return EXIT_APPROVAL;
     case 'workspace_unavailable':
-      return RUN_EXIT_WORKSPACE_UNAVAILABLE;
+      return EXIT_WORKSPACE;
     case 'provider_probe_failed':
-      return RUN_EXIT_PROVIDER_PROBE_FAILED;
+      return EXIT_PROVIDER;
     // A provider error during the run is a failed task, not the pre-run probe —
     // 6 is reserved for the boot probe (no provider configured, an unknown
     // stored model). The failure code is the honest half.
     case 'provider_transient':
     case 'provider_auth':
-      return RUN_EXIT_FAILED;
+      return EXIT_FAILED;
   }
 }
 
@@ -269,7 +256,7 @@ export function buildRunEnvelope(
   // failure terminus has exactly one implied failure code.
   const failure = result.failure ?? failureForTerminus(result.terminus);
   return {
-    ok: exitCode === RUN_EXIT_OK,
+    ok: exitCode === EXIT_OK,
     exitCode,
     sessionId: result.sessionId,
     status: result.terminus,
@@ -537,7 +524,7 @@ export function shellQuote(value: string): string {
 export async function runRunCommand(
   options: RunCommandOptions,
   deps: RunCommandDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const log = diagnosticsOf(deps);
   // commander validated these already; re-checked because the session id
   // becomes a path segment and a direct caller skips the parser.
@@ -548,11 +535,11 @@ export async function runRunCommand(
     log.error(
       `invalid --session id ${JSON.stringify(options.session)} (use [A-Za-z0-9_-])`,
     );
-    return RUN_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   if (options.prompt.trim() === '') {
     log.error('-p needs a value (the prompt is empty)');
-    return RUN_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   // Headless path never mounts an alt-screen; the hook exists only so
   // tests can fail closed if a future edit wires one in.
@@ -592,14 +579,14 @@ export async function runRunCommand(
     // One compact line, deliberately not pretty-printed: a script reads the
     // envelope as the LAST stdout line.
     deps.out(JSON.stringify(buildRunEnvelope(result, exitCode)));
-    return exitCode;
+    return { exitCode };
   }
   if (progress !== undefined) {
     // The interactive rendering. The answer is the command's
     // data (stdout); the receipt and next steps are presentation (stderr,
     // through the sink). The plain lines below stay for every other case.
     progress.settle();
-    if (exitCode === RUN_EXIT_OK) {
+    if (exitCode === EXIT_OK) {
       deps.out('');
       deps.out(result.summary);
       deps.out('');
@@ -607,13 +594,13 @@ export async function runRunCommand(
       log.error(result.error.message);
     }
     progress.receipt(result, exitCode);
-    return exitCode;
+    return { exitCode };
   }
   if (result.error !== undefined) log.error(result.error.message);
   const theme = themeOf(deps);
   const label = (name: string): string => theme.muted(`${name}:`);
   const summary =
-    exitCode === RUN_EXIT_OK
+    exitCode === EXIT_OK
       ? theme.success(result.summary)
       : theme.error(result.summary);
   deps.out(`${label('result')} ${summary}`);
@@ -621,5 +608,5 @@ export async function runRunCommand(
   deps.out(`${label('journal')} ${result.journalRef}`);
   deps.out(`${label('usage')} ${result.usageRef}`);
   deps.out(`${label('trajectory')} ${result.trajectoryRef}`);
-  return exitCode;
+  return { exitCode };
 }

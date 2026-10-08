@@ -207,7 +207,7 @@ describe('kubic tui --session seeds the committed spend', () => {
     expect(fake.writes.join('')).toContain('$0.03');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(boots).toHaveLength(1);
   });
 

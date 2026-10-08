@@ -163,7 +163,7 @@ describe('tool entries share the sweep turn numbering', () => {
       if (sweep.turn !== undefined) expect(sweep.turn).toBe(1);
     }
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it("kubic diff --stat shows the turn on the TUI turn's write entry", async () => {
@@ -183,15 +183,17 @@ describe('tool entries share the sweep turn numbering', () => {
     });
     if (id === undefined) throw new Error('no session journal written');
     const lines: string[] = [];
-    const code = await runJournalCommand(
-      { command: 'diff', stat: true, session: id },
-      { sessionsRoot, out: (line) => lines.push(line) },
-    );
+    const code = (
+      await runJournalCommand(
+        { command: 'diff', stat: true, session: id },
+        { sessionsRoot, out: (line) => lines.push(line) },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     // The write entry carries the first turn; the stat line names it.
     expect(lines.some((line) => /t\.txt .*turn 1/.test(line))).toBe(true);
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 });
 
@@ -209,7 +211,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     expect(fake.since(mark)).toContain('+hi there');
     expect(fake.since(mark)).not.toContain('no changes');
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('the journal panel lists every change in the session', async () => {
@@ -230,7 +232,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
         fake.since(mark).includes('beta.txt'),
     );
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('the diff panel follows the most recent tool call that has journal rows', async () => {
@@ -247,7 +249,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     await waitFor(() => fake.since(mark).includes('kept.txt'));
     expect(fake.since(mark)).not.toContain('no changes');
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // A `bash` write is not intercepted by the file tools, so the
@@ -282,7 +284,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     expect(fake.since(mark)).toContain('+++ b/shellfile.txt');
     expect(fake.since(mark)).toContain('unattributed, non-reversible');
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('the settlement sweep runs only after a turn that used the shell, once per such turn', async () => {
@@ -329,7 +331,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     await submit(fake, 'write again', 'wrote again');
     expect(sweeps).toBe(1);
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('a failing sweep never reaches the loop: the turn still settles and the panels keep working', async () => {
@@ -360,7 +362,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     fake.feed('\x12');
     await waitFor(() => fake.since(mark).includes('no changes'));
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // The tool-end wiring: a tool that ends mid-turn asks the feed
@@ -418,7 +420,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     expect(fake.since(0)).not.toContain('slept');
     await waitFor(() => fake.since(0).includes('slept'));
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   // `apply` reads `stopped` / `screen`, which used to be
@@ -439,7 +441,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     );
     await submit(fake, 'write hello', 'wrote it');
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(failures).toEqual([]);
   });
 
@@ -470,7 +472,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     fake.feed('\x12');
     await waitFor(() => fake.since(mark).includes('earlier.txt'));
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 
   it('journal rows are sanitized before they reach the panel', async () => {
@@ -502,7 +504,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     await waitFor(() => fake.since(mark).includes('name.txt'));
     expect(fake.since(mark)).not.toContain('evil\x1b[2J');
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 });
 
@@ -610,7 +612,7 @@ describe('per-turn reconciliation in the TUI', () => {
       ['two.txt', 2],
     ]);
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(
       sweptEntries(sessionsRoot).some((entry) => entry.path === 'mine.txt'),
     ).toBe(false);
@@ -628,7 +630,7 @@ describe('per-turn reconciliation in the TUI', () => {
     // An edit after the last turn settled, before the quit.
     writeFileSync(join(workspace, 'after.txt'), 'operator\n');
     fake.feed('\x04');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
     expect(sweptEntries(sessionsRoot).map((entry) => entry.path)).toEqual([
       'made.txt',
     ]);

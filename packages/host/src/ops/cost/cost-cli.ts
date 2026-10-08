@@ -12,6 +12,7 @@
 
 import { join } from 'node:path';
 import {
+  type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
@@ -547,7 +548,7 @@ function unitNoun(by: CostGroupBy, count: number): string {
 export async function runCostCommand(
   options: CostOptions,
   deps: CostCommandDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const json = options.json === true;
   const theme = json ? PLAIN : (deps.theme ?? PLAIN);
   const log = createLineLogger(deps.err, {
@@ -560,7 +561,7 @@ export async function runCostCommand(
     log.error(
       `invalid --session id ${redactSecretShapes(JSON.stringify(sessionId))} (use [A-Za-z0-9_-])`,
     );
-    return EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   // `--by` takes exactly the four levels; anything else is
   // a usage error, and the rejected value is argv-controlled, so it is
@@ -575,7 +576,7 @@ export async function runCostCommand(
     log.error(
       `invalid --by ${redactSecretShapes(JSON.stringify(options.by))} (use request|session|project)`,
     );
-    return EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   let rows: SessionCostInput[];
   try {
@@ -589,7 +590,7 @@ export async function runCostCommand(
       // SESSION_ID_PATTERN admits sk-shaped strings, so the validated id
       // echoing back here may carry secret-shaped material — redact it.
       log.error(`unknown session: ${redactSecretShapes(sessionId ?? '')}`);
-      return EXIT_FAILED;
+      return { exitCode: EXIT_FAILED };
     }
     // Store failures name the failure, never the secret: the message is
     // store-controlled and may echo ids, paths, or tokens.
@@ -598,16 +599,16 @@ export async function runCostCommand(
         error instanceof Error ? error.message : String(error),
       ),
     );
-    return EXIT_FAILED;
+    return { exitCode: EXIT_FAILED };
   }
   const summary = summarizeSessionCost(rows, by);
   if (json) {
     deps.out(formatJson(toCostJson(summary)));
-    return EXIT_OK;
+    return { exitCode: EXIT_OK };
   }
   if (rows.length === 0) {
     deps.out('no cost rows');
-    return EXIT_OK;
+    return { exitCode: EXIT_OK };
   }
   deps.out(costTable(summary, deps, by));
   deps.out(
@@ -625,5 +626,5 @@ export async function runCostCommand(
     );
     deps.out(theme.muted(transparentCachingNote()));
   }
-  return EXIT_OK;
+  return { exitCode: EXIT_OK };
 }

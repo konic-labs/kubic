@@ -79,7 +79,7 @@ describe('tui entry regression', () => {
     await waitFor(() => fake.counts.started === 1);
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(fake.counts.stopped).toBe(1);
     expect(fake.writes.join('')).toContain('?1049l');
     expect(lines.join('\n')).toContain('session s1');
@@ -87,23 +87,25 @@ describe('tui entry regression', () => {
 
   it('headless `kubic run` mounts no screen beside the tui entry', async () => {
     const lines: string[] = [];
-    const code = await runRunCommand(
-      { prompt: 'hi' },
-      {
-        out: (line: string) => lines.push(line),
-        run: async () => ({
-          terminus: 'completed' as const,
-          summary: 'hi',
-          sessionId: 's',
-          journalRef: 'journal:s',
-          usageRef: 'usage:s',
-          trajectoryRef: 'trajectory:s',
-        }),
-        onScreenMount: () => {
-          throw new Error('alt-screen mounted on the headless path');
+    const code = (
+      await runRunCommand(
+        { prompt: 'hi' },
+        {
+          out: (line: string) => lines.push(line),
+          run: async () => ({
+            terminus: 'completed' as const,
+            summary: 'hi',
+            sessionId: 's',
+            journalRef: 'journal:s',
+            usageRef: 'usage:s',
+            trajectoryRef: 'trajectory:s',
+          }),
+          onScreenMount: () => {
+            throw new Error('alt-screen mounted on the headless path');
+          },
         },
-      },
-    );
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.join('\n')).toContain('result: hi');
     // The hook is inert on this path (run-cli never calls it), so the
@@ -120,22 +122,24 @@ describe('tui entry regression', () => {
     // the emitted output — the only thing a user could actually observe.
     const root = tmpRoot();
     const lines: string[] = [];
-    const code = await runRunCommand(
-      { prompt: 'headless hi' },
-      {
-        out: (line: string) => lines.push(line),
-        run: (prompt: string) =>
-          runHeadlessPrompt(
-            prompt,
-            {},
-            {
-              sessionsRoot: root,
-              models: fauxModels(['headless answer']),
-              env: new FakeExecutionEnv({}),
-            },
-          ),
-      },
-    );
+    const code = (
+      await runRunCommand(
+        { prompt: 'headless hi' },
+        {
+          out: (line: string) => lines.push(line),
+          run: (prompt: string) =>
+            runHeadlessPrompt(
+              prompt,
+              {},
+              {
+                sessionsRoot: root,
+                models: fauxModels(['headless answer']),
+                env: new FakeExecutionEnv({}),
+              },
+            ),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const doc = lines.join('\n');
     expect(doc).toContain('result: headless answer');
@@ -160,23 +164,25 @@ describe('tui entry regression', () => {
     ];
     for (const [terminus, expected] of cases) {
       const lines: string[] = [];
-      const code = await runRunCommand(
-        { prompt: 'x' },
-        {
-          out: (line: string) => lines.push(line),
-          run: async () => ({
-            terminus: terminus as never,
-            summary: 's',
-            sessionId: 's',
-            journalRef: 'journal:s',
-            usageRef: 'usage:s',
-            trajectoryRef: 'trajectory:s',
-            ...(terminus === 'failed'
-              ? { error: { kind: 'failed' as const, message: 's' } }
-              : {}),
-          }),
-        },
-      );
+      const code = (
+        await runRunCommand(
+          { prompt: 'x' },
+          {
+            out: (line: string) => lines.push(line),
+            run: async () => ({
+              terminus: terminus as never,
+              summary: 's',
+              sessionId: 's',
+              journalRef: 'journal:s',
+              usageRef: 'usage:s',
+              trajectoryRef: 'trajectory:s',
+              ...(terminus === 'failed'
+                ? { error: { kind: 'failed' as const, message: 's' } }
+                : {}),
+            }),
+          },
+        )
+      ).exitCode;
       expect([terminus, code]).toEqual([terminus, expected]);
     }
   });

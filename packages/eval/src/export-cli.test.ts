@@ -1,14 +1,13 @@
 // `kubic export` command surface: trajectory-export
 // inspection plus RL dataset export over trajectory files.
 import { describe, expect, it, vi } from 'vitest';
-import type { TrajectoryExport } from '../../trajectory/src/schema.js';
 import {
-  EXPORT_EXIT_FAILED,
-  EXPORT_EXIT_OK,
-  EXPORT_EXIT_USAGE,
-  type ExportCommandOptions,
-  runExportCommand,
-} from './export-cli.js';
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
+import type { TrajectoryExport } from '../../trajectory/src/schema.js';
+import { type ExportCommandOptions, runExportCommand } from './export-cli.js';
 import { makeExport } from './test-support/fixtures.js';
 
 // One controllable failure seam: the export-failed mapping
@@ -76,14 +75,16 @@ function out(): {
 describe('export command', () => {
   it('describes a trajectory export without --type: exit 0 with provenance', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      { trajectory: 't.json' },
-      {
-        readFile: files({ 't.json': passing() }),
-        out: o.write,
-        err: o.err,
-      },
-    );
+    const exit = (
+      await runExportCommand(
+        { trajectory: 't.json' },
+        {
+          readFile: files({ 't.json': passing() }),
+          out: o.write,
+          err: o.err,
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     const text = o.lines.join('\n');
     expect(text).toMatch(/provenance/);
@@ -93,14 +94,16 @@ describe('export command', () => {
 
   it('emits a jq-able --json describe envelope', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      { trajectory: 't.json', json: true },
-      {
-        readFile: files({ 't.json': passing() }),
-        out: o.write,
-        err: o.err,
-      },
-    );
+    const exit = (
+      await runExportCommand(
+        { trajectory: 't.json', json: true },
+        {
+          readFile: files({ 't.json': passing() }),
+          out: o.write,
+          err: o.err,
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
@@ -115,10 +118,12 @@ describe('export command', () => {
 
   it('exports an SFT record: exit 0, schema sft/1', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      { trajectory: 't.json', type: 'sft' },
-      { readFile: files({ 't.json': passing() }), out: o.write, err: o.err },
-    );
+    const exit = (
+      await runExportCommand(
+        { trajectory: 't.json', type: 'sft' },
+        { readFile: files({ 't.json': passing() }), out: o.write, err: o.err },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     const record = JSON.parse(o.lines.join('\n')) as { schema: string };
     expect(record.schema).toBe('sft/1');
@@ -126,11 +131,13 @@ describe('export command', () => {
 
   it('wraps an exported dataset record in the --json envelope', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      { trajectory: 't.json', type: 'sft', json: true },
-      { readFile: files({ 't.json': passing() }), out: o.write, err: o.err },
-    );
-    expect(exit).toBe(EXPORT_EXIT_OK);
+    const exit = (
+      await runExportCommand(
+        { trajectory: 't.json', type: 'sft', json: true },
+        { readFile: files({ 't.json': passing() }), out: o.write, err: o.err },
+      )
+    ).exitCode;
+    expect(exit).toBe(EXIT_OK);
     expect(o.errs).toEqual([]);
     expect(o.lines).toHaveLength(1);
     const envelope = JSON.parse(o.lines.join('\n')) as {
@@ -140,7 +147,7 @@ describe('export command', () => {
       record: { schema: string };
     };
     expect(envelope.ok).toBe(true);
-    expect(envelope.exitCode).toBe(EXPORT_EXIT_OK);
+    expect(envelope.exitCode).toBe(EXIT_OK);
     expect(envelope.type).toBe('sft');
     expect(envelope.record.schema).toBe('sft/1');
   });
@@ -151,10 +158,16 @@ describe('export command', () => {
       ['coding', 'coding/1'],
     ]) {
       const o = out();
-      const exit = await runExportCommand(
-        { trajectory: 't.json', type: type },
-        { readFile: files({ 't.json': passing() }), out: o.write, err: o.err },
-      );
+      const exit = (
+        await runExportCommand(
+          { trajectory: 't.json', type: type },
+          {
+            readFile: files({ 't.json': passing() }),
+            out: o.write,
+            err: o.err,
+          },
+        )
+      ).exitCode;
       expect(exit).toBe(0);
       const record = JSON.parse(o.lines.join('\n')) as { schema: string };
       expect(record.schema).toBe(schema);
@@ -163,14 +176,16 @@ describe('export command', () => {
 
   it('exports a DPO record from --trajectory (chosen) + --against (rejected)', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      { trajectory: 'chosen.json', type: 'dpo', against: 'rej.json' },
-      {
-        readFile: files({ 'chosen.json': passing(), 'rej.json': failing() }),
-        out: o.write,
-        err: o.err,
-      },
-    );
+    const exit = (
+      await runExportCommand(
+        { trajectory: 'chosen.json', type: 'dpo', against: 'rej.json' },
+        {
+          readFile: files({ 'chosen.json': passing(), 'rej.json': failing() }),
+          out: o.write,
+          err: o.err,
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     const record = JSON.parse(o.lines.join('\n')) as { schema: string };
     expect(record.schema).toBe('dpo/1');
@@ -178,20 +193,22 @@ describe('export command', () => {
 
   it('exports a preference pair from --trajectory (chosen) + --against (rejected)', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      {
-        trajectory: 'chosen.json',
-        type: 'preference',
-        against: 'rej.json',
-        json: true,
-      },
-      {
-        readFile: files({ 'chosen.json': passing(), 'rej.json': failing() }),
-        out: o.write,
-        err: o.err,
-      },
-    );
-    expect(exit).toBe(EXPORT_EXIT_OK);
+    const exit = (
+      await runExportCommand(
+        {
+          trajectory: 'chosen.json',
+          type: 'preference',
+          against: 'rej.json',
+          json: true,
+        },
+        {
+          readFile: files({ 'chosen.json': passing(), 'rej.json': failing() }),
+          out: o.write,
+          err: o.err,
+        },
+      )
+    ).exitCode;
+    expect(exit).toBe(EXIT_OK);
     expect(o.errs).toEqual([]);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
@@ -210,19 +227,21 @@ describe('export command', () => {
       summary: 'tool exploded',
     });
     const o = out();
-    const exit = await runExportCommand(
-      {
-        trajectory: 'chosen.json',
-        type: 'preference',
-        against: 'rej.json',
-        json: true,
-      },
-      {
-        readFile: files({ 'chosen.json': passing(), 'rej.json': envFail }),
-        out: o.write,
-        err: o.err,
-      },
-    );
+    const exit = (
+      await runExportCommand(
+        {
+          trajectory: 'chosen.json',
+          type: 'preference',
+          against: 'rej.json',
+          json: true,
+        },
+        {
+          readFile: files({ 'chosen.json': passing(), 'rej.json': envFail }),
+          out: o.write,
+          err: o.err,
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
@@ -236,17 +255,19 @@ describe('export command', () => {
 
   it('--type dpo over mismatched prompts prints the exclusion, exit 0, no record', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      { trajectory: 'chosen.json', type: 'dpo', against: 'rej.json' },
-      {
-        readFile: files({
-          'chosen.json': passing({ promptText: 'task A' }),
-          'rej.json': failing({ promptText: 'task B' }),
-        }),
-        out: o.write,
-        err: o.err,
-      },
-    );
+    const exit = (
+      await runExportCommand(
+        { trajectory: 'chosen.json', type: 'dpo', against: 'rej.json' },
+        {
+          readFile: files({
+            'chosen.json': passing({ promptText: 'task A' }),
+            'rej.json': failing({ promptText: 'task B' }),
+          }),
+          out: o.write,
+          err: o.err,
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(o.lines).toHaveLength(1);
     expect(o.lines[0]).toMatch(/^excluded: prompt-mismatch-excluded — /);
@@ -255,17 +276,19 @@ describe('export command', () => {
 
   it('--type grpo over mismatched prompts is refused with exit 2', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      { trajectory: 'a.json', type: 'grpo', against: 'b.json' },
-      {
-        readFile: files({
-          'a.json': passing({ promptText: 'task A' }),
-          'b.json': failing({ promptText: 'task B' }),
-        }),
-        out: o.write,
-        err: o.err,
-      },
-    );
+    const exit = (
+      await runExportCommand(
+        { trajectory: 'a.json', type: 'grpo', against: 'b.json' },
+        {
+          readFile: files({
+            'a.json': passing({ promptText: 'task A' }),
+            'b.json': failing({ promptText: 'task B' }),
+          }),
+          out: o.write,
+          err: o.err,
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(2);
     expect(o.lines).toEqual([]);
     expect(o.errs.join('\n')).toMatch(/different prompt or task/);
@@ -273,14 +296,16 @@ describe('export command', () => {
 
   it('exports a 2-candidate GRPO group from --trajectory + --against', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      { trajectory: 'a.json', type: 'grpo', against: 'b.json' },
-      {
-        readFile: files({ 'a.json': passing(), 'b.json': failing() }),
-        out: o.write,
-        err: o.err,
-      },
-    );
+    const exit = (
+      await runExportCommand(
+        { trajectory: 'a.json', type: 'grpo', against: 'b.json' },
+        {
+          readFile: files({ 'a.json': passing(), 'b.json': failing() }),
+          out: o.write,
+          err: o.err,
+        },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     const record = JSON.parse(o.lines.join('\n')) as {
       schema: string;
@@ -294,18 +319,20 @@ describe('export command', () => {
     const stripped = passing();
     stripped.worktree.baseRevision = '';
     const o = out();
-    const exit = await runExportCommand(
-      { trajectory: 't.json', type: 'sft', json: true },
-      { readFile: files({ 't.json': stripped }), out: o.write, err: o.err },
-    );
-    expect(exit).toBe(EXPORT_EXIT_USAGE);
+    const exit = (
+      await runExportCommand(
+        { trajectory: 't.json', type: 'sft', json: true },
+        { readFile: files({ 't.json': stripped }), out: o.write, err: o.err },
+      )
+    ).exitCode;
+    expect(exit).toBe(EXIT_USAGE);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
       exitCode: number;
       error: { code: string; message: string };
     };
     expect(envelope.ok).toBe(false);
-    expect(envelope.exitCode).toBe(EXPORT_EXIT_USAGE);
+    expect(envelope.exitCode).toBe(EXIT_USAGE);
     expect(envelope.error).toEqual({
       code: 'rl-refused',
       message: 'provenance.base is required: record the base revision',
@@ -314,15 +341,17 @@ describe('export command', () => {
     expect(o.lines.join('\n')).not.toMatch(/"schema":\s*"sft\/1"/);
     const text = out();
     expect(
-      await runExportCommand(
-        { trajectory: 't.json', type: 'sft' },
-        {
-          readFile: files({ 't.json': stripped }),
-          out: text.write,
-          err: text.err,
-        },
-      ),
-    ).toBe(EXPORT_EXIT_USAGE);
+      (
+        await runExportCommand(
+          { trajectory: 't.json', type: 'sft' },
+          {
+            readFile: files({ 't.json': stripped }),
+            out: text.write,
+            err: text.err,
+          },
+        )
+      ).exitCode,
+    ).toBe(EXIT_USAGE);
     expect(text.lines).toEqual([]);
     expect(text.errs).toEqual([
       'error: [rl-refused] provenance.base is required: record the base revision',
@@ -337,30 +366,38 @@ describe('export command', () => {
     const message =
       'record failed validation: diffRefs must be an array of changed paths';
     const json = out();
-    const exit = await runExportCommand(
-      { trajectory: 't.json', type: 'coding', json: true },
-      { readFile: files({ 't.json': broken }), out: json.write, err: json.err },
-    );
-    expect(exit).toBe(EXPORT_EXIT_FAILED);
+    const exit = (
+      await runExportCommand(
+        { trajectory: 't.json', type: 'coding', json: true },
+        {
+          readFile: files({ 't.json': broken }),
+          out: json.write,
+          err: json.err,
+        },
+      )
+    ).exitCode;
+    expect(exit).toBe(EXIT_FAILED);
     expect(json.errs).toEqual([]);
     expect(json.lines).toHaveLength(1);
     expect(JSON.parse(json.lines.join('\n'))).toEqual({
       ok: false,
-      exitCode: EXPORT_EXIT_FAILED,
+      exitCode: EXIT_FAILED,
       error: { code: 'invalid-record', message },
     });
     expect(json.lines.join('\n')).not.toMatch(/"schema":\s*"coding\/1"/);
     const text = out();
     expect(
-      await runExportCommand(
-        { trajectory: 't.json', type: 'coding' },
-        {
-          readFile: files({ 't.json': broken }),
-          out: text.write,
-          err: text.err,
-        },
-      ),
-    ).toBe(EXPORT_EXIT_FAILED);
+      (
+        await runExportCommand(
+          { trajectory: 't.json', type: 'coding' },
+          {
+            readFile: files({ 't.json': broken }),
+            out: text.write,
+            err: text.err,
+          },
+        )
+      ).exitCode,
+    ).toBe(EXIT_FAILED);
     expect(text.lines).toEqual([]);
     expect(text.errs).toEqual([`error: [invalid-record] ${message}`]);
   });
@@ -369,34 +406,38 @@ describe('export command', () => {
     injected.error = new TypeError('builder exploded');
     try {
       const json = out();
-      const exit = await runExportCommand(
-        { trajectory: 't.json', type: 'sft', json: true },
-        {
-          readFile: files({ 't.json': passing() }),
-          out: json.write,
-          err: json.err,
-        },
-      );
-      expect(exit).toBe(EXPORT_EXIT_FAILED);
+      const exit = (
+        await runExportCommand(
+          { trajectory: 't.json', type: 'sft', json: true },
+          {
+            readFile: files({ 't.json': passing() }),
+            out: json.write,
+            err: json.err,
+          },
+        )
+      ).exitCode;
+      expect(exit).toBe(EXIT_FAILED);
       expect(json.errs).toEqual([]);
       expect(json.lines).toHaveLength(1);
       expect(JSON.parse(json.lines.join('\n'))).toEqual({
         ok: false,
-        exitCode: EXPORT_EXIT_FAILED,
+        exitCode: EXIT_FAILED,
         error: { code: 'export-failed', message: 'builder exploded' },
       });
       expect(json.lines.join('\n')).not.toMatch(/"schema":\s*"sft\/1"/);
       const text = out();
       expect(
-        await runExportCommand(
-          { trajectory: 't.json', type: 'sft' },
-          {
-            readFile: files({ 't.json': passing() }),
-            out: text.write,
-            err: text.err,
-          },
-        ),
-      ).toBe(EXPORT_EXIT_FAILED);
+        (
+          await runExportCommand(
+            { trajectory: 't.json', type: 'sft' },
+            {
+              readFile: files({ 't.json': passing() }),
+              out: text.write,
+              err: text.err,
+            },
+          )
+        ).exitCode,
+      ).toBe(EXIT_FAILED);
       expect(text.lines).toEqual([]);
       expect(text.errs).toEqual(['error: builder exploded']);
     } finally {
@@ -438,13 +479,15 @@ describe('export command', () => {
     ];
     for (const [options, message] of cases) {
       const o = out();
-      const exit = await runExportCommand(options, {
-        readFile: () => {
-          throw new Error('a refused invocation must not read files');
-        },
-        out: o.write,
-        err: o.err,
-      });
+      const exit = (
+        await runExportCommand(options, {
+          readFile: () => {
+            throw new Error('a refused invocation must not read files');
+          },
+          out: o.write,
+          err: o.err,
+        })
+      ).exitCode;
       const label = JSON.stringify(options);
       expect(exit, label).toBe(2);
       expect(o.lines, label).toEqual([]);
@@ -455,25 +498,29 @@ describe('export command', () => {
   it('exits 2 on unreadable and malformed trajectory files', async () => {
     const missing = out();
     expect(
-      await runExportCommand(
-        { trajectory: 'nope.json' },
-        {
-          readFile: files({}),
-          out: missing.write,
-          err: missing.err,
-        },
-      ),
+      (
+        await runExportCommand(
+          { trajectory: 'nope.json' },
+          {
+            readFile: files({}),
+            out: missing.write,
+            err: missing.err,
+          },
+        )
+      ).exitCode,
     ).toBe(2);
     const malformed = out();
     expect(
-      await runExportCommand(
-        { trajectory: 'bad.json' },
-        {
-          readFile: () => '{not json',
-          out: malformed.write,
-          err: malformed.err,
-        },
-      ),
+      (
+        await runExportCommand(
+          { trajectory: 'bad.json' },
+          {
+            readFile: () => '{not json',
+            out: malformed.write,
+            err: malformed.err,
+          },
+        )
+      ).exitCode,
     ).toBe(2);
     expect(missing.lines).toEqual([]);
     expect(missing.errs).toHaveLength(1);
@@ -542,13 +589,15 @@ describe('export --dataset', () => {
     ];
     for (const [options, message] of cases) {
       const o = out();
-      const exit = await runExportCommand(options, {
-        readFile: () => {
-          throw new Error('a refused invocation must not read files');
-        },
-        out: o.write,
-        err: o.err,
-      });
+      const exit = (
+        await runExportCommand(options, {
+          readFile: () => {
+            throw new Error('a refused invocation must not read files');
+          },
+          out: o.write,
+          err: o.err,
+        })
+      ).exitCode;
       const label = JSON.stringify(options);
       expect(exit, label).toBe(2);
       expect(o.lines, label).toEqual([]);
@@ -558,10 +607,12 @@ describe('export --dataset', () => {
 
   it('refuses dataset mode without the filesystem deps by name', async () => {
     const o = out();
-    const exit = await runExportCommand(
-      { dataset: 'traj', type: 'sft', out: 'out.jsonl', json: true },
-      { readFile: () => '', out: o.write, err: o.err },
-    );
+    const exit = (
+      await runExportCommand(
+        { dataset: 'traj', type: 'sft', out: 'out.jsonl', json: true },
+        { readFile: () => '', out: o.write, err: o.err },
+      )
+    ).exitCode;
     expect(exit).toBe(2);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
@@ -579,10 +630,12 @@ describe('export --dataset', () => {
       'traj/b.json': JSON.stringify(failing({ taskId: 'task-1' })),
     });
     const o = out();
-    const exit = await runExportCommand(
-      { dataset: 'traj', type: 'dpo', out: 'out.jsonl' },
-      { ...deps, out: o.write, err: o.err },
-    );
+    const exit = (
+      await runExportCommand(
+        { dataset: 'traj', type: 'dpo', out: 'out.jsonl' },
+        { ...deps, out: o.write, err: o.err },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     expect(o.errs).toEqual([]);
     expect(o.lines).toEqual([
@@ -608,17 +661,19 @@ describe('export --dataset', () => {
       'traj/a.json': JSON.stringify(passing({ taskId: 'task-1' })),
     });
     const o = out();
-    const exit = await runExportCommand(
-      { dataset: 'traj', type: 'sft', out: 'out.jsonl', json: true },
-      {
-        ...deps,
-        appendFile: () => {
-          throw new Error('ENOSPC: no space left on device');
+    const exit = (
+      await runExportCommand(
+        { dataset: 'traj', type: 'sft', out: 'out.jsonl', json: true },
+        {
+          ...deps,
+          appendFile: () => {
+            throw new Error('ENOSPC: no space left on device');
+          },
+          out: o.write,
+          err: o.err,
         },
-        out: o.write,
-        err: o.err,
-      },
-    );
+      )
+    ).exitCode;
     expect(exit).toBe(1);
     expect(o.errs).toEqual([]);
     expect(JSON.parse(o.lines.join('\n'))).toEqual({
@@ -637,10 +692,12 @@ describe('export --dataset', () => {
       'traj/b.json': JSON.stringify(envFailureFixture()),
     });
     const o = out();
-    const exit = await runExportCommand(
-      { dataset: 'traj', type: 'preference', out: 'out.jsonl', json: true },
-      { ...deps, out: o.write, err: o.err },
-    );
+    const exit = (
+      await runExportCommand(
+        { dataset: 'traj', type: 'preference', out: 'out.jsonl', json: true },
+        { ...deps, out: o.write, err: o.err },
+      )
+    ).exitCode;
     expect(exit).toBe(0);
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;

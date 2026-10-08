@@ -5,6 +5,7 @@
 
 import { stripVTControlCharacters } from 'node:util';
 import { describe, expect, it } from 'vitest';
+import type { CommandResult } from '../../core/src/cli/exit-codes.js';
 import { createCliTheme } from '../../core/src/cli/theme.js';
 import { runCostCommand } from './ops/cost/cost-cli.js';
 import { runAuditCommand } from './policy/audit-cli.js';
@@ -19,7 +20,7 @@ type Run = (channels: {
   err: (line: string) => void;
   theme: typeof COLOUR;
   errTheme: typeof COLOUR;
-}) => Promise<number>;
+}) => Promise<CommandResult>;
 
 const HANDLERS: readonly (readonly [string, Run])[] = [
   [

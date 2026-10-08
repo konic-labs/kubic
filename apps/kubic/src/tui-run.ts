@@ -16,7 +16,7 @@
 // no-op.
 
 import { randomUUID } from 'node:crypto';
-import { homedir, constants as osConstants } from 'node:os';
+import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
 import {
@@ -28,6 +28,16 @@ import {
   expandSkillInvocation,
   type LoadedSkill,
 } from '../../../packages/agents/src/skills/skills.js';
+import {
+  type CommandResult,
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_PROVIDER,
+  EXIT_USAGE,
+  EXIT_WORKSPACE,
+  type ExitCode,
+  INTERRUPT_EXIT_CODES,
+} from '../../../packages/core/src/cli/exit-codes.js';
 import { formatCost } from '../../../packages/core/src/cli/kit.js';
 import type { LaneImagePart } from '../../../packages/core/src/presentation.js';
 import {
@@ -104,11 +114,6 @@ import {
 } from '../../../packages/host/src/roles/roles-boot.js';
 import {
   mapCaughtErrorToTerminus,
-  RUN_EXIT_FAILED,
-  RUN_EXIT_OK,
-  RUN_EXIT_PROVIDER_PROBE_FAILED,
-  RUN_EXIT_USAGE,
-  RUN_EXIT_WORKSPACE_UNAVAILABLE,
   type RunTerminusKind,
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
@@ -916,8 +921,8 @@ const TUI_FATAL_EVENTS = ['uncaughtException', 'unhandledRejection'] as const;
 // A signalled quit exits 128+signo (SIGHUP 129, SIGINT 130,
 // SIGTERM 143) — the shell convention, so a supervisor can tell a signalled
 // TUI from a clean quit.
-function signalExitCode(signal: TuiSignal): number {
-  return 128 + osConstants.signals[signal];
+function signalExitCode(signal: TuiSignal): ExitCode {
+  return INTERRUPT_EXIT_CODES[signal];
 }
 
 // How long a quit waits for an aborted turn to settle. The kills
@@ -3696,7 +3701,7 @@ export interface TuiCommandOptions {
 export async function runTuiCommand(
   options: TuiCommandOptions,
   deps: TuiRunDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const sessionId = options.session;
   const flags: TuiBootFlags = {};
   if (options.role !== undefined) flags.role = options.role;
@@ -3713,7 +3718,7 @@ export async function runTuiCommand(
     (deps.err ?? deps.out)(
       'error: --tools and --no-tools are mutually exclusive',
     );
-    return RUN_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   if (options.tools !== undefined && options.tools.length > 0) {
     flags.tools = [...options.tools];
@@ -3725,7 +3730,7 @@ export async function runTuiCommand(
     (deps.err ?? deps.out)(
       `error: invalid --session id ${JSON.stringify(sessionId)} (use [A-Za-z0-9_-])`,
     );
-    return RUN_EXIT_USAGE;
+    return { exitCode: EXIT_USAGE };
   }
   // The `[ui] theme` reference is resolved and validated
   // BEFORE anything opens — a missing or invalid theme file is a named
@@ -3744,7 +3749,7 @@ export async function runTuiCommand(
   } catch (error) {
     if (error instanceof ThemeError) {
       (deps.err ?? deps.out)(`error: ${error.message}`);
-      return RUN_EXIT_USAGE;
+      return { exitCode: EXIT_USAGE };
     }
     throw error;
   }
@@ -3760,7 +3765,7 @@ export async function runTuiCommand(
   } catch (error) {
     if (error instanceof KeybindingsError) {
       (deps.err ?? deps.out)(`error: ${error.message}`);
-      return RUN_EXIT_USAGE;
+      return { exitCode: EXIT_USAGE };
     }
     throw error;
   }
@@ -3809,18 +3814,20 @@ export async function runTuiCommand(
       })) {
         (deps.err ?? deps.out)(line);
       }
-      return RUN_EXIT_PROVIDER_PROBE_FAILED;
+      return { exitCode: EXIT_PROVIDER };
     }
     const message = error instanceof Error ? error.message : String(error);
     (deps.err ?? deps.out)(`error: ${message}`);
-    if (error instanceof ModelSelectError)
-      return RUN_EXIT_PROVIDER_PROBE_FAILED;
+    if (error instanceof ModelSelectError) return { exitCode: EXIT_PROVIDER };
     // A refused tool selection is a usage error (exit 2), not a
     // generic lane boot failure.
-    if (error instanceof ToolSelectionError) return RUN_EXIT_USAGE;
-    return mapCaughtErrorToTerminus(error) === 'workspace_unavailable'
-      ? RUN_EXIT_WORKSPACE_UNAVAILABLE
-      : RUN_EXIT_FAILED;
+    if (error instanceof ToolSelectionError) return { exitCode: EXIT_USAGE };
+    return {
+      exitCode:
+        mapCaughtErrorToTerminus(error) === 'workspace_unavailable'
+          ? EXIT_WORKSPACE
+          : EXIT_FAILED,
+    };
   }
   // Colour only for a real terminal; NO_COLOR / FORCE_COLOR honoured.
   // The level is injectable (tests pass 'none', so the suite
@@ -4191,7 +4198,7 @@ export async function runTuiCommand(
       () => {},
     );
   };
-  let exitCode = RUN_EXIT_OK;
+  let exitCode: ExitCode = EXIT_OK;
   let resolveExit: () => void = () => {};
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
@@ -4230,7 +4237,7 @@ export async function runTuiCommand(
     if (fatalHandled) return;
     fatalHandled = true;
     stopped = true;
-    exitCode = RUN_EXIT_FAILED;
+    exitCode = EXIT_FAILED;
     stopSpinner();
     stopClock();
     endDrain?.();
@@ -4247,7 +4254,7 @@ export async function runTuiCommand(
     const detail =
       error instanceof Error ? (error.stack ?? error.message) : String(error);
     (deps.err ?? deps.out)(`error: kubic tui crashed: ${detail}`);
-    (deps.exit ?? ((code: number) => process.exit(code)))(RUN_EXIT_FAILED);
+    (deps.exit ?? ((code: number) => process.exit(code)))(EXIT_FAILED);
     resolveExit();
   };
   const fatalListener = (value: unknown): void => {
@@ -6152,7 +6159,7 @@ export async function runTuiCommand(
   }
   await exited;
   setTuiTheme(previousTheme);
-  return exitCode;
+  return { exitCode };
 }
 
 // A path under the home directory, written `~/…`.

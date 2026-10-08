@@ -408,7 +408,7 @@ describe('kubic tui --dangerously-skip-approvals', () => {
     }
     rig.feed('\x03');
     rig.feed('\x03');
-    expect(await pending).toBe(0);
+    expect((await pending).exitCode).toBe(0);
     expect(flags).toEqual([{ dangerouslySkipApprovals: true }]);
     expect(rig.frame).toContain('approvals OFF (full-access)');
     expect(errors.join('\n')).toContain('full-access approvals skipped');
@@ -421,14 +421,16 @@ describe('kubic sessions create --dangerously-skip-approvals', () => {
     const workspace = tmpRoot('ws-');
     const out: string[] = [];
     const err: string[] = [];
-    const code = await runSessionsCommand(
-      { command: 'create', cwd: workspace, dangerouslySkipApprovals: true },
-      {
-        sessionsRoot,
-        out: (line) => out.push(line),
-        logger: createLineLogger((line: string) => err.push(line)),
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'create', cwd: workspace, dangerouslySkipApprovals: true },
+        {
+          sessionsRoot,
+          out: (line) => out.push(line),
+          logger: createLineLogger((line: string) => err.push(line)),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const id = out[0] ?? '';
     const rows = fullAccessRows(workspace);

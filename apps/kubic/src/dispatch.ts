@@ -12,8 +12,11 @@
 // usage fallthrough → commander (help, version, crash probe, commands).
 
 import {
+  type CommandResult,
   EXIT_FAILED,
+  EXIT_OK,
   EXIT_USAGE,
+  type ExitCode,
 } from '../../../packages/core/src/cli/exit-codes.js';
 import { errorBlock } from '../../../packages/core/src/cli/kit.js';
 import { formatJson } from '../../../packages/core/src/cli/output.js';
@@ -242,9 +245,9 @@ export interface DispatchDeps {
   // colour terminal, `error:`/`hint:` lines otherwise. Absent means plain.
   readonly errorTheme?: () => CliTheme;
   // The first-run setup of a bare `kubic` on a terminal, run
-  // before the config load so the TUI boots on what it saved. Resolves to an
-  // exit code to stop with, or undefined to open the TUI.
-  readonly firstRunSetup?: () => Promise<number | undefined>;
+  // before the config load so the TUI boots on what it saved. Resolves to the
+  // result to stop with, or undefined to open the TUI.
+  readonly firstRunSetup?: () => Promise<CommandResult | undefined>;
   // "interactive by default": true when stdin AND stdout are a TTY.
   // Only consulted for the bare invocation; absent means non-interactive.
   readonly isInteractive?: () => boolean;
@@ -316,7 +319,7 @@ export async function dispatchCommand(
   requested: string | undefined,
   rest: readonly string[],
   deps: DispatchDeps,
-): Promise<number> {
+): Promise<ExitCode> {
   // A bare `kubic` on an interactive terminal IS `kubic tui` — the
   // same refusal gate, runtime-exclude shipping and runner. Off a TTY (a
   // pipe, CI, a script) the bare invocation keeps the POSIX usage + exit 1
@@ -367,7 +370,7 @@ export async function dispatchCommand(
     deps.firstRunSetup !== undefined
   ) {
     const stop = await deps.firstRunSetup();
-    if (stop !== undefined) return stop;
+    if (stop !== undefined) return stop.exitCode;
   }
   // A help request is side-effect free: commander answers
   // `--help`/`-h` before any action, so the trust question and the
@@ -486,15 +489,19 @@ export async function dispatchCommand(
     ...(helpTheme === undefined ? {} : { helpTheme }),
     ...(deps.errorTheme === undefined ? {} : { errorTheme: deps.errorTheme() }),
   });
-  let exitCode = 0;
+  // The exit code of a command invocation. A registrar's result reaches it
+  // through CommandContext.finish, the only place a command sets it.
+  let exitCode: ExitCode = EXIT_OK;
+  let finished = false;
   const ctx: CommandContext = {
     config: cliConfig,
     runners: deps.runners,
     rest: args,
     out: io.out,
     err: io.err,
-    setExitCode: (code) => {
-      exitCode = code;
+    finish: (result) => {
+      exitCode = result.exitCode;
+      finished = true;
     },
   };
   for (const register of REGISTRARS) register(program, ctx);
@@ -514,5 +521,6 @@ export async function dispatchCommand(
   }
   return runKubicProgram(program, [command, ...args], io, {
     code: () => exitCode,
+    finished: () => finished,
   });
 }

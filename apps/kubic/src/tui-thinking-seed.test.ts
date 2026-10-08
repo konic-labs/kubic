@@ -109,6 +109,6 @@ describe('kubic tui seeds the thinking indicator from the boot', () => {
     expect(fake.writes.join('')).toContain('faux/deep · high');
     fake.feed('\x03');
     fake.feed('\x03');
-    expect(await exit).toBe(0);
+    expect((await exit).exitCode).toBe(0);
   });
 });

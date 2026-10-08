@@ -236,13 +236,15 @@ describe('kubic sessions attach with a pending op', () => {
     const { id, submissionId } = await crashAfterAccept(root, 'first task');
     stubDeadHolder();
     const lines: string[] = [];
-    const code = await runSessionsCommand(
-      { command: 'attach', id },
-      {
-        sessionsRoot: root,
-        out: (line) => lines.push(line),
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'attach', id },
+        {
+          sessionsRoot: root,
+          out: (line) => lines.push(line),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(
       lines.some((line) =>
@@ -263,13 +265,15 @@ describe('kubic sessions attach with a pending op', () => {
     const id = session.id;
     await session.release(BACKGROUND_CONTEXT);
     const lines: string[] = [];
-    const code = await runSessionsCommand(
-      { command: 'attach', id },
-      {
-        sessionsRoot: root,
-        out: (line) => lines.push(line),
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'attach', id },
+        {
+          sessionsRoot: root,
+          out: (line) => lines.push(line),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(lines.some((line) => line.startsWith('pending work'))).toBe(false);
   });

@@ -153,26 +153,30 @@ describe('sessions CLI', () => {
     const work = join(root, 'work');
     mkdirSync(work);
     const o = out();
-    const created = await runSessionsCommand(
-      { command: 'create', cwd: work },
-      {
-        sessionsRoot: root,
-        out: o.write,
-      },
-    );
+    const created = (
+      await runSessionsCommand(
+        { command: 'create', cwd: work },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(created).toBe(0);
     expect(o.lines.length).toBe(1);
     const id = o.lines[0] ?? '';
     expect(id).toMatch(/^[A-Za-z0-9_-]+$/);
     // A separate sink: the listing itself must carry the session and its cwd.
     const listing = out();
-    const listed = await runSessionsCommand(
-      { command: 'list' },
-      {
-        sessionsRoot: root,
-        out: listing.write,
-      },
-    );
+    const listed = (
+      await runSessionsCommand(
+        { command: 'list' },
+        {
+          sessionsRoot: root,
+          out: listing.write,
+        },
+      )
+    ).exitCode;
     expect(listed).toBe(0);
     expect(
       listing.lines.some((line) => line.includes(id) && line.includes(work)),
@@ -182,10 +186,12 @@ describe('sessions CLI', () => {
   it('create --cwd resolves a relative path against the invoking directory', async () => {
     const root = tmpRoot();
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'create', cwd: '.' },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'create', cwd: '.' },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const id = o.lines[0] ?? '';
     const listing = out();
@@ -207,14 +213,16 @@ describe('sessions CLI', () => {
     for (const bad of [join(root, 'does-not-exist'), join(root, 'file')]) {
       const o = out();
       const e = out();
-      const code = await runSessionsCommand(
-        { command: 'create', cwd: bad },
-        {
-          sessionsRoot: root,
-          out: o.write,
-          logger: createLineLogger(e.write),
-        },
-      );
+      const code = (
+        await runSessionsCommand(
+          { command: 'create', cwd: bad },
+          {
+            sessionsRoot: root,
+            out: o.write,
+            logger: createLineLogger(e.write),
+          },
+        )
+      ).exitCode;
       expect(code).toBe(1);
       expect(e.lines.join('\n')).toContain(bad);
     }
@@ -229,13 +237,15 @@ describe('sessions CLI', () => {
 
   it('list --json prints [] when there are no sessions', async () => {
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'list', json: true },
-      {
-        sessionsRoot: tmpRoot(),
-        out: o.write,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'list', json: true },
+        {
+          sessionsRoot: tmpRoot(),
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(o.lines).toEqual(['[]']);
   });
@@ -258,10 +268,12 @@ describe('sessions CLI', () => {
       })}\n`,
     );
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'list' },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'list' },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(o.lines.join('\n')).toContain('legacy-1');
     expect(o.lines.join('\n')).toContain('(legacy pi 0.87');
@@ -296,13 +308,15 @@ describe('sessions CLI', () => {
     const root = tmpRoot();
     const id = await seededSession(root);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'attach', id, tail: 5 },
-      {
-        sessionsRoot: root,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'attach', id, tail: 5 },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(o.lines[0]).toBe(`session ${id}  cwd=/work`);
     expect(o.lines).toContain('user: cli hello');
@@ -322,13 +336,15 @@ describe('sessions CLI', () => {
       ],
     });
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'attach', id, tail: 10 },
-      {
-        sessionsRoot: root,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'attach', id, tail: 10 },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const assistant = o.lines.find((line) =>
       line.startsWith('assistant: (no text) [tools: read]'),
@@ -343,13 +359,15 @@ describe('sessions CLI', () => {
     const root = tmpRoot();
     const id = await seededCompactedSession(root);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'attach', id, tail: 3 },
-      {
-        sessionsRoot: root,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'attach', id, tail: 3 },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     expect(o.lines.some((line) => line.startsWith('[compaction]'))).toBe(true);
     expect(o.lines.join('\n')).toContain('Summarized.');
@@ -360,13 +378,15 @@ describe('sessions CLI', () => {
     const root = tmpRoot();
     const id = await seededCompactedSession(root);
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'attach', id, tail: 10, json: true },
-      {
-        sessionsRoot: root,
-        out: o.write,
-      },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'attach', id, tail: 10, json: true },
+        {
+          sessionsRoot: root,
+          out: o.write,
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     // Raw entries: every entry line parses as JSON and the compaction
     // entry is present in full (no truncation, no readable rendering).
@@ -464,10 +484,12 @@ describe('sessions CLI', () => {
     await session.release(BACKGROUND_CONTEXT);
 
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'attach', id: session.id, tail: 10 },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'attach', id: session.id, tail: 10 },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const text = o.lines.join('\n');
     expect(text).toContain('owned');
@@ -514,10 +536,12 @@ describe('sessions CLI', () => {
     await session.release(BACKGROUND_CONTEXT);
 
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'attach', id: session.id, tail: 0 },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'attach', id: session.id, tail: 0 },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     // 's storage-level probe owns the format, so this is the same line
     // the run path prints when it settles the work.
@@ -532,26 +556,30 @@ describe('sessions CLI', () => {
     const o = out();
     const e = out();
     expect(
-      await runSessionsCommand(
-        { command: 'attach', id: 'nope' },
-        {
-          sessionsRoot: root,
-          out: o.write,
-          logger: createLineLogger(e.write),
-        },
-      ),
+      (
+        await runSessionsCommand(
+          { command: 'attach', id: 'nope' },
+          {
+            sessionsRoot: root,
+            out: o.write,
+            logger: createLineLogger(e.write),
+          },
+        )
+      ).exitCode,
     ).toBe(1);
     expect(e.lines.join('\n')).toContain('error:');
     expect(o.lines.join('\n')).not.toContain('error:');
     // The id is a path segment: a traversal is refused before any store I/O.
     expect(
-      await runSessionsCommand(
-        { command: 'attach', id: '../x' },
-        {
-          sessionsRoot: root,
-          out: o.write,
-        },
-      ),
+      (
+        await runSessionsCommand(
+          { command: 'attach', id: '../x' },
+          {
+            sessionsRoot: root,
+            out: o.write,
+          },
+        )
+      ).exitCode,
     ).toBe(2);
   });
 });
@@ -560,21 +588,25 @@ describe('sessions CLI approvals posture', () => {
   it('records full-access on create with the flag and indicates on attach', async () => {
     const root = tmpRoot();
     const o = out();
-    const created = await runSessionsCommand(
-      { command: 'create', cwd: root, dangerouslySkipApprovals: true },
-      { sessionsRoot: root, out: o.write },
-    );
+    const created = (
+      await runSessionsCommand(
+        { command: 'create', cwd: root, dangerouslySkipApprovals: true },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(created).toBe(0);
     expect(o.lines.some((line) => line.includes('full-access'))).toBe(true);
     const id = o.lines[0] ?? '';
     const o2 = out();
-    const attached = await runSessionsCommand(
-      { command: 'attach', id: id, tail: 0 },
-      {
-        sessionsRoot: root,
-        out: o2.write,
-      },
-    );
+    const attached = (
+      await runSessionsCommand(
+        { command: 'attach', id: id, tail: 0 },
+        {
+          sessionsRoot: root,
+          out: o2.write,
+        },
+      )
+    ).exitCode;
     expect(attached).toBe(0);
     expect(o2.lines.some((line) => line.includes('posture: full-access'))).toBe(
       true,
@@ -585,10 +617,12 @@ describe('sessions CLI approvals posture', () => {
     const root = tmpRoot();
     const ws = tmpRoot();
     const o = out();
-    const code = await runSessionsCommand(
-      { command: 'create', cwd: ws, dangerouslySkipApprovals: true },
-      { sessionsRoot: root, out: o.write },
-    );
+    const code = (
+      await runSessionsCommand(
+        { command: 'create', cwd: ws, dangerouslySkipApprovals: true },
+        { sessionsRoot: root, out: o.write },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const rows = readAuditLedger(auditLedgerDirFor(ws));
     expect(rows).toHaveLength(1);
@@ -600,37 +634,43 @@ describe('sessions CLI approvals posture', () => {
     const root = tmpRoot();
     const o = out();
     expect(
-      await runSessionsCommand(
-        { command: 'create', cwd: root },
-        {
-          sessionsRoot: root,
-          out: o.write,
-        },
-      ),
+      (
+        await runSessionsCommand(
+          { command: 'create', cwd: root },
+          {
+            sessionsRoot: root,
+            out: o.write,
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     const id = o.lines[0] ?? '';
     const o2 = out();
     expect(
-      await runSessionsCommand(
-        { command: 'attach', id: id, tail: 0 },
-        {
-          sessionsRoot: root,
-          out: o2.write,
-        },
-      ),
+      (
+        await runSessionsCommand(
+          { command: 'attach', id: id, tail: 0 },
+          {
+            sessionsRoot: root,
+            out: o2.write,
+          },
+        )
+      ).exitCode,
     ).toBe(0);
     expect(
       o2.lines.some((line) => line.includes('posture: approvals enforced')),
     ).toBe(true);
     const o3 = out();
     expect(
-      await runSessionsCommand(
-        { command: 'attach', id: '../../etc', tail: 0 },
-        {
-          sessionsRoot: root,
-          out: o3.write,
-        },
-      ),
+      (
+        await runSessionsCommand(
+          { command: 'attach', id: '../../etc', tail: 0 },
+          {
+            sessionsRoot: root,
+            out: o3.write,
+          },
+        )
+      ).exitCode,
     ).toBe(2);
     expect(o3.lines.some((line) => line.includes('invalid session id'))).toBe(
       true,

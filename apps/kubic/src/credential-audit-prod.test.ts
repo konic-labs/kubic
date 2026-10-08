@@ -650,15 +650,17 @@ describe('kubic run: models.json key use is audited', () => {
     });
     // `kubic audit` lists it, and the value is nowhere in its output.
     const lines: string[] = [];
-    const code = await runAuditCommand(
-      { json: true },
-      {
-        loadRecords: () => readAuditLedger(auditLedgerDir(workspace)),
-        loadSecrets: () => [],
-        out: (line) => lines.push(line),
-        err: (line) => lines.push(line),
-      },
-    );
+    const code = (
+      await runAuditCommand(
+        { json: true },
+        {
+          loadRecords: () => readAuditLedger(auditLedgerDir(workspace)),
+          loadSecrets: () => [],
+          out: (line) => lines.push(line),
+          err: (line) => lines.push(line),
+        },
+      )
+    ).exitCode;
     expect(code).toBe(0);
     const output = lines.join('\n');
     expect(output).toContain('credential:gw');

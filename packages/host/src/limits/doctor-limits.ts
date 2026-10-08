@@ -13,17 +13,11 @@ import {
   EXIT_FAILED,
   EXIT_OK,
   EXIT_PROVIDER,
+  type ExitCode,
 } from '../../../core/src/cli/exit-codes.js';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import { mcpRefusalMessage } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';
-
-// Provider-failure code, mirroring kubic run: a doctor matrix
-// with a provider-down failure exits 6. the command keeps its own
-// exit contract; this mapper is what the composition root adopts.
-export const LIMITS_DOCTOR_EXIT_OK = EXIT_OK;
-export const LIMITS_DOCTOR_EXIT_FAIL = EXIT_FAILED;
-export const LIMITS_DOCTOR_EXIT_PROVIDER = EXIT_PROVIDER;
 
 export interface LimitProviderProbe {
   id: string;
@@ -210,23 +204,26 @@ export function policyEnforceabilityCheck(raw: unknown): DoctorCheck {
   };
 }
 
-export function limitsDoctorExit(checks: readonly DoctorCheck[]): number {
+// Provider-failure code, mirroring kubic run: a doctor matrix
+// with a provider-down failure exits 6. the command keeps its own
+// exit contract; this mapper is what the composition root adopts.
+export function limitsDoctorExit(checks: readonly DoctorCheck[]): ExitCode {
   if (
     checks.some(
       (check) => check.status === 'fail' && check.reason === 'provider-down',
     )
   ) {
-    return LIMITS_DOCTOR_EXIT_PROVIDER;
+    return EXIT_PROVIDER;
   }
   if (checks.some((check) => check.status === 'fail')) {
-    return LIMITS_DOCTOR_EXIT_FAIL;
+    return EXIT_FAILED;
   }
-  return LIMITS_DOCTOR_EXIT_OK;
+  return EXIT_OK;
 }
 
 export interface LimitsJsonReport {
   ok: boolean;
-  exitCode: number;
+  exitCode: ExitCode;
   checks: DoctorCheck[];
 }
 
@@ -234,7 +231,7 @@ export interface LimitsJsonReport {
 // doctor command emits, so human and machine readers agree.
 export function buildLimitsJsonReport(checks: DoctorCheck[]): LimitsJsonReport {
   const exitCode = limitsDoctorExit(checks);
-  return { ok: exitCode === LIMITS_DOCTOR_EXIT_OK, exitCode, checks };
+  return { ok: exitCode === EXIT_OK, exitCode, checks };
 }
 
 export interface LimitProbeInputs {

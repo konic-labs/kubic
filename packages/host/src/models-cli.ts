@@ -5,6 +5,12 @@
 
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import {
+  type CommandResult,
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { suggest } from '../../core/src/suggest.js';
@@ -373,7 +379,7 @@ function defaultOf(deps: ModelsCommandDeps): { defaultModel?: string } {
 export async function runModelsCommand(
   options: ModelsCommandOptions,
   deps: ModelsCommandDeps,
-): Promise<number> {
+): Promise<CommandResult> {
   const log = diagnosticsOf(deps);
   if (options.resolve !== undefined) {
     try {
@@ -382,10 +388,10 @@ export async function runModelsCommand(
       deps.out(
         `selected ${picked.provider}/${picked.id} (thinking: ${levels.join(', ') || 'off only'})`,
       );
-      return 0;
+      return { exitCode: EXIT_OK };
     } catch (error) {
       log.error(errorText(error));
-      return 1;
+      return { exitCode: EXIT_FAILED };
     }
   }
   const info = deps.providers;
@@ -427,7 +433,7 @@ export async function runModelsCommand(
         ? `unknown provider ${JSON.stringify(options.provider)} (known: ${ids.join(', ')})`
         : `unknown provider ${JSON.stringify(options.provider)}; did you mean '${close}'?`,
     );
-    return 2;
+    return { exitCode: EXIT_USAGE };
   }
   const scoped =
     options.provider === undefined
@@ -435,7 +441,7 @@ export async function runModelsCommand(
       : catalog.filter((provider) => provider.id === options.provider);
   if (options.json === true) {
     deps.out(formatJson(scoped));
-    return 0;
+    return { exitCode: EXIT_OK };
   }
   if (deps.fancy === true) {
     // The catalogue view on an interactive colour terminal.
@@ -446,7 +452,7 @@ export async function runModelsCommand(
     })) {
       deps.out(line);
     }
-    return 0;
+    return { exitCode: EXIT_OK };
   }
   // Text mode lists the usable providers in full; the (large) set of
   // built-ins with no configured auth is summarised on one line. A named
@@ -499,5 +505,5 @@ export async function runModelsCommand(
       `${unconfigured.length} built-in providers not configured (set their env key): ${unconfigured.join(', ')}`,
     );
   }
-  return 0;
+  return { exitCode: EXIT_OK };
 }

@@ -33,7 +33,8 @@ Each command group owns one module under `apps/kubic/src/commands/`:
 A module exports `register<Group>Commands: CommandRegistrar`, i.e.
 `(program: KubicProgram, ctx: CommandContext) => void`. The context carries
 the process-wide config load (`ctx.config`), the injected runners
-(`ctx.runners`), the `out`/`err` line channels, and `ctx.setExitCode(code)`.
+(`ctx.runners`), the `out`/`err` line channels, and `ctx.finish(result)`,
+which records the command's `CommandResult` (see [Exit codes](#exit-codes)).
 
 Every command is a real commander definition; the hand-rolled parser
 (`flags.ts`) and help convention (`cli-help.ts`) are gone, and
@@ -43,7 +44,8 @@ The analysis group (`commands/analysis.ts`) is the reference to copy:
 
 - it declares typed runners (`AnalysisRunners`, parsed options in), which
   `DispatchRunners` extends;
-- its handlers take `{ out, err, theme?, fancy? }`;
+- each runner returns a `CommandResult`, and prints its own output on the
+  `out`/`err` channels;
 - its tests are in `commands/analysis.test.ts`.
 
 A new command is a real definition:
@@ -55,7 +57,7 @@ program
   .option('--session <id>', 'one session only')
   .option('--json', 'print one JSON document')
   .action(async (opts) => {
-    ctx.setExitCode(await runCost({ ...opts, out: ctx.out }));
+    ctx.finish(await runCost({ ...opts, out: ctx.out }));
   });
 ```
 
@@ -65,11 +67,20 @@ the handler takes the parsed options, never argv. Update the command's
 
 ## Exit codes
 
-The table is [docs/cli/exit-codes.md](cli/exit-codes.md); use the named
-constants (`EXIT_OK` 0, `EXIT_FAILED` 1, `EXIT_USAGE` 2, `EXIT_BUDGET` 3,
-`EXIT_APPROVAL` 4, `EXIT_WORKSPACE` 5, `EXIT_PROVIDER` 6). A module's own
-named codes (`RUN_EXIT_*`, `EVAL_EXIT_*`, …) are aliases of these, never
-new literals.
+The table is [docs/cli/exit-codes.md](cli/exit-codes.md).
+`packages/core/src/cli/exit-codes.ts` is the only module that defines exit
+codes: use its named constants (`EXIT_OK` 0, `EXIT_FAILED` 1, `EXIT_USAGE` 2,
+`EXIT_TURN_LIMIT` 3, `EXIT_APPROVAL` 4, `EXIT_WORKSPACE` 5, `EXIT_PROVIDER`
+6, `EXIT_CANCELLED` 130 for `kubic setup` quit at a prompt), never new
+literals. A signalled exit (128 + signo) comes from `INTERRUPT_EXIT_CODES`,
+keyed by signal name: SIGHUP 129, SIGINT 130, SIGTERM 143.
+
+- A command handler (a runner) returns `CommandResult`, which is
+  `{ exitCode: ExitCode }`. `ExitCode` is the union of the documented codes,
+  so a handler cannot return an undocumented one.
+- The handler prints its own output on `out`/`err`. The dispatcher
+  (`apps/kubic/src/dispatch.ts`) sets the process exit code from the result,
+  in one place, through the context's `finish` call.
 
 - commander parse failures (unknown option, missing value, bad argument,
   excess operands) exit **2** with commander's one `error: …` line on
@@ -83,9 +94,14 @@ new literals.
   the program prints `error: <message>` on stderr and exits with the code.
 - Anything else thrown reaches the root catch-all: one `error: <message>`
   line, exit 1, the stack only with `KUBIC_DEBUG=1`.
-- An unknown top-level command or root option is a usage error reported on stderr with a did-you-mean or prompt hint (issue
-  ); a bare `kubic` off a TTY prints the root help and exits 1 (POSIX
-  usage-on-no-args); a bare `kubic` on a TTY opens the TUI.
+- An action that returns without calling `ctx.finish` is an internal error:
+  `error: internal error: command '<name>' finished without a result` on
+  stderr, exit 1. Every registered command reports its result, so this guards
+  a registrar bug; it is never a user-facing path.
+- An unknown top-level command or root option is a usage error reported on
+  stderr with a did-you-mean or prompt hint; a bare `kubic` off a TTY prints
+  the root help and exits 1 (POSIX usage-on-no-args); a bare `kubic` on a TTY
+  opens the TUI.
 - **Errors on a terminal**: the logger's level prefixes become
   status marks on a colour stderr (`✕`, `▲`, `ℹ`, `✓`; plain `error:` /
   `warn:` / `info:` / `ok:` words otherwise), commander usage errors are an

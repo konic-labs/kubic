@@ -176,11 +176,13 @@ describe('resolveSessionTrajectory', () => {
     );
     if (!('options' in exported)) throw new Error(exported.error);
     const exportOut: string[] = [];
-    const exportCode = await runExportCommand(exported.options, {
-      readFile: (path) => readFileSync(path, 'utf8'),
-      out: (line) => exportOut.push(line),
-      err: () => undefined,
-    });
+    const exportCode = (
+      await runExportCommand(exported.options, {
+        readFile: (path) => readFileSync(path, 'utf8'),
+        out: (line) => exportOut.push(line),
+        err: () => undefined,
+      })
+    ).exitCode;
     expect(exportCode).toBe(0);
     expect(JSON.parse(exportOut.join('\n'))).toMatchObject({ schema: 'sft/1' });
 
@@ -190,13 +192,15 @@ describe('resolveSessionTrajectory', () => {
     );
     if (!('options' in replayed)) throw new Error(replayed.error);
     const replayOut: string[] = [];
-    const replayCode = await runReplayCommand(replayed.options, {
-      out: (line) => replayOut.push(line),
-      err: () => undefined,
-      run: async () => {
-        throw new Error('recorded tier never re-executes');
-      },
-    });
+    const replayCode = (
+      await runReplayCommand(replayed.options, {
+        out: (line) => replayOut.push(line),
+        err: () => undefined,
+        run: async () => {
+          throw new Error('recorded tier never re-executes');
+        },
+      })
+    ).exitCode;
     expect(replayCode).toBe(0);
     expect(JSON.parse(replayOut.join('\n'))).toMatchObject({
       ok: true,

@@ -1,13 +1,10 @@
 // Run-scoped reconciliation lifecycle.
 //
 // The mechanism itself lives in `journal.ts` (`captureBaseline` /
-// `saveBaseline` / `loadBaseline` / `reconcile`). What was
-// missing is the production caller: every one of those was reachable only
-// from tests, so non-tool effects (`sed -i`, `npm install`, a formatter, a
-// build) were never journaled and `unattributed: true` entries could not
-// exist outside a fixture.
-//
-// This module is that caller's contract, one object per run:
+// `saveBaseline` / `reconcile`) and `journal-git.ts` (`captureGitBaseline`).
+// The TUI and headless composition roots run this lifecycle, so non-tool
+// effects (`sed -i`, `npm install`, a formatter, a build) reach the journal as
+// `unattributed: true` entries. The lifecycle is one object per run:
 //
 //   beginReconciliation(...)  → capture the boot baseline, persist
 //                               it beside the session journal, hand back

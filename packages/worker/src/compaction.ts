@@ -9,10 +9,10 @@
 //   model's window: a `configure({ model })` switch re-clamps both with no
 //   explicit re-clamp step. A pending manual compaction narrows the keep window
 //   through the lane's `ManualKeepScope`.
-// - `compactSoloLane` admits Pi's compaction task with Kubic's compact prompt
-//   as the summarizer instructions. `runManualCompaction` runs one compaction
-//   to its outcome; `runCompactCommand` is the user's `/compact`, which also
-//   holds the manual keep window while the task is pending.
+// - `runManualCompaction` admits Pi's compaction task with Kubic's compact
+//   prompt as the summarizer instructions, then runs it to its outcome.
+//   `runCompactCommand` is the user's `/compact`, which also holds the manual
+//   keep window while the task is pending.
 //
 // The rest of this module is pure policy and formatting. The seam types are
 // type-only imports (erased), no Pi runtime import, no network, no filesystem.

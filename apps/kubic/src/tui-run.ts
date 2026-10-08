@@ -1075,7 +1075,7 @@ export interface TuiRunOptions {
   modelPinFrozen?: boolean;
   // Thinking level: the effective level with its source
   // (`--thinking` > `KUBIC_MODEL_THINKING` > file layers), from the SAME
-  // runtimeThinking projection `kubic run` consumes. The boot resolves it
+  // `RuntimeThinking` projection `kubic run` consumes. The boot resolves it
   // against the session's stored level and the role default and clamps it
   // to the effective model — a clamp is never silent.
   thinking?: RuntimeThinking;

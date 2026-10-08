@@ -696,9 +696,9 @@ export async function bootSoloLane(
   // Role narrowing: the role's resolved tool set is the
   // NARROWER of the two allowlists — applied after the class-derived one,
   // so a role can never widen what the permission classes permit. An empty
-  // set is the noTools case (the conversation offers nothing). The absence
-  // guard (the createRoleToolGuard) stays available to callers;
-  // offer-time absence is what this pins.
+  // set is the noTools case (the conversation offers nothing). A tool outside
+  // the role's set is absent from the offer; offer-time absence is what this
+  // pins.
   if (mustActivateTools) {
     await conversation.configure(
       { tools: toolsForNames(registry, effectiveToolNames) },

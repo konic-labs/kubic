@@ -341,9 +341,9 @@ export {
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#TaskId, #CompactionResult (types)
-//   used by: packages/worker/src/compaction.ts (compactSoloLane returns the
-//     admitted manual compaction's id; callers wait with
-//     harness.waitForTask and match LiveDoc.compactions entries)
+//   used by: packages/worker/src/compaction.ts (the admitted manual
+//     compaction's id comes back from Conversation.compact; the admission
+//     waits on it with harness.waitForTask)
 //   why Pi has no alternative: TaskId is the branded id the durable task
 //     graph hands back from Conversation.compact(); a Kubic string handle
 //     would not type-check against waitForTask/getTask and would drift from

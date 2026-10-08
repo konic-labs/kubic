@@ -680,6 +680,7 @@ describe('kubic tui prompt loop', () => {
     let lane: SoloLane | undefined;
     const { models, calls } = fauxModels([
       'first answer',
+      'second answer',
       (context) => {
         seen.push(
           context.messages.map((message) => JSON.stringify(message)).join('\n'),
@@ -707,6 +708,11 @@ describe('kubic tui prompt loop', () => {
     for (const ch of 'first prompt') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('first answer'));
+    // Two turns: the first is older history. A session of one turn is only
+    // its most recent turn, and there is nothing older to compact.
+    for (const ch of 'second prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('second answer'));
     for (const ch of '/compact focus on the auth bug') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() =>
@@ -728,7 +734,8 @@ describe('kubic tui prompt loop', () => {
     // never saw the command text).
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain('focus on the auth bug');
-    expect(calls()).toBe(2);
+    // Two agent turns and the one summary request.
+    expect(calls()).toBe(3);
     expect(entries.filter((entry) => CompactionEntry.is(entry))).toHaveLength(
       1,
     );
@@ -823,6 +830,7 @@ describe('kubic tui prompt loop', () => {
     });
     const { models } = fauxModels([
       'first answer',
+      'second answer',
       async () => {
         summaryStarted();
         await summaryGate;
@@ -844,6 +852,10 @@ describe('kubic tui prompt loop', () => {
     for (const ch of 'first prompt') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('first answer'));
+    // Two turns, so there is older history to compact (see the test above).
+    for (const ch of 'second prompt') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => fake.writes.join('').includes('second answer'));
     for (const ch of '/compact') fake.feed(ch);
     fake.feed('\r');
     // The compaction task is live (its summarization request is gated):

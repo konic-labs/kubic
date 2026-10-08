@@ -810,7 +810,8 @@ export function registerCustomProviders(
         },
         // Fail-safe defaults for an unset window: small local servers
         // overflow (or reject maxTokens) above these. Compaction stays sane
-        // through the reserve clamp (compaction.ts effectiveReserveTokens).
+        // through the reserve and kept-window clamps (compaction.ts
+        // effectiveReserveTokens and effectiveKeepRecentTokens).
         contextWindow: m.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
         maxTokens: m.maxTokens ?? DEFAULT_MAX_TOKENS,
       })),

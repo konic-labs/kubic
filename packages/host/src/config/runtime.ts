@@ -240,7 +240,8 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
       'reserved-room tokens on the lane (run, tui), clamped per model to at most a quarter of its context window',
   },
   'session.keepRecentTokens': {
-    effect: 'verbatim recent-context window on the lane (run, tui)',
+    effect:
+      'verbatim recent-context window on the lane (run, tui), capped per model to a quarter of the room below its reserve',
   },
   'verify.tests': {
     effect:
@@ -1303,7 +1304,7 @@ export function compactionSummaryLine(compaction: {
   keepRecentTokens: number;
   source: ConfigValueSource;
 }): string {
-  return `compaction: ${compaction.enabled ? 'automatic' : 'off'}, reserve=${compaction.reserveTokens} token(s) (${compaction.source}; clamped per model to at most a quarter of its window), keep-recent=${compaction.keepRecentTokens} token(s)`;
+  return `compaction: ${compaction.enabled ? 'automatic' : 'off'}, reserve=${compaction.reserveTokens} token(s) (${compaction.source}; clamped per model to at most a quarter of its window), keep-recent=${compaction.keepRecentTokens} token(s), capped to the model window`;
 }
 
 // Human-readable rendering of the same view (one line per fact); secret

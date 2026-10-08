@@ -34,6 +34,7 @@ import {
 import { ConfigError, ProjectUntrustedError } from './config.js';
 import {
   checkWorkspaceIgnoreSplit,
+  compactionSummaryLine,
   effectiveConfigView,
   keyEffectFor,
   loadRuntimeConfig,
@@ -225,6 +226,21 @@ describe('runtime config load', () => {
     expect(runtimeKeyDisposition(keyEffectFor('roles.reviewer.escalate'))).toBe(
       'consumed',
     );
+  });
+
+  it('says the kept window is capped to the model window, in the key table and the summary line', () => {
+    const entry = keyEffectFor('session.keepRecentTokens');
+    expect(entry === undefined ? '' : runtimeKeyEffectText(entry)).toMatch(
+      /capped per model/,
+    );
+    expect(
+      compactionSummaryLine({
+        enabled: true,
+        reserveTokens: 16384,
+        keepRecentTokens: 20000,
+        source: 'defaults',
+      }),
+    ).toContain('keep-recent=20000 token(s), capped to the model window');
   });
 
   it('projects [journal] outOfScope with its layer, refusing an empty entry by name', () => {

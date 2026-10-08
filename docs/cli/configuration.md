@@ -261,7 +261,7 @@ quietly stop configuring anything.
 | `session.dir` | Not yet implemented: sessions stay under `~/.kubic/sessions`; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first). |
 | `session.autoCompact` | Threshold compaction on the lane (`run`, `tui`): `false` disables it, `true` (and unset) keeps the automatic default. A non-boolean is refused by name. |
 | `session.reserveTokens` | Reserved-room tokens before the lane compacts: unset ⇒ 16384. A value that is not a positive integer is refused by name. The effective reserve is clamped per model to at most a quarter of its context window (an 8192-token model reserves 2048), so a small-window model compacts sooner than the configured figure; `kubic config` and `kubic doctor` print the effective reserve. |
-| `session.keepRecentTokens` | Verbatim recent-context window the lane keeps across a compaction: unset ⇒ 20000. A value that is not a positive integer is refused by name. |
+| `session.keepRecentTokens` | Verbatim recent-context window the lane keeps across a compaction: unset ⇒ 20000. A value that is not a positive integer is refused by name. The effective window is capped per model to a quarter of the room below its reserve (window − reserve), so it scales with the model: an 8192-token model keeps 1536, a 16384-token model 3072, a 32768-token model 6144, and the configured 20000 applies from a 96384-token window up. A `/compact` keeps at most 2000 tokens verbatim, whatever the window. |
 | `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. `kubic journal prune` reads `[journal] retentionDays` instead (see the paragraph below the table). |
 | `verify.tests`, `verify.build`, `verify.lint`, `verify.typecheck` | The gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. |
 | `verify.timeoutMs` | Per-command bound for the `[verify]` gates, a positive integer of milliseconds (default 600000). A command still running at the bound is killed and its gate is `fail`. |
@@ -804,8 +804,16 @@ not. The split, exactly as shipped:
   fail-safe defaults `8192`/`2048` (small local servers overflow above
   them). The compaction reserve (`[session] reserveTokens`, default 16384) is
   clamped to a quarter of the model's window (an 8192-token model reserves
-  2048), so a small-window model compacts only near its limit, never every
-  turn. The same three `[session]` keys (`autoCompact`, `reserveTokens`,
+  2048), and the kept window (`[session] keepRecentTokens`, default 20000) to
+  a quarter of the room below that reserve, so a small-window model compacts
+  only near its limit. The system prompt and the default tool set take about
+  2800 tokens of every request, so the room a compaction leaves is smaller
+  than the window suggests: about 360 to 1060 tokens on an 8192-token window
+  (roughly one exchange, so agent work needs a larger window), about 5000 on
+  16384, about 14300 on 32768 and about 91000 on 131072. These are estimates:
+  the threshold minus those 2800 tokens and the kept window, with a summary of
+  700 to 1400 tokens. The same
+  three `[session]` keys (`autoCompact`, `reserveTokens`,
   `keepRecentTokens`) drive `kubic run` and `kubic tui` alike — see the
   key-effect table — and `kubic config` / `kubic doctor`
   print the effective reserve after the clamp.

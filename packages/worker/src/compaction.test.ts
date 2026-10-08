@@ -11,13 +11,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildCompactPrompt,
   compactSoloLane,
+  createManualKeepScope,
   DEFAULT_RESERVE_TOKENS,
+  effectiveKeepRecentTokens,
   effectiveReserveTokens,
+  MANUAL_KEEP_RECENT_TOKENS,
+  MAX_KEEP_RECENT_FRACTION,
   MAX_RESERVE_FRACTION,
   parseCompactCommand,
+  runCompactCommand,
   runManualCompaction,
   SOLO_BACKGROUND_TOKENS,
   SOLO_KEEP_RECENT_TOKENS,
+  type SoloCompactionLane,
   soloCompactionSettings,
 } from './compaction.js';
 import {
@@ -592,8 +598,270 @@ describe('/compact focus instructions', () => {
     // Exact sections, exact order, no focus line: a dropped or reordered
     // section fails here instead of reaching the summarizer silently.
     expect(buildCompactPrompt({})).toBe(
-      'Summarize this session for compaction: goal, decisions, open work, cumulative file ops, spill refs.\n' +
-        'Prefer compact state + artifacts + refs over history.',
+      'Summarize this session for compaction: goal, decisions, open work, next steps.',
     );
+  });
+
+  it('asks the summarizer only for sections Kubic has: no file ops, no spill refs', () => {
+    const prompt = buildCompactPrompt({});
+    expect(prompt).not.toMatch(/file ops|spill/i);
+    expect(prompt).toMatch(/goal/);
+    expect(prompt).toMatch(/decisions/);
+    expect(prompt).toMatch(/open work/);
+    expect(prompt).toMatch(/next steps/);
+  });
+});
+
+// ─── the kept window scales with the model window ─────────────────────────
+
+describe('effectiveKeepRecentTokens (the kept window scales with the window)', () => {
+  it('keeps the configured window when the model window is unknown', () => {
+    expect(effectiveKeepRecentTokens(0)).toBe(SOLO_KEEP_RECENT_TOKENS);
+  });
+
+  it('keeps a share of the room below the reserve on small and mid-size windows', () => {
+    // Room below the clamped reserve: 8192 - 2048, 16384 - 4096, 32768 - 8192.
+    expect(MAX_KEEP_RECENT_FRACTION).toBe(0.25);
+    expect(effectiveKeepRecentTokens(8192)).toBe(1536);
+    expect(effectiveKeepRecentTokens(16384)).toBe(3072);
+    expect(effectiveKeepRecentTokens(32768)).toBe(6144);
+  });
+
+  it('keeps the configured 20000 on large windows, and never more than configured', () => {
+    expect(effectiveKeepRecentTokens(131072)).toBe(20000);
+    expect(effectiveKeepRecentTokens(200000)).toBe(20000);
+    expect(effectiveKeepRecentTokens(200000, 1000)).toBe(1000);
+  });
+
+  it('measures the room with the reserve it is given', () => {
+    // A 1000-token reserve leaves 8192 - 1000 = 7192 below an 8k window.
+    expect(effectiveKeepRecentTokens(8192, SOLO_KEEP_RECENT_TOKENS, 1000)).toBe(
+      1798,
+    );
+  });
+});
+
+describe('soloCompactionSettings (the kept window is read live)', () => {
+  it('follows the current model window, like the reserve', () => {
+    let window = 8192;
+    const settings = soloCompactionSettings({ currentWindow: () => window });
+    expect(settings.keepRecentTokens).toBe(1536);
+    window = 200000;
+    expect(settings.keepRecentTokens).toBe(20000);
+    window = 0;
+    expect(settings.keepRecentTokens).toBe(SOLO_KEEP_RECENT_TOKENS);
+  });
+});
+
+describe('manual compaction keeps less while it is pending', () => {
+  it('keeps at most MANUAL_KEEP_RECENT_TOKENS while the scope is open, and resets on release', () => {
+    expect(MANUAL_KEEP_RECENT_TOKENS).toBe(2000);
+    const manualKeep = createManualKeepScope();
+    const settings = soloCompactionSettings({
+      currentWindow: () => 200000,
+      manualKeep,
+    });
+    expect(settings.keepRecentTokens).toBe(20000);
+    const release = manualKeep.open();
+    expect(manualKeep.active).toBe(true);
+    expect(settings.keepRecentTokens).toBe(2000);
+    release();
+    release();
+    expect(manualKeep.active).toBe(false);
+    expect(settings.keepRecentTokens).toBe(20000);
+  });
+
+  it('keeps the smaller effective window on a tiny model', () => {
+    const manualKeep = createManualKeepScope();
+    const settings = soloCompactionSettings({
+      currentWindow: () => 8192,
+      manualKeep,
+    });
+    const release = manualKeep.open();
+    expect(settings.keepRecentTokens).toBe(1536);
+    release();
+  });
+
+  it('counts overlapping scopes, so one release never ends another', () => {
+    const manualKeep = createManualKeepScope();
+    const first = manualKeep.open();
+    const second = manualKeep.open();
+    first();
+    expect(manualKeep.active).toBe(true);
+    second();
+    expect(manualKeep.active).toBe(false);
+  });
+});
+
+// ─── manual compaction on a real harness, with the reason it did not cut ──
+
+describe('runManualCompaction on a short session', () => {
+  it('places a summary on about 5k tokens of history with the default keep window', async () => {
+    const manualKeep = createManualKeepScope();
+    const result = await openSolo({
+      models: [{ id: 'large', contextWindow: 200000, maxTokens: 20000 }],
+      compaction: soloCompactionSettings({
+        configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
+        currentWindow: () => 200000,
+        manualKeep,
+      }),
+      reply: () => text('a', 500),
+    });
+    for (let index = 0; index < 4; index++) {
+      await turn(result.root, text(`u${index}`, 1000));
+    }
+    const outcome = await runCompactCommand(
+      { harness: result.harness, conversation: result.root, manualKeep },
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    expect(outcome.status).toBe('completed');
+    expect(outcome.tokensBefore).toBeGreaterThan(4000);
+    expect(await compactionEntries(result.root)).toHaveLength(1);
+  });
+
+  it('reports a session that is only its most recent turn as nothing, with the reason', async () => {
+    const result = await openSolo({
+      models: [{ id: 'large', contextWindow: 200000, maxTokens: 20000 }],
+      compaction: soloCompactionSettings({
+        configuredReserveTokens: DEFAULT_RESERVE_TOKENS,
+        currentWindow: () => 200000,
+      }),
+      reply: () => text('a', 500),
+    });
+    await turn(result.root, text('u1', 500));
+    const outcome = await runManualCompaction(
+      { harness: result.harness, conversation: result.root },
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    expect(outcome.status).toBe('nothing');
+    expect(outcome.reason).toBe('most-recent-turn');
+    expect(result.requests.summary).toHaveLength(0);
+    expect(await compactionEntries(result.root)).toHaveLength(0);
+  });
+});
+
+// ─── the manual scope on every exit path ──────────────────────────────────
+
+const USER_MESSAGE = {
+  role: 'user',
+  content: [{ type: 'text', text: 'hello there' }],
+  timestamp: 0,
+};
+const ASSISTANT_MESSAGE = {
+  role: 'assistant',
+  content: [{ type: 'text', text: 'hi' }],
+  usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+  stopReason: 'stop',
+  timestamp: 0,
+};
+
+/** A lane whose admitted task settles as `outcome` (or whose admission throws). */
+function fakeManualLane(
+  outcome: unknown,
+  admissionError?: string,
+): {
+  lane: SoloCompactionLane;
+  manualKeep: ReturnType<typeof createManualKeepScope>;
+  activeWhilePending: boolean[];
+} {
+  const manualKeep = createManualKeepScope();
+  const activeWhilePending: boolean[] = [];
+  const messages = [USER_MESSAGE, ASSISTANT_MESSAGE, USER_MESSAGE];
+  const lane = {
+    manualKeep,
+    harness: {
+      waitForTask: async () => {
+        activeWhilePending.push(manualKeep.active);
+        return { state: { outcome } };
+      },
+    },
+    conversation: {
+      context: async () => ({
+        head: undefined,
+        entries: [],
+        contributions: messages.map((message) => [message]),
+        messages,
+      }),
+      compact: async () => {
+        if (admissionError !== undefined) throw new Error(admissionError);
+        return 1;
+      },
+    },
+  };
+  return {
+    lane: lane as unknown as SoloCompactionLane,
+    manualKeep,
+    activeWhilePending,
+  };
+}
+
+describe('the /compact command holds the manual scope only while the task is pending', () => {
+  it.each<[string, unknown, string | undefined]>([
+    [
+      'completed',
+      { status: 'completed', result: { entryId: 'entry-1' } },
+      undefined,
+    ],
+    ['nothing', { status: 'completed', result: {} }, 'no-cut'],
+    [
+      'failed',
+      { status: 'failed', error: { message: 'model gone' } },
+      undefined,
+    ],
+    ['aborted', { status: 'aborted', reason: 'operator' }, undefined],
+    [
+      'orphaned',
+      { status: 'orphaned', reason: 'abort could not run' },
+      undefined,
+    ],
+    [
+      'faulted',
+      { status: 'faulted', error: { message: 'contract' } },
+      undefined,
+    ],
+  ])(
+    'releases the scope when the task ends %s',
+    async (status, outcome, reason) => {
+      const { lane, manualKeep, activeWhilePending } = fakeManualLane(outcome);
+      const result = await runCompactCommand(
+        lane,
+        undefined,
+        BACKGROUND_CONTEXT,
+      );
+      expect(result.status).toBe(status);
+      expect(result.reason).toBe(reason);
+      expect(activeWhilePending).toEqual([true]);
+      expect(manualKeep.active).toBe(false);
+    },
+  );
+
+  it('releases the scope when the admission is refused', async () => {
+    const { lane, manualKeep, activeWhilePending } = fakeManualLane(
+      undefined,
+      'compaction refused',
+    );
+    const result = await runCompactCommand(lane, undefined, BACKGROUND_CONTEXT);
+    expect(result.status).toBe('failed');
+    expect(activeWhilePending).toEqual([]);
+    expect(manualKeep.active).toBe(false);
+  });
+});
+
+describe('overflow recovery (runManualCompaction) keeps the effective window', () => {
+  it('does not open the manual scope while the task is pending', async () => {
+    const { lane, manualKeep, activeWhilePending } = fakeManualLane({
+      status: 'completed',
+      result: { entryId: 'entry-1' },
+    });
+    const result = await runManualCompaction(
+      lane,
+      undefined,
+      BACKGROUND_CONTEXT,
+    );
+    expect(result.status).toBe('completed');
+    expect(activeWhilePending).toEqual([false]);
+    expect(manualKeep.active).toBe(false);
   });
 });

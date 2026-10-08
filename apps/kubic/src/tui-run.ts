@@ -207,7 +207,7 @@ import {
   type ManualCompactionOptions,
   type ManualCompactionOutcome,
   parseCompactCommand,
-  runManualCompaction,
+  runCompactCommand,
 } from '../../../packages/worker/src/compaction.js';
 import {
   abortLane,
@@ -1110,10 +1110,10 @@ export function soloTuiLoop(
       ),
     entries: (loopContext) =>
       readConversationEntries(solo.conversation, loopContext),
-    // `/compact [focus]` — Pi's manual compaction task with
-    // Kubic's compact prompt as the summarizer instructions.
+    // `/compact [focus]` — Pi's manual compaction task with Kubic's compact
+    // prompt as the summarizer instructions, under the manual keep window.
     compact: (focus, loopContext, options) =>
-      runManualCompaction(solo, focus, loopContext, options),
+      runCompactCommand(solo, focus, loopContext, options),
     // The shared abort+drain (conversation.abort, every kill
     // attempted, failures aggregated) and the settled-turn forget.
     abort: async (loopContext) => {

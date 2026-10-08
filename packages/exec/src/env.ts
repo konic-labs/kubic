@@ -33,6 +33,7 @@ import {
 import { constants as osConstants } from 'node:os';
 import { dirname, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import { isSecretEnvKey } from '../../core/src/secret-keys.js';
 
 export interface Provenance {
   sessionId: string;
@@ -439,7 +440,7 @@ const ALLOWED_UPPER = new Set(TOOL_ENV_ALLOWLIST.map((k) => k.toUpperCase()));
 
 // The proxy variables are allowlisted for reachability, but a
 // proxy URL can carry userinfo — `http://user:password@proxy:3128` — which is
-// a credential even though the NAME looks benign, so `looksSecret` never sees
+// a credential even though the NAME looks benign, so the secret-name check never sees
 // it. A credential must never reach an agent-visible string, and the model's
 // shell can read the child env. The
 // value keeps its scheme, host and port and loses the userinfo; a proxy that
@@ -475,14 +476,6 @@ function stripProxyUserinfo(value: string): string {
   return `${value.slice(0, start)}${authority.slice(at + 1)}${value.slice(end)}`;
 }
 
-const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
-
-function looksSecret(upper: string): boolean {
-  return SECRET_SUFFIXES.some(
-    (suffix) => upper === suffix || upper.endsWith(`_${suffix}`),
-  );
-}
-
 // Pure: the allowlisted subset of `base` (plus LC_* / XDG_* vars). A
 // secret-shaped name is dropped even if it matches a pattern (LC_*_KEY), and
 // a proxy URL loses its userinfo — the one credential an
@@ -500,7 +493,7 @@ export function toolSpawnEnv(
         : TOOL_ENV_ALLOWLIST.includes(key)) ||
       key.startsWith('LC_') ||
       key.startsWith('XDG_');
-    if (!allowed || looksSecret(upper)) continue;
+    if (!allowed || isSecretEnvKey(key)) continue;
     out[key] = PROXY_VARS.has(upper) ? stripProxyUserinfo(value) : value;
   }
   return out;

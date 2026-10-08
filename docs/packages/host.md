@@ -91,7 +91,7 @@ ancestor's or `~/.kubic`'s — plus the session root in use
 | `ApprovalVerdict` | `{ approved: true, by: string, justified?: boolean } \| { approved: false, reason: string }` |
 
 `ApprovalStore` (`load`/`save`) has memory and file backings;
-the installed ask (`installSoloPolicy`) over `ApprovalService` serves the lane interception
+the installed ask (`installPolicy`) over `ApprovalService` serves the lane interception
 point; `detectTriggers` maps tool calls to capabilities via
 `TriggerContext`. The lane awaits the ask inside its pi-durable
 `ToolTask.beforeTool` hook, which runs before the tool's intent is

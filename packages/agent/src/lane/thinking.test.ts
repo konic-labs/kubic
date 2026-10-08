@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 function scratch(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-solo-thinking-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-lane-thinking-'));
   dirs.push(dir);
   return dir;
 }

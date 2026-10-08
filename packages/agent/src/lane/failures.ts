@@ -44,7 +44,7 @@ const RETRY_STRATEGIES = [
 
 // Full retry strategy vocabulary. Emitted today: retry_same (executed by the
 // harness's durable generation retry), retry_with_different_tool, and
-// retry_with_new_context (solo compact-then-retry). Stronger model and new
+// retry_with_new_context (compact-then-retry). Stronger model and new
 // agent are DECIDED here and executed by their owners; wider capability only
 // ever arises through an explicit approval, never from this chooser.
 
@@ -204,7 +204,7 @@ export function classifyFailure(
         };
       }
       // Overflow compacts first, then retries on the fresh
-      // context (executed by the solo recovery, through runManualCompaction).
+      // context (executed by the recovery, through runManualCompaction).
       // A polluted context still escalates: only the operator picks the
       // fresh agent after seeing the record.
       return {

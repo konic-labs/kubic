@@ -27,7 +27,7 @@
 // always free for the next prompt afterwards.
 //
 // The decisions are driven by the pi-durable Harness only; the parameter is
-// the structural subset of the SoloLane (built in parallel), so this
+// the structural subset of the Lane (built in parallel), so this
 // module lands and compiles before that issue does.
 
 import {
@@ -42,8 +42,8 @@ import type { OperationKillRegistry } from './abort.js';
 
 export type PendingPolicy = 'resume' | 'abort';
 
-// Pick<SoloLane, 'harness' | 'conversation' | 'kills'> — structural, so the
-// tests and the solo lane both satisfy it.
+// Pick<Lane, 'harness' | 'conversation' | 'kills'> — structural, so the
+// tests and the lane both satisfy it.
 export interface PendingLane {
   readonly harness: Harness;
   readonly conversation: Conversation;

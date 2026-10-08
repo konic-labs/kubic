@@ -50,7 +50,7 @@ export class OperationKillRegistry {
   }
 }
 
-// The structural lane surface the abort paths need: SoloLane satisfies it,
+// The structural lane surface the abort paths need: Lane satisfies it,
 // and so do unit stubs.
 export interface AbortableLane {
   readonly conversation: Conversation;

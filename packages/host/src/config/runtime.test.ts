@@ -1128,7 +1128,7 @@ describe('effective config view', () => {
 
   // The acceptance criterion's own bar: a .kubic/config.toml value must
   // measurably change a live behaviour, not merely parse. This drives the
-  // real solo lane (through the shared faux harness factory) with the
+  // real lane (through the shared faux harness factory) with the
   // classes the config produced and asserts the lane's own allowlist — the
   // same set applyToolPolicy installs.
   it('narrows a live lane allowlist from [permissions] in config', async () => {
@@ -1299,7 +1299,7 @@ level = "privileged"
       expect(active).not.toContain('bash');
       expect(active).toContain('read');
       // The prompt tells the model the truth about its own tool set;
-      // the committed system entry carries the assembled solo prompt.
+      // the committed system entry carries the assembled prompt.
       await lane.run('hi');
       const advertised = promptToolsLine(await lane.systemPrompt());
       expect(advertised).not.toContain('bash');

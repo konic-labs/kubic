@@ -281,8 +281,8 @@ describe('kubic tui: the audit row names the model the lane runs', () => {
 
 describe('a run records its own identity', () => {
   it('a locally decided ask is one root row with the process pid', async () => {
-    const root = tmpRoot('audit-id-solo-root-');
-    const workspace = tmpRoot('audit-id-solo-ws-');
+    const root = tmpRoot('audit-id-lane-root-');
+    const workspace = tmpRoot('audit-id-lane-ws-');
     await runHeadlessPrompt(
       'clean up',
       {},
@@ -304,7 +304,7 @@ describe('a run records its own identity', () => {
   });
 });
 
-describe('installSoloPolicy audit model', () => {
+describe('installPolicy audit model', () => {
   const call = (id: string) => ({
     toolName: 'bash',
     args: { command: 'rm -rf build' },

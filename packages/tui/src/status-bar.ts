@@ -125,7 +125,7 @@ export interface StatusBarState {
   readonly approvalsSkipped: boolean;
   readonly sessionId: string;
   // The model's context window and the token level at
-  // which the solo lane compacts (window − reserve, the policy; will
+  // which the lane compacts (window − reserve, the policy; will
   // make the reserve configurable). Both absent means the gauge stays off —
   // an unknown window must never render a made-up percentage.
   readonly contextWindow?: number;

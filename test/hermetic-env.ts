@@ -1,6 +1,6 @@
 // Hermetic unit-test environment.
 //
-// The solo and TUI prod paths default the skill roots to os.homedir()
+// The and TUI prod paths default the skill roots to os.homedir()
 // (~/.agents/skills, ~/.pi/agent/skills) and read the project trust opt-in
 // from KUBIC_TRUST_PROJECT, so without isolation every system-prompt
 // assertion depended on the developer's machine. isolateTestEnv() points

@@ -74,7 +74,7 @@ function fauxModels(steps: FauxMessage[]): {
 // The prod boot shape with the sessions root + models injected (same pattern as
 // tui-loop.test.ts). The seat arrives as bootLane's second argument — the same
 // way runTuiCommand hands the real one to the real boot — and is forwarded to
-// installSoloPolicy exactly like prod does.
+// installPolicy exactly like prod does.
 function fauxLaneBoot(
   root: string,
   models: MutableModels,
@@ -225,7 +225,7 @@ describe('approval card on the kubic tui path', () => {
     // (The main-screen `lines` document is only printed at quit, so the
     // live frame is the only place the settled turn can show up yet.)
     await waitFor(() => fake.frame.includes('approved turn done'));
-    // The solo tree row opens on Ctrl-T.
+    // The tree row opens on Ctrl-T.
     fake.feed('\x14');
     // Quit cleanly: restore + exit 0.
     fake.feed('\x03');

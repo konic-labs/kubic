@@ -1,4 +1,4 @@
-// Solo-lane event consumer on pi-durable's committed watch. Exactly one
+// Lane event consumer on pi-durable's committed watch. Exactly one
 // subscription per conversation relays the groups Kubic routes — run status,
 // tool status, usage, faults — plus the retry and compaction state the 1.0
 // harness commits, the inbox queue the TUI renders and the in-flight

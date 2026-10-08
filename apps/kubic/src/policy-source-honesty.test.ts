@@ -3,7 +3,7 @@
 // same origin, and neither may claim "config" for a directory that configured
 // nothing. This exists because the first implementation inferred `source` from
 // the shape of the classes object — and a config-less install still yields
-// SOLO_DEFAULTS, so the real binary printed `source=config` in an empty
+// DEFAULT_PERMISSIONS, so the real binary printed `source=config` in an empty
 // directory. Measured against /tmp/k86 with no config: PASS policy:installed
 // said source=config; that was the bug this test now pins shut.
 //

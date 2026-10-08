@@ -147,7 +147,7 @@ export interface SessionConfig {
   retentionDays?: number;
   // Compaction policy: whether threshold
   // compaction runs, the reserved-room tokens and the verbatim recent
-  // window the solo lane compacts under. Unset means the lane defaults
+  // window the lane compacts under. Unset means the lane defaults
   // (automatic, 16384 reserved, 20000 kept recent).
   autoCompact?: boolean;
   reserveTokens?: number;

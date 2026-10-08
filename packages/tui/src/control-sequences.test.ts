@@ -170,7 +170,7 @@ describe('terminal control sequences from lane content', () => {
         ],
       }),
     );
-    // The solo tree row is opened on demand (Ctrl-T).
+    // The tree row is opened on demand (Ctrl-T).
     app.handleInput('\x14');
     const frame = app.render(100).join('\n');
     expect(frame).toContain('ZZ');

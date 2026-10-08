@@ -1,7 +1,7 @@
 // Bash approval-detector bypasses and autoApprove semantics. Each block pins
 // a bypass the detectors once missed. The classifiers are the PRODUCTION ones
 // (defaultIsDestructive, isNetworkCommand, confinePath) wired like
-// triggerContextFor, and the lane tests drive the real installSoloPolicy —
+// triggerContextFor, and the lane tests drive the real installPolicy —
 // faux/no provider, zero network. Detection stays lexical: a variable-built
 // path (`$D/roles/r.md` with D set elsewhere), a symlink, `sed -i`, a script
 // file or an interpreter still reach `.kubic/` without raising — those

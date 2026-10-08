@@ -247,7 +247,7 @@ export function turnLaneRecord(outcome: TurnOutcome): {
   }
 }
 
-// Solo context-overflow recovery. The harness owns blind retries (its durable
+// Context-overflow recovery. The harness owns blind retries (its durable
 // generation retry), so the lane retries exactly one failure: context overflow,
 // compacted first and retried once on the fresh context. Every other failure
 // passes through untouched — stronger-model and new-agent decisions belong to

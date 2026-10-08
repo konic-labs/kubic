@@ -120,7 +120,7 @@ function deps(): Parameters<typeof runHeadlessPrompt>[2] {
 }
 
 beforeEach(() => {
-  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // The no-isolation notice is not under test here (no-isolation-notice-prod.test.ts owns
   // it); the documented opt-out keeps it off the test runner's stderr.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
   mockState.closeShouldReject = false;

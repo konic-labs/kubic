@@ -1,11 +1,11 @@
-// Skills on the live solo path.
+// Skills on the live path.
 // Before nothing in the shipped binary called discoverSkills /
 // formatSkillsForSystemPrompt and `--no-skills` did not exist. These tests
 // pin that the composition root runs discovery through the real FileBridge
 // and hands the model-visible blocks to the lane boot.
 //
 // Faux provider only (zero network, zero paid tokens): the assertions are
-// about the committed solo prompt bytes, read back from the session
+// about the committed prompt bytes, read back from the session
 // transcript (the reader) after a real `kubic run`.
 import {
   mkdirSync,
@@ -74,7 +74,7 @@ function writeSkill(root: string, name: string, description: string): string {
   return file;
 }
 
-// The solo prompt the lane committed for this session (the reader): the
+// The prompt the lane committed for this session (the reader): the
 // run's own durable record of the bytes the model saw.
 async function committedPrompt(
   root: string,
@@ -102,7 +102,7 @@ async function committedPrompt(
 }
 
 beforeEach(() => {
-  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // The no-isolation notice is not under test here (no-isolation-notice-prod.test.ts owns
   // it); the documented opt-out keeps it off the test runner's stderr.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });
@@ -115,7 +115,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('skills reach the live solo prompt', () => {
+describe('skills reach the live prompt', () => {
   it("injects a discovered skill's name, description and path into the assembled system prompt", async () => {
     const home = tmpRoot('skills-home-');
     const skillFile = writeSkill(
@@ -502,7 +502,7 @@ describe('settings skills from config', () => {
   });
 });
 
-describe('the role/capability gate reaches the live solo prompt', () => {
+describe('the role/capability gate reaches the live prompt', () => {
   function writeScopedSkill(
     root: string,
     name: string,

@@ -1,4 +1,4 @@
-// Compaction through the REAL solo lane (`bootFauxLane`, faux models, zero
+// Compaction through the REAL lane (`bootFauxLane`, faux models, zero
 // network): automatic, overflow and manual compaction on small and mid-size
 // windows, and a model switch that moves the kept window and the reserve
 // live. The faux provider estimates usage from the request text (chars / 4),

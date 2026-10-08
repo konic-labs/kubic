@@ -67,7 +67,7 @@ export interface BootSkillOptions {
   // the skill-side `roles:` check: both must admit).
   roleSkills?: string[];
   // The capability classes the lane enforces, for the
-  // capability-aware check. Absent means the documented SOLO_DEFAULTS —
+  // capability-aware check. Absent means the documented DEFAULT_PERMISSIONS —
   // the same default the lane installs, so the gate never withholds what
   // the lane would run.
   classes?: PermissionClasses;

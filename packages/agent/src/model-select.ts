@@ -147,7 +147,7 @@ export function escalateModel(
 }
 
 // Side-effect-free pre-check for escalateModel: throws the same errors
-// without consuming escalation budget. The solo lane validates with this
+// without consuming escalation budget. The lane validates with this
 // BEFORE touching the live lane, applies the model switch, and only then
 // records via escalateModel — so a refused or failed switch never burns
 // budget. (No-op from==to steps pass here; the lane rejects those

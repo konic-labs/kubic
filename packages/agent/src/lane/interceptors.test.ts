@@ -499,7 +499,7 @@ describe('policy interceptor state lifetime', () => {
   it('gives every factory call its own stand-down set', () => {
     // The same options object is reusable: the state lives in the factory
     // invocation, never in the options or in module scope. One invocation =
-    // one boot's chain (solo.ts builds its kubic.policy extension per boot).
+    // one boot's chain (boot.ts builds its kubic.policy extension per boot).
     const policy: PolicyInterceptorOptions = { workspace: '/work' };
     expect(policyInterceptorHooks(policy)[0]).not.toBe(
       policyInterceptorHooks(policy)[0],

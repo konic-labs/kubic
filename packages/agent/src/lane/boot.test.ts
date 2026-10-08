@@ -1,11 +1,11 @@
-// Solo root-lane boot on the pi-durable 1.0 harness. The lane opens `Harness`
+// Root-lane boot on the pi-durable 1.0 harness. The lane opens `Harness`
 // over the session handle's `Storage` and runs the session's ROOT conversation;
 // the Kubic extension (tools + prompt section) lives in a per-process registry
 // that is never stored.
 //
 // The other halves of land in parallel: owns `SessionHandle`,
 // `kubicToolsToPiTools` `policyInterceptorHooks`
-// `soloCompactionSettings`. Until they merge, this file mocks those three
+// `compactionSettings`. Until they merge, this file mocks those three
 // runtime seams (types are erased) and builds pi-durable objects directly,
 // exactly as the module contract prescribes.
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -132,7 +132,7 @@ vi.mock('./tools-adapter.js', async () => {
 // Model-id splitting: the lane only boots 'provider/id' —
 // the table pins what splits and what throws PromptCacheError, so a
 // misrouted id fails at parse time, never inside a run.
-describe('splitSoloModelId', () => {
+describe('splitModelId', () => {
   it('splits provider from id on the first slash', () => {
     expect(splitModelId('prov/id')).toEqual({
       provider: 'prov',
@@ -179,7 +179,7 @@ type TestSession = {
 function handle(storage: Storage, id = 'sess-1'): TestSession {
   return {
     id,
-    dir: `/tmp/kubic-solo-test/${id}`,
+    dir: `/tmp/kubic-lane-test/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
     // The boot adopts the storage, so the handle must expose it.
@@ -265,7 +265,7 @@ async function driveOneTurn(lane: Lane, content = 'say hi'): Promise<void> {
   expect(settled.status).toBe('done');
 }
 
-describe('solo boot on the durable harness', () => {
+describe('lane boot on the durable harness', () => {
   it('opens the harness over the session storage and the root conversation', async () => {
     const session = handle(new MemoryStorage());
     const { faux, models, big } = catalog();
@@ -428,7 +428,7 @@ describe('solo boot on the durable harness', () => {
   });
 
   it('persists configure({ thinkingLevel }) across close and reopen', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kubic-solo-thinking-'));
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-lane-thinking-'));
     DIRS.push(dir);
     const env = new FakeExecutionEnv({});
     const { faux, models, big } = catalog();

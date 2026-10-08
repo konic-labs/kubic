@@ -860,7 +860,7 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
   }
 
   it('eval --task drives the live suite runner', async () => {
-    // The built-in suite's fixture runs through the solo lane with the faux
+    // The built-in suite's fixture runs through the lane with the faux
     // provider, so --task produces a scored record instead of the old
     // "live suite execution is not available" refusal.
     vi.stubEnv('KUBIC_PROVIDER', 'faux');

@@ -89,7 +89,7 @@ function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();
   return {
     id,
-    dir: `/tmp/kubic-solo-tools-line/${id}`,
+    dir: `/tmp/kubic-lane-tools-line/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
     // The boot adopts the storage, so the handle must expose it.
@@ -114,7 +114,7 @@ function toolsLine(prompt: string): string[] {
     .sort();
 }
 
-// Boots a solo lane and returns what the model is told (`tools:` line of the
+// Boots a lane and returns what the model is told (`tools:` line of the
 // committed prompt section) next to what the conversation actually offers.
 async function boot(extra: {
   policy?: Parameters<typeof bootLane>[0]['policy'];
@@ -217,7 +217,7 @@ describe('the prompt tools line is the same intersection the conversation offers
   });
 
   it('a reopened session without narrowing offers exactly the prompt tools line', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kubic-solo-tools-reopen-'));
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-lane-tools-reopen-'));
     DIRS.push(dir);
     const all = Object.keys(
       (await import('../ops/registry.js')).OPERATIONS,

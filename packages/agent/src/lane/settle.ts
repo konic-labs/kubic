@@ -83,7 +83,7 @@ export function classifyHarnessError(
   details?: JsonValue,
 ): ResultError {
   const kind = errorKindOf(code, message);
-  // Solo lane, unrecognized terminal code: the failure came from the
+  // Lane, unrecognized terminal code: the failure came from the
   // execution substrate, not from a classified domain, and the code stays in
   // the message so a diagnosis never loses it. Pinned by test.
   const text = kind === 'process' ? `${code}: ${message}` : message;

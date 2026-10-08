@@ -1,5 +1,5 @@
 // Prod `kubic replay` re-execution runner: binds the host's
-// lane-backed replay runner to the real solo lane. The model pin in the
+// lane-backed replay runner to the real lane. The model pin in the
 // request (deterministic's --model, live's recorded model) is resolved
 // against the assembled catalog first: an unregistered pin can never
 // reach the lane, so it reports provider_probe_failed (exit 6 — the same

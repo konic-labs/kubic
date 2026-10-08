@@ -1072,7 +1072,7 @@ describe('explicit skill loading hardening', () => {
     const { env, bridge } = setup();
     env.fs.writeFile(
       '/custom/standalone.md',
-      skillMd('name: solo\ndescription: Direct'),
+      skillMd('name: lane\ndescription: Direct'),
     );
     const result = discoverSkills({
       bridge,
@@ -1081,7 +1081,7 @@ describe('explicit skill loading hardening', () => {
       trusted: false,
       cliSkills: ['/custom/standalone.md'],
     });
-    expect(result.skills.map((skill) => skill.name)).toEqual(['solo']);
+    expect(result.skills.map((skill) => skill.name)).toEqual(['lane']);
     expect(result.skills[0]?.source).toBe('cli');
   });
 

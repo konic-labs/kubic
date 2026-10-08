@@ -107,7 +107,7 @@ function completedResult(
 }
 
 beforeEach(() => {
-  // The solo notice is not under test here (solo-notice-prod.test.ts owns
+  // The no-isolation notice is not under test here (no-isolation-notice-prod.test.ts owns
   // it); the documented opt-out keeps it off the test runner's stderr.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });
@@ -121,7 +121,7 @@ afterEach(() => {
 describe('run guard flags', () => {
   // The value rules commander applies to --timeout/--max-turns
   // (apps/kubic/src/commands/session.ts wires them; a refusal exits 2 there —
-  // pinned in solo.test.ts). A missing value is commander's own error.
+  // pinned in boot.test.ts). A missing value is commander's own error.
   it.each(['abc', '0', '-5', '1.5'])('refuses --timeout %s', (value) => {
     expect(() => parseRunTimeout(value)).toThrow(/need a positive integer/);
   });

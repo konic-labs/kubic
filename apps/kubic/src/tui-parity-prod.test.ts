@@ -1,4 +1,4 @@
-// Prod path: `kubic tui` boots "the same solo lane" as
+// Prod path: `kubic tui` boots "the same lane" as
 // `kubic run` — so the interactive surface must carry the same context the
 // headless one does: skills discovery, `--role` documents, journal
 // retention, and the runtime exclude rules. And its deferred-settlement
@@ -66,7 +66,7 @@ function systemTextOf(context: unknown): string {
     }
   }
   // The durable request carries the positional prompt sections beside the
-  // base system message; the assembled solo prompt (skills, role) is one of
+  // base system message; the assembled prompt (skills, role) is one of
   // them.
   for (const section of Object.values(system.sections ?? {})) {
     if (typeof section === 'string' && section !== '') parts.push(section);
@@ -189,7 +189,7 @@ describe('skills reach the TUI lane', () => {
 });
 
 describe('role documents drive the TUI lane', () => {
-  it('replaces the solo prompt and narrows the tool set on --role', async () => {
+  it('replaces the prompt and narrows the tool set on --role', async () => {
     const cwd = tmpRoot('tui-roles-cwd-');
     writeRole(
       cwd,
@@ -231,7 +231,7 @@ describe('role documents drive the TUI lane', () => {
   });
 });
 
-describe('solo-lane projections reach the TUI lane', () => {
+describe('lane projections reach the TUI lane', () => {
   // The same `runtimeLaneDeps` projection `kubic run` consumes: the TUI
   // lane must name itself and layer `--role` identically, or the shared
   // projection would have one consumer too many.

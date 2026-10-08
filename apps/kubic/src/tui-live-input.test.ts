@@ -223,7 +223,7 @@ describe('idle input repaints', () => {
     // The turn settled: the spinner is gone, so only the key can paint.
     await new Promise((resolve) => setTimeout(resolve, 150));
     let mark = fake.mark();
-    // The solo tree row starts hidden; Ctrl-T opens it.
+    // The tree row starts hidden; Ctrl-T opens it.
     fake.feed('\x14');
     await waitFor(
       () => fake.since(mark).includes('✓ bash rows'),

@@ -1,4 +1,4 @@
-// Installed solo policy: the classes and
+// Installed policy: the classes and
 // interceptor options the PRODUCTION path installs, and the composition order
 // they produce on a real lane — permission wrapper innermost (so a tool
 // outside the allowlist is refused at execute time, not merely absent from
@@ -49,7 +49,7 @@ async function bootWith(installed: InstalledPolicy) {
 }
 
 describe('installed policy defaults', () => {
-  it('installs the documented solo default classes when no config supplies any', () => {
+  it('installs the documented default classes when no config supplies any', () => {
     const installed = installPolicy({ workspace: '/fake' });
     expect(installed.classes).toEqual({ ...DEFAULT_PERMISSIONS });
     expect(installed.posture.source).toBe('default');

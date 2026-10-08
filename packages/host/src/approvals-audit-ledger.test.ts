@@ -109,7 +109,7 @@ describe('resolveRepoRuntimeRoot', () => {
   });
 });
 
-describe('solo decisions land in the repo ledger', () => {
+describe('decisions land in the repo ledger', () => {
   it('a run from <repo>/sub appends to <repo>/.kubic/…/audit.jsonl and creates nothing under sub', async () => {
     const { repo, sub } = fixtureRepo();
     const installed = installPolicy({
@@ -148,7 +148,7 @@ describe('solo decisions land in the repo ledger', () => {
   });
 });
 
-describe('solo provenance fields', () => {
+describe('provenance fields', () => {
   it('records the thinking level and the base revision the run captured at start', async () => {
     const { repo, sub } = fixtureRepo();
     const base = git(repo, ['rev-parse', 'HEAD']).trim();

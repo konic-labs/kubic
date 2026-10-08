@@ -1,5 +1,5 @@
 // Prod `kubic run -p` runner: the composition root drives the
-// real solo lane headless and derives the terminus from the lane's own
+// real lane headless and derives the terminus from the lane's own
 // settled outcome (E1). Everything durable lands under
 // <sessionsRoot>/<id>/ (E3): the transcript and usage rows in the session
 // store, file effects in <id>/journal/ via lane interception, and the
@@ -203,8 +203,8 @@ export interface HeadlessRunOptions {
   invokeSkill?: string;
   // Role selection: `--role <name>` boots the lane as
   // the role document `.kubic/roles/<name>.md` defines — its prompt text
-  // replaces the solo constant and its resolved tool set becomes the
-  // lane's allowlist. Absent means the solo default, unchanged.
+  // replaces the constant and its resolved tool set becomes the
+  // lane's allowlist. Absent means the default, unchanged.
   role?: string;
   // Debug channel: when set, the run emits its lane/tool
   // debug lines to the injected sink (stderr in prod). The span artifact is
@@ -224,7 +224,7 @@ export interface HeadlessRunOptions {
   // session. Absent means off (interactive), never assumed.
   autonomous?: boolean;
   // Live progress on an interactive terminal (heading, compact
-  // solo notice, one line per tool call). Absent: today's stderr warning
+  // no-isolation notice, one line per tool call). Absent: today's stderr warning
   // block and no progress output.
   progress?: RunProgressSink;
 }
@@ -278,9 +278,9 @@ export interface HeadlessRunDeps {
   // level, a role default, or Pi's 'off'.
   thinking?: RuntimeThinking;
   // The installed-policy seat. Absent means the shipped
-  // DEFAULT: the documented SOLO_DEFAULTS classes plus the destructive/
+  // DEFAULT: the documented DEFAULT_PERMISSIONS classes plus the destructive/
   // network/confine guards and the approval ask, all derived by
-  // installSoloPolicy. Tests inject a variant here; nothing else may skip
+  // installPolicy. Tests inject a variant here; nothing else may skip
   // the install, which is why the default is not an opt-in.
   policy?: InstalledPolicy;
   // Declared out-of-scope paths for the baseline.
@@ -434,7 +434,7 @@ function finished(
   errorMessage?: string,
   signal?: string,
   failure?: ClassifiedFailure,
-  // The retry decision when the lane made one (solo overflow
+  // The retry decision when the lane made one (overflow
   // recovery) — strategy, reason, notBefore and whether the retry
   // happened, also on success.
   retry?: RetryRecord,
@@ -1219,7 +1219,7 @@ async function runHeadlessPromptImpl(
       // write is not a run failure.
     }
   };
-  // Solo no-isolation notice: the trust model is announced on
+  // The no-isolation notice: the trust model is announced on
   // stderr before the first turn, once per process start, using the module
   // strings verbatim so `kubic tui` reads identically. Suppressed by the
   // documented KUBIC_NO_NOTICE opt-out. stderr, never stdout: `--json`
@@ -1254,7 +1254,7 @@ async function runHeadlessPromptImpl(
     // the pin can act as the selection default. All four refusals are
     // fail-closed with a named reason: an unknown role, a contradictory
     // document, a document with no instructions, and a parse failure.
-    // Nothing is invented, and an absent --role leaves the solo boot
+    // Nothing is invented, and an absent --role leaves the lane boot
     // byte-identical.
     let role: { resolved: ResolvedRole; prompt: string } | undefined;
     // The resolved role document's `skills` list for
@@ -1333,7 +1333,7 @@ async function runHeadlessPromptImpl(
       roleDocSkills = selected.doc.skills;
       capture.role = selected.resolved.name;
     } else {
-      // The stock solo run resolves no role document — the
+      // The stock run resolves no role document — the
       // [policy] line still names the default role it runs as.
       debug?.(`[policy] role=solo (default)`);
     }
@@ -1455,8 +1455,8 @@ async function runHeadlessPromptImpl(
     capture.cwd = env.cwd;
     // Installed policy: the composition root derives
     // the classes and interceptor options the lane runs on, ONCE, from the
-    // same function doctor reads (host/approvals.installSoloPolicy). Config-
-    // sourced classes replace the documented SOLO_DEFAULTS; the
+    // same function doctor reads (host/approvals.installPolicy). Config-
+    // sourced classes replace the documented DEFAULT_PERMISSIONS; the
     // destructive/network/confine guards and the approval ask are installed
     // either way, so a run with no config is not a run with no policy.
     // The workspace root is explicit — the lane cannot invent one.
@@ -1564,7 +1564,7 @@ async function runHeadlessPromptImpl(
           posture: report.posture,
           autonomous: options.autonomous === true,
           // Review (low): the resolved base was in scope
-          // (`runBase`, passed to installSoloPolicy above) while the row
+          // (`runBase`, passed to installPolicy above) while the row
           // hardcoded `unknown`.
           base: runBase,
         }),
@@ -1959,7 +1959,7 @@ async function runHeadlessPromptImpl(
       // prompting twice, while a fresh invocation is a fresh prompt.
       const requestId = `kubic-run:${randomUUID()}`;
       let outcome: TurnOutcome;
-      // The solo overflow-recovery decision, when the lane
+      // The overflow-recovery decision, when the lane
       // made one — carried into the envelope on every exit path below.
       let retryDecision: RetryDecision | undefined;
       let retryRetried = false;

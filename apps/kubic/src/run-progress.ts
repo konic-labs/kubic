@@ -1,4 +1,4 @@
-// `kubic run` on an interactive terminal: a heading, the one-line solo notice,
+// `kubic run` on an interactive terminal: a heading, the one-line no-isolation notice,
 // a spinner while the model works, one settled line per tool call, then — after
 // the answer the command prints on stdout — the receipt and the next steps.
 // Everything here goes to stderr; the run's data (the answer) stays on stdout.

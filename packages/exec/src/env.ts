@@ -1,7 +1,7 @@
 // ExecutionEnv seam.
 // Every tool runs through this seam — no tool imports node:fs/child_process
 // directly (enforced by scripts/dep-lint.mjs: only packages/exec may).
-// Solo has no isolation: confinement here is a cwd guardrail against
+// Kubic has no isolation: confinement here is a cwd guardrail against
 // accidental escapes, not a sandbox boundary.
 //
 // FileSystem + Shell interfaces, provenance on every result,
@@ -212,7 +212,7 @@ export interface ExecutionEnv {
 function confine(cwd: string, path: string): string {
   // Lexical guardrail only: resolve() defeats `..` and absolute escapes but
   // does NOT resolve symlinks — a symlink inside the cwd can still point
-  // out. Acceptable: solo has no isolation, this is an accidental-
+  // out. Acceptable: Kubic has no isolation, this is an accidental-
   // escape guard, not a sandbox boundary.
   const abs = resolve(cwd, path);
   if (abs === cwd || abs.startsWith(cwd + sep)) return abs;

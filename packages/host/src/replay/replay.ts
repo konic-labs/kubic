@@ -120,7 +120,7 @@ export interface ReplayRuntimeDeps {
   // gates the project models.json of the assembled catalog. Absent falls
   // back to the env opt-in inside assembleModels.
   trustProject?: (path: string) => boolean;
-  // The shared solo-lane projections `kubic run` threads
+  // The shared lane projections `kubic run` threads
   // — the configured agent id, the config-sourced role layers the pinned
   // role merges under its document, and the declared out-of-scope paths.
   // Absent means the documented run defaults ('root', no layers, the

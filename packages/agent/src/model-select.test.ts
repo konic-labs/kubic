@@ -81,7 +81,7 @@ describe('model selection + escalation + thinking', () => {
 
   // The thinking.json sidecar (save/loadThinkingLevel) is
   // deleted — the level persists as durable agent state through
-  // `configure()` + `pi.agent` (solo.test.ts pins it across
+  // `configure()` + `pi.agent` (boot.test.ts pins it across
   // close and reopen), so attach restores it from the storage and no
   // sidecar read exists to test here.
   it('thinking clamps to model support', () => {

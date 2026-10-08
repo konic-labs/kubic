@@ -1,6 +1,6 @@
 // Prod suite runner for `kubic eval --task` / `kubic benchmark`. Each built-in
 // suite carries a FIXTURE (prompt, starting files, gate commands); this runner
-// materializes it, drives the real solo lane through runHeadlessPrompt, and
+// materializes it, drives the real lane through runHeadlessPrompt, and
 // scores the trajectory the run wrote with the eval package's own signal
 // derivation — the same computeSignals/gatesPass the reference verifier reads,
 // never a re-guess.

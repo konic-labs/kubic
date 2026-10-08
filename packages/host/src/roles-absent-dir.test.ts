@@ -7,7 +7,7 @@
 // translates `RoleParseError`; a
 // filesystem error escapes it, and the probe's catch-all renders any thrown
 // error as a policy mismatch. Two distinct conditions must stay distinct:
-//   - absent directory      → nothing to report (the solo default is intact)
+// - absent directory → nothing to report (the default is intact)
 //   - unreadable/corrupt    → a real failure the operator must see
 // These tests pin the distinction, so the probe cannot just swallow errors.
 

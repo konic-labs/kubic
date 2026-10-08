@@ -52,7 +52,7 @@ function tmpRoot(): string {
   return root;
 }
 
-// The solo no-isolation notice is pinned by solo-notice-prod.test.ts; here it
+// The no-isolation notice is pinned by no-isolation-notice-prod.test.ts; here it
 // is only stderr noise, silenced through its documented opt-out.
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');

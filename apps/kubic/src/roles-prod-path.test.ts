@@ -1,4 +1,4 @@
-// Roles on the live solo path. Every test below fails until the composition
+// Roles on the live path. Every test below fails until the composition
 // root loads the documents through the resolver, refuses a contradictory role
 // by name, and applies the resolved tool set + prompt on a live `--role` path.
 //
@@ -61,7 +61,7 @@ function writeRole(
   );
 }
 
-// The solo prompt the lane committed for this session (the reader): the
+// The prompt the lane committed for this session (the reader): the
 // run's own durable record of the bytes the model saw — the harness-spy
 // equivalent on the durable lane.
 async function committedPrompt(
@@ -89,7 +89,7 @@ async function committedPrompt(
   }
 }
 
-// The solo no-isolation notice is pinned by solo-notice-prod.test.ts; here it
+// The no-isolation notice is pinned by no-isolation-notice-prod.test.ts; here it
 // is only stderr noise, silenced through its documented opt-out.
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -103,7 +103,7 @@ afterEach(() => {
   }
 });
 
-describe('role documents drive a live solo lane', () => {
+describe('role documents drive a live lane', () => {
   it("editing .kubic/roles/<name>.md changes the lane's system prompt on --role", async () => {
     const cwd = tmpRoot('roles-cwd-');
     writeRole(
@@ -130,7 +130,7 @@ describe('role documents drive a live solo lane', () => {
     expect(prompt).toContain(
       'You are the planner. Decompose objectives into ordered steps.',
     );
-    // Not the hardcoded solo constant.
+    // Not the hardcoded constant.
     expect(prompt).not.toContain(
       'You are a coding agent working in a terminal.',
     );
@@ -191,7 +191,7 @@ describe('role documents drive a live solo lane', () => {
       },
     );
     // Fail closed, with the resolver's named reason — never a silent
-    // fallback to the solo prompt.
+    // fallback to the prompt.
     expect(result.terminus).toBe('failed');
     expect(result.summary).toContain("role 'liar'");
     expect(result.summary).toContain(

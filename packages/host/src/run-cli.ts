@@ -1,8 +1,8 @@
 // Headless `kubic run -p`.
-// Non-interactive equivalent of the solo run: no alt-screen, no prompt,
+// Non-interactive equivalent of the run: no alt-screen, no prompt,
 // consumable output, exact exit codes. Host owns presentation only —
 // the agent run itself is injected by the composition root (faux in tests,
-// the solo lane in prod). This module imports the worker settlement
+// the lane in prod). This module imports the worker settlement
 // kernel (pure outcome mapping) read-only — never the lane, the session
 // store, or any TUI seam. Persistence (session+journal+usage+trajectory)
 // flows through the injected persist hook identically for text and
@@ -187,7 +187,7 @@ export interface HeadlessRunResult {
   // strategy) — the precise half the terminus cannot carry. Absent on
   // termini with no failure code (`timeout`, `cancelled`, `usage`).
   failure?: ClassifiedFailure;
-  // The retry decision when the lane made one (solo overflow
+  // The retry decision when the lane made one (overflow
   // recovery) — strategy, reason and notBefore, also on success.
   retry?: RetryRecord;
   // The interrupt that ended the run, present exactly when the
@@ -268,7 +268,7 @@ export function buildRunEnvelope(
 // hands it the settled result for the receipt. Absent means today's plain
 // text everywhere (pipes, files, CI, `--json`).
 export interface RunProgressSink {
-  /** The lane booted: heading and (when `notice`) the one-line solo notice. */
+  /** The lane booted: heading and (when `notice`) the one-line no-isolation notice. */
   begin(info: { readonly model?: string; readonly notice: boolean }): void;
   toolStart(event: {
     readonly toolCallId: string;

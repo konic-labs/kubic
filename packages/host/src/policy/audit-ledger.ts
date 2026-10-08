@@ -92,12 +92,12 @@ function mainCheckoutFor(top: string, dotGit: string): string {
 }
 
 // The ledger dir for a working directory: the repo runtime root's ledger
-// (resolveRepoRuntimeRoot) — the one the solo writer and `kubic audit` share.
+// (resolveRepoRuntimeRoot) — the one the writer and `kubic audit` share.
 export function auditLedgerDirFor(cwd: string): string {
   return auditLedgerDir(resolveRepoRuntimeRoot(cwd));
 }
 
-// The base revision a solo run started from: `git rev-parse
+// The base revision a run started from: `git rev-parse
 // HEAD` in the WORKSPACE, captured ONCE at run start — `none` outside git
 // or when git cannot run. Best-effort by contract: a failed probe is never a
 // run failure, and the record then honestly says `none`. The workspace
@@ -260,7 +260,7 @@ function verdictFields(verdict: Verdict): {
       };
 }
 
-// Audit record for a solo approval decision (the in-process lane's ask).
+// Audit record for an approval decision (the in-process lane's ask).
 export interface DecisionInput {
   sessionId: string;
   toolName: string;

@@ -23,14 +23,14 @@ interface Viewport {
 }
 
 // The tree row sizes to its content up to this many rows (TUI polish: a
-// fixed 12-row block left most of the top of the screen blank in solo).
+// fixed 12-row block left most of the top of the screen blank in Kubic).
 export const TREE_MAX_ROWS = 6;
 
 export interface LayoutSlots {
   // Optional one-line header above everything else.
   header?: Component;
   tree: Component;
-  // Whether the tree row shows at all (solo hides it until
+  // Whether the tree row shows at all (the lane hides it until
   // Ctrl-T asks for it). Absent keeps it on; the width gate applies either
   // way.
   treeVisible?: () => boolean;

@@ -1,5 +1,5 @@
-// Config `[approvals]` reaches the solo lanes.
-// `kubic run` and `kubic tui` install the solo policy from the configured
+// Config `[approvals]` reaches the lanes.
+// `kubic run` and `kubic tui` install the policy from the configured
 // values. Installing the hardcoded defaults (route ask-user, maxPendingMs 60 000,
 // no autoApprove) while `kubic config` and doctor's `policy:approvals` print the
 // configured values would show two contradictory green lines.
@@ -112,7 +112,7 @@ describe('config route=deny reaches kubic run', () => {
     expect(result.summary).toContain('denied by policy route');
   });
 
-  it('KUBIC_APPROVALS_ROUTE=deny takes effect in solo', async () => {
+  it('KUBIC_APPROVALS_ROUTE=deny takes effect in the lane', async () => {
     const home = tmpRoot('home-');
     const loaded = loadCliConfig({
       home,

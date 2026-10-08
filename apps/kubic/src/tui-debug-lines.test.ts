@@ -177,7 +177,7 @@ describe('TUI boot debug lines', () => {
       debug: (line: string) => debugLines.push(line),
     });
     try {
-      // The stock boot names its session and runs as solo.
+      // The stock boot names its session and runs as the default role.
       expect(debugLines.some((line) => line.startsWith('[session] id='))).toBe(
         true,
       );

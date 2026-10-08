@@ -88,7 +88,7 @@ type TestSession = {
 function handle(storage: Storage, id = 'sess-1'): TestSession {
   return {
     id,
-    dir: `/tmp/kubic-solo-resume/${id}`,
+    dir: `/tmp/kubic-lane-resume/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
     // The boot adopts the storage, so the handle must expose it.
@@ -116,7 +116,7 @@ function catalog(providerId = 'faux') {
 // A session whose root conversation was booted once on `big` (the stored
 // model): close it, hand back a fresh storage over the same sessions dir.
 async function sessionOnBig(id = 'resume'): Promise<Storage> {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-solo-resume-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-lane-resume-'));
   DIRS.push(dir);
   const { faux, models, big } = catalog();
   faux.setResponses([fauxAssistantMessage('hi')]);

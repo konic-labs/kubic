@@ -1,5 +1,5 @@
-// Solo no-isolation startup warning.
-// Solo announces its trust model on every fresh start: in-process, the
+// The no-isolation startup warning.
+// Kubic announces its trust model on every fresh start: in-process, the
 // user's own authority over files/network/credentials, no isolation, no
 // containment, no prompt-injection prevention. Controls are approvals
 // (ask-user by default) plus the change journal (review `kubic diff`,

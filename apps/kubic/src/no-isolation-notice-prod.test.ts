@@ -1,4 +1,4 @@
-// Solo no-isolation notice on the real surfaces.
+// The no-isolation notice on the real surfaces.
 // Shipped the text and the module's own tests; the emission was never
 // wired, so `kubic run` and `kubic tui` never told the operator the trust
 // model. This file proves the notice reaches the operator ON THE COMPOSITION
@@ -109,9 +109,9 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('solo no-isolation notice on `kubic run`', () => {
+describe('no-isolation notice on `kubic run`', () => {
   it('emits the warning on stderr before the first turn', async () => {
-    const root = tmpRoot('solo-notice-run-');
+    const root = tmpRoot('notice-run-');
     const faux = fauxModels(['all done']);
     const capture = captureStderr(faux.calls);
     let terminus: string;
@@ -141,7 +141,7 @@ describe('solo no-isolation notice on `kubic run`', () => {
   });
 
   it('still warns on an explicit --session resume (rule: per process start)', async () => {
-    const root = tmpRoot('solo-notice-resume-');
+    const root = tmpRoot('notice-resume-');
     // Both runs are captured: the first one announces too (fresh start), and
     // an uncaptured sink would spray the suite's own output.
     const firstCapture = captureStderr(() => 0);
@@ -180,9 +180,9 @@ describe('solo no-isolation notice on `kubic run`', () => {
   });
 });
 
-describe('solo no-isolation notice suppression', () => {
+describe('no-isolation notice suppression', () => {
   async function runOnce(label: string): Promise<CapturedWrite[]> {
-    const root = tmpRoot(`solo-notice-${label}-`);
+    const root = tmpRoot(`notice-${label}-`);
     const capture = captureStderr(() => 0);
     try {
       const result = await runHeadlessPrompt(
@@ -301,7 +301,7 @@ async function waitFor(condition: () => boolean, ticks = 500): Promise<void> {
   expect(condition()).toBe(true);
 }
 
-describe('solo no-isolation notice on `kubic tui`', () => {
+describe('no-isolation notice on `kubic tui`', () => {
   it('shows the line at startup, before any turn or input', async () => {
     const lines: string[] = [];
     const fake = fakeTerminal(200);
@@ -352,7 +352,7 @@ describe('solo no-isolation notice on `kubic tui`', () => {
   });
 
   it('prints the full notice on /safety after a turn', async () => {
-    const root = tmpRoot('solo-notice-tui-');
+    const root = tmpRoot('notice-tui-');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
     const pending = runTuiCommand(

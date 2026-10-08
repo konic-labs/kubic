@@ -223,7 +223,7 @@ describe('redaction hardening', () => {
 });
 
 // A live value is matched as a SUBSTRING by the debug/persistence redaction
-// and by the ledger refusal. A short or dummy key (`gw`, `solo`, `1`, a
+// and by the ledger refusal. A short or dummy key (`gw`, `lane`, `1`, a
 // key named like its provider) would redact every word it appears in and —
 // on the ledger — refuse the very credential-use row that names the
 // provider; below the minimum length the value is not matched at all.
@@ -257,8 +257,8 @@ describe('short live values are not substring-matched', () => {
   });
 
   it('a dummy key does not blank the words it happens to spell', () => {
-    const line = 'provider ollama solo mode gw 1';
-    expect(redactSecretValues(line, ['ollama', 'solo', 'gw', '1'])).toBe(line);
+    const line = 'provider ollama lane mode gw 1';
+    expect(redactSecretValues(line, ['ollama', 'lane', 'gw', '1'])).toBe(line);
   });
 
   it('a short value does not stop a real one in the same inventory from redacting', () => {

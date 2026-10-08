@@ -1,4 +1,4 @@
-// Policy interceptors on the solo lane.
+// Policy interceptors on the lane.
 // Registered as ordered pi-durable `ToolTask.beforeTool` hooks,
 // so chaining, first-block-wins, and throw-becomes-block are the harness's
 // real semantics, not ours. Every handler is fail-closed: a policy exception
@@ -592,7 +592,7 @@ function confineArgs(
 // order.
 //
 // State lifetime: the approved call ids live in THIS invocation's closure — call the factory once per
-// lane boot (solo.ts builds its `kubic.policy` extension fresh on every
+// lane boot (boot.ts builds its `kubic.policy` extension fresh on every
 // boot). Installing one returned array into two boots would share them, so
 // the factory deliberately never keeps state across calls: two invocations,
 // even with the same options object, start clean.

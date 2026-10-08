@@ -1,5 +1,5 @@
 // Request options per model/role: parsed config tuning
-// resolves to pi-durable `settings.stream`, and the solo lane hands it to
+// resolves to pi-durable `settings.stream`, and the lane hands it to
 // the harness — the faux provider sees exactly what was configured.
 import { afterEach, describe, expect, it } from 'vitest';
 import { bootFauxLane, type FauxLane } from './lane/test-harness.js';
@@ -49,7 +49,7 @@ describe('resolveStreamOptions', () => {
   });
 });
 
-describe('solo lane stream settings', () => {
+describe('lane stream settings', () => {
   it('configured timeoutMs/maxRetries reach the harness streamOptions', async () => {
     const seen: Array<Record<string, unknown> | undefined> = [];
     const lane = await bootFauxLane({

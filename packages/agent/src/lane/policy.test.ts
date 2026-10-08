@@ -1,4 +1,4 @@
-// Allowlisting on the solo lane, ported to the durable
+// Allowlisting on the lane, ported to the durable
 // harness. The class-derived allowlist is now a
 // `conversation.configure({ tools })` against the registry's registrations.
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -79,7 +79,7 @@ function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();
   return {
     id,
-    dir: `/tmp/kubic-solo-policy/${id}`,
+    dir: `/tmp/kubic-lane-policy/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
     // The boot adopts the storage, so the handle must expose it.
@@ -112,7 +112,7 @@ async function offered(lane: Lane): Promise<string[]> {
 }
 
 describe('tool policy allowlisting', () => {
-  it('allowlists all eighteen tools active under solo defaults', async () => {
+  it('allowlists all eighteen tools active under defaults', async () => {
     const lane = await booted();
     const allowed = await applyToolPolicy(
       lane.registry,

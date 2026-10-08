@@ -3,7 +3,7 @@
 // Pi 1.0 / pi-durable owns the mechanism (the threshold checkpoints, the
 // summarization request, the pi.compaction entry, the overflow retry). These
 // tests drive a REAL Harness over MemoryStorage with the faux provider, so
-// they pin what Kubic hands the harness (`soloCompactionSettings`: the clamped
+// they pin what Kubic hands the harness (`compactionSettings`: the clamped
 // live reserve, the keep-recent window, the background decision) and what
 // Kubic asks for by hand (`runManualCompaction`: the compact prompt and verbatim
 // caller focus).
@@ -192,9 +192,9 @@ function entryReason(entry: { readonly data?: unknown }): unknown {
   return (entry.data as { reason?: unknown } | undefined)?.reason;
 }
 
-// ─── soloCompactionSettings: the live clamped reserve ─────────────────────
+// ─── compactionSettings: the live clamped reserve ─────────────────────
 
-describe('soloCompactionSettings (the reserve is read live)', () => {
+describe('compactionSettings (the reserve is read live)', () => {
   it('defaults to the Kubic budget: enabled, 16384 reserve, 20000 keep-recent, background off', () => {
     const settings = compactionSettings({ currentWindow: () => 200000 });
     expect(DEFAULT_RESERVE_TOKENS).toBe(16384);
@@ -655,7 +655,7 @@ describe('effectiveKeepRecentTokens (the kept window scales with the window)', (
   });
 });
 
-describe('soloCompactionSettings (the kept window is read live)', () => {
+describe('compactionSettings (the kept window is read live)', () => {
   it('follows the current model window, like the reserve', () => {
     let window = 8192;
     const settings = compactionSettings({ currentWindow: () => window });

@@ -1,7 +1,7 @@
 // Faux-provider harness factory for Kubic tests.
-// ONE place knows how a SoloLane is booted in tests: `bootSoloLane` over a
+// ONE place knows how a Lane is booted in tests: `bootLane` over a
 // pi-durable Storage, with the faux provider and a `FakeExecutionEnv`. Tests
-// depend on the Kubic shapes this module returns (`SoloLane`, `EntryRecord`,
+// depend on the Kubic shapes this module returns (`Lane`, `EntryRecord`,
 // the parsed tool results) instead of assembling `Harness.open` + storage +
 // session handles themselves, so an upstream rename touches this file, not
 // every lane test.
@@ -245,7 +245,7 @@ export async function laneToolResults(
   return out;
 }
 
-/** The committed solo prompt (its one `kubic` section), newest entry first. */
+/** The committed prompt (its one `kubic` section), newest entry first. */
 export async function laneSystemPrompt(
   lane: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
@@ -271,7 +271,7 @@ export async function laneActiveTools(
   return agent.tools.map((tool) => tool.name);
 }
 
-/** The `tools:` line of the committed solo prompt, decoded. */
+/** The `tools:` line of the committed prompt, decoded. */
 export function promptToolsLine(prompt: string): string[] {
   const line = /^tools: (.*)$/m.exec(prompt)?.[1] ?? '';
   return line

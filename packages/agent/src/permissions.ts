@@ -1,5 +1,5 @@
 // Tool permission policy model. Layer-1 policy, not a
-// boundary: in solo mode this is the only thing shaping the tool set.
+// boundary: in-process this is the only thing shaping the tool set.
 // Classes declare intent; toolsForClasses derives the allowlist;
 // checkAgreement refuses contradictions with named reasons, never silent.
 export const FILESYSTEM_LEVELS = [
@@ -30,7 +30,7 @@ export interface PermissionClasses {
   credentials: CredentialLevel;
 }
 
-// Solo defaults; unlisted classes default to most restrictive.
+// Defaults; unlisted classes default to most restrictive.
 export const DEFAULT_PERMISSIONS: PermissionClasses = {
   filesystem: 'workspace-write',
   shell: true,
@@ -240,8 +240,8 @@ export function validateClasses(input: unknown): PermissionClasses {
     throw new PolicyValidationError('permission classes must be an object');
   }
   const record = input as Record<string, unknown>;
-  // Partial input merges over SOLO_DEFAULTS (unlisted classes take
-  // the solo default; the restrictive tail — network none, credentials
+  // Partial input merges over DEFAULT_PERMISSIONS (unlisted classes take
+  // the default; the restrictive tail — network none, credentials
   // none — is what makes that safe).
   const pick = (
     key: string,

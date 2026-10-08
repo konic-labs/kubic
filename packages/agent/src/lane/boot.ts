@@ -1,4 +1,4 @@
-// Solo root lane: one pi-durable Harness + its root conversation, in-process
+// Root lane: one pi-durable Harness + its root conversation, in-process
 // (ported to the Pi 1.0 durable harness).
 // Zero IPC on the path — the harness, the conversation, and the Kubic tools
 // all live in this process. Kubic adds no loop: a turn is
@@ -68,13 +68,13 @@ import {
 
 const LANE_NAME = 'main';
 
-// The stable key of the one prompt section the solo extension installs.
+// The stable key of the one prompt section the extension installs.
 // pi-durable stores sections as positional `pi.system` entries keyed by
 // name, so a resumed session replays the same section instead of
 // appending a second one.
 export const PROMPT_SECTION = 'kubic';
 
-// Stable role seed for the assembled solo prompt. The
+// Stable role seed for the assembled prompt. The
 // sentences match the pre ad-hoc prompt; the wiring delta is that
 // boot now appends the byte-stable `cwd:` / `tools:` / `meta:` lines
 // from prompts.ts instead of the `Working directory:` sentence.
@@ -90,7 +90,7 @@ export interface PromptInput {
   metadata: Record<string, string>;
   extraSections?: string[];
   // Role text override: the role document's `## Prompt`
-  // body replaces the SOLO_ROLE constant. Absent means the constant, so
+  // body replaces the DEFAULT_ROLE constant. Absent means the constant, so
   // every pre-existing caller assembles identical bytes.
   role?: string;
 }
@@ -117,8 +117,6 @@ function defaultModelId(model: { provider: string; id: string }): string {
   return `${model.provider}/${model.id}`;
 }
 
-// NOTE: defaultSoloPrompt lived here — deleted, it had no
-// callers (the run paths always assemble an explicit prompt).
 interface LanePolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
@@ -151,7 +149,7 @@ interface LanePolicyOptions {
 }
 
 // Harness compaction budget overrides. keepRecentTokens defaults inside
-// compaction.ts (the soloCompactionSettings), so Kubic keeps ONE home for
+// compaction.ts (the compactionSettings), so Kubic keeps ONE home for
 // the 20000 figure.
 export interface LaneCompactionOptions {
   enabled?: boolean;
@@ -191,7 +189,7 @@ export interface LaneBootOptions {
   context?: Context;
   policy?: LanePolicyOptions;
   // Model affinity pin: when set, boot pins the
-  // boot model for the task; escalateSoloModel is the only path off it.
+  // boot model for the task; escalateLaneModel is the only path off it.
   taskId?: string;
   // Harness compaction budget: reserve defaults to Kubic's
   // DEFAULT_RESERVE_TOKENS so the harness automatic path fires on the
@@ -219,7 +217,7 @@ export interface LaneBootOptions {
   // path inside one — the env serves those reads and the confine guard
   // leaves them un-rerooted; every other tool and path stays confined.
   skillReadRoots?: readonly string[];
-  // Role prompt: replaces the hardcoded SOLO_ROLE seed
+  // Role prompt: replaces the hardcoded DEFAULT_ROLE seed
   // with the role document's own `## Prompt` text. The assembled
   // cwd/tools/meta lines are unchanged — the role supplies the instruction
   // half only, so the prompt-cache prefix rules still hold.
@@ -268,7 +266,7 @@ export interface LaneBootOptions {
   onThinkingNotice?: (line: string) => void;
   // Harness-wide run policy (retry, stream, toolExecution, steering/follow
   // up). Compaction is NOT passable: it is built from `compaction` through
-  // soloCompactionSettings so the Kubic clamp cannot be bypassed. Extension
+  // compactionSettings so the Kubic clamp cannot be bypassed. Extension
   // selection is NOT passable either: the lane owns the four Kubic
   // extensions, and a caller-supplied selection could uninstall the tools,
   // the prompt and every policy hook silently.
@@ -329,7 +327,7 @@ export function splitModelId(id: string): {
   const slash = id.indexOf('/');
   if (slash <= 0 || slash === id.length - 1) {
     throw new PromptCacheError(
-      `solo model id must be 'provider/id' (got ${JSON.stringify(id)})`,
+      `model id must be 'provider/id' (got ${JSON.stringify(id)})`,
     );
   }
   return { provider: id.slice(0, slash), modelId: id.slice(slash + 1) };
@@ -368,7 +366,7 @@ export async function escalateLaneModel(
   }
   const parsed = splitModelId(to);
   validateEscalation(ladder, from, to);
-  // The reserve follows the live model through soloCompactionSettings'
+  // The reserve follows the live model through compactionSettings'
   // `currentWindow` getter (which reads affinity first), so no explicit
   // re-clamp is needed.
   await lane.conversation.configure({ model: parsed }, context);
@@ -453,7 +451,7 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
 
   // Compaction: reserveTokens is a live getter over the window of the
   // conversation's CURRENT model. It reads the attached `pi.agent` document
-  // first, so EVERY model switch — `escalateSoloModel`, the TUI/headless
+  // first, so EVERY model switch — `escalateLaneModel`, the TUI/headless
   // `configure({ model })`, a boot — re-clamps on the next use, with no
   // explicit re-clamp step. Affinity and the boot model are fallbacks for
   // the window between this boot and its first configure.
@@ -610,7 +608,7 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
         model: effectiveId,
       },
       // Role prompt: the document's own text replaces
-      // the solo constant; absent, the constant stands.
+      // the constant; absent, the constant stands.
       ...(options.rolePrompt === undefined ? {} : { role: options.rolePrompt }),
       // Context blocks appended as suffix sections: the
       // role/cwd/tools/meta prefix stays byte-stable for the prompt

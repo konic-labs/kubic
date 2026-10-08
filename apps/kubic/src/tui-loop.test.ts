@@ -1,4 +1,4 @@
-// `kubic tui` prompt loop over the solo lane.
+// `kubic tui` prompt loop over the lane.
 // Before runTuiCommand booted a viewer shell — no prompt accept, no
 // drive, no lane events into the views, and Ctrl-C exited unconditionally.
 //
@@ -99,7 +99,7 @@ function fauxModels(steps: FauxStep[]): {
   return { models, setResponses, calls: () => faux.state.callCount };
 }
 
-// A real solo boot against a temp sessions root with the faux provider —
+// A real lane boot against a temp sessions root with the faux provider —
 // the prod boot shape (bootTuiLane) with the sessions root and models
 // injected, exactly like headless-run.ts accepts its deps.
 function fauxLaneBoot(
@@ -243,7 +243,7 @@ describe('kubic tui prompt loop', () => {
     for (const ch of 'run it') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('tool turn done'));
-    // The solo tree row opens on Ctrl-T; `/session` reports the
+    // The tree row opens on Ctrl-T; `/session` reports the
     // usage rows the status bar holds.
     fake.feed('\x14');
     for (const ch of '/session') fake.feed(ch);
@@ -1714,7 +1714,7 @@ describe('the header facts on the live loop', () => {
   });
 });
 
-// Every settled solo turn ends with its receipt — the
+// Every settled turn ends with its receipt — the
 // whole production wire: the turn's tool call, the journal row its write
 // recorded, and the receipt the settlement appends.
 describe('the turn receipt on the live loop', () => {

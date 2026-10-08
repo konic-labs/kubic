@@ -207,7 +207,7 @@ describe('walk ignore rules on the node seam', () => {
   });
 
   it('keeps symlink-loop protection when the env is wrapped with skill read roots', async () => {
-    // bootSoloLane applies withReadRoots whenever a skill lives outside the
+    // bootLane applies withReadRoots whenever a skill lives outside the
     // workspace (every user with global skills). The wrapper once built an fs
     // WITHOUT lstat, so the walk fell back to stat() and followed `loop`.
     const root = tmp('walk-roots-ws-');

@@ -3,7 +3,7 @@
 // Pi owns the mechanism: the threshold and overflow checks, the summarization
 // request, the `pi.compaction` entry, output bounds and spill files. Kubic
 // owns the policy numbers Pi reads and the compact prompt:
-// - `soloCompactionSettings` builds the `HarnessSettings.compaction` Kubic
+// - `compactionSettings` builds the `HarnessSettings.compaction` Kubic
 //   hands the harness. HarnessSettings are read at every use and never copied,
 //   so `reserveTokens` and `keepRecentTokens` are LIVE getters over the current
 //   model's window: a `configure({ model })` switch re-clamps both with no
@@ -81,7 +81,7 @@ export function effectiveKeepRecentTokens(
   );
 }
 
-// The system entry of Kubic's default boot, in pi-ai's estimate: the solo
+// The system entry of Kubic's default boot, in pi-ai's estimate: the
 // prompt section plus the 18 default tool declarations (about 2800 tokens).
 // The room estimate below and `kubic doctor` use it; a test pins it to the
 // real boot, so a prompt or tool-set change moves the figure with it.
@@ -152,7 +152,7 @@ export function createManualKeepScope(): ManualKeepScope {
 // default (32768) also starts a background compaction that far BELOW the
 // blocking threshold, i.e. a speculative summary model call before the
 // reserved room is needed. Kubic pins it off so the reserved room is the only
-// trigger — the behaviour the solo lane had before the Pi 1.0 migration — and
+// trigger — the behaviour the lane had before the Pi 1.0 migration — and
 // so a session that ends early never pays for a summary nobody needed. A
 // caller that wants the head start can still pass an explicit value.
 export const BACKGROUND_TOKENS = 0;
@@ -171,7 +171,7 @@ export interface CompactionSettingsOptions {
 /**
  * The `settings.compaction` Kubic hands the harness.
  *
- * HarnessSettings are harness-wide and read at every use, so the solo process
+ * HarnessSettings are harness-wide and read at every use, so the process
  * (one active conversation) satisfies the live getters with that
  * conversation's current model window. `reserveTokens` and `keepRecentTokens`
  * are getters for exactly that reason: the harness reads them at each
@@ -238,9 +238,9 @@ export function buildCompactPrompt(input: CompactPromptInput): string {
 }
 
 /**
- * The half of the `SoloLane` compaction needs: the structural twin of
- * `Pick<SoloLane, 'harness' | 'conversation'>`. Naming `SoloLane` here would
- * make compaction.ts import lane/solo.ts while solo.ts imports this module.
+ * The half of the `Lane` compaction needs: the structural twin of
+ * `Pick<Lane, 'harness' | 'conversation'>`. Naming `Lane` here would
+ * make compaction.ts import lane/boot.ts while boot.ts imports this module.
  */
 export interface CompactionLane {
   readonly harness: Harness;

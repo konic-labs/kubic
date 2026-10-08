@@ -163,7 +163,7 @@ export interface ProdRunnerIo {
 
 export type ProdRunners = DispatchRunners;
 
-// The presentation seams of one solo-command invocation, derived once from
+// The presentation seams of one command invocation, derived once from
 // the real streams: colour for stdout data (none off a TTY, under NO_COLOR,
 // or for --json), the stderr diagnostics logger (debug lines under
 // KUBIC_DEBUG=1), kit tables and prompts only on an interactive
@@ -248,7 +248,7 @@ function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
 }
 
 // The lane deps `kubic run` boots the headless runner with: every config
-// projection the solo lane consumes, from the ONE config load. Exported so
+// projection the lane consumes, from the ONE config load. Exported so
 // the wiring is tested through the same builder the runner calls — a test
 // that hand-spreads these keys stays green when the production spread is
 // dropped (the defect class of).
@@ -311,7 +311,7 @@ export function prodTuiDeps(
     // `error:` lines (unknown session, no models) are diagnostics.
     err: io.debug,
     // Same policy install as `kubic run`: the TUI
-    // drives the same solo lane, so a config that names classes must reach
+    // drives the same lane, so a config that names classes must reach
     // it here too.
     ...installedPolicyClasses(cliConfig),
     policySource: installedPolicyDeps(cliConfig).source,
@@ -916,7 +916,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // library-owned (packages/eval/src/cli.ts, read-only); the root only
       // supplies prod deps. Worktree cleanliness is a real git probe
       // (packages/exec); the suite runner is the live one — each built-in
-      // suite's fixture runs through the solo lane and is scored from the
+      // suite's fixture runs through the lane and is scored from the
       // trajectory it writes.
       runEvalCommand(options, {
         runSuite: createProdRunSuite(options, cliConfig),
@@ -936,7 +936,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       }),
     replay: (options, cliConfig) => {
       const enterprisePolicy = runtimePolicy(cliConfig);
-      // The live re-execution tiers boot the real solo lane,
+      // The live re-execution tiers boot the real lane,
       // so they compact under the configured policy like `kubic run`.
       const compaction = runtimeCompactionDeps(cliConfig);
       // The same prompt augmentation on the re-executed tiers.
@@ -946,7 +946,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       if ('error' in resolved) return usageError(resolved.error);
       // Replay at a declared tier: recorded/compare are
       // log-only; deterministic/live re-execute the recorded objective
-      // through the real solo lane at the declared model pin.
+      // through the real lane at the declared model pin.
       // The runtime object is built
       // against the named type, so a dropped or mistyped projection fails
       // compile — the spreads below are checked, not carried unchecked.

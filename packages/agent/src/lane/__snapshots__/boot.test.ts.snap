@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`solo boot on the durable harness > assembles exactly the prompt bytes in one untagged section 1`] = `
+exports[`lane boot on the durable harness > assembles exactly the prompt bytes in one untagged section 1`] = `
 "You are a coding agent working in a terminal.
 Use the read, write, edit, grep, find, ls, and bash tools to inspect and change files.
 Keep answers short and technical.

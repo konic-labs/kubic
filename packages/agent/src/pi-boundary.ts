@@ -26,7 +26,7 @@
 
 // JUSTIFICATION:
 //   seam: @earendil-works/chord#Context, #JsonValue (types)
-//   used by: packages/agent/src/lane/{solo,session-store,tools-adapter,
+// used by: packages/agent/src/lane/{boot,session-store,tools-adapter,
 //     pending,abort,events}.ts (Context) and lane/interceptors.ts+tools
 //     (JsonValue for tool details, memos and hook state)
 //   why Pi has no alternative: chord's Context IS the cancellation/telemetry
@@ -159,11 +159,11 @@ export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
 //     ToolExecutionApi, ToolHooks, HookRegistration, HarnessSettings,
 //     CompactionPolicy, AgentEvent, EntryRecord, Storage)
 //   used by: the Kubic modules that name them in their own signatures —
-//     lane/solo.ts SoloLane (Conversation, Extension, HarnessSettings),
+// lane/boot.ts Lane (Conversation, Extension, HarnessSettings),
 //     lane/tools-adapter.ts (ToolRegistration, ToolExecutionApi),
 //     lane/interceptors.ts (ToolHooks, HookRegistration), lane/settle.ts
 //     (Submission, SettledSubmissionRecord), lane/events.ts (AgentEvent),
-//     lane/session-store.ts (Storage), lane/solo.ts compaction
+// lane/session-store.ts (Storage), lane/boot.ts compaction
 //     (CompactionPolicy), the session readers (EntryRecord)
 //   why Pi has no alternative: these are the shapes the durable harness
 //     passes across its API; Kubic aliases or structural copies would drift
@@ -200,7 +200,7 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Harness, createRegistry,
 //     defineExtension
-//   used by: packages/agent/src/lane/boot.ts (the solo lane boots with a
+// used by: packages/agent/src/lane/boot.ts (the lane boots with a
 //     per-process registry holding the Kubic extension)
 //   why Pi has no alternative: the durable harness IS the execution engine
 //     — Harness.open over a Storage owns conversations, durable
@@ -218,7 +218,7 @@ export type {
 //     #ToolTask, #GenerationTask, #CompactionTask (hook targets)
 //   used by: packages/agent/src/lane/boot.ts (ordered prompt sections) and
 //     lane/interceptors.ts (beforeTool/afterTool policy and approval);
-//     lane/solo.ts compaction (CompactionTask.beforeCompact)
+// lane/boot.ts compaction (CompactionTask.beforeCompact)
 //   why Pi has no alternative: these are the built-in tasks whose hooks are
 //     the 1.0 replacement for the removed harness before_tool/after_tool
 //     interception, and section() is how pieces of the system prompt become
@@ -353,7 +353,7 @@ export type { CompactionResult } from '@earendil-works/pi-durable';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Registry
-//   used by: packages/agent/src/lane/boot.ts (SoloLane.registry — the
+// used by: packages/agent/src/lane/boot.ts (Lane.registry — the
 //     per-process registry the boot installs the Kubic extensions into)
 //     and lane/policy.ts (resolving a name-based allowlist back to the
 //     ToolRegistration objects configure({ tools }) takes)
@@ -416,7 +416,7 @@ export {
 //   used by: packages/agent/src/lane/transcript.ts (readSessionEntries
 //     reads a session's active transcript straight from its Storage — the
 //     CLI readers attach to a session without booting a harness, and the
-//     solo lane's transcript is its reserved root conversation)
+// lane's transcript is its reserved root conversation)
 //   why Pi has no alternative: the id is reserved by pi-durable's Session
 //     (the harness creates the root conversation under it); Kubic could only
 //     guess a numeric literal, which would silently read nothing after an
@@ -445,7 +445,7 @@ export type { CacheRetention } from '@earendil-works/pi-ai';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#ConversationStreamOptions (type)
 //   used by: packages/agent/src/stream-options.ts (the per-model/ per-role
-//   tuning the solo lane hands to Harness.open as settings.stream)
+// tuning the lane hands to Harness.open as settings.stream)
 //     and packages/host/src/config/config.ts (the parsed [model]/[roles.*]
 //     tables it resolves from)
 //   why Pi has no alternative: these are the curated request options the

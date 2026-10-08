@@ -1,5 +1,5 @@
 // The headless runner feeds the `kubic run` progress sink:
-// begin once the lane booted (with the solo-notice decision), then one
+// begin once the lane booted (with the -notice decision), then one
 // toolStart/toolEnd pair per tool call — and the three-line stderr warning
 // block is replaced by the sink's compact notice. Faux provider, no network.
 import { mkdtempSync, rmSync } from 'node:fs';

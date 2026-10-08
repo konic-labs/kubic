@@ -48,9 +48,9 @@ function tmpRoot(prefix = 'kubic-run-path-'): string {
 }
 
 beforeEach(() => {
-  // The solo no-isolation notice goes straight to process.stderr (its text
-  // and gating are pinned in limits/solo-warning.test.ts and
-  // solo-notice-prod.test.ts); the documented opt-out keeps these runs quiet.
+  // The no-isolation notice goes straight to process.stderr (its text
+  // and gating are pinned in limits/no-isolation-notice.test.ts and
+  // no-isolation-notice-prod.test.ts); the documented opt-out keeps these runs quiet.
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });
 
@@ -265,7 +265,7 @@ describe('config feeds the live run path', () => {
       projectTrusted: false,
       env: {},
     });
-    // An absent [permissions] section resolves to the solo
+    // An absent [permissions] section resolves to the
     // defaults — never to the most permissive or restrictive extreme.
     expect(runtime.permissions.classes).toEqual({
       ...DEFAULT_PERMISSIONS,
@@ -298,7 +298,7 @@ describe('config feeds the live run path', () => {
   });
 });
 
-describe('solo-lane projections reach the live path', () => {
+describe('lane projections reach the live path', () => {
   const NO_SPLIT = { missing: [], checked: [], applicable: false };
 
   function namedRuntime(workspace: string, toml: string): RuntimeConfig {
@@ -357,9 +357,9 @@ describe('solo-lane projections reach the live path', () => {
     writeFileSync(join(workspace, 'note.txt'), 'v1\n');
     const runtime = namedRuntime(
       workspace,
-      '[agent]\nname = "kubic-solo"\n[approvals]\nroute = "ask-user"\n',
+      '[agent]\nname = "kubic-lane"\n[approvals]\nroute = "ask-user"\n',
     );
-    expect(runtime.config.agent?.name).toBe('kubic-solo');
+    expect(runtime.config.agent?.name).toBe('kubic-lane');
     const lane = runtimeLaneDeps({
       runtime,
       error: undefined,
@@ -367,7 +367,7 @@ describe('solo-lane projections reach the live path', () => {
       trust: NO_PROJECT_TRUST,
     });
     // The composition-root projection `kubic run` spreads into the runner.
-    expect(lane.agentId).toBe('kubic-solo');
+    expect(lane.agentId).toBe('kubic-lane');
 
     const faux = fauxProvider();
     const models = createModels();

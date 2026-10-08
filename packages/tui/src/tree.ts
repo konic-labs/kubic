@@ -334,7 +334,7 @@ export class TreeView implements Component {
 
   // `/new` and `/resume` show another session's work; the tree
   // starts empty (the label is the view's own default). The
-  // caller says whether it starts collapsed — solo hides the tree row until
+  // caller says whether it starts collapsed — the lane hides the tree row until
   // Ctrl-T opens it.
   reset(label?: string, collapsed = false): void {
     this.treeState = createTreeState(label);

@@ -117,7 +117,7 @@ const SIGNAL_EXIT: Readonly<Record<(typeof SIGNALS)[number], number>> = {
   SIGTERM: 143,
 };
 
-describe('headless run signal handling (solo lane)', () => {
+describe('headless run signal handling (lane)', () => {
   for (const signal of SIGNALS) {
     it(`${signal} mid-drive kills the detached bash child and settles a mapped result`, {
       timeout: 10_000,

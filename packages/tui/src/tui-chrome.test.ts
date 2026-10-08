@@ -256,7 +256,7 @@ describe('turn receipts and thinking time on the app', () => {
     },
   });
 
-  it('ends a solo turn with its receipt, before the next prompt', () => {
+  it('ends a turn with its receipt, before the next prompt', () => {
     const app = seed();
     app.setBusy(true);
     app.applyLaneEntries([user('u1', 1, 'first'), answer('a1', 2, 'one')]);

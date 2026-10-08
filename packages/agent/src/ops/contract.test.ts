@@ -102,7 +102,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
 };
 
 describe('operation tool contract', () => {
-  it('registers exactly the eighteen solo tools', () => {
+  it('registers exactly the eighteen tools', () => {
     expect(Object.keys(OPERATIONS).sort()).toEqual(
       Object.keys(EXPECTED).sort(),
     );

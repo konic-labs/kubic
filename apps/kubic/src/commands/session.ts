@@ -1,4 +1,4 @@
-// Solo-mode commands (the architecture, not a mode): run, tui, doctor,
+// In-process mode commands (the architecture, not a mode): run, tui, doctor,
 // models, config, sessions. Registered on the root program by
 // ../dispatch.ts; this module is the one place their commander
 // definitions live — every flag, operand and value rule below is the

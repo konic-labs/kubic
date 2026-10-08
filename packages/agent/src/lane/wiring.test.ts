@@ -1,4 +1,4 @@
-// Solo lane boot wiring on the durable harness: the registry install order (=
+// Lane boot wiring on the durable harness: the registry install order (=
 // hook order), the prompt sections (role prompt, appended context blocks), and
 // the HarnessSettings the boot hands over.
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -109,7 +109,7 @@ function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();
   return {
     id,
-    dir: `/tmp/kubic-solo-wiring/${id}`,
+    dir: `/tmp/kubic-lane-wiring/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
     // The boot adopts the storage, so the handle must expose it.
@@ -176,7 +176,7 @@ async function committedPrompt(lane: Lane): Promise<string> {
   return message?.sections?.[PROMPT_SECTION] ?? '';
 }
 
-describe('solo boot installs the extension stack in hook order', () => {
+describe('lane boot installs the extension stack in hook order', () => {
   it('policy → spans → kubic, and nothing else', async () => {
     const span = hook(ToolTask, { beforeTool: () => undefined });
     const lane = await boot({
@@ -230,8 +230,8 @@ describe('solo boot installs the extension stack in hook order', () => {
   });
 });
 
-describe('solo boot prompt sections', () => {
-  it('a role prompt replaces the SOLO_ROLE seed, prefix rules intact', async () => {
+describe('lane boot prompt sections', () => {
+  it('a role prompt replaces the DEFAULT_ROLE seed, prefix rules intact', async () => {
     const lane = await boot({ rolePrompt: 'ROLE TEXT' });
     const prompt = await committedPrompt(lane);
     expect(prompt).toBe(
@@ -267,7 +267,7 @@ describe('solo boot prompt sections', () => {
   });
 });
 
-describe('solo boot hands HarnessSettings compaction to', () => {
+describe('lane boot hands HarnessSettings compaction to', () => {
   it('passes the configured reserve and a live current-window getter', async () => {
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);

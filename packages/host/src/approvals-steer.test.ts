@@ -3,7 +3,7 @@
 // instead of the proposed one after it is judged again, and "allow all edits
 // this turn" approves the turn's edit/write asks of the same kind — never
 // another capability, never past the turn. Driven end to end on a faux lane
-// through the solo policy and the lane's own hooks.
+// through the policy and the lane's own hooks.
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

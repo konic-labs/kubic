@@ -78,7 +78,7 @@ function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();
   return {
     id,
-    dir: `/tmp/kubic-solo-escalation/${id}`,
+    dir: `/tmp/kubic-lane-escalation/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
     // The boot adopts the storage, so the handle must expose it.
@@ -122,7 +122,7 @@ function liveModelId(lane: Lane): Promise<string | undefined> {
     );
 }
 
-describe('escalateSoloModel validates before recording', () => {
+describe('escalateLaneModel validates before recording', () => {
   it('failing configure leaves ladder budget, affinity, and sink untouched', async () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();
@@ -164,7 +164,7 @@ describe('escalateSoloModel validates before recording', () => {
   });
 });
 
-describe('escalateSoloModel rejects same-model no-ops', () => {
+describe('escalateLaneModel rejects same-model no-ops', () => {
   it('from==to is refused without recording or emitting', async () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();
@@ -184,7 +184,7 @@ describe('escalateSoloModel rejects same-model no-ops', () => {
   });
 });
 
-describe('escalateSoloModel switches the live conversation', () => {
+describe('escalateLaneModel switches the live conversation', () => {
   it('fires exactly once: event recorded, model switched, second attempt refused', async () => {
     const { booted, ladder } = await bootPinned();
     const sink = vi.fn();

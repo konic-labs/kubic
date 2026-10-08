@@ -74,7 +74,7 @@ function fauxModels(steps: FauxMessage[]): {
 // The prod boot shape with the sessions root + models injected (same pattern as
 // tui-loop.test.ts). The seat arrives as bootLane's second argument — the same
 // way runTuiCommand hands the real one to the real boot — and is forwarded to
-// installSoloPolicy exactly like prod does.
+// installPolicy exactly like prod does.
 function fauxLaneBoot(
   root: string,
   models: MutableModels,

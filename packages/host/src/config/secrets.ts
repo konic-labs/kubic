@@ -269,7 +269,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // The shortest live value matched as a SUBSTRING: the debug and
 // persistence redaction and the ledger refusal all search text for the
-// resolved values, and a short or dummy key (`gw`, `solo`, `1`, a key named
+// resolved values, and a short or dummy key (`gw`, `lane`, `1`, a key named
 // like its provider) would blank every word it spells and refuse the
 // credential-use row that names the provider. Real provider keys are far
 // longer; below this length a value is not matched at all.

@@ -176,8 +176,8 @@ export interface ApprovalRequest {
   // TUI card's diff preview). Absent when it could not be computed.
   preview?: ToolDisplay;
   // The answers this ask can take beyond allow and deny — the
-  // command can be edited before it runs (a solo shell call), or the edits
-  // of the rest of the turn approved at once (a solo edit/write a role's
+  // command can be edited before it runs (a shell call), or the edits
+  // of the rest of the turn approved at once (an edit/write a role's
   // obligation raised inside the workspace).
   editable?: boolean;
   batchable?: boolean;
@@ -1852,13 +1852,13 @@ export function fullAccessInForceWarning(sessionId: string): string {
   return `session ${sessionId} runs with full access: approvals are skipped for every challenged call`;
 }
 
-// The INSTALLED solo policy. This is the
+// The INSTALLED policy. This is the
 // single derivation both the lane boot and `kubic doctor` read, so
 // agreement between what doctor prints and what the lane enforces holds by
 // construction instead of by two hand-kept copies.
 //
 // Deny-by-default doctrine, stated once here:
-//   - classes: the explicit, documented safe default is SOLO_DEFAULTS
+// - classes: the explicit, documented safe default is DEFAULT_PERMISSIONS
 //     — filesystem workspace-write, shell true, network none,
 //     git workspace, credentials none. Config-sourced classes REPLACE the
 //     default when the config layer supplies them; the restrictive tail
@@ -1870,11 +1870,11 @@ export function fullAccessInForceWarning(sessionId: string): string {
 //   - contributions: the telemetry wrapper is appended LAST, which makes it
 //     outermost — it therefore times (and records) a DENIED attempt too.
 //     The permission wrapper is composed by the lane itself, innermost, from
-//     the same classes (solo.ts withPolicyContributions) — never duplicated
+// the same classes (boot.ts withPolicyContributions) — never duplicated
 //     here.
 export interface PolicyInput {
   workspace: string;
-  /** Config-sourced classes; absent means the documented SOLO_DEFAULTS. */
+  /** Config-sourced classes; absent means the documented DEFAULT_PERMISSIONS. */
   classes?: PermissionClasses;
   /**
    * Role-sourced approval obligations: tool names
@@ -1956,8 +1956,8 @@ export interface PolicyInput {
 }
 
 // The config `[approvals]` half of the install: the one shape
-// the composition root projects from the config load and every solo entry
-// point (run, tui, replay, doctor) spreads into installSoloPolicy.
+// the composition root projects from the config load and every entry
+// point (run, tui, replay, doctor) spreads into installPolicy.
 export type ApprovalConfig = Pick<
   PolicyInput,
   | 'route'
@@ -2424,7 +2424,7 @@ export function installPolicy(input: PolicyInput): InstalledPolicy {
           call.toolName,
           call.args,
         );
-        // The answers a solo ask can take beyond allow/deny.
+        // The answers an ask can take beyond allow/deny.
         const editable =
           call.toolName === 'bash' && typeof call.args.command === 'string';
         const batchable = turnEditable(call.toolName, capability);

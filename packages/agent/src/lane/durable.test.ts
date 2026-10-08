@@ -1,6 +1,6 @@
-// The solo boot against the REAL tools and compaction (review low 4 /
+// The lane boot against the REAL tools and compaction (review low 4 /
 // coordinator item 4). Only `./interceptors.js` is mocked: 's
-// `policyInterceptorHooks` is not merged yet, so solo.ts cannot load without
+// `policyInterceptorHooks` is not merged yet, so boot.ts cannot load without
 // the mock; the tool adapter, the compaction policy and the harness are real.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
@@ -26,7 +26,7 @@ vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
 }));
 
-// The REAL soloCompactionSettings, captured so the test can read the live
+// The REAL compactionSettings, captured so the test can read the live
 // reserve getter exactly as the harness does.
 const compaction = vi.hoisted(() => ({
   captured: [] as Array<{
@@ -73,7 +73,7 @@ function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();
   return {
     id,
-    dir: `/tmp/kubic-solo-durable/${id}`,
+    dir: `/tmp/kubic-lane-durable/${id}`,
     storage,
     meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
     // The boot adopts the storage, so the handle must expose it.

@@ -1,4 +1,4 @@
-// The solo command group's commander surface (run, tui, doctor, models,
+// The command group's commander surface (run, tui, doctor, models,
 // config, sessions): every flag parses into the typed options the runner
 // receives, `--help` is commander's generated help (exit 0), and every
 // usage error — unknown flag, missing value, a value the command's rules
@@ -111,7 +111,7 @@ const GROUP: readonly (readonly string[])[] = [
   ['sessions', 'prune'],
 ];
 
-describe('solo commands: generated help', () => {
+describe('commands: generated help', () => {
   for (const path of GROUP) {
     it(`kubic ${path.join(' ')} --help prints its usage, exit 0`, async () => {
       for (const flag of ['--help', '-h']) {
@@ -158,7 +158,7 @@ describe('solo commands: generated help', () => {
   });
 });
 
-describe('solo commands: unknown flags exit 2', () => {
+describe('commands: unknown flags exit 2', () => {
   for (const path of GROUP.filter((entry) => entry.join(' ') !== 'sessions')) {
     it(`kubic ${path.join(' ')} --bogus`, async () => {
       const argv = path[1] === 'attach' ? [...path, 'id1'] : [...path];

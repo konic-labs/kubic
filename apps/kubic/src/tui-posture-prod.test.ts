@@ -1,5 +1,5 @@
 // The TUI mode indicator on the real boot:
-// the posture installSoloPolicy installed is the single source of truth, so
+// the posture installPolicy installed is the single source of truth, so
 // a full-access session can never render 'approvals on' (the header's
 // posture).
 //

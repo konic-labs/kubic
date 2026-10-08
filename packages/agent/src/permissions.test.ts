@@ -12,7 +12,7 @@ import {
 } from './permissions.js';
 
 describe('permission policy model', () => {
-  it('loads solo defaults matching', () => {
+  it('loads defaults matching', () => {
     expect(DEFAULT_PERMISSIONS).toEqual({
       filesystem: 'workspace-write',
       shell: true,
@@ -22,7 +22,7 @@ describe('permission policy model', () => {
     });
   });
 
-  it('derives the solo tool allowlist from defaults', () => {
+  it('derives the tool allowlist from defaults', () => {
     expect(toolsForClasses(DEFAULT_PERMISSIONS).sort()).toEqual(
       [
         'bash',
@@ -110,7 +110,7 @@ describe('permission policy model', () => {
     ).toBe(true);
   });
 
-  it('merges partial input over solo defaults', () => {
+  it('merges partial input over defaults', () => {
     expect(validateClasses({})).toEqual(DEFAULT_PERMISSIONS);
     expect(validateClasses({ filesystem: 'read' }).shell).toBe(true);
   });
@@ -312,7 +312,7 @@ describe('inexpressible levels are reported, never silent', () => {
     ]);
   });
 
-  it('reports nothing for the expressible solo defaults', () => {
+  it('reports nothing for the expressible defaults', () => {
     expect(checkExpressible(DEFAULT_PERMISSIONS)).toEqual([]);
     expect(
       checkExpressible(

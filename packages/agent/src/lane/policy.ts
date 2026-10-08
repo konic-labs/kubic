@@ -1,4 +1,4 @@
-// Tool policy enforcement on the solo lane.
+// Tool policy enforcement on the lane.
 // Layer-1 shaping: allowlist the conversation to the class-derived set and
 // refuse contradictory configurations with named reasons, never silent.
 //
@@ -52,14 +52,14 @@ export async function applyToolPolicy(
 ): Promise<string[]> {
   // validateClasses runs here (not just at the config edge) so unvalidated
   // objects reaching the lane are still rejected with named reasons, and
-  // partial inputs merge over SOLO_DEFAULTS.
+  // partial inputs merge over DEFAULT_PERMISSIONS.
   const valid = validateClasses({ ...classes });
   const registered = registry
     .snapshot()
     .tools()
     .map(({ tool }) => tool.name);
   // Agreement is a role-time check: a declared tool set must not
-  // contradict the classes. The solo lane always registers the full set
+  // contradict the classes. The lane always registers the full set
   // and narrows via configure(), so here we enforce the grantable half —
   // classes must never demand a tool that is not registered.
   const grantable = checkGrantable(valid, registered);

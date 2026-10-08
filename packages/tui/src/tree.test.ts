@@ -1,5 +1,5 @@
 // TreeView one-node + ToolOutput collapsing.
-// Solo-only: head row + tool children, glyphs ✓/●/◌, keyboard+click toggle,
+// In-process only: head row + tool children, glyphs ✓/●/◌, keyboard+click toggle,
 // truncation. Headless snapshots render directly (no VirtualTerminal in
 // Pi 0.85.1) like layout.test.ts.
 import { describe, expect, it } from 'vitest';

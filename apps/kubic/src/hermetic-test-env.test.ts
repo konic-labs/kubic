@@ -1,4 +1,4 @@
-// Hermetic unit-test environment. The solo prod path reads
+// Hermetic unit-test environment. The prod path reads
 // the account's skill roots (~/.agents/skills, ~/.pi/agent/skills) through
 // homedir() and the project trust opt-in through KUBIC_TRUST_PROJECT, so
 // before every system-prompt assertion depended on the developer's
@@ -36,7 +36,7 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
-// The solo prompt the lane committed for this session (the reader).
+// The prompt the lane committed for this session (the reader).
 async function committedPrompt(
   root: string,
   sessionId: string,
@@ -110,7 +110,7 @@ describe('hermetic unit-test environment', () => {
   // os.homedir() reads), so the developer's real skills would leak into the
   // prompt and this would test the runner, not Kubic.
   it.skipIf(!homedirIsolated)(
-    "keeps a developer's installed skills and trust opt-in out of the solo prompt",
+    "keeps a developer's installed skills and trust opt-in out of the prompt",
     async () => {
       // A developer machine: skills in both account roots, trust exported.
       const devHome = tmpRoot('dev-home-');

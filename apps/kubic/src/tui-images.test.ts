@@ -364,10 +364,10 @@ describe('kubic tui /image', () => {
     fake.feed('\r');
     await waitFor(() => fake.writes.join('').includes('image attached'));
 
-    for (const ch of 'solo it') fake.feed(ch);
+    for (const ch of 'lane it') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() => admitted.length === 1);
-    expect(admitted).toEqual([{ prompt: 'solo it', images: 1 }]);
+    expect(admitted).toEqual([{ prompt: 'lane it', images: 1 }]);
 
     // The turn is still running and the echo still shows the image; a blank
     // Enter must not queue a second, imageless prompt.

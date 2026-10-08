@@ -1,6 +1,6 @@
 // Approval interception through pi-durable ToolTask hooks. The approvals here
 // are driven end to end: a REAL Harness over Storage with the faux provider,
-// the production installed policy (`installSoloPolicy`), and `policyInterceptorHooks` as
+// the production installed policy (`installPolicy`), and `policyInterceptorHooks` as
 // the lane's policy extension.
 //
 // The durable contract under test: `beforeTool` runs BEFORE the harness

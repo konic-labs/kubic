@@ -149,7 +149,7 @@ describe('bounded read windowing', () => {
       'simple.txt': 'alpha\nbeta\ngamma\n',
       'no-trailing.txt': 'one\ntwo\nthree',
       'blank-lines.txt': 'a\n\nb\n\n',
-      'single.txt': 'solo',
+      'single.txt': 'lane',
       'empty.txt': '',
       'unicode.txt': 'héllo\nwörld\n',
       // Multi-byte codepoint straddling the chunk boundary.

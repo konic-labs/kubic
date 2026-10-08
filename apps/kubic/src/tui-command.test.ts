@@ -1,4 +1,4 @@
-// `kubic tui` wiring over the solo lane.
+// `kubic tui` wiring over the lane.
 //
 // Headless snapshots through the real TuiAltScreen + a fake Terminal
 // (same pattern as screen.test.ts): alt-screen open/restore asserted on

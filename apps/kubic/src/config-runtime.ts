@@ -485,7 +485,7 @@ function relabelRefusal(
   );
 }
 
-// The named refusal both solo entry points share: one text, so
+// The named refusal both entry points share: one text, so
 // the headless terminus and the TUI's exit-6 report cannot drift apart.
 function modelPolicyRefusal(provider: string, id: string): string {
   return `model '${provider}/${id}' refused by enterprise policy (allowed_models/allowed_providers): no provider call was made`;
@@ -656,11 +656,11 @@ export function selectModelUnderPolicy(
   return picked;
 }
 
-// The config `[approvals]` policy as the solo install consumes it: route,
+// The config `[approvals]` policy as the install consumes it: route,
 // maxPendingMs, autoApprove, requireJustification and sessionScoped, projected
-// ONCE here and spread into installSoloPolicy by `kubic run`, `kubic tui`,
+// ONCE here and spread into installPolicy by `kubic run`, `kubic tui`,
 // replay and doctor's installed-policy line — so what doctor prints and what
-// every solo lane enforces are one derivation. A refused config contributes
+// every lane enforces are one derivation. A refused config contributes
 // nothing (the command fails closed first); absent means the documented
 // defaults.
 export function runtimeApprovalDeps(result: CliConfigResult): ApprovalConfig {
@@ -735,7 +735,7 @@ export function runtimeRunDeps(result: CliConfigResult): {
   };
 }
 
-// The shared solo-lane projections: the agent id the lane and
+// The shared lane projections: the agent id the lane and
 // its journal attribution carry, and the config-sourced role layers the
 // `--role` resolution merges under the role document. ONE projection with
 // two one-line consumers — `kubic run` (headless-run.ts) and `kubic tui`
@@ -903,7 +903,7 @@ export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
 // hand the lane a malformed value. Undefined when nothing is tuned — the
 // run sites then omit `settings.stream` and the provider defaults stand.
 // The run sites resolve the tables against the run's role with
-// `resolveStreamOptions`, so each lane (solo or worker) carries its own
+// `resolveStreamOptions`, so each lane (or worker) carries its own
 // role's tuning on its own harness.
 export function runtimeStreamTuning(
   result: CliConfigResult,
@@ -1002,7 +1002,7 @@ export function runtimeCompactionDeps(
 //
 // `source` is the honesty switch, taken from the config layer's own record
 // (runtime.permissions.source) rather than from the shape of the object: a
-// config-less install yields SOLO_DEFAULTS through validateClasses, so
+// config-less install yields DEFAULT_PERMISSIONS through validateClasses, so
 // "classes are present" does NOT mean "the operator configured them". Only a
 // real layer (file/env/cli) makes it 'config'.
 export function installedPolicyDeps(result: CliConfigResult): {
@@ -1022,8 +1022,8 @@ export function installedPolicyDeps(result: CliConfigResult): {
 }
 
 // The projection `doctor` and the `tui` path read, over the SAME config load
-// `kubic run` uses. Absent config → absent classes → installSoloPolicy's
-// documented SOLO_DEFAULTS, which is exactly what a config-less run installs,
+// `kubic run` uses. Absent config → absent classes → installPolicy's
+// documented DEFAULT_PERMISSIONS, which is exactly what a config-less run installs,
 // so doctor's line and the lane's posture are the same object.
 export function installedPolicyClasses(result: CliConfigResult): {
   classes?: PermissionClasses;

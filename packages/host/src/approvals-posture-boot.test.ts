@@ -1,4 +1,4 @@
-// The full-access posture is resolved ONCE, at session boot. installSoloPolicy
+// The full-access posture is resolved ONCE, at session boot. installPolicy
 // must not re-read <session>/posture.json on every ask: one model-issued bash
 // redirect (`echo '{"fullAccess":true}' > …/posture.json`) would otherwise switch
 // approvals off for the rest of the session, and the ledger would record it as

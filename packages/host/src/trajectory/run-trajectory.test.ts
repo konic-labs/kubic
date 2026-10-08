@@ -1,7 +1,7 @@
 // Run → trajectory assembly. Pure: session entries, journal
 // changes, ledger records and the settled outcome in; a TrajectoryExport
 // that parseTrajectoryExport accepts out. Entry shapes are the ones the
-// real solo lane stores (assistant toolCall parts, toolResult messages,
+// real lane stores (assistant toolCall parts, toolResult messages,
 // per-request usage on assistant messages).
 import { describe, expect, it } from 'vitest';
 import { readConversationEntries } from '../../../agent/src/lane/transcript.js';

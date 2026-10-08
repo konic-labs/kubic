@@ -212,7 +212,7 @@ describe('kubic tui rejects a bad theme at boot', () => {
     const themePath = join(root, 'solarized.json');
     writeFileSync(themePath, VALID_THEME);
     const fake = recordingTerminal();
-    const faux = fauxProvider({ models: [{ id: 'solo', input: ['text'] }] });
+    const faux = fauxProvider({ models: [{ id: 'lane', input: ['text'] }] });
     const registry = createModels();
     registry.setProvider(faux.provider);
     const exit = runTuiCommand(
@@ -229,7 +229,7 @@ describe('kubic tui rejects a bad theme at boot', () => {
             sessionsRoot: root,
             models: registry,
             env: new FakeExecutionEnv({}),
-            model: { provider: 'faux', id: 'solo' },
+            model: { provider: 'faux', id: 'lane' },
           }),
       },
     );
@@ -256,7 +256,7 @@ describe('/theme in the TUI', () => {
   }, async () => {
     const root = tmpRoot();
     const fake = recordingTerminal();
-    const faux = fauxProvider({ models: [{ id: 'solo', input: ['text'] }] });
+    const faux = fauxProvider({ models: [{ id: 'lane', input: ['text'] }] });
     const registry = createModels();
     registry.setProvider(faux.provider);
     const exit = runTuiCommand(
@@ -271,7 +271,7 @@ describe('/theme in the TUI', () => {
             sessionsRoot: root,
             models: registry,
             env: new FakeExecutionEnv({}),
-            model: { provider: 'faux', id: 'solo' },
+            model: { provider: 'faux', id: 'lane' },
           }),
       },
     );

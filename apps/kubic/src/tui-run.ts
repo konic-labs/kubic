@@ -1,6 +1,6 @@
 // `kubic tui` (prompt loop): interactive alt-screen over the
-// solo lane. The composition root owns every side effect: it boots the real
-// solo lane (same session/model setup as the headless runner), opens the
+// lane. The composition root owns every side effect: it boots the real
+// lane (same session/model setup as the headless runner), opens the
 // alt-screen on the replicated presentation, routes keyboard input through
 // the tui controller, drives the lane for whatever the user submits, feeds
 // lane events into the tree and usage rows into the status bar, and restores
@@ -513,7 +513,7 @@ function terminusOfFailure(reason: string): RunTerminusKind {
   }
 }
 
-// A turn's own options. The solo lane queues a busy follow-up
+// A turn's own options. The lane queues a busy follow-up
 // in the conversation's inbox (`followUp`) or joins the running work with a
 // steer (`steer`); `onSubmitted` reports the admitted submission's id the
 // moment the harness takes it, so the loop can key its `queued: …` rows.
@@ -791,7 +791,7 @@ export interface TuiLaneBoot {
   };
 }
 
-// A model's context window and the token level at which the solo
+// A model's context window and the token level at which the
 // lane compacts (window − reserve, the same policy the harness reads).
 // `undefined` means the catalog does not know the window: the gauge then
 // stays off rather than showing a made-up percentage. will make the
@@ -852,7 +852,7 @@ export interface TuiRunDeps {
   // are one object created by runTuiCommand: a boot that closed over the deps
   // would never see it, which is exactly the bug the end-to-end test caught
   // (the overlay never appeared, the call was refused with
-  // NO_ANSWER_SURFACE_REASON). The prod boot forwards it to installSoloPolicy;
+  // NO_ANSWER_SURFACE_REASON). The prod boot forwards it to installPolicy;
   // a boot may ignore it (the viewer shell does).
   bootLane: (
     sessionId?: string,
@@ -966,7 +966,7 @@ export interface TuiRunOptions {
   env?: NodeExecutionEnv;
   // Config-sourced permission classes: the TUI is a
   // config-consuming command, so it takes the same projection `kubic run`
-  // does. Absent means the documented SOLO_DEFAULTS.
+  // does. Absent means the documented DEFAULT_PERMISSIONS.
   classes?: PermissionClasses;
   // `--tools <a,b>` / `--no-tools` —
   // intersected with the classes/role/enterprise sets, never widening.
@@ -1088,7 +1088,7 @@ export interface TuiRunOptions {
   theme?: string;
 }
 
-// The durable loop surface over one booted solo lane — exactly what
+// The durable loop surface over one booted lane — exactly what
 // bootTuiLane installs. Exported so the prod boot, embedders and the tests
 // share ONE wiring: a lane member the loop needs cannot be forgotten in a
 // hand-spread fake (the failure mode that hides a dropped dep).
@@ -1130,7 +1130,7 @@ export function tuiLoop(
   };
 }
 
-// Prod solo boot: same session/model setup as the headless runner
+// Prod lane boot: same session/model setup as the headless runner
 // (create-or-attach, journal dir, assembled models, default select, lane
 // boot) plus the loop surface the interactive path drives.
 class ToolSelectionError extends Error {
@@ -1437,7 +1437,7 @@ export async function bootTuiLane(
             record: [],
           };
     // The climbs this run recorded: the sink every
-    // escalateSoloModel call reports to — the trajectory event and the
+    // escalateLaneModel call reports to — the trajectory event and the
     // transcript line read them from here.
     const escalationEvents: ModelEscalationEvent[] = [];
     // The single automatic trigger's streak:
@@ -1477,9 +1477,9 @@ export async function bootTuiLane(
     // The skills the loader met but did not load — the TUI
     // drops none of these lines: they ride the boot notices once.
     let skillSkips: SkippedSkill[] = [];
-    // Installed policy: `kubic tui` drives the same solo lane as
+    // Installed policy: `kubic tui` drives the same lane as
     // `kubic run`, so it installs the same policy — one derivation
-    // (host/approvals.installSoloPolicy), which is also what `doctor`
+    // (host/approvals.installPolicy), which is also what `doctor`
     // reports. Without this the interactive path would be the unprotected
     // one, which is the gap this install closes.
     // The explicit flag records full access for THIS
@@ -1597,7 +1597,7 @@ export async function bootTuiLane(
             },
           }),
       // The session id pins the boot model
-      // for the task — escalateSoloModel is the only path off it, so an
+      // for the task — escalateLaneModel is the only path off it, so an
       // off-ladder `/model` target refuses instead of silently switching.
       taskId: id,
       env,
@@ -1709,7 +1709,7 @@ export async function bootTuiLane(
         ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
       },
     });
-    // The booted lane: `solo` stays optional for the close closure (a boot
+    // The booted lane: `lane` stays optional for the close closure (a boot
     // that failed before the assignment must still release the session).
     lane = booted;
     {
@@ -1861,7 +1861,7 @@ export async function bootTuiLane(
         reconciliation?.rebaseline(turn);
       },
       // The lane samples this cell per tool call (through
-      // SoloBootOptions.currentTurn) — installing the loop's counter here
+      // LaneBootOptions.currentTurn) — installing the loop's counter here
       // keeps tool entries on the sweep numbering without touching boot.
       setCurrentTurnSupplier: (supplier: () => number | undefined) => {
         turnCell.supplier = supplier;
@@ -1951,7 +1951,7 @@ export async function bootTuiLane(
             roleModelScope(selectedRole?.resolved),
           );
           // With a ladder configured the switch climbs
-          // it through escalateSoloModel — one-way, budget-bounded,
+          // it through escalateLaneModel — one-way, budget-bounded,
           // recorded — so an off-ladder target, a down-step, or an
           // exhausted budget refuses by name with the live model untouched.
           // Naming the live model is a no-op pass down the plain path
@@ -2140,7 +2140,7 @@ export async function bootTuiLane(
                 // Best-effort: a refused climb (the shared budget burned
                 // by explicit climbs since the streak started) leaves the
                 // run intact; the next tool-failure retries while the
-                // streak holds. escalateSoloModel validates before it
+                // streak holds. escalateLaneModel validates before it
                 // mutates, so a refusal records nothing.
               }
             }
@@ -3681,7 +3681,7 @@ export function parseThinkingCommand(
 }
 
 // The parsed `kubic tui` invocation (commander owns the argv:
-// ./commands/solo.ts). The parity flags carry the same names
+// ./commands/session.ts). The parity flags carry the same names
 // and value rules as their `kubic run` counterparts.
 export interface TuiCommandOptions {
   readonly session?: string;
@@ -3842,9 +3842,9 @@ export async function runTuiCommand(
   for (const notice of boot.notices ?? []) {
     (deps.err ?? deps.out)(`warning: ${notice}`);
   }
-  // Solo no-isolation notice: the trust statement is in the welcome block from
+  // The no-isolation notice: the trust statement is in the welcome block from
   // the first frame. Suppressed by the documented KUBIC_NO_NOTICE opt-out; the
-  // text is solo-warning.ts's, never re-worded here.
+  // text is no-isolation-notice.ts's, never re-worded here.
   const noIsolationNotice = shouldEmitNotice(process.env)
     ? noIsolationTuiLine()
     : '';

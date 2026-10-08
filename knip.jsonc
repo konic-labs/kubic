@@ -4,9 +4,10 @@
   // not guarantee.
   "$schema": "https://unpkg.com/knip@6.38.0/schema.json",
 
-  // An export that its own module uses is not reported. Turning this off also
-  // reports in-file-only exports, which is a planned follow-up.
-  "ignoreExportsUsedInFile": true,
+  // An export that only its own module uses is reported, so it must be made
+  // module-private. The gate would otherwise accept dead exports whose only
+  // caller sits in the same file.
+  "ignoreExportsUsedInFile": false,
 
   // mkfifo is a POSIX utility, not an npm dependency: the exec journal test
   // (packages/exec/src/journal-reconcile-run.test.ts) calls it to make a pipe.

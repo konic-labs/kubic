@@ -91,14 +91,14 @@ export interface DepProbe {
 }
 
 // A models.json model that runs on the fallback context window.
-export interface ModelWindowProbe {
+interface ModelWindowProbe {
   readonly provider: string;
   readonly model: string;
   readonly contextWindow: number;
 }
 
 // A model the room check measures: its registry window.
-export interface RoomModel {
+interface RoomModel {
   readonly provider: string;
   readonly model: string;
   readonly contextWindow: number;

@@ -69,7 +69,7 @@ export interface PersistRunTrajectoryInput {
   warn?: TrajectoryWarn;
 }
 
-export type TrajectoryWarn = (line: string) => void;
+type TrajectoryWarn = (line: string) => void;
 
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

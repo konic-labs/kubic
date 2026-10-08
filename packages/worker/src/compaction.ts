@@ -89,7 +89,7 @@ export const SYSTEM_ENTRY_ESTIMATE = 2822;
 
 // A planning figure for one summary, in estimated tokens. Pi's own budget for a
 // summary is 0.8 of the reserve; a typical summary is far shorter.
-export const SUMMARY_ESTIMATE = 800;
+const SUMMARY_ESTIMATE = 800;
 
 /**
  * The room a compaction leaves for the next exchange: the window, less its
@@ -314,7 +314,7 @@ type ManualCompactionStatus =
 // turn, so there was nothing to summarize and no task was admitted.
 // `no-cut`: older history exists, but pi-durable found no cut point before the
 // most recent turn.
-export type ManualCompactionReason = 'most-recent-turn' | 'no-cut';
+type ManualCompactionReason = 'most-recent-turn' | 'no-cut';
 
 export interface ManualCompactionOutcome {
   status: ManualCompactionStatus;

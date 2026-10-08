@@ -66,7 +66,7 @@ interface ModelsSource {
 
 // A models.json model that declares no `contextWindow`: it runs with the
 // fallback window, which `kubic models` and `kubic doctor` report.
-export interface DefaultedWindow {
+interface DefaultedWindow {
   readonly provider: string;
   readonly model: string;
   readonly contextWindow: number;
@@ -74,7 +74,7 @@ export interface DefaultedWindow {
 
 // A model the user defined in a loaded models.json. Built-in models are never
 // listed here: models.json cannot redeclare them.
-export interface CustomModelRef {
+interface CustomModelRef {
   readonly provider: string;
   readonly model: string;
 }

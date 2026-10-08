@@ -85,7 +85,7 @@ function trajectoryAt(label, path, readFile, problems) {
 }
 
 // Replay, eval and export all consume the run-produced file:
-// the analysis surfaces are no longer fixture-only.
+// the analysis surfaces read the run's real output, not only fixtures.
 function consumeTrajectory(run, path, readFile, problems) {
   const replay = run(['replay', path, '--tier', 'recorded', '--json'], {
     env: FAUX_ENV,
@@ -202,7 +202,7 @@ export function fauxSmoke({ run, readFile, cwd }) {
   // The live suite runner: every executable built-in fixture
   // runs through the real lane in a temp workspace, and the matrix exits by
   // verdict. This is the shipped-binary proof that `kubic benchmark` is not
-  // a refusal anymore.
+  // a refusal.
   const benchmark = run(
     [
       'benchmark',

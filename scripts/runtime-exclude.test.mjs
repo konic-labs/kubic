@@ -34,7 +34,7 @@ import {
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../packages/exec/src/runtime-exclude.ts';
 
-// The rule checker (`checkGitignoreSplit`) now runs on
+// The rule checker (`checkGitignoreSplit`) runs on
 // a production path — `loadCliConfig` → `checkWorkspaceIgnoreSplit` on every
 // `kubic config` / `kubic doctor`. The host module cannot be imported here
 // (plain-node resolution does not map its `.js` specifiers), so this gate

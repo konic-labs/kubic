@@ -23,8 +23,8 @@ const PI_DEPS = [
 ];
 // Only the tui boundary imports pi-tui, so the tui manifest declares it.
 const TUI_PI_DEPS = ['@earendil-works/pi-tui'];
-// Dropped in the Pi 1.0 migration: pi-agent-core lost the
-// harness, and nothing imports pi-protocol / pi-telemetry directly.
+// Not imported: Pi 1.0's pi-agent-core has no harness, and nothing imports
+// pi-protocol / pi-telemetry directly.
 const REMOVED_PI_DEPS = [
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-protocol',

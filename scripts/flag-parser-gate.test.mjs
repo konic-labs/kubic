@@ -10,12 +10,11 @@
 //   B. no other argv parser is imported anywhere in the product tree
 //      (yargs, minimist, meow, arg, node:util parseArgs, bare `commander`),
 //      and extra-typings is imported only under apps/kubic/src;
-//   C. the legacy hand-rolled layer is gone: packages/core/src/flags.ts
-//      (`parseFlagArgs`) and packages/core/src/cli-help.ts (`answerHelp`)
-//      were deleted once every command moved onto commander, and must not
-//      come back.
+//   C. the legacy hand-rolled layer must not exist: packages/core/src/flags.ts
+//      (`parseFlagArgs`) and packages/core/src/cli-help.ts (`answerHelp`) may
+//      not come back now that every command is a commander definition.
 //
-// Every command used to hand-roll the same value guard —
+// No command may hand-roll the same value guard —
 //
 //   const value = args[i + 1];
 //   if (value === undefined || value.startsWith('--')) { … }
@@ -48,7 +47,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-// Rule C: the legacy parser and help modules, deleted by the migration.
+// Rule C: the legacy parser and help modules must stay deleted.
 const LEGACY = [
   join(ROOT, 'packages', 'core', 'src', 'flags.ts'),
   join(ROOT, 'packages', 'core', 'src', 'cli-help.ts'),
@@ -216,7 +215,7 @@ describe('legacy flag parser', () => {
     );
   });
 
-  it('the legacy parser and help modules are gone and the scan covers the tree', () => {
+  it('the legacy parser and help modules stay deleted, and the scan covers the tree', () => {
     // Rule C: every command is a commander definition; the hand-rolled
     // parser and help convention must not come back.
     for (const file of LEGACY) {

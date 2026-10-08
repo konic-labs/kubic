@@ -159,7 +159,7 @@ link itself.
 - **Line endings:** the file's dominant ending is detected, the file body,
   `oldText` and `newText` are normalized to LF for matching and replacement,
   and the dominant ending is restored on write. A CRLF file with an LF
-  multi-line `oldText` edits where it used to be `no_match`, the result never
+  multi-line `oldText` still edits (no `no_match`), the result never
   mixes endings, and an LF file is byte-for-byte unchanged apart from the
   replacement. A tie between CRLF and bare LF goes to LF, and a mixed file
   comes out uniform.
@@ -178,7 +178,7 @@ restores the CRLF/BOM file exactly as it was.
 `grep` bounds what it reads and what it returns:
 
 - **Matching lines are clipped at 500 characters** (`GREP_MAX_LINE_LENGTH`, / Pi's own constant) and the result carries `linesTruncated: true`
-  — a minified bundle's 5 MB line can no longer flood the context. The line
+  — a minified bundle's 5 MB line cannot flood the context. The line
   *number* stays exact; only the text is partial, and the header says
   `lines clipped at 500 chars`.
 - **Binary files are skipped and counted** (`skippedBinary`): a file whose

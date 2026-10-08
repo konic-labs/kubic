@@ -16,7 +16,7 @@ package-declared dirs (the `skills` / `pi.skills` arrays of trusted
 paths. A skill can still go missing after discovery: the project is
 untrusted, the file is unreadable, a package entry escapes its trusted
 root, `disable-model-invocation` hides it from the model, or the active
-role withholds it. None of that is silent anymore — `kubic skills` names
+role withholds it. None of that is silent — `kubic skills` names
 every skill and why it was left out.
 
 ## `kubic skills [--role <name>] [--json]`

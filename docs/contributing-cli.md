@@ -37,7 +37,7 @@ the process-wide config load (`ctx.config`), the injected runners
 which records the command's `CommandResult` (see [Exit codes](#exit-codes)).
 
 Every command is a real commander definition; the hand-rolled parser
-(`flags.ts`) and help convention (`cli-help.ts`) are gone, and
+(`flags.ts`) and help convention (`cli-help.ts`) do not exist, and
 `scripts/flag-parser-gate.test.mjs` keeps them from coming back.
 
 The analysis group (`commands/analysis.ts`) is the reference to copy:

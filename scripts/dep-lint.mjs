@@ -39,6 +39,16 @@ import { fileURLToPath } from 'node:url';
 const IMPORT_RE =
   /(?:import|export)\s+(?:[^'"]*?\sfrom\s+)?['"]([^'"]+)['"]|(?:import\s*\(\s*|require\s*\(\s*)['"]([^'"]+)['"]/g;
 
+// Test scaffolding lives under test-support/ and serves tests only. A
+// production file that imports it would ship fixtures in the product, so only
+// test files and test-support modules may import it.
+const TEST_SUPPORT_SPEC = /(^|\/)test-support(\/|$)/;
+const TEST_FILE = /\.test\.m?[jt]sx?$/;
+
+function isTestScaffold(rel) {
+  return TEST_FILE.test(rel) || rel.split(sep).includes('test-support');
+}
+
 function tsFiles(dir, out = []) {
   let entries;
   try {
@@ -97,6 +107,21 @@ export function checkTree(root) {
       const content = readFileSync(file, 'utf8');
       for (const m of content.matchAll(IMPORT_RE)) {
         const spec = m[1] ?? m[2];
+        if (
+          TEST_SUPPORT_SPEC.test(spec) &&
+          !isTestScaffold(relative(root, file))
+        ) {
+          // Test scaffolding is for tests: a production file that imports it
+          // would ship fixtures in the product.
+          const line = content.slice(0, m.index).split('\n').length;
+          violations.push({
+            from: owner,
+            to: spec,
+            file: relative(root, file),
+            line,
+          });
+          continue;
+        }
         if (
           (spec === 'node:fs' ||
             spec.startsWith('node:fs/') ||

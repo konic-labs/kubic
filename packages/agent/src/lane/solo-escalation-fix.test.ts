@@ -14,7 +14,7 @@ import {
   MemoryStorage,
   type Storage,
 } from '../pi-boundary.js';
-import { bootSoloLane, escalateSoloModel, type SoloLane } from './solo.js';
+import { bootLane, escalateSoloModel, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -57,7 +57,7 @@ vi.mock('./tools-adapter.js', async () => {
   };
 });
 
-const SOLOS: SoloLane[] = [];
+const SOLOS: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -94,7 +94,7 @@ async function bootPinned(taskId = 'task-1') {
   faux.setResponses([fauxAssistantMessage('hi')]);
   const modelA = faux.getModel('a');
   if (modelA === undefined) throw new Error("faux model 'a' missing");
-  const booted = await bootSoloLane({
+  const booted = await bootLane({
     session: handle() as never,
     models,
     model: modelA,
@@ -112,7 +112,7 @@ async function bootPinned(taskId = 'task-1') {
   return { booted, ladder };
 }
 
-function liveModelId(solo: SoloLane): Promise<string | undefined> {
+function liveModelId(solo: Lane): Promise<string | undefined> {
   return solo.conversation
     .agent(BACKGROUND_CONTEXT)
     .then((agent) =>

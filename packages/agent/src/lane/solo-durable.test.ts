@@ -20,7 +20,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
-import { bootSoloLane, SOLO_PROMPT_SECTION, type SoloLane } from './solo.js';
+import { bootLane, SOLO_PROMPT_SECTION, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -51,7 +51,7 @@ vi.mock('../compaction.js', async (importOriginal) => {
   };
 });
 
-const SOLOS: SoloLane[] = [];
+const SOLOS: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -98,16 +98,16 @@ function catalog() {
 }
 
 async function boot(
-  extra: Partial<Parameters<typeof bootSoloLane>[0]> = {},
+  extra: Partial<Parameters<typeof bootLane>[0]> = {},
   env = new FakeExecutionEnv({}),
-): Promise<SoloLane> {
+): Promise<Lane> {
   const { faux, models, big } = catalog();
   faux.setResponses([
     fauxAssistantMessage('first'),
     fauxAssistantMessage('second'),
   ]);
   const session = handle();
-  const solo = await bootSoloLane({
+  const solo = await bootLane({
     session: session as never,
     models,
     model: big,
@@ -132,7 +132,7 @@ describe('the boot against the real Kubic tools and compaction policy', () => {
       fauxAssistantMessage('read it'),
     ]);
     const session = handle();
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: session as never,
       models,
       model: big,

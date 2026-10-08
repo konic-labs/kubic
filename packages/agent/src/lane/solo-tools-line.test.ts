@@ -21,7 +21,7 @@ import {
   SystemEntry,
 } from '../pi-boundary.js';
 import { SOLO_DEFAULTS } from '../policy.js';
-import { bootSoloLane, SOLO_PROMPT_SECTION, type SoloLane } from './solo.js';
+import { bootLane, SOLO_PROMPT_SECTION, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -64,7 +64,7 @@ vi.mock('./tools-adapter.js', async () => {
   };
 });
 
-const SOLOS: SoloLane[] = [];
+const SOLOS: Lane[] = [];
 const DIRS: string[] = [];
 
 afterEach(async () => {
@@ -117,7 +117,7 @@ function toolsLine(prompt: string): string[] {
 // Boots a solo lane and returns what the model is told (`tools:` line of the
 // committed prompt section) next to what the conversation actually offers.
 async function boot(extra: {
-  policy?: Parameters<typeof bootSoloLane>[0]['policy'];
+  policy?: Parameters<typeof bootLane>[0]['policy'];
   toolAllowlist?: string[];
   toolSelection?: string[];
   noTools?: boolean;
@@ -126,7 +126,7 @@ async function boot(extra: {
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage('hi')]);
-  const solo = await bootSoloLane({
+  const solo = await bootLane({
     session: handle() as never,
     models,
     model: faux.getModel(),
@@ -233,7 +233,7 @@ describe('the prompt tools line is the same intersection the conversation offers
       models.setProvider(faux.provider);
       faux.setResponses([fauxAssistantMessage('hi')]);
       const sessionId = 'reopen';
-      const solo = await bootSoloLane({
+      const solo = await bootLane({
         session: {
           id: sessionId,
           dir,

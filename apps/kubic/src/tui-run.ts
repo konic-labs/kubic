@@ -51,10 +51,10 @@ import {
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
 import {
-  bootSoloLane,
+  bootLane,
   escalateSoloModel,
-  type SoloCompactionOptions,
-  type SoloLane,
+  type LaneCompactionOptions,
+  type Lane,
 } from '../../../packages/agent/src/lane/solo.js';
 import {
   entriesToTranscript,
@@ -1034,7 +1034,7 @@ export interface TuiRunOptions {
   // The `[session]` compaction policy — the same
   // projection `kubic run` threads, so the interactive lane compacts under
   // config, not the lane defaults. Absent means the own defaults.
-  compaction?: SoloCompactionOptions;
+  compaction?: LaneCompactionOptions;
   // Out-of-scope paths: the same projection `kubic run`
   // threads, so a declared directory is excluded from this lane's
   // baseline and sweep too. Absent means the mechanism's own skips only.
@@ -1093,7 +1093,7 @@ export interface TuiRunOptions {
 // share ONE wiring: a lane member the loop needs cannot be forgotten in a
 // hand-spread fake (the failure mode that hides a dropped dep).
 export function soloTuiLoop(
-  solo: SoloLane,
+  solo: Lane,
   context: Context = BACKGROUND_CONTEXT,
 ): TuiLaneLoop {
   return {
@@ -1220,7 +1220,7 @@ export async function bootTuiLane(
   let settlePolicy: (() => void) | undefined;
   // The booted lane, once it exists. The session release is the caller's job:
   // the harness closes first, then the handle gives the lock back.
-  let solo: SoloLane | undefined;
+  let solo: Lane | undefined;
   // The quit's last-resort kill drain. keys every bash group
   // by String(conversation.id): whatever is still registered when the quit
   // runs is killed here — before the sweep and the close — because a tool
@@ -1565,7 +1565,7 @@ export async function bootTuiLane(
       model.provider,
       model.id,
     );
-    const booted = await bootSoloLane({
+    const booted = await bootLane({
       session,
       models,
       model,
@@ -2231,7 +2231,7 @@ function tuiTurnOutcome(
 // `pi.agent` document first, the boot model as the fallback for the window
 // before the first configure.
 async function liveModelOf(
-  solo: SoloLane,
+  solo: Lane,
   context: Context,
 ): Promise<{ provider: string; id: string }> {
   const agent = await solo.conversation.agent(context);
@@ -2373,7 +2373,7 @@ type TuiConfigProjection = {
   // projection `kubic run` consumes — the interactive lane compacts under
   // the configured policy, not the lane defaults. Absent means the own
   // defaults.
-  compaction?: SoloCompactionOptions;
+  compaction?: LaneCompactionOptions;
   // The file text the runtime read
   // at load, from the same projection `kubic run` consumes — the
   // interactive lane assembles the same prompt. Absent means the lane

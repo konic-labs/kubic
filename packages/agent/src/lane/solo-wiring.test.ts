@@ -18,9 +18,9 @@ import {
 } from '../pi-boundary.js';
 import {
   assembleSoloPrompt,
-  bootSoloLane,
+  bootLane,
   SOLO_PROMPT_SECTION,
-  type SoloLane,
+  type Lane,
 } from './solo.js';
 
 const captured = vi.hoisted(() => ({
@@ -90,7 +90,7 @@ vi.mock('./tools-adapter.js', async () => {
   };
 });
 
-const SOLOS: SoloLane[] = [];
+const SOLOS: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -139,13 +139,13 @@ function catalog() {
 }
 
 async function boot(
-  extra: Parameters<typeof bootSoloLane>[0] extends infer _
+  extra: Parameters<typeof bootLane>[0] extends infer _
     ? Record<string, unknown>
     : never,
-): Promise<SoloLane> {
+): Promise<Lane> {
   const { faux, models } = catalog();
   faux.setResponses([fauxAssistantMessage('hi'), fauxAssistantMessage('hi')]);
-  const solo = await bootSoloLane({
+  const solo = await bootLane({
     session: handle() as never,
     models,
     model: faux.getModel('big'),
@@ -153,12 +153,12 @@ async function boot(
     sessionId: 'sess-1',
     agentId: 'root',
     ...extra,
-  } as Parameters<typeof bootSoloLane>[0]);
+  } as Parameters<typeof bootLane>[0]);
   SOLOS.push(solo);
   return solo;
 }
 
-async function committedPrompt(solo: SoloLane): Promise<string> {
+async function committedPrompt(solo: Lane): Promise<string> {
   const settled = await (
     await solo.conversation.submit(
       { type: 'input', content: 'hi' },
@@ -276,7 +276,7 @@ describe('solo boot hands HarnessSettings compaction to', () => {
   it('passes the configured reserve and a live current-window getter', async () => {
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: handle() as never,
       models,
       model: big,
@@ -301,7 +301,7 @@ describe('solo boot hands HarnessSettings compaction to', () => {
   it('the current-window getter follows an escalation', async () => {
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: handle() as never,
       models,
       model: big,

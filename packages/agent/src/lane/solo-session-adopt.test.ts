@@ -14,7 +14,7 @@ import {
   type Storage,
 } from '../pi-boundary.js';
 import type { SessionHandle } from './session-store.js';
-import { bootSoloLane, type SoloLane } from './solo.js';
+import { bootLane, type Lane } from './solo.js';
 
 // The shipped handle's own contract, reduced to what this file observes:
 // `adopt()` marks the storage as the harness's, and `release()` closes the
@@ -49,12 +49,12 @@ function trackableHandle(id: string): {
   return { handle, adopted: () => adopted, closed: () => closed };
 }
 
-async function boot(handle: SessionHandle): Promise<SoloLane> {
+async function boot(handle: SessionHandle): Promise<Lane> {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage('booted')]);
-  return bootSoloLane({
+  return bootLane({
     session: handle,
     models,
     model: faux.getModel(),

@@ -30,7 +30,7 @@ import type {
   SubmissionFailure,
 } from './settle.js';
 import { classifySubmissionFailure, classifyThrownError } from './settle.js';
-import type { SoloLane } from './solo.js';
+import type { Lane } from './solo.js';
 
 // `TurnOutcome.failed.reason` for the one refusal Kubic raises itself: the
 // conversation is busy and the caller asked to be rejected rather than
@@ -105,7 +105,7 @@ export interface RunTurnOptions {
 // One turn, settled. Never throws for a refusal, a failed run or a cancelled
 // guard: every way a durable run can end is one `TurnOutcome`.
 export async function runTurn(
-  solo: SoloLane,
+  solo: Lane,
   prompt: string,
   options: RunTurnOptions,
 ): Promise<TurnOutcome> {
@@ -273,7 +273,7 @@ const OVERFLOW_RECOVERY_FOCUS =
   'The context overflowed mid-run; keep what a single retry of the current task needs.';
 
 export async function recoverSoloOverflowTurn(
-  solo: SoloLane,
+  solo: Lane,
   prompt: string,
   failed: { reason: TurnFailureReason; error?: string },
   options: RunTurnOptions,
@@ -323,7 +323,7 @@ export async function recoverSoloOverflowTurn(
 // One turn with overflow recovery: a completed or non-overflow outcome
 // passes through exactly as `runTurn` reports it.
 export async function runTurnWithOverflowRecovery(
-  solo: SoloLane,
+  solo: Lane,
   prompt: string,
   options: RunTurnOptions & OverflowRecoveryOptions,
 ): Promise<SoloOverflowRecovery> {

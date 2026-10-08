@@ -13,7 +13,7 @@ import {
   createSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootSoloLane } from '../../../packages/agent/src/lane/solo.js';
+import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import { readSessionEntries } from '../../../packages/agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
@@ -77,7 +77,7 @@ async function crashAfterAccept(
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([() => new Promise<never>(() => undefined)]);
-  const solo = await bootSoloLane({
+  const solo = await bootLane({
     session,
     models,
     model: faux.getModel(),

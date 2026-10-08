@@ -15,7 +15,7 @@ import {
 } from '../pi-boundary.js';
 import { SOLO_DEFAULTS } from '../policy.js';
 import { applyToolPolicy } from './policy.js';
-import { bootSoloLane, type SoloLane } from './solo.js';
+import { bootLane, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -58,7 +58,7 @@ vi.mock('./tools-adapter.js', async () => {
   };
 });
 
-const SOLOS: SoloLane[] = [];
+const SOLOS: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -88,12 +88,12 @@ function handle(id = 'sess-1'): TestSession {
   };
 }
 
-async function booted(): Promise<SoloLane> {
+async function booted(): Promise<Lane> {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage('hi')]);
-  const solo = await bootSoloLane({
+  const solo = await bootLane({
     session: handle() as never,
     models,
     model: faux.getModel(),
@@ -105,7 +105,7 @@ async function booted(): Promise<SoloLane> {
   return solo;
 }
 
-async function offered(solo: SoloLane): Promise<string[]> {
+async function offered(solo: Lane): Promise<string[]> {
   return (await solo.conversation.agent(BACKGROUND_CONTEXT)).tools.map(
     (tool) => tool.name,
   );

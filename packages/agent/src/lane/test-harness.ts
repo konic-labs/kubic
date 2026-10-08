@@ -46,10 +46,10 @@ import {
   type SessionStore,
 } from './session-store.js';
 import {
-  bootSoloLane,
+  bootLane,
   SOLO_PROMPT_SECTION,
-  type SoloBootOptions,
-  type SoloLane,
+  type LaneBootOptions,
+  type Lane,
 } from './solo.js';
 
 type Models = ReturnType<typeof createModels>;
@@ -95,7 +95,7 @@ export interface FauxLaneSessionOptions {
 
 export interface FauxLaneOptions
   extends Omit<
-      SoloBootOptions,
+      LaneBootOptions,
       | 'session'
       | 'models'
       | 'model'
@@ -184,7 +184,7 @@ export async function invokeRegisteredTool(
 
 /** One turn: admit the input durably, then wait for its settlement. */
 export async function runPrompt(
-  solo: Pick<SoloLane, 'conversation'>,
+  solo: Pick<Lane, 'conversation'>,
   prompt: string,
   options: RunPromptOptions = {},
 ): Promise<PromptResult> {
@@ -213,7 +213,7 @@ export async function runPrompt(
 
 /** The conversation's active transcript, oldest first. */
 export async function laneEntries(
-  solo: Pick<SoloLane, 'conversation'>,
+  solo: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<EntryRecord[]> {
   const page = await solo.conversation.entries({}, 1000, undefined, context);
@@ -222,7 +222,7 @@ export async function laneEntries(
 
 /** The tool results of a conversation, oldest first. */
 export async function laneToolResults(
-  solo: Pick<SoloLane, 'conversation'>,
+  solo: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<HarnessToolResult[]> {
   const entries = await laneEntries(solo, context);
@@ -247,7 +247,7 @@ export async function laneToolResults(
 
 /** The committed solo prompt (its one `kubic` section), newest entry first. */
 export async function laneSystemPrompt(
-  solo: Pick<SoloLane, 'conversation'>,
+  solo: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<string> {
   const page = await solo.conversation.entries({}, 500, undefined, context);
@@ -264,7 +264,7 @@ export async function laneSystemPrompt(
 
 /** The tool names the conversation offers right now. */
 export async function laneActiveTools(
-  solo: Pick<SoloLane, 'conversation'>,
+  solo: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<string[]> {
   const agent = await solo.conversation.agent(context);
@@ -281,7 +281,7 @@ export function promptToolsLine(prompt: string): string[] {
 }
 
 export interface FauxLane {
-  readonly solo: SoloLane;
+  readonly solo: Lane;
   readonly faux: Faux;
   readonly models: Models;
   readonly env: FakeExecutionEnv;
@@ -383,7 +383,7 @@ export async function bootFauxLane(
   // Hand the storage to the harness before booting: `release()` then gives
   // the Kubic lock back without closing a storage the harness owns.
   session.adopt();
-  const solo = await bootSoloLane({
+  const solo = await bootLane({
     ...bootOptions,
     session,
     models,

@@ -18,8 +18,8 @@ import {
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
 import {
-  bootSoloLane,
-  type SoloLane,
+  bootLane,
+  type Lane,
 } from '../../../packages/agent/src/lane/solo.js';
 import {
   bootFauxLane,
@@ -110,13 +110,13 @@ function fauxLaneBoot(
   models: MutableModels,
   options: {
     // A smaller keep-recent window lets a test-sized context compact.
-    compaction?: Parameters<typeof bootSoloLane>[0]['compaction'];
+    compaction?: Parameters<typeof bootLane>[0]['compaction'];
     // Boot-time harness settings (retry off, so a scripted
     // provider error fails the turn deterministically).
-    settings?: Parameters<typeof bootSoloLane>[0]['settings'];
+    settings?: Parameters<typeof bootLane>[0]['settings'];
     // The booted lane, for tests that read its transcript (the /compact
     // acceptance counts pi.compaction entries).
-    onBoot?: (solo: SoloLane) => void;
+    onBoot?: (solo: Lane) => void;
     // Hand the session journal to the TUI (its panels and the
     // turn receipt read it).
     exposeJournal?: boolean;
@@ -134,7 +134,7 @@ function fauxLaneBoot(
     const model = models.getModels(provider.id)[0];
     if (model === undefined) throw new Error('no model registered');
     const journal = new FileJournalStore(join(root, id, 'journal'));
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session,
       models,
       model,
@@ -677,7 +677,7 @@ describe('kubic tui prompt loop', () => {
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const seen: string[] = [];
-    let lane: SoloLane | undefined;
+    let lane: Lane | undefined;
     const { models, calls } = fauxModels([
       'first answer',
       'second answer',
@@ -760,7 +760,7 @@ describe('kubic tui prompt loop', () => {
     const gated = new Promise<void>((resolve) => {
       release = resolve;
     });
-    let lane: SoloLane | undefined;
+    let lane: Lane | undefined;
     const { models } = fauxModels([
       async () => {
         await gated;
@@ -1137,7 +1137,7 @@ describe('kubic tui prompt loop', () => {
     const root = tmpRoot();
     const lines: string[] = [];
     const fake = fakeTerminal(100);
-    let lane: SoloLane | undefined;
+    let lane: Lane | undefined;
     const { models } = fauxModels(['first answer']);
     const pending = runTuiCommand(
       {},

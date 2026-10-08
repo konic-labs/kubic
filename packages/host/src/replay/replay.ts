@@ -34,7 +34,7 @@
 // go through the exec FileBridge (I/O confinement).
 
 import { createHash } from 'node:crypto';
-import type { SoloCompactionOptions } from '../../../agent/src/lane/solo.js';
+import type { LaneCompactionOptions } from '../../../agent/src/lane/solo.js';
 import type { PermissionClasses } from '../../../agent/src/policy.js';
 import {
   type CommandResult,
@@ -135,7 +135,7 @@ export interface ReplayRuntimeDeps {
   // projection `kubic run` threads — the live re-execution tiers compact
   // under the configured policy, not the lane defaults. Absent means the
   // lane defaults.
-  compaction?: SoloCompactionOptions;
+  compaction?: LaneCompactionOptions;
   // [agent] systemPromptFile contents, from the same
   // projection `kubic run` threads — the re-executed tiers assemble the
   // same prompt. Absent means the lane assembles its prompt unchanged.

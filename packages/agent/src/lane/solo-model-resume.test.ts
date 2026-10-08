@@ -21,7 +21,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
-import { bootSoloLane, SOLO_PROMPT_SECTION, type SoloLane } from './solo.js';
+import { bootLane, SOLO_PROMPT_SECTION, type Lane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({
   policyInterceptorHooks: () => [],
@@ -65,7 +65,7 @@ vi.mock('./tools-adapter.js', async () => {
 });
 
 const DIRS: string[] = [];
-const SOLOS: SoloLane[] = [];
+const SOLOS: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -120,7 +120,7 @@ async function sessionOnBig(id = 'resume'): Promise<Storage> {
   DIRS.push(dir);
   const { faux, models, big } = catalog();
   faux.setResponses([fauxAssistantMessage('hi')]);
-  const seeding = await bootSoloLane({
+  const seeding = await bootLane({
     session: handle(
       await openNodeJsonlStorage(dir, BACKGROUND_CONTEXT),
       id,
@@ -135,7 +135,7 @@ async function sessionOnBig(id = 'resume'): Promise<Storage> {
   return openNodeJsonlStorage(dir, BACKGROUND_CONTEXT);
 }
 
-async function promptOf(solo: SoloLane): Promise<string> {
+async function promptOf(solo: Lane): Promise<string> {
   const page = await solo.conversation.entries(
     {},
     200,
@@ -151,7 +151,7 @@ async function promptOf(solo: SoloLane): Promise<string> {
   return message?.sections?.[SOLO_PROMPT_SECTION] ?? '';
 }
 
-async function driveOneTurn(solo: SoloLane): Promise<void> {
+async function driveOneTurn(solo: Lane): Promise<void> {
   const settled = await (
     await solo.conversation.submit(
       { type: 'input', content: 'hi' },
@@ -161,7 +161,7 @@ async function driveOneTurn(solo: SoloLane): Promise<void> {
   expect(settled.status).toBe('done');
 }
 
-function liveModel(solo: SoloLane): Promise<string | undefined> {
+function liveModel(solo: Lane): Promise<string | undefined> {
   return solo.conversation
     .agent(BACKGROUND_CONTEXT)
     .then((agent) =>
@@ -177,7 +177,7 @@ describe('resumed session model identity', () => {
     const { faux, models, small } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: small,
@@ -200,7 +200,7 @@ describe('resumed session model identity', () => {
     const { faux, models, small } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: small,
@@ -227,7 +227,7 @@ describe('resumed session model identity', () => {
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: big,
@@ -245,7 +245,7 @@ describe('resumed session model identity', () => {
   it('a stored model whose provider is absent fails closed with a named error', async () => {
     const storage = await sessionOnBig();
     const other = catalog('other');
-    const error = await bootSoloLane({
+    const error = await bootLane({
       session: handle(storage, 'resume') as never,
       models: other.models,
       model: other.small,
@@ -267,7 +267,7 @@ describe('resumed session model identity', () => {
     const models = createModels();
     models.setProvider(faux.provider);
     await expect(
-      bootSoloLane({
+      bootLane({
         session: handle(storage, 'resume') as never,
         models,
         model: faux.getModel(),
@@ -284,7 +284,7 @@ describe('resumed session model identity', () => {
     const storage = await sessionOnBig();
     const { faux, models, small } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const kept = await bootSoloLane({
+    const kept = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: small,
@@ -304,7 +304,7 @@ describe('a resumed session never keeps a model the enterprise gate refuses', ()
     faux.setResponses([fauxAssistantMessage('hi')]);
     const notices: string[] = [];
     const asked: string[] = [];
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: small,
@@ -334,7 +334,7 @@ describe('a resumed session never keeps a model the enterprise gate refuses', ()
     const storage = await sessionOnBig();
     const { faux, models, small } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: handle(storage, 'resume') as never,
       models,
       model: small,

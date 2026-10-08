@@ -38,9 +38,9 @@ import {
   sessionsTouchingWorkspace,
 } from '../../../packages/agent/src/lane/session-store.js';
 import {
-  bootSoloLane,
-  type SoloCompactionOptions,
-  type SoloLane,
+  bootLane,
+  type LaneCompactionOptions,
+  type Lane,
 } from '../../../packages/agent/src/lane/solo.js';
 import {
   entriesToTranscript,
@@ -296,7 +296,7 @@ export interface HeadlessRunDeps {
   // config load — the boot hands it to the settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent
   // window).
-  compaction?: SoloCompactionOptions;
+  compaction?: LaneCompactionOptions;
   // Debug sink for the debug lines. Defaults to stderr so a live
   // `kubic run --debug` emits without the composition root wiring anything;
   // tests inject an array collector instead.
@@ -557,7 +557,7 @@ function stoppedResult(
 // while the lane is open, the session storage otherwise. A read failure
 // leaves the trajectory without actions, never the run without its result.
 async function captureEntries(
-  solo: SoloLane | undefined,
+  solo: Lane | undefined,
   session: SessionHandle,
   context: Context,
 ): Promise<EntryRecord[]> {
@@ -601,7 +601,7 @@ async function settledWithin<T>(
 // a context that is NOT the cancelled bound, and the wait is bounded so the
 // run's own result never hangs on it.
 async function abortAbandonedLane(
-  solo: SoloLane,
+  solo: Lane,
   report: (message: string) => void,
 ): Promise<void> {
   const cancel = withCancel(BACKGROUND_CONTEXT);
@@ -679,7 +679,7 @@ async function appendPromptEntry(
 // earlier identical prompt) is never written twice, and a lane that booted
 // but never admitted the prompt still gets its entry.
 async function ensurePromptDurable(
-  solo: SoloLane | undefined,
+  solo: Lane | undefined,
   session: SessionHandle,
   prompt: string,
   context: Context,
@@ -1134,7 +1134,7 @@ async function runHeadlessPromptImpl(
   // The booted lane is hoisted so every exit path can stop the
   // in-flight turn — a guard firing mid-turn must not abandon the tool
   // processes it interrupted.
-  let solo: SoloLane | undefined;
+  let solo: Lane | undefined;
   // Set when a guard or an interrupt abandoned a live turn: the finally then
   // states the durable conversation abort (plus the kill drain) instead of
   // dropping handles for work that is still running.
@@ -1756,7 +1756,7 @@ async function runHeadlessPromptImpl(
     // climbs only via the single auto trigger; explicit switches are a
     // TUI affordance).
     try {
-      solo = await bootSoloLane({
+      solo = await bootLane({
         session,
         models,
         model,
@@ -2176,7 +2176,7 @@ function catalogIdentity(models: MutableModels | undefined): string[] {
 // conversation's agent model, else the boot's effective model. Tolerant of
 // liveness gaps, which report nothing rather than fail.
 async function liveModel(
-  solo: SoloLane,
+  solo: Lane,
   context: Context,
 ): Promise<{ provider: string; id: string } | undefined> {
   const agent = await solo.conversation.agent(context);
@@ -2184,11 +2184,11 @@ async function liveModel(
   if (live !== undefined) {
     return { provider: live.provider, id: live.modelId };
   }
-  return solo.model as SoloLane['model'] | undefined;
+  return solo.model as Lane['model'] | undefined;
 }
 
 async function liveModelId(
-  solo: SoloLane,
+  solo: Lane,
   context: Context,
 ): Promise<string | undefined> {
   const running = await liveModel(solo, context);

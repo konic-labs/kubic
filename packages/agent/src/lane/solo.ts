@@ -119,7 +119,7 @@ function defaultSoloModelId(model: { provider: string; id: string }): string {
 
 // NOTE: defaultSoloPrompt lived here — deleted, it had no
 // callers (the run paths always assemble an explicit prompt).
-interface SoloPolicyOptions {
+interface LanePolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];
@@ -153,7 +153,7 @@ interface SoloPolicyOptions {
 // Harness compaction budget overrides. keepRecentTokens defaults inside
 // compaction.ts (the soloCompactionSettings), so Kubic keeps ONE home for
 // the 20000 figure.
-export interface SoloCompactionOptions {
+export interface LaneCompactionOptions {
   enabled?: boolean;
   reserveTokens?: number;
   keepRecentTokens?: number;
@@ -168,7 +168,7 @@ export interface SoloCompactionOptions {
 // classes are declared, so execute-time denial is deployed on every
 // policy boot — not just tested in isolation.
 function withPolicyContributions(
-  policy: SoloPolicyOptions | undefined,
+  policy: LanePolicyOptions | undefined,
 ): ToolContribution[] {
   const extra = policy?.contributions ?? [];
   if (policy?.classes === undefined) return extra;
@@ -177,7 +177,7 @@ function withPolicyContributions(
   return [withPermissionCheck((name) => allowed.includes(name)), ...extra];
 }
 
-export interface SoloBootOptions {
+export interface LaneBootOptions {
   // The session handle: its storage is what the harness opens, and
   // its lock stays held for the handle's lifetime. The caller releases it
   // after `close()`.
@@ -189,14 +189,14 @@ export interface SoloBootOptions {
   agentId: string;
   systemPrompt?: string;
   context?: Context;
-  policy?: SoloPolicyOptions;
+  policy?: LanePolicyOptions;
   // Model affinity pin: when set, boot pins the
   // boot model for the task; escalateSoloModel is the only path off it.
   taskId?: string;
   // Harness compaction budget: reserve defaults to Kubic's
   // DEFAULT_RESERVE_TOKENS so the harness automatic path fires on the
   // same threshold as shouldCompact.
-  compaction?: SoloCompactionOptions;
+  compaction?: LaneCompactionOptions;
   // Session journal for interception: when set, every
   // write/edit through the lane is recorded with its tool call id.
   journal?: FileJournalStore;
@@ -276,7 +276,7 @@ export interface SoloBootOptions {
 }
 
 function resolveStoredModel(
-  models: SoloBootOptions['models'],
+  models: LaneBootOptions['models'],
   stored: { provider: string; modelId: string },
 ): Model<string> {
   const id = `${stored.provider}/${stored.modelId}`;
@@ -295,7 +295,7 @@ function resolveStoredModel(
   return model as Model<string>;
 }
 
-export interface SoloLane {
+export interface Lane {
   harness: Harness;
   conversation: Conversation;
   // The per-process registry the Kubic extensions are installed in. It is
@@ -343,7 +343,7 @@ export function splitSoloModelId(id: string): {
 // a malformed id, or a configure rejection burns no escalation budget,
 // emits no event, and leaves affinity untouched.
 export async function escalateSoloModel(
-  solo: SoloLane,
+  solo: Lane,
   ladder: EscalationLadder,
   to: string,
   reason: string,
@@ -377,9 +377,9 @@ export async function escalateSoloModel(
   return result;
 }
 
-export async function bootSoloLane(
-  options: SoloBootOptions,
-): Promise<SoloLane> {
+export async function bootLane(
+  options: LaneBootOptions,
+): Promise<Lane> {
   const context = options.context ?? BACKGROUND_CONTEXT;
   const kills = new OperationKillRegistry();
   const toolContext: KubicToolContext = {
@@ -463,7 +463,7 @@ export async function bootSoloLane(
   const windowOf = (provider: string, modelId: string) =>
     options.models.getModels(provider).find((model) => model.id === modelId)
       ?.contextWindow;
-  let soloRef: SoloLane | undefined;
+  let soloRef: Lane | undefined;
   // Minimal structural view of the attached `pi.agent` document state: its
   // committed `model` and its dispose(), so this module needs no extra
   // pi-boundary type for it.
@@ -710,7 +710,7 @@ export async function bootSoloLane(
     await conversation.configure({ tools: null }, context);
   }
 
-  const solo: SoloLane = {
+  const solo: Lane = {
     harness,
     conversation,
     registry,

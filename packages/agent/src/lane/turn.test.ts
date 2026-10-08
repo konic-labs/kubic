@@ -21,7 +21,7 @@ import {
 import type { AbortableLane } from './abort.js';
 import { abortLane, forgetLaneKills, OperationKillRegistry } from './abort.js';
 import { type KubicLaneEvent, subscribeLaneEvents } from './events.js';
-import { bootSoloLane, type SoloLane } from './solo.js';
+import { bootLane, type Lane } from './solo.js';
 import { entriesToTranscript, readConversationEntries } from './transcript.js';
 import {
   runTurn,
@@ -31,7 +31,7 @@ import {
   turnLaneRecord,
 } from './turn.js';
 
-const SOLOS: SoloLane[] = [];
+const SOLOS: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -74,12 +74,12 @@ function catalog() {
 async function boot(
   responses: Parameters<Faux['setResponses']>[0],
   env: ExecutionEnv = new FakeExecutionEnv({}),
-  extra: Partial<Parameters<typeof bootSoloLane>[0]> = {},
-): Promise<{ solo: SoloLane; faux: Faux }> {
+  extra: Partial<Parameters<typeof bootLane>[0]> = {},
+): Promise<{ solo: Lane; faux: Faux }> {
   const { faux, models } = catalog();
   faux.setResponses(responses);
   const session = handle();
-  const solo = await bootSoloLane({
+  const solo = await bootLane({
     session: session as never,
     models,
     model: faux.getModel(),
@@ -115,7 +115,7 @@ function userTexts(entries: readonly unknown[]): string[] {
   return texts;
 }
 
-async function transcript(solo: SoloLane): Promise<unknown[]> {
+async function transcript(solo: Lane): Promise<unknown[]> {
   const page = await solo.conversation.entries(
     {},
     200,

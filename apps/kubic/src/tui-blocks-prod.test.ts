@@ -10,7 +10,7 @@ import {
   createSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootSoloLane } from '../../../packages/agent/src/lane/solo.js';
+import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -58,7 +58,7 @@ function boot(answer: string): TuiRunDeps['bootLane'] {
       provider === undefined ? undefined : models.getModels(provider.id)[0];
     if (provider === undefined || model === undefined)
       throw new Error('no model');
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session,
       models,
       model,

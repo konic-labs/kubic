@@ -16,7 +16,7 @@
 // module never imports node:fs.
 
 import { homedir } from 'node:os';
-import type { SoloCompactionOptions } from '../../../packages/agent/src/lane/solo.js';
+import type { LaneCompactionOptions } from '../../../packages/agent/src/lane/solo.js';
 import {
   ModelSelectError,
   type ModelSelection,
@@ -981,7 +981,7 @@ export function runtimeSystemPromptSection(
 // so the lane defaults apply — never an invented value.
 export function runtimeCompactionDeps(
   result: CliConfigResult,
-): SoloCompactionOptions | undefined {
+): LaneCompactionOptions | undefined {
   const compaction = result.runtime?.compaction;
   if (compaction === undefined) return undefined;
   const { enabled, reserveTokens, keepRecentTokens } = compaction;

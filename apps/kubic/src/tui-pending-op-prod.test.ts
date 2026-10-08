@@ -11,7 +11,7 @@ import {
   createSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootSoloLane } from '../../../packages/agent/src/lane/solo.js';
+import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -66,7 +66,7 @@ async function crashAfterAccept(
   // The dead process's generation never answers: the durable work stays
   // unfinished, exactly what a crash leaves behind.
   faux.setResponses([() => new Promise(() => {})]);
-  const solo = await bootSoloLane({
+  const solo = await bootLane({
     session,
     models,
     model: faux.getModel(),

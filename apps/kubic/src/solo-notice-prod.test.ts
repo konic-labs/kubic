@@ -21,7 +21,7 @@ import {
   openSessionStore,
   type SessionHandle,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootSoloLane } from '../../../packages/agent/src/lane/solo.js';
+import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -251,7 +251,7 @@ function fauxLaneBoot(
     if (provider === undefined) throw new Error('no provider registered');
     const model = models.getModels(provider.id)[0];
     if (model === undefined) throw new Error('no model registered');
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session,
       models,
       model,

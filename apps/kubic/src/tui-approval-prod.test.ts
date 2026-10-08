@@ -18,7 +18,7 @@ import {
   createSession,
   openSessionStore,
 } from '../../../packages/agent/src/lane/session-store.js';
-import { bootSoloLane } from '../../../packages/agent/src/lane/solo.js';
+import { bootLane } from '../../../packages/agent/src/lane/solo.js';
 import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   BACKGROUND_CONTEXT,
@@ -100,7 +100,7 @@ function fauxLaneBoot(
       sessionDir: join(root, id),
       ...(answer === undefined ? {} : { answer }),
     });
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session,
       models,
       model,

@@ -28,10 +28,10 @@ import {
 import { PromptCacheError } from '../prompts.js';
 import {
   assembleSoloPrompt,
-  bootSoloLane,
+  bootLane,
   SOLO_PROMPT_SECTION,
   SOLO_ROLE,
-  type SoloLane,
+  type Lane,
   splitSoloModelId,
 } from './solo.js';
 
@@ -153,7 +153,7 @@ describe('splitSoloModelId', () => {
 });
 
 const DIRS: string[] = [];
-const SOLOS: SoloLane[] = [];
+const SOLOS: Lane[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -208,8 +208,8 @@ function catalog(providerId = 'faux') {
 // A lane with two scripted text answers (one per submitted turn), so a
 // test can drive two turns without touching the faux provider.
 async function boot(
-  extra: Partial<Parameters<typeof bootSoloLane>[0]> = {},
-): Promise<SoloLane> {
+  extra: Partial<Parameters<typeof bootLane>[0]> = {},
+): Promise<Lane> {
   const env = new FakeExecutionEnv({});
   env.fs.writeFile('a.txt', 'lane reads this\n');
   const { faux, models, big } = catalog();
@@ -218,7 +218,7 @@ async function boot(
     fauxAssistantMessage('second answer'),
   ]);
   const session = handle(new MemoryStorage());
-  const solo = await bootSoloLane({
+  const solo = await bootLane({
     session: session as never,
     models,
     model: big,
@@ -242,7 +242,7 @@ function promptTextOf(entry: { model?: unknown }): string {
 
 // The prompt sections the harness has committed, oldest first.
 async function committedPrompts(
-  solo: SoloLane,
+  solo: Lane,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<string[]> {
   const page = await solo.conversation.entries({}, 200, undefined, context);
@@ -254,7 +254,7 @@ async function committedPrompts(
 
 // `pi.system` entries are planned at request preparation, so a turn has to
 // run before the assembled prompt is in the transcript.
-async function driveOneTurn(solo: SoloLane, content = 'say hi'): Promise<void> {
+async function driveOneTurn(solo: Lane, content = 'say hi'): Promise<void> {
   const settled = await (
     await solo.conversation.submit(
       { type: 'input', content },
@@ -270,7 +270,7 @@ describe('solo boot on the durable harness', () => {
     const session = handle(new MemoryStorage());
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: session as never,
       models,
       model: big,
@@ -347,7 +347,7 @@ describe('solo boot on the durable harness', () => {
       fauxAssistantMessage('read it'),
     ]);
     const session = handle(new MemoryStorage());
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: session as never,
       models,
       model: big,
@@ -383,7 +383,7 @@ describe('solo boot on the durable harness', () => {
       fauxAssistantMessage('wrote it'),
     ]);
     const session = handle(new MemoryStorage());
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: session as never,
       models,
       model: big,
@@ -414,7 +414,7 @@ describe('solo boot on the durable harness', () => {
     const session = handle(new MemoryStorage());
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi')]);
-    const solo = await bootSoloLane({
+    const solo = await bootLane({
       session: session as never,
       models,
       model: big,
@@ -433,7 +433,7 @@ describe('solo boot on the durable harness', () => {
     const env = new FakeExecutionEnv({});
     const { faux, models, big } = catalog();
     faux.setResponses([fauxAssistantMessage('hi'), fauxAssistantMessage('hi')]);
-    const first = await bootSoloLane({
+    const first = await bootLane({
       session: handle(
         await openNodeJsonlStorage(dir, BACKGROUND_CONTEXT),
         'think',
@@ -455,7 +455,7 @@ describe('solo boot on the durable harness', () => {
     // model does not support is clamped with a named notice — never kept
     // silently, never dropped silently.
     const notices: string[] = [];
-    const second = await bootSoloLane({
+    const second = await bootLane({
       session: handle(
         await openNodeJsonlStorage(dir, BACKGROUND_CONTEXT),
         'think',

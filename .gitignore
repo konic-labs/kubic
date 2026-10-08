@@ -109,3 +109,4 @@ reports/
 # (public files must not reference or depend on it).
 # ---------------------------------------------------------------------------
 AGENTS.md
+/CLAUDE.md

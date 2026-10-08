@@ -297,16 +297,11 @@ export async function loadSessionCostRows(
     const isNamed = named !== undefined && entry.id === named.id;
     const project = entry.meta?.workspace ?? entry.meta?.cwd;
     // Base identity every row below carries: the session id stays `agentId`
-    // (the stable contract), `agent`/`role` name what the session recorded
-    // about itself, and `session`/`project` locate the fact.
+    // (the stable contract), and `session`/`project` locate the fact.
     const identity = {
       agentId: entry.id,
       session: entry.id,
       ...(project === undefined ? {} : { project }),
-      ...(entry.meta?.agentId === undefined
-        ? {}
-        : { agent: entry.meta.agentId }),
-      ...(entry.meta?.role === undefined ? {} : { role: entry.meta.role }),
     } as const;
     if (entry.format === 'legacy') {
       // A named legacy id escaped above; a legacy listing entry reports as

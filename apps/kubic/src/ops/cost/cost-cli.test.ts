@@ -939,8 +939,6 @@ describe('kubic cost project scope and grouping', () => {
       id: string;
       cwd: string;
       workspace?: string;
-      role?: string;
-      agentId?: string;
     },
   ): Promise<string> {
     const store = openSessionStore(root, createNodeFileBridge(root));
@@ -1020,18 +1018,16 @@ describe('kubic cost project scope and grouping', () => {
     ]);
   });
 
-  it("names a session's recorded role, agent and model", async () => {
+  it("names a session's project and model", async () => {
     const root = tmpRoot();
     await storedRun(root, {
-      id: 's-role',
+      id: 's-model',
       cwd: '/repo',
       workspace: '/repo',
-      role: 'implementer',
-      agentId: 'ccc',
     });
-    const rows = await loadSessionCostRows(root, 's-role');
-    expect(rows.map((row) => row.agent)).toEqual(['ccc']);
-    expect(rows.map((row) => row.role)).toEqual(['implementer']);
+    const rows = await loadSessionCostRows(root, 's-model');
+    expect(rows.map((row) => row.session)).toEqual(['s-model']);
+    expect(rows.map((row) => row.project)).toEqual(['/repo']);
     expect(rows.map((row) => row.model)).toEqual([MODEL_REF]);
   });
 

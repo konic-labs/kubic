@@ -274,12 +274,6 @@ export async function runSessionsCommand(
           sessions.map((entry) => ({
             id: entry.id,
             cwd: entry.meta?.cwd ?? null,
-            ...(entry.meta?.role === undefined
-              ? {}
-              : { role: entry.meta.role }),
-            ...(entry.meta?.agentId === undefined
-              ? {}
-              : { agentId: entry.meta.agentId }),
           })),
         ),
       );

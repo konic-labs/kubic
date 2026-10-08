@@ -1079,41 +1079,45 @@ describe('session state permissions', () => {
     },
   );
 
-  describe('session identity metadata', () => {
-    it('records role and agentId on the session', async () => {
+  describe('session metadata', () => {
+    it('ignores role and agentId keys an older session header still carries', async () => {
       const root = tmpRoot();
       const store = storeFor(root);
       const session = track(
-        await createSession(
-          store,
-          { cwd: '/repo', role: 'implementer', agentId: 'aaa' },
-          BACKGROUND_CONTEXT,
-        ),
+        await createSession(store, { cwd: '/repo' }, BACKGROUND_CONTEXT),
       );
-      expect(session.meta.role).toBe('implementer');
-      expect(session.meta.agentId).toBe('aaa');
-      // The durable document carries the same identity.
+      // The durable document carries the same facts as the listing header.
       expect(
         await readSessionMetadata(session.storage, BACKGROUND_CONTEXT),
       ).toEqual(session.meta);
       await session.release(BACKGROUND_CONTEXT);
-      // The listing header carries it too, so listSessions surfaces it
-      // without opening any storage.
+      // A header written before the identity keys were dropped.
+      writeFileSync(
+        join(root, session.id, 'session.json'),
+        JSON.stringify({
+          ...readHeader(root, session.id),
+          role: 'implementer',
+          agentId: 'aaa',
+        }),
+      );
       const listed = await listSessions(store, BACKGROUND_CONTEXT);
       const entry = listed.find((item) => item.id === session.id);
-      expect(entry?.meta?.role).toBe('implementer');
-      expect(entry?.meta?.agentId).toBe('aaa');
+      expect(entry?.meta?.cwd).toBe('/repo');
+      expect(entry?.meta).not.toHaveProperty('role');
+      expect(entry?.meta).not.toHaveProperty('agentId');
+      const reopened = track(
+        await attachSession(store, session.id, BACKGROUND_CONTEXT),
+      );
+      expect(reopened.meta).not.toHaveProperty('role');
+      expect(reopened.meta).not.toHaveProperty('agentId');
+      await reopened.release(BACKGROUND_CONTEXT);
     });
 
     it('keeps the listing header free of transcript references', async () => {
       const root = tmpRoot();
       const store = storeFor(root);
       const session = track(
-        await createSession(
-          store,
-          { cwd: '/repo', role: 'implementer', agentId: 'aaa' },
-          BACKGROUND_CONTEXT,
-        ),
+        await createSession(store, { cwd: '/repo' }, BACKGROUND_CONTEXT),
       );
       await session.release(BACKGROUND_CONTEXT);
       const header = readHeader(root, session.id);

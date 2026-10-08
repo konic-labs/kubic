@@ -111,9 +111,6 @@ export interface KubicSessionMeta {
   cwd: string;
   createdAt: string;
   workspace?: string;
-  // The role and agent the session runs as, when the caller records them.
-  role?: string;
-  agentId?: string;
   // A forked session's lane runs a FORK of the source's
   // conversation, not the reserved root: its id is recorded here (absent ⇒
   // the root), with where it came from.
@@ -136,8 +133,6 @@ export const KubicSessionDoc = defineDoc<{
   workspace?: string;
   conversation?: number;
   forkedFrom?: { session: string; at: number };
-  role?: string;
-  agentId?: string;
   mode?: RunMode;
 }>({
   kind: 'kubic.session',
@@ -530,22 +525,12 @@ function metaFrom(
   if (cwd === undefined || createdAt === undefined) return undefined;
   const conversation = value.conversation;
   const forkedFrom = value.forkedFrom as Record<string, unknown> | undefined;
-  const role =
-    typeof value.role === 'string' && value.role !== ''
-      ? value.role
-      : undefined;
-  const agentId =
-    typeof value.agentId === 'string' && value.agentId !== ''
-      ? value.agentId
-      : undefined;
   return {
     cwd,
     createdAt,
     ...(typeof value.workspace === 'string' && value.workspace !== ''
       ? { workspace: value.workspace }
       : {}),
-    ...(role === undefined ? {} : { role }),
-    ...(agentId === undefined ? {} : { agentId }),
     // Only the two RunMode spellings survive the read —
     // a foreign or hand-edited value is absent, never a third mode.
     ...(value.mode === 'autonomous' || value.mode === 'interactive'
@@ -667,10 +652,6 @@ export async function forkSession(
       ...(sourceMeta.workspace === undefined
         ? {}
         : { workspace: sourceMeta.workspace }),
-      ...(sourceMeta.role === undefined ? {} : { role: sourceMeta.role }),
-      ...(sourceMeta.agentId === undefined
-        ? {}
-        : { agentId: sourceMeta.agentId }),
     };
     let at: number | undefined;
     const storage = await openSessionStorage(store, targetDir, context);
@@ -761,8 +742,6 @@ function writeSessionHeader(
       cwd: meta.cwd,
       createdAt: meta.createdAt,
       ...(meta.workspace === undefined ? {} : { workspace: meta.workspace }),
-      ...(meta.role === undefined ? {} : { role: meta.role }),
-      ...(meta.agentId === undefined ? {} : { agentId: meta.agentId }),
       ...(meta.mode === undefined ? {} : { mode: meta.mode }),
     })}\n`,
     { mode: 0o600 },
@@ -854,8 +833,6 @@ export async function createSession(
     id?: string;
     cwd: string;
     workspace?: string;
-    role?: string;
-    agentId?: string;
     // The run's mode, recorded in the creating commit.
     mode?: RunMode;
   },
@@ -883,8 +860,6 @@ export async function createSession(
       cwd: opts.cwd,
       createdAt: new Date().toISOString(),
       ...(opts.workspace === undefined ? {} : { workspace: opts.workspace }),
-      ...(opts.role === undefined ? {} : { role: opts.role }),
-      ...(opts.agentId === undefined ? {} : { agentId: opts.agentId }),
       ...(opts.mode === undefined ? {} : { mode: opts.mode }),
     };
     const storage = await openSessionStorage(store, sessionDir, context);
@@ -900,8 +875,6 @@ export async function createSession(
         doc.cwd = meta.cwd;
         doc.createdAt = meta.createdAt;
         if (meta.workspace !== undefined) doc.workspace = meta.workspace;
-        if (meta.role !== undefined) doc.role = meta.role;
-        if (meta.agentId !== undefined) doc.agentId = meta.agentId;
         if (meta.mode !== undefined) doc.mode = meta.mode;
       }, context);
     } finally {
@@ -1012,9 +985,7 @@ export async function attachSession(
         header === undefined ||
         header.cwd !== meta.cwd ||
         header.createdAt !== meta.createdAt ||
-        header.workspace !== meta.workspace ||
-        header.role !== meta.role ||
-        header.agentId !== meta.agentId
+        header.workspace !== meta.workspace
       ) {
         writeSessionHeader(store, sessionDir, sessionId, meta);
       }

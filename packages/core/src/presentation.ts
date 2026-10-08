@@ -7,7 +7,7 @@
 // Negative rule: there is deliberately no `eval`-style command channel, no
 // raw event stream, and no way for the presentation to reach the harness
 // directly. This package (core) imports nothing internal;
-// `scripts/dep-lint.mjs` rejects core → host/worker/exec imports structurally.
+// `scripts/dep-lint.mjs` rejects core → host/agent/exec imports structurally.
 //
 
 // One image content part of a prompt. The

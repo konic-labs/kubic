@@ -184,7 +184,7 @@ export class SessionIdError extends Error {
 // processes appending to one session. LOCAL FILESYSTEM ONLY: O_EXCL create and
 // hard links are atomic on a local fs (and on volumes that honor them), but no
 // network/shared-disk locking semantics are claimed — see
-// docs/packages/worker.md.
+// docs/packages/agent.md.
 export class SessionLockError extends Error {
   constructor(sessionId: string, holder: { pid: number; startedAt: number }) {
     // Totality: a partially-written lock must refuse with the named error,

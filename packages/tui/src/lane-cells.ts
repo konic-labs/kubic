@@ -20,7 +20,7 @@ import type {
 import { visibleWidth } from './tui-boundary.js';
 
 // Entry shapes are structural on purpose: the tui package must never import
-// worker/host implementation (dep-lint), so only the fields read here are
+// agent/host implementation (dep-lint), so only the fields read here are
 // typed.
 export interface LaneEntryLike {
   readonly id?: unknown;

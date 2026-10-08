@@ -111,7 +111,7 @@ export interface FileBridge {
   /**
    * Flush a file's contents and the metadata needed to read them back: the
    * session storage's fsync seam. Kubic opens its sessions without it (the
-   * journal is the fsync'd store — see docs/packages/worker.md), so this exists
+   * journal is the fsync'd store — see docs/packages/agent.md), so this exists
    * for a caller that asks for durability explicitly. Optional like the rest.
    */
   flushFile?(path: string): void;

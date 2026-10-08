@@ -98,8 +98,8 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   `KUBIC_JOURNAL_RETENTION_DAYS=0.5`), an unknown `--session`, a live-run
   refusal (the session is attached by a live pid), or a pass that removed
   nothing while entries were listed; 2 for usage errors (a `--keep-days` that
-  is not a non-negative integer of days, a file-configured
-  `retentionDays = 0.5`-style value that is not one, an unknown option,
+  is not a non-negative integer of days, a file value that is not a
+  non-negative integer, an unknown option,
   `kubic journal` without a subcommand).
 - **`kubic trust`**: 0 recorded, revoked or listed; 2 usage errors
   (unknown option, a path that is not a directory, `--list` combined with

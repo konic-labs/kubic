@@ -323,10 +323,9 @@ function checkResult(input: BuildTrajectoryInput): TrajectoryResult {
   return result as TrajectoryResult;
 }
 
-// 1.1: every escalation must name the model it moved to —
-// an escalation without a target cannot be attributed to a model in RL
-// pairing or cost analysis. Fail-closed, never a silently target-less
-// record.
+// Every escalation must name the model it moved to — an escalation without a
+// target cannot be attributed to a model in RL pairing or cost analysis.
+// Fail-closed, never a silently target-less record.
 function checkEscalations(
   escalations: TrajectoryEscalation[],
 ): TrajectoryEscalation[] {

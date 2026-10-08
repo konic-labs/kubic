@@ -261,7 +261,7 @@ describe('trajectory structural validation', () => {
   it('recognizes the failure codes and nothing else', () => {
     expect(isTrajectoryFailureCode('tool_timeout')).toBe(true);
     expect(isTrajectoryFailureCode('run_limit')).toBe(true);
-    expect(isTrajectoryFailureCode('budget_exhausted')).toBe(false);
+    expect(isTrajectoryFailureCode('made_up_code')).toBe(false);
     expect(isTrajectoryFailureCode('completed')).toBe(false);
     expect(isTrajectoryFailureCode('')).toBe(false);
   });

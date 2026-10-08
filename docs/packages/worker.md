@@ -272,7 +272,7 @@ the installed Pi 1.0.2 (`edit-diff.js`, `tools/edit.js`), so nobody
 "aligns with Pi" later and reintroduces the `no_match` failure:
 
 - `detectLineEnding` takes the **dominant** ending (Pi takes the first
-  line's), which is what the issue asks for; a tie goes to LF.
+  line's), which is deliberate; a tie goes to LF.
 - `normalizeToLF` folds **`\r\n` only**, not Pi's lone `\r` as well: an
   old-Mac file keeps its bytes rather than being silently rewritten.
 - The model's `oldText`/`newText` are BOM-stripped too (Pi strips only the
@@ -311,10 +311,10 @@ bytes are streamed through the sha256 one `PREIMAGE_CHUNK_BYTES` (4 MiB)
 chunk at a time and the pre-image is recorded hash-only (`text: null`, so
 `write` sets `beforeOmitted: true` alongside the digest). The digest is over
 the raw bytes on both paths, so it is identical either way; what changes is
-memory: overwriting a 1.5 GB file would allocate roughly 3x its size
-(buffer + decode + re-encode lossless check) and journal the content
-verbatim — one `write` call away from OOMing the worker — and costs one
-chunk. Undo reports the step non-reversible exactly as it does for a binary
+memory: a 1.5 GB overwrite costs one chunk. A whole-file read would allocate
+roughly 3x the file size (buffer, decode and re-encode lossless check) and journal
+the content verbatim, one `write` call away from OOMing the worker.
+Undo reports the step non-reversible exactly as it does for a binary
 pre-image: it skips the entry (`non-reversible (skipped)`) instead of
 inventing content. `edit` is unaffected — it refuses above `EDIT_MAX_BYTES`
 before calling `readPreImage` — and a seam without `readFileRange` (a test
@@ -367,7 +367,7 @@ that touches `node:fs`.
 | --- | --- |
 | `main.jsonl` + `doc-<n>.jsonl` | the pi-durable JSONL storage: the session's transcript, documents and durable tasks — the session's truth |
 | `session.json` | Kubic's **listing header**: the metadata projection `listSessions` reads |
-| `lock.json` | the session lock ([below](#session-locking-issue-118)) |
+| `lock.json` | the session lock ([below](#session-locking)) |
 | `journal/`, `spans.jsonl`, `posture.json`, `trajectory.json` | the rest of the session's state, unchanged |
 
 The metadata itself is the session-scoped `kubic.session` document

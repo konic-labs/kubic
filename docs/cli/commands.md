@@ -384,8 +384,8 @@ alt-screen (exit 2), `--no-tools` is the empty set, and the two are
 mutually exclusive. Lane boot failure exits 5 on a missing
 session, 6 with no provider available, 1 otherwise, each with one
 `error: …` line on stderr (never stdout) before the screen opens. The
-`--session` model rule is the same as `kubic run`'s (issue
-Adds the same pins): `--model <provider/id>`, `KUBIC_MODEL`,
+`--session` model rule is the same as `kubic run`'s, and it adds the same pins:
+`--model <provider/id>`, `KUBIC_MODEL`,
 `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux` —
 the status bar and usage rows name the model the lane actually runs, and a
 kept or switched model is named in the first footer. `--thinking <level>` boots the lane at that level under the same rule as `kubic run` (resolved against the session record and the role default, clamped to the model with a named notice); the status bar seeds from the committed level. In the loop,
@@ -1072,7 +1072,7 @@ listing header, the lock, the journal, spans, approvals posture and
 trajectory. The session's metadata is the session-scoped `kubic.session`
 document, written in the creating commit, so anything holding the session
 open reads it from the same durable state as the transcript. Session JSONL
-is not fsynced (matching the previous storage); the change journal is the
+is not fsynced; the change journal is the
 fsync'd store.
 
 Legacy sessions use a different format: one
@@ -1137,7 +1137,7 @@ journal entries at read time (see the read-time self-heal note under
   **process-local**: it reads this machine's process table, so a session
   held by a run on another machine or in another container is not seen as
   held (the same local-filesystem-only caveat the lock itself carries —
-  see [worker](../packages/worker.md#session-locking-issue-118)). The
+  see [worker](../packages/worker.md#session-locking)). The
   probe is `process.kill(pid, 0)`: any result other than success —
   including `EPERM` for a pid this user cannot signal — reads as dead;
   same-user holders always signal, so a per-user sessions root never
@@ -1656,8 +1656,8 @@ Health readout — see [doctor and debug](doctor-and-debug.md).
 | `--json` | Emit `{ok, exitCode, checks}` as one pretty-printed JSON document instead of human lines. Same exit code either way. |
 | `--verbose` | On an interactive colour terminal, print every check in full instead of the grouped summary. Off a terminal the full report always prints. |
 
-On an interactive colour terminal the default is a grouped summary (issue
-See [doctor and debug](doctor-and-debug.md)). The full report keeps the
+On an interactive colour terminal the default is a grouped summary.
+See [doctor and debug](doctor-and-debug.md). The full report keeps the
 `STATUS id (reason): detail` shape; on a colour terminal the status is
 coloured (pass green, warn amber, fail red, skip grey). Unknown options exit 2. Full exit-code contract is on the
 [exit-codes page](exit-codes.md).

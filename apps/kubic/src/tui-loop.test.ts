@@ -1117,7 +1117,9 @@ describe('kubic tui prompt loop', () => {
     for (const ch of '/compact') fake.feed(ch);
     fake.feed('\r');
     await waitFor(() =>
-      /nothing to compact: \d+ tokens/.test(fake.writes.join('')),
+      /nothing to compact: no history older than the most recent turn \(\d+ tokens of context\)/.test(
+        fake.writes.join(''),
+      ),
     );
     if (lane === undefined) throw new Error('the lane never booted');
     const page = await lane.conversation.entries(

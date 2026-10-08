@@ -628,9 +628,11 @@ export class TuiCompactionTurn implements TuiTurnDriver {
       return `compacted: ${outcome.tokensBefore} tokens → summary`;
     }
     if (outcome.status === 'nothing') {
-      // Pi found no older history to cut: no summary entry was placed, and
-      // saying `compacted` would claim work that never happened.
-      return `nothing to compact: ${outcome.tokensBefore} tokens`;
+      // No summary entry was placed, and saying `compacted` would claim work
+      // that never happened. The line says why, in words.
+      return outcome.reason === 'most-recent-turn'
+        ? `nothing to compact: no history older than the most recent turn (${outcome.tokensBefore} tokens of context)`
+        : `nothing to compact: no cut point before the most recent turn (${outcome.tokensBefore} tokens)`;
     }
     if (outcome.status === 'aborted' || outcome.status === 'orphaned') {
       return 'compaction cancelled';

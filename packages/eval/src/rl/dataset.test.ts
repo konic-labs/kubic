@@ -3,6 +3,7 @@
 // The in-memory fs keeps the tests hermetic (no temp dirs, no network) and
 // lets the streaming claim be observed directly: one append per record.
 import { describe, expect, it } from 'vitest';
+import { makeExport } from '../test-support/fixtures.js';
 import {
   type DatasetDirEntry,
   DatasetError,
@@ -11,7 +12,6 @@ import {
   exportDataset,
   resolveDatasetFiles,
 } from './dataset.js';
-import { makeExport } from './fixtures.js';
 
 function passing(overrides: Parameters<typeof makeExport>[0] = {}) {
   return makeExport({

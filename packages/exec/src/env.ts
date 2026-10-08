@@ -33,6 +33,7 @@ import {
 import { constants as osConstants } from 'node:os';
 import { dirname, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import { isSecretEnvKey } from '../../core/src/secret-keys.js';
 
 export interface Provenance {
   sessionId: string;
@@ -154,7 +155,7 @@ export interface CheckpointStore {
   latest(key: string): ProcessSnapshot | undefined;
 }
 
-export type UpdateCallback = (
+type UpdateCallback = (
   snapshot: ProcessSnapshot,
   options?: { checkpoint?: boolean },
 ) => void;
@@ -319,7 +320,7 @@ class NodeFileSystem implements FileSystem {
   }
 }
 
-export const CHECKPOINT_INTERVAL_MS = 2000;
+const CHECKPOINT_INTERVAL_MS = 2000;
 
 function encodeSnapshot(snapshot: ProcessSnapshot): string {
   return `${snapshot.exitCode ?? 'run'}|${snapshot.stdout.length}|${snapshot.stdout}|${snapshot.stderr}`;
@@ -383,7 +384,7 @@ export const MAX_CHILD_OUTPUT_BYTES = 10 * 1024 * 1024;
 // SIGTERM → SIGKILL escalation window for kill(): long enough for a
 // well-behaved child to flush and exit, short enough that an abort never
 // hangs on a child that ignores SIGTERM.
-export const KILL_GRACE_MS = 2000;
+const KILL_GRACE_MS = 2000;
 
 // "never inherit ambient authority": every child the exec seam spawns
 // (the bash tool, host git calls) starts from this allowlist, never from
@@ -391,7 +392,7 @@ export const KILL_GRACE_MS = 2000;
 // one `echo $X` away from the model. It carries the POSIX session basics a
 // shell tool needs. No SSH_AUTH_SOCK / credential helpers: those are
 // authority, not environment.
-export const TOOL_ENV_ALLOWLIST: readonly string[] = [
+const TOOL_ENV_ALLOWLIST: readonly string[] = [
   'PATH',
   'HOME',
   'USER',
@@ -439,7 +440,7 @@ const ALLOWED_UPPER = new Set(TOOL_ENV_ALLOWLIST.map((k) => k.toUpperCase()));
 
 // The proxy variables are allowlisted for reachability, but a
 // proxy URL can carry userinfo — `http://user:password@proxy:3128` — which is
-// a credential even though the NAME looks benign, so `looksSecret` never sees
+// a credential even though the NAME looks benign, so the secret-name check never sees
 // it. A credential must never reach an agent-visible string, and the model's
 // shell can read the child env. The
 // value keeps its scheme, host and port and loses the userinfo; a proxy that
@@ -475,14 +476,6 @@ function stripProxyUserinfo(value: string): string {
   return `${value.slice(0, start)}${authority.slice(at + 1)}${value.slice(end)}`;
 }
 
-const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
-
-function looksSecret(upper: string): boolean {
-  return SECRET_SUFFIXES.some(
-    (suffix) => upper === suffix || upper.endsWith(`_${suffix}`),
-  );
-}
-
 // Pure: the allowlisted subset of `base` (plus LC_* / XDG_* vars). A
 // secret-shaped name is dropped even if it matches a pattern (LC_*_KEY), and
 // a proxy URL loses its userinfo — the one credential an
@@ -500,7 +493,7 @@ export function toolSpawnEnv(
         : TOOL_ENV_ALLOWLIST.includes(key)) ||
       key.startsWith('LC_') ||
       key.startsWith('XDG_');
-    if (!allowed || looksSecret(upper)) continue;
+    if (!allowed || isSecretEnvKey(key)) continue;
     out[key] = PROXY_VARS.has(upper) ? stripProxyUserinfo(value) : value;
   }
   return out;
@@ -511,13 +504,13 @@ export function toolSpawnEnv(
 // a background job, never the command's own output, so the streams are
 // destroyed instead of waiting for 'close' (which never comes while a
 // backgrounded `sleep` inherits the pipe).
-export const EXIT_DRAIN_MS = 150;
+const EXIT_DRAIN_MS = 150;
 
 const GROUP_POLL_MS = 10;
 
 // 128+signal, the shell convention (`kill -9 $$` → 137), instead of a
 // flattening `code ?? 1` that makes a signal exit look like a plain error.
-export function exitCodeFor(
+function exitCodeFor(
   code: number | null,
   signal: NodeJS.Signals | null,
 ): number {

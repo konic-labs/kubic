@@ -19,10 +19,6 @@ import type {
   ToolRegistration,
 } from '../pi-boundary.js';
 
-export {
-  PolicyValidationError,
-  SOLO_DEFAULTS,
-} from '../../../agents/src/policy.js';
 export type { PermissionClasses };
 
 // Name → registration lookup over the live registry: pi-durable's

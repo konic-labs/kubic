@@ -12,7 +12,7 @@ import { visibleWidth } from './tui-boundary.js';
 import { leftRight, wrapStyled } from './ui/line.js';
 import { sectionLabel } from './ui/marks.js';
 
-export type PreflightMark = 'ok' | 'warn' | 'err' | 'info';
+type PreflightMark = 'ok' | 'warn' | 'err' | 'info';
 
 export interface PreflightInfo {
   readonly version: string;

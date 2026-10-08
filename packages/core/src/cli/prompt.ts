@@ -85,7 +85,7 @@ export interface KeyChoice<T extends string> {
 }
 
 // The input a one-key prompt reads: a TTY stream in raw mode.
-export interface KeyPromptInput {
+interface KeyPromptInput {
   setRawMode?(mode: boolean): unknown;
   readonly isRaw?: boolean;
   on(event: 'data', listener: (chunk: Buffer | string) => void): unknown;

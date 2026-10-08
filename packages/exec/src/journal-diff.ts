@@ -16,7 +16,7 @@ import {
  * one; the narrower type keeps the TUI's file-op views (`DiffOp`) assignable
  * without teaching them about journal bookkeeping.
  */
-export type FileOp = Exclude<JournalOp, 'marker'>;
+type FileOp = Exclude<JournalOp, 'marker'>;
 
 export interface FileChange {
   path: string;

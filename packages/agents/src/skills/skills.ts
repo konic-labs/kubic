@@ -32,7 +32,7 @@ import { type PermissionClasses, toolsForClasses } from '../policy.js';
 
 export type SkillSource = 'user' | 'project' | 'package' | 'settings' | 'cli';
 
-export interface SkillMeta {
+interface SkillMeta {
   name: string;
   description: string;
   filePath: string;
@@ -87,7 +87,7 @@ export interface DiscoverSkillsResult {
 // `error` is a failed read. The name of an excluded project skill is the
 // directory basename: the frontmatter name is unknowable without reading
 // the file, which trust forbids.
-export type SkillSkipStatus = 'excluded' | 'error';
+type SkillSkipStatus = 'excluded' | 'error';
 
 export interface SkippedSkill {
   name: string;

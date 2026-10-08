@@ -13,7 +13,7 @@
 // - ToolTask beforeTool/afterTool, GenerationTask and CompactionTask hooks
 //   (policy, approval and perf interception points)
 // - chord Context (cancellation every durable call is threaded with)
-// - pi-durable FileSystem / ExecutionEnv (the exec-backed session bridge)
+// - pi-durable FileSystem (the exec-backed session bridge)
 // - pi-ai model layer (createModels, providers, thinking clamp, Type)
 //
 // Per-export justification template — copy this block above EVERY re-export
@@ -53,15 +53,14 @@ export { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 //     assembled catalogue resolves provider auth against)
 //   why Pi has no alternative: createModels reads auth through this context;
 //     a Kubic-shaped context would not type-check against Pi's resolver
+// TSchema: the type of the per-operation parameter schemas
+// in ops/registry.ts — the same typebox Pi's Tool.parameters requires.
 export type {
   ApiKeyAuth,
   AuthContext,
-  DeferredHandle,
   Model,
   ModelThinkingLevel,
   MutableModels,
-  // TSchema: the type of the per-operation parameter schemas
-  // in ops/registry.ts — the same typebox Pi's Tool.parameters requires.
   TSchema,
   Usage,
 } from '@earendil-works/pi-ai';
@@ -186,18 +185,15 @@ export type {
   ConversationId,
   EntryId,
   EntryRecord,
-  Extension,
   HarnessSettings,
   HookRegistration,
   JsonObject,
-  SettledSubmissionRecord,
   SnapshotEvent,
   Storage,
   Submission,
   SubmissionId,
   TaskId,
   ToolExecutionApi,
-  ToolHooks,
   ToolRegistration,
   UsageState,
 } from '@earendil-works/pi-durable';
@@ -278,9 +274,7 @@ export {
   AgentDoc,
   AssistantEntry,
   CompactionEntry,
-  CompactionTask,
   ConversationBusy,
-  configure,
   createRegistry,
   defineDoc,
   defineExtension,
@@ -297,11 +291,10 @@ export {
   UsageDoc,
   UserEntry,
   watchEvents,
-  wrapTool,
 } from '@earendil-works/pi-durable';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/env#FileSystem (with Result,
-//     FileErrorCode, FileInfo, FileKind, ExecutionEnv types)
+//     FileErrorCode types)
 //   used by: packages/worker/src/lane/session-fs.ts (the exec-backed
 //     FileSystem the JSONL storage writes through) and lane/* (the `env`
 //     option of Harness.open)
@@ -311,10 +304,7 @@ export {
 //     HarnessOptions.env, and FileError is the code-carrying failure the
 //     session bridge maps to Kubic errors.
 export type {
-  ExecutionEnv,
   FileErrorCode,
-  FileInfo,
-  FileKind,
   FileSystem,
   Result,
 } from '@earendil-works/pi-durable/env';

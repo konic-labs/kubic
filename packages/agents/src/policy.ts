@@ -8,7 +8,7 @@ export const FILESYSTEM_LEVELS = [
   'workspace-write',
   'full',
 ] as const;
-export type FilesystemLevel = (typeof FILESYSTEM_LEVELS)[number];
+type FilesystemLevel = (typeof FILESYSTEM_LEVELS)[number];
 
 export const SHELL_LEVELS = [false, 'read-only-allowlist', true] as const;
 export type ShellLevel = (typeof SHELL_LEVELS)[number];
@@ -17,7 +17,7 @@ export const NETWORK_LEVELS = ['none', 'allowlist', 'full'] as const;
 export type NetworkLevel = (typeof NETWORK_LEVELS)[number];
 
 export const GIT_LEVELS = [false, 'workspace', 'full'] as const;
-export type GitLevel = (typeof GIT_LEVELS)[number];
+type GitLevel = (typeof GIT_LEVELS)[number];
 
 export const CREDENTIAL_LEVELS = ['none', 'allowlist'] as const;
 export type CredentialLevel = (typeof CREDENTIAL_LEVELS)[number];

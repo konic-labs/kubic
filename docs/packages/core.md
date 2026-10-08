@@ -38,12 +38,12 @@ presentation to the harness.
 
 | Field | Type |
 | --- | --- |
-| `session` | `SessionSnapshot` |
+| `session` | object with `sessionId: string`, `model?: string`, `thinking?: string`, `approvalsSkipped: boolean` |
 | `agents` | `ReadonlyMap<string, AgentSummary>` |
 | `lanes` | `ReadonlyMap<string, LaneSnapshot>` |
 | `approvals` | `readonly ApprovalRequest[]` |
 | `usage` | `UsageTotals` |
-| `connection` | `ConnectionState` |
+| `connection` | object with `status: 'connected' \| 'disconnected' \| 'reconnecting'`, `detail?` |
 
 `PRESENTATION_STATE_FIELDS` pins exactly those six keys via
 `satisfies Record<keyof KubicPresentationState, true>` — adding or
@@ -52,14 +52,12 @@ list at runtime before every hand-out.
 
 | Interface | Fields |
 | --- | --- |
-| `SessionSnapshot` | `sessionId: string`, `model?: string`, `thinking?: string`, `approvalsSkipped: boolean` |
 | `AgentSummary` | `agentId`, `role`, `status`, `workspace?` |
 | `LaneSnapshot` | `laneId`, `agentId`, `status: 'idle'\|'running'\|'done'`, `tools: LaneToolSnapshot[]`, `queued: string[]`, `compacting: boolean`, `fault?`, `retrying?` |
 | `LaneToolSnapshot` | `toolCallId`, `toolName`, `status: 'running'\|'done'`, `isError`, `args?`, `entry?`, `durationMs?` |
 | `LaneImagePart` | `mimeType`, `data` (base64, no `data:` prefix), `filename?`, `bytes?` |
 | `ApprovalRequest` | `requestId`, `toolName?`, `capability?`, `detail?` |
 | `UsageTotals` | `inputTokens`, `outputTokens`, `costUsd`, `requests?`, `cacheReadTokens?`, `cacheWriteTokens?` |
-| `ConnectionState` | `status: 'connected' \| 'disconnected' \| 'reconnecting'`, `detail?` |
 
 The state is produced by the host-side projector
 (`packages/host/src/presentation/projector.ts`), which folds the lane event

@@ -246,7 +246,7 @@ function withNewline(text: string): string {
 // refusal or cut notice rides the same header — or replaces
 // the empty-window text, since "no lines at offset K" would misname a line
 // that exists but exceeds the output cap.
-export function renderReadText(result: ReadResult): string {
+function renderReadText(result: ReadResult): string {
   const shown = lineCount(result.content);
   const total = `${result.truncated ? 'at least ' : ''}${result.totalLines}`;
   if (shown === 0) {
@@ -305,7 +305,7 @@ export function renderGrepText(result: GrepResult): string {
 
 // `[bash exit <code> (<shell>)]` + the raw streams, each under its own
 // marker; flags name a timeout, an abort, or a clipped stream.
-export function renderBashText(result: BashResult): string {
+function renderBashText(result: BashResult): string {
   const flags = [
     result.timedOut ? 'timed out' : undefined,
     result.aborted ? 'aborted' : undefined,
@@ -326,7 +326,7 @@ export function renderBashText(result: BashResult): string {
 }
 
 // The model-facing text for a successful op result.
-export function renderToolText(name: string, result: unknown): string {
+function renderToolText(name: string, result: unknown): string {
   if (name === 'read') return renderReadText(result as ReadResult);
   if (name === 'grep') return renderGrepText(result as GrepResult);
   if (name === 'bash') return renderBashText(result as BashResult);

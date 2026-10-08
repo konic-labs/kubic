@@ -53,9 +53,7 @@ export const PANEL_EMPTY_LINE = 'no changes';
 // fields are carried through untouched. A null body stays null —
 // `create`/`delete` legitimately have one null side, and diff-view.ts renders
 // its own placeholder for those.
-export function sanitizeJournalChange(
-  change: JournalChangeLike,
-): JournalChangeLike {
+function sanitizeJournalChange(change: JournalChangeLike): JournalChangeLike {
   return {
     ...change,
     path: sanitizeLaneText(change.path),

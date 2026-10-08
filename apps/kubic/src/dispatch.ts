@@ -88,7 +88,7 @@ const ROOT_OPTIONS: ReadonlySet<string> = new Set([
 
 // Runner and registry types live with the command registry (./cli/context.ts);
 // re-exported here because the dispatch seam is what callers wire.
-export type { CommandRunner, DispatchRunners } from './cli/context.js';
+export type { DispatchRunners } from './cli/context.js';
 
 // Commands whose `--model <provider/id>` is the `cli`
 // config layer. The flag is an input to the ONE config load dispatch

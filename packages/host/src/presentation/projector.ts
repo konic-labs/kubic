@@ -9,8 +9,6 @@
 // The root lane's id IS the session id: the TUI has exactly one lane.
 
 import type {
-  AgentSummary,
-  ApprovalRequest,
   KubicPresentationState,
   LaneSnapshot,
   LaneToolSnapshot,
@@ -386,5 +384,3 @@ function usageTotalsOf(usage: {
   }
   return totals;
 }
-
-export type { AgentSummary, ApprovalRequest };

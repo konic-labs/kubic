@@ -116,7 +116,7 @@ export interface ApprovalPolicy {
   requireJustification: boolean;
 }
 
-export class PolicyValidationError extends Error {
+class PolicyValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'PolicyValidationError';
@@ -185,15 +185,15 @@ export interface ApprovalRequest {
 
 // The `by` a seat answers for a single-call approval (the TUI overlay's 'a'):
 // approved, audited, never latched or persisted.
-export const ALLOW_ONCE = 'allow-once';
+const ALLOW_ONCE = 'allow-once';
 // The `by` for "allow all edits this turn" — this call, and the
 // edit/write asks of the same kind until the turn ends; never latched.
 export const ALLOW_TURN_EDITS = 'allow-turn-edits';
 // The comments and edited commands a seat may send, at most.
-export const APPROVAL_NOTE_MAX_CHARS = 500;
+const APPROVAL_NOTE_MAX_CHARS = 500;
 // The request fields an ask shows: the one-line summary and,
 // for a bash call, the full command — both from the call's own args.
-export function approvalRequestDisplay(
+function approvalRequestDisplay(
   toolName: string,
   capability: Capability,
   args: Record<string, unknown>,
@@ -1764,7 +1764,7 @@ export function enableFullAccess(
 // The symmetric half — a session switched back to
 // enforced approvals. Writes the same posture.json the enable path writes
 // (so a resume boots enforced) and returns the posture it recorded.
-export function disableFullAccess(
+function disableFullAccess(
   store: FileApprovalStore,
   by: string,
   clock: () => number = Date.now,
@@ -2050,7 +2050,7 @@ export interface InstalledPolicyPosture {
   unsupported: UnsupportedLevel[];
 }
 
-export interface RecordedApprovalDeny {
+interface RecordedApprovalDeny {
   capability: string;
   toolName: string;
   reason: string;

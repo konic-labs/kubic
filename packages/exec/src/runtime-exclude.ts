@@ -72,7 +72,7 @@ const UNSAFE_CHARACTERS_ALL =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally stripping controls.
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 
-export function hasUnsafeCharacters(value: string): boolean {
+function hasUnsafeCharacters(value: string): boolean {
   return UNSAFE_CHARACTERS.test(value);
 }
 
@@ -87,7 +87,7 @@ export function hasUnsafeCharacters(value: string): boolean {
 // be silently repaired into a different rule.
 const GITIGNORE_METACHARACTERS = /[*?[\]\\]/;
 
-export function hasGitignoreMetacharacters(value: string): boolean {
+function hasGitignoreMetacharacters(value: string): boolean {
   return value.startsWith('#') || GITIGNORE_METACHARACTERS.test(value);
 }
 

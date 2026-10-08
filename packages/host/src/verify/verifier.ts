@@ -13,8 +13,8 @@
 import type { ExecutionEnv } from '../../../exec/src/env.js';
 
 export const VERIFY_GATES = ['tests', 'build', 'lint', 'typecheck'] as const;
-export type VerifyGate = (typeof VERIFY_GATES)[number];
-export type GateVerdict = 'pass' | 'fail';
+type VerifyGate = (typeof VERIFY_GATES)[number];
+type GateVerdict = 'pass' | 'fail';
 export type VerifyResults = Partial<Record<VerifyGate, GateVerdict>>;
 
 export type VerifyCommands = Partial<Record<VerifyGate, string>>;

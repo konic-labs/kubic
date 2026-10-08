@@ -85,10 +85,6 @@ import {
   readSessionUsage,
   type SessionUsageRow,
 } from '../../../packages/host/src/ops/cost/cost-cli.js';
-import {
-  TurnSpans,
-  type TurnSpansSink,
-} from '../../../packages/host/src/ops/perf/run-spans.js';
 import { resolveRunBaseRevision } from '../../../packages/host/src/policy/audit-ledger.js';
 import {
   type EffectivePolicy,
@@ -116,6 +112,10 @@ import {
   type RunTerminusKind,
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
+import {
+  TurnSpans,
+  type TurnSpansSink,
+} from '../../../packages/host/src/run-spans.js';
 import {
   type SessionSummary,
   summarizeProjectSessions,
@@ -476,16 +476,12 @@ export interface TuiProviderChoice {
 // footer outcome, and — when the lane settled it — the durable TurnOutcome that
 // is the lane record's source (completed/failed/aborted, the reason and the
 // human message).
-export interface TuiTurnRecord {
+interface TuiTurnRecord {
   prompt: string;
   startedAt: number;
   outcome: TuiTurnOutcome;
   turn?: TurnOutcome;
 }
-
-// The lane record of one settled turn: the durable outcome kind and, for
-// a failure, the classified error.
-export type TuiTurnLaneRecord = ReturnType<typeof turnLaneRecord>;
 
 // The terminus of a durable failure: the reason code carries
 // the classification the old terminal-status mapping used to derive, so the
@@ -524,7 +520,7 @@ export interface TuiTurnOptions {
 
 // One turn's driver (a prompt turn or a compaction): the input loop's busy
 // latch, Ctrl-C handling and quit drain stay one contract.
-export interface TuiTurnDriver {
+interface TuiTurnDriver {
   isRunning(): boolean;
   isCancelling(): boolean;
   // False means Ctrl-C cannot cancel this turn: the runner quits instead of
@@ -661,7 +657,7 @@ export class TuiCompactionTurn implements TuiTurnDriver {
 }
 
 // One row of the `/resume` picker.
-export interface TuiSessionChoice {
+interface TuiSessionChoice {
   readonly id: string;
   readonly cwd?: string;
   readonly createdAt?: string;
@@ -906,11 +902,8 @@ export interface TuiRunDeps {
   projectTrust?: 'loaded' | 'untrusted';
 }
 
-export type TuiSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
-export type TuiProcessEvent =
-  | TuiSignal
-  | 'uncaughtException'
-  | 'unhandledRejection';
+type TuiSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
+type TuiProcessEvent = TuiSignal | 'uncaughtException' | 'unhandledRejection';
 
 export interface TuiProcessEvents {
   on(event: TuiProcessEvent, listener: (value: unknown) => void): unknown;
@@ -923,14 +916,14 @@ const TUI_FATAL_EVENTS = ['uncaughtException', 'unhandledRejection'] as const;
 // A signalled quit exits 128+signo (SIGHUP 129, SIGINT 130,
 // SIGTERM 143) — the shell convention, so a supervisor can tell a signalled
 // TUI from a clean quit.
-export function signalExitCode(signal: TuiSignal): number {
+function signalExitCode(signal: TuiSignal): number {
   return 128 + osConstants.signals[signal];
 }
 
 // How long a quit waits for an aborted turn to settle. The kills
 // have already run by then; the wait only lets the lane record its terminal
 // status and the killed tool finish its last write before the sweep.
-export const TUI_DRAIN_TIMEOUT_MS = 3000;
+const TUI_DRAIN_TIMEOUT_MS = 3000;
 
 // How often the header clock checks whether its minute changed.
 export const TUI_CLOCK_TICK_MS = 30_000;
@@ -1135,7 +1128,7 @@ export function soloTuiLoop(
 // Prod solo boot: same session/model setup as the headless runner
 // (create-or-attach, journal dir, assembled models, default select, lane
 // boot) plus the loop surface the interactive path drives.
-export class ToolSelectionError extends Error {
+class ToolSelectionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ToolSelectionError';
@@ -2195,7 +2188,7 @@ export async function bootTuiLane(
 // A settled TUI turn → the outcome its trajectory records: the
 // durable turn record decides, exactly as it does for `kubic run`; a
 // turn the lane never settled is a plain failure, never an invented terminus.
-export function tuiTurnOutcome(
+function tuiTurnOutcome(
   turn: TuiTurnRecord,
   items: readonly TranscriptItem[],
 ): RunOutcome {
@@ -2242,7 +2235,7 @@ async function liveModelOf(
 // entries render as prompt/assistant/tool cells; a `pi.compaction` summary
 // and a `pi.reset` handoff render as their own cells, while the
 // positional `pi.system` prompt carries empty content and has none.
-export function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
+function laneEntryFor(entry: EntryRecord): LaneEntryLike | undefined {
   const role =
     entry.kind === 'pi.user'
       ? 'user'
@@ -2335,7 +2328,7 @@ export type TuiDepsInput = {
 // `runtimeLaneDeps`' own return type BY NAME: a key that projection gains can
 // never be silently dropped here, because the forwarding table in
 // tuiBootOptions must name every key of this type.
-export type TuiConfigProjection = {
+type TuiConfigProjection = {
   // Config projections: the TUI installs the same policy
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
@@ -2519,7 +2512,7 @@ export function tuiDepsWithDefaults(
 // burst of tool-end events collapses into one read per window, and a
 // settlement (or the boot) reads at once. A read failure never reaches the
 // loop — the panels keep their last rows.
-export const JOURNAL_REFRESH_MS = 100;
+const JOURNAL_REFRESH_MS = 100;
 
 // The one builtin whose writes bypass the journal's own recording: a turn that
 // ran it needs the reconcile sweep at settlement.
@@ -2602,7 +2595,7 @@ export interface TuiTurnOutcome {
 // One-line footer for a settled turn: the editor row is the loop's only
 // always-visible status surface besides the status bar, and a silent
 // outcome (especially a cancellation) would leave the user guessing.
-export function footerForOutcome(outcome: TuiTurnOutcome): string {
+function footerForOutcome(outcome: TuiTurnOutcome): string {
   if (outcome.status === 'completed') return '';
   if (outcome.status === 'cancelled') return 'cancelled';
   return `error: ${outcome.detail ?? 'the turn failed'}`;
@@ -3442,10 +3435,7 @@ export function workspaceFileLister(
 // is read through the exec bridge with the same regular-file and size guard
 // as a theme, and an invalid one is a `KeybindingsError` naming the file and
 // the entry, so the boot refuses it (exit 2) before the screen opens.
-export function resolveTuiKeybindings(
-  path: string,
-  files: FileBridge,
-): KeyRegistry {
+function resolveTuiKeybindings(path: string, files: FileBridge): KeyRegistry {
   if (!files.exists(path)) return createKeyRegistry();
   let text: string;
   try {
@@ -3473,12 +3463,11 @@ export function resolveTuiKeybindings(
 // `undefined` means the draft is a prompt, not the command. One parser for
 // the dispatch and its tests: `/image` alone is the usage error, anything
 // after it is the path (spaces included — a screenshot path often has them).
-export type TuiImageCommand =
+type TuiImageCommand =
   | { kind: 'attach'; path: string }
   | { kind: 'invalid'; message: string };
 
-export const IMAGE_COMMAND_USAGE =
-  'usage: /image <path> (png, jpeg, webp or gif)';
+const IMAGE_COMMAND_USAGE = 'usage: /image <path> (png, jpeg, webp or gif)';
 
 // How long an unterminated inline-image sequence is held before it is
 // dropped with a footer: long enough for the
@@ -3522,7 +3511,7 @@ export function parseSkillInvokeCommand(
   return { kind: 'invoke', name, instructions };
 }
 
-export function parseImageCommand(prompt: string): TuiImageCommand | undefined {
+function parseImageCommand(prompt: string): TuiImageCommand | undefined {
   const trimmed = prompt.trim();
   if (trimmed !== '/image' && !trimmed.startsWith('/image ')) {
     return undefined;
@@ -3644,13 +3633,11 @@ export function parseEscalateCommand(
 // Pi hands the summarizer (verbatim, via compaction.ts's compact prompt),
 // absent when the operator typed `/compact` alone. One parser for the dispatch
 // and its tests.
-export interface TuiCompactCommand {
+interface TuiCompactCommand {
   readonly focus: string | undefined;
 }
 
-export function parseTuiCompactCommand(
-  prompt: string,
-): TuiCompactCommand | undefined {
+function parseTuiCompactCommand(prompt: string): TuiCompactCommand | undefined {
   const trimmed = prompt.trim();
   if (trimmed !== '/compact' && !trimmed.startsWith('/compact ')) {
     return undefined;
@@ -6169,7 +6156,7 @@ export async function runTuiCommand(
 }
 
 // A path under the home directory, written `~/…`.
-export function tildePath(path: string, home: string = homedir()): string {
+function tildePath(path: string, home: string = homedir()): string {
   if (home === '' || home === '/') return path;
   if (path === home) return '~';
   return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;

@@ -8,7 +8,7 @@ export interface LsArgs {
   path?: string;
 }
 
-export interface LsEntry {
+interface LsEntry {
   name: string;
   isFile: boolean;
   isDirectory: boolean;
@@ -28,13 +28,13 @@ export interface LsResult {
 // listing — a 2000-file directory must not flood the worker's context.
 // The cap applies to the sorted names BEFORE statting, so the entries past
 // it cost no stat calls either.
-export const LS_MAX_ENTRIES = 500;
+const LS_MAX_ENTRIES = 500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function validateLsArgs(raw: unknown): LsArgs {
+function validateLsArgs(raw: unknown): LsArgs {
   if (!isRecord(raw))
     throw new OpError('invalid_args', 'ls args must be an object');
   for (const key of Object.keys(raw)) {

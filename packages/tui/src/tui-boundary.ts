@@ -15,13 +15,9 @@ export type {
   Component,
   EditorTheme,
   Focusable,
-  ImageProtocol,
-  ImageTheme,
   MarkdownTheme,
   MouseRegionHandler,
-  StackEntryOptions,
   Terminal,
-  TerminalCapabilities,
   TUI,
 } from '@earendil-works/pi-tui';
 // JUSTIFICATION:

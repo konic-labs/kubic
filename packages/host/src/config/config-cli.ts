@@ -11,8 +11,8 @@
 
 import { EXIT_FAILED, EXIT_OK } from '../../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../../core/src/cli/output.js';
+import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import { type CliIo, diagnosticsOf } from '../cli-io.js';
-import { redactSecretShapes } from '../policy/secret-shapes.js';
 import {
   effectiveConfigView,
   type RuntimeConfig,

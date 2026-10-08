@@ -1,29 +1,12 @@
 // Settlement mapping:
 // submitted settlements → Kubic failure codes and result vocabulary.
 import { describe, expect, it } from 'vitest';
-import type { SettledSubmissionRecord } from '../pi-boundary.js';
 import {
   classifyHarnessError,
   classifySubmissionFailure,
   classifyThrownError,
-  laneErrorOf,
-  laneStatusOf,
-  settleSubmission,
   settleTerminalStatus,
 } from './settle.js';
-
-function settled(
-  record:
-    | { status: 'done' }
-    | { status: 'unanswered'; reason: string; detail?: string },
-): SettledSubmissionRecord {
-  return {
-    id: 'sub-1',
-    conversationId: 'conv-1',
-    type: 'input',
-    ...record,
-  } as unknown as SettledSubmissionRecord;
-}
 
 describe('settlement mapping', () => {
   it('maps completed to a completed result without error', () => {
@@ -70,58 +53,10 @@ describe('settlement mapping', () => {
 });
 
 describe('settled pi-durable submissions', () => {
-  it('maps a done submission to completed', () => {
-    expect(settleSubmission(settled({ status: 'done' }))).toEqual({
-      status: 'completed',
-    });
-    expect(laneStatusOf(settled({ status: 'done' }))).toBe('completed');
-    expect(laneErrorOf(settled({ status: 'done' }))).toBeUndefined();
-  });
-
-  it('maps model_error to the model code with the harness detail as message', () => {
-    const record = settled({
-      status: 'unanswered',
-      reason: 'model_error',
-      detail: 'provider returned 500',
-    });
-    expect(settleSubmission(record)).toEqual({
-      status: 'failed',
-      error: {
-        kind: 'model',
-        message: 'provider returned 500',
-        details: 'provider returned 500',
-      },
-    });
-    expect(
-      classifySubmissionFailure('model_error', 'provider returned 500'),
-    ).toEqual({
-      code: 'model_failed',
-      message: 'provider returned 500',
-      error: {
-        kind: 'model',
-        message: 'provider returned 500',
-        details: 'provider returned 500',
-      },
-    });
-    expect(laneStatusOf(record)).toBe('failed');
-    expect(laneErrorOf(record)).toEqual({
-      code: 'model_error',
-      message: 'provider returned 500',
-      details: 'provider returned 500',
-    });
-  });
-
   it('maps a bare reason to a readable message, never the code alone', () => {
     const failure = classifySubmissionFailure('no_model');
     expect(failure.code).toBe('provider_auth');
     expect(failure.message).toBe('lane settled no_model');
-  });
-
-  it('maps an aborted settlement to cancelled with no error', () => {
-    const record = settled({ status: 'unanswered', reason: 'aborted' });
-    expect(settleSubmission(record)).toEqual({ status: 'cancelled' });
-    expect(laneStatusOf(record)).toBe('aborted');
-    expect(laneErrorOf(record)).toBeUndefined();
   });
 
   it('maps a faulted settlement to the process code', () => {

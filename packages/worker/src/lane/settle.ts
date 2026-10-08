@@ -3,7 +3,6 @@
 // module translates that into a ResultStatus + ResultError and the failure
 // codes of lane/failures.ts.
 
-import type { SettledSubmissionRecord } from '../pi-boundary.js';
 import { classifyFailure, type FailureCode } from './failures.js';
 
 export type JsonValue =
@@ -15,7 +14,7 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 
 // How a run ended.
-export type ResultStatus =
+type ResultStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
@@ -159,29 +158,6 @@ export function classifyThrownError(error: unknown): SubmissionFailure {
   return { code: classified.code, message, error: { kind, message } };
 }
 
-// The trajectory/lane record for one settled submission: `done` is 'completed';
-// `unanswered`/aborted is 'aborted' (no error) and every other reason is
-// 'failed' with the raw reason as `code` (the failure code lives on the
-// TurnOutcome).
-export function laneStatusOf(
-  settled: SettledSubmissionRecord,
-): LaneTerminalStatus {
-  if (settled.status === 'done') return 'completed';
-  return settled.reason === 'aborted' ? 'aborted' : 'failed';
-}
-
-export function laneErrorOf(
-  settled: SettledSubmissionRecord,
-): OperationErrorLike | undefined {
-  if (settled.status === 'done') return undefined;
-  if (settled.reason === 'aborted') return undefined;
-  return {
-    code: settled.reason,
-    message: detailText(settled.detail) ?? settled.reason,
-    ...(settled.detail === undefined ? {} : { details: settled.detail }),
-  };
-}
-
 export function settleTerminalStatus(
   status: LaneTerminalStatus,
   error?: OperationErrorLike,
@@ -205,10 +181,4 @@ export function settleTerminalStatus(
       };
     }
   }
-}
-
-export function settleSubmission(
-  settled: SettledSubmissionRecord,
-): SettledResult {
-  return settleTerminalStatus(laneStatusOf(settled), laneErrorOf(settled));
 }

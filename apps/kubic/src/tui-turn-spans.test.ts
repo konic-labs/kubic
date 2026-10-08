@@ -9,7 +9,7 @@ import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js'
 import {
   TurnSpans,
   type TurnSpansSink,
-} from '../../../packages/host/src/ops/perf/run-spans.js';
+} from '../../../packages/host/src/run-spans.js';
 import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import type {
   KubicLaneEvent,

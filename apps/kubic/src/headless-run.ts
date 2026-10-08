@@ -67,11 +67,6 @@ import {
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import { readSessionRunUsage } from '../../../packages/host/src/ops/cost/cost-cli.js';
 import {
-  RunSpans,
-  runSpanHooks,
-  serializeSpanArtifact,
-} from '../../../packages/host/src/ops/perf/run-spans.js';
-import {
   appendToLedger,
   auditLedgerDirFor,
   resolveRunBaseRevision,
@@ -106,6 +101,11 @@ import {
   type RetryRecord,
   SESSION_ID_PATTERN,
 } from '../../../packages/host/src/run-cli.js';
+import {
+  RunSpans,
+  runSpanHooks,
+  serializeSpanArtifact,
+} from '../../../packages/host/src/run-spans.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import type { DebugSink } from '../../../packages/host/src/spans.js';
@@ -357,7 +357,7 @@ export interface HeadlessRunDeps {
   warn?: (line: string) => void;
 }
 
-export interface SignalSource {
+interface SignalSource {
   on(event: InterruptSignal, listener: (signal: string) => void): unknown;
   off(event: InterruptSignal, listener: (signal: string) => void): unknown;
 }
@@ -785,7 +785,7 @@ export function laneActivityDebugLine(
 
 // The run's agent id: the configured `[agent].name`, else 'root'. It tags
 // the run's journal, reconcile and trajectory entries.
-export function resolveRunAgentId(depsAgentId: string | undefined): string {
+function resolveRunAgentId(depsAgentId: string | undefined): string {
   return depsAgentId ?? 'root';
 }
 

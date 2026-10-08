@@ -2,7 +2,7 @@
 // Both types generate against a schema and validate fail-closed:
 // stripped provenance/labels are errors, not warnings.
 import { describe, expect, it } from 'vitest';
-import { makeExport } from './fixtures.js';
+import { makeExport } from '../test-support/fixtures.js';
 import { buildGrpoGroup, validateGrpoGroup } from './grpo.js';
 import { canonicalJson } from './manifest.js';
 import { buildSftRecord, validateSftRecord } from './sft.js';

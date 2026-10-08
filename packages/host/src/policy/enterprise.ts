@@ -19,7 +19,7 @@ export const POLICY_LAYERS = [
   'agent',
 ] as const;
 
-export type PolicyLayer = (typeof POLICY_LAYERS)[number];
+type PolicyLayer = (typeof POLICY_LAYERS)[number];
 
 export class PolicyError extends Error {
   constructor(message: string) {
@@ -35,19 +35,19 @@ export class PolicyDeniedError extends PolicyError {
   }
 }
 
-export type NetworkMode = 'none' | 'allowlist' | 'full';
+type NetworkMode = 'none' | 'allowlist' | 'full';
 
-export interface ToolsPolicy {
+interface ToolsPolicy {
   allow?: string[];
   deny?: string[];
 }
 
-export interface NetworkPolicy {
+interface NetworkPolicy {
   mode?: NetworkMode;
   domains?: string[];
 }
 
-export interface ModelsPolicy {
+interface ModelsPolicy {
   providers?: string[];
   ids?: string[];
   thinking?: string;
@@ -59,23 +59,23 @@ export interface ModelsPolicy {
   allowed?: string[];
 }
 
-export type FilesystemLevel = 'none' | 'read' | 'workspace-write' | 'full';
+type FilesystemLevel = 'none' | 'read' | 'workspace-write' | 'full';
 
-export interface FilesystemPolicy {
+interface FilesystemPolicy {
   level?: FilesystemLevel;
   roots?: string[];
 }
 
-export interface DataPolicy {
+interface DataPolicy {
   retentionDays?: number;
   redactSecrets?: boolean;
   /** `data_policy`: carried, reported, not enforced yet. */
   policy?: string;
 }
 
-export type LoggingLevel = 'error' | 'warn' | 'info' | 'debug';
+type LoggingLevel = 'error' | 'warn' | 'info' | 'debug';
 
-export interface LoggingPolicy {
+interface LoggingPolicy {
   level?: LoggingLevel;
   destinations?: string[];
   /** `logging_policy`: carried, reported, not enforced yet. */
@@ -84,12 +84,12 @@ export interface LoggingPolicy {
 
 export type AuditSinkKind = 'syslog' | 'file' | 'memory';
 
-export interface AuditSinkSpec {
+interface AuditSinkSpec {
   kind: AuditSinkKind;
   target: string;
 }
 
-export interface AuditPolicy {
+interface AuditPolicy {
   sinks?: AuditSinkSpec[];
 }
 
@@ -1010,11 +1010,6 @@ export function isModelAllowed(
     );
   }
   return true;
-}
-
-export interface BrokerSecret {
-  ref: string;
-  value: string;
 }
 
 export interface EnterpriseDoctorEnv {

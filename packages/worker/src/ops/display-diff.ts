@@ -30,9 +30,9 @@ export interface WriteDisplay {
 
 export type ToolDisplay = DiffDisplay | WriteDisplay;
 
-export const DISPLAY_DIFF_CONTEXT = 3;
+const DISPLAY_DIFF_CONTEXT = 3;
 export const DISPLAY_DIFF_MAX_ROWS = 400;
-export const WRITE_PREVIEW_LINES = 40;
+const WRITE_PREVIEW_LINES = 40;
 // The LCS table's cell budget (rows × columns of the changed middle).
 const LCS_MAX_CELLS = 250_000;
 

@@ -13,7 +13,7 @@ import {
   runEvalCommand,
 } from '../../../../packages/eval/src/cli.js';
 import { runExportCommand } from '../../../../packages/eval/src/export-cli.js';
-import { makeExport } from '../../../../packages/eval/src/rl/fixtures.js';
+import { makeExport } from '../../../../packages/eval/src/test-support/fixtures.js';
 import { runCostCommand } from '../../../../packages/host/src/ops/cost/cost-cli.js';
 import {
   AUDIT_FIELDS,

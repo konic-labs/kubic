@@ -28,7 +28,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function validateEditArgs(raw: unknown): EditArgs {
+function validateEditArgs(raw: unknown): EditArgs {
   if (!isRecord(raw))
     throw new OpError('invalid_args', 'edit args must be an object');
   for (const key of Object.keys(raw)) {
@@ -87,7 +87,7 @@ function countOccurrences(text: string, needle: string): number {
 // Above this size the edit op refuses before allocating anything: split/join
 // over a huge file is an unbounded allocation the model can trigger with one
 // tool call. 8 MiB matches the read bound.
-export const EDIT_MAX_BYTES = 8 * 1024 * 1024;
+const EDIT_MAX_BYTES = 8 * 1024 * 1024;
 
 const BOM = '\uFEFF';
 

@@ -16,7 +16,7 @@ no isolation; the classes decide which tools the model is offered.
 
 | Module | Exports |
 | --- | --- |
-| `policy.ts` | `PermissionClasses`, `FilesystemLevel`, `FILESYSTEM_LEVELS`, `ShellLevel`, `SHELL_LEVELS`, `NetworkLevel`, `NETWORK_LEVELS`, `GitLevel`, `GIT_LEVELS`, `CredentialLevel`, `CREDENTIAL_LEVELS`, `SOLO_DEFAULTS`, `toolsForClasses`, `AgreementCheck`, `checkAgreement`, `checkGrantable`, `UnsupportedLevel`, `effectiveNetworkLevel`, `effectiveCredentialLevel`, `checkExpressible`, `describeUnsupported`, `validateClasses`, `PolicyValidationError`, `RunMode` |
+| `policy.ts` | `PermissionClasses`, `FILESYSTEM_LEVELS`, `ShellLevel`, `SHELL_LEVELS`, `NetworkLevel`, `NETWORK_LEVELS`, `GIT_LEVELS`, `CredentialLevel`, `CREDENTIAL_LEVELS`, `SOLO_DEFAULTS`, `toolsForClasses`, `AgreementCheck`, `checkAgreement`, `checkGrantable`, `UnsupportedLevel`, `effectiveNetworkLevel`, `effectiveCredentialLevel`, `checkExpressible`, `describeUnsupported`, `validateClasses`, `PolicyValidationError`, `RunMode` |
 | `skills/skills.ts` | Skill registry: `discoverSkills`, `gateSkills`, `formatSkillsForSystemPrompt`, `invokeSkill`, `expandSkillInvocation`, `parseSkillFile` and their types |
 | `index.ts` | No barrel — import per-module paths |
 

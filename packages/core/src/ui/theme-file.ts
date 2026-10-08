@@ -36,7 +36,7 @@ export class ThemeError extends Error {
 }
 
 /** The seven v1 colour keys. */
-export const LEGACY_THEME_KEYS = [
+const LEGACY_THEME_KEYS = [
   'accent',
   'warm',
   'success',

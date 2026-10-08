@@ -9,7 +9,6 @@
 import { redactSecretEnv } from '../../core/src/secret-keys.js';
 import {
   isTrajectoryFailureCode,
-  type JsonValue,
   SCHEMA_VERSION,
   type TrajectoryAction,
   type TrajectoryApproval,
@@ -447,5 +446,3 @@ export function buildTrajectoryExport(
     eval: input.eval ?? { suite: null, caseId: null, labels: {} },
   };
 }
-
-export type { JsonValue };

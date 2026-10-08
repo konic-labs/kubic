@@ -13,14 +13,14 @@
 // Never blocks a tool call — the handlers return undefined except for the
 // untouched result, so telemetry can only observe the lane, never fail it.
 
-import type { HookRegistration } from '../../../../worker/src/pi-boundary.js';
-import { hook, ToolTask } from '../../../../worker/src/pi-boundary.js';
+import type { HookRegistration } from '../../worker/src/pi-boundary.js';
+import { hook, ToolTask } from '../../worker/src/pi-boundary.js';
 import {
   DebugLog,
   type DebugSink,
   type SpanRecord,
   SpanRecorder,
-} from '../../spans.js';
+} from './spans.js';
 
 export const RUN_SPAN_NAMES = {
   run: 'kubic.agent.run',
@@ -28,8 +28,6 @@ export const RUN_SPAN_NAMES = {
   drive: 'kubic.lane.drive',
   tool: 'pi.tool.execute',
 } as const;
-
-export type RunSpanName = (typeof RUN_SPAN_NAMES)[keyof typeof RUN_SPAN_NAMES];
 
 export interface RunSpanRecord extends SpanRecord {
   // Present on pi.tool.execute spans only: which tool the call ran.

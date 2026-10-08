@@ -14,7 +14,7 @@ import {
 } from './types.js';
 import { referenceVerifier, type VerifierVerdict } from './verifier.js';
 
-export const CODING_SCHEMA = 'coding/1';
+const CODING_SCHEMA = 'coding/1';
 
 export interface CodingRecord {
   schema: typeof CODING_SCHEMA;

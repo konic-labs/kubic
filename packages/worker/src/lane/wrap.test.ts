@@ -21,7 +21,6 @@ import { OperationKillRegistry } from './abort.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 import {
   composeTools,
-  compositionOrder,
   type ExecuteFn,
   PolicyDeniedError,
   type TelemetryRecord,
@@ -88,7 +87,6 @@ describe('wrap composition', () => {
       recorder('permission', log),
       recorder('telemetry', log),
     ];
-    expect(compositionOrder(contributions)).toBe('permission>telemetry');
     const tool = only(composeTools([stubTool(log)], contributions));
     await (tool.execute as unknown as ExecuteFn)();
     expect(log).toEqual([
@@ -105,7 +103,6 @@ describe('wrap composition', () => {
     const permission = recorder('permission', log);
     const telemetry = recorder('telemetry', log);
     const base = [stubTool(log)];
-    const first = compositionOrder([permission, telemetry]);
     await (
       only(composeTools(base, [permission, telemetry]))
         .execute as unknown as ExecuteFn
@@ -123,8 +120,6 @@ describe('wrap composition', () => {
       only(composeTools(base, [permission])).execute as unknown as ExecuteFn
     )();
     expect(log).toEqual(['permission-pre', 'core', 'permission-post']);
-    // Re-adding yields the identical order string.
-    expect(compositionOrder([permission, telemetry])).toBe(first);
   });
 
   it('denies disallowed tools at execute time and times the stack', async () => {
@@ -136,7 +131,6 @@ describe('wrap composition', () => {
         records.push(record);
       }),
     ];
-    expect(compositionOrder(contributions)).toBe('permission>telemetry');
     const denied = only(
       composeTools([{ ...stubTool(log), name: 'bash' }], contributions),
     );

@@ -5,9 +5,8 @@
 // It lives at the repo root because `packages/tui` and `packages/host` tests
 // both import it: `host -> tui` is a forbidden dependency edge
 // (`npm run lint:deps`), so a `packages/tui/src/test-support` module could
-// never be the one fake. Root `test/` is also outside the reachability gate's
-// scope (`packages/*/src`, `apps/*/src`), so a test-only helper needs no
-// dead-surface ledger row.
+// never be the one fake. Root `test/` holds test-only helpers, so they need no
+// production entry.
 //
 // The `Terminal` type comes from the presentation boundary, not from
 // `@earendil-works/*` directly: only `tui-boundary.ts` may touch Pi.

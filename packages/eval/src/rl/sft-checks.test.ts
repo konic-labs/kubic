@@ -4,7 +4,7 @@
 // messages are part of the export contract. Direct unit tests pin the
 // valid case as [] and each invalid field by its exact string.
 import { describe, expect, it } from 'vitest';
-import { makeExport } from './fixtures.js';
+import { makeExport } from '../test-support/fixtures.js';
 import { checkFailureCategory, checkProvenance, checkVerifier } from './sft.js';
 import { extractProvenance } from './types.js';
 

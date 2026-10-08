@@ -9,7 +9,7 @@ import {
   type ExportCommandOptions,
   runExportCommand,
 } from './export-cli.js';
-import { makeExport } from './rl/fixtures.js';
+import { makeExport } from './test-support/fixtures.js';
 
 // One controllable failure seam: the export-failed mapping
 // needs a builder that throws something the handler does not recognise.

@@ -13,7 +13,7 @@ import type { Style, UiTheme } from '../../../core/src/ui/style.js';
 
 /** Blocks past either bound render plain. */
 export const HIGHLIGHT_MAX_LINES = 2000;
-export const HIGHLIGHT_MAX_CHARS = 200_000;
+const HIGHLIGHT_MAX_CHARS = 200_000;
 
 interface HastText {
   readonly type: 'text';

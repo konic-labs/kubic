@@ -983,9 +983,25 @@ describe('toolSpawnEnv allowlist coverage', () => {
   });
 });
 
+// The workload-identity federation keys carry no secret suffix; only the
+// explicit name list in core keeps them out of a tool child.
+describe('federation identity keys in the tool env', () => {
+  it('never passes the workload-identity keys to a tool child', () => {
+    const out = toolSpawnEnv({
+      PATH: '/usr/bin',
+      ANTHROPIC_IDENTITY_TOKEN_FILE: '/run/secrets/token',
+      ANTHROPIC_FEDERATION_RULE_ID: 'rule-1',
+      ANTHROPIC_ORGANIZATION_ID: 'org-1',
+      ANTHROPIC_SERVICE_ACCOUNT_ID: 'sa-1',
+      ANTHROPIC_WORKSPACE_ID: 'ws-1',
+    });
+    expect(out).toEqual({ PATH: '/usr/bin' });
+  });
+});
+
 // A proxy URL's userinfo (`http://user:password@proxy:3128`) is a
-// credential in the sense, but the NAME looks benign, so `looksSecret`
-// never sees it and it reached every tool child — where the model can read it
+// credential in the sense, but the NAME looks benign, so the secret-name
+// check never sees it and it reached every tool child — where the model can read it
 // with `echo $HTTPS_PROXY`. The value keeps its scheme, host
 // and port and loses the userinfo; a proxy that REQUIRES that auth is not
 // usable from a tool child (Kubic does not broker proxy auth).

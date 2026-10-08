@@ -41,7 +41,3 @@ export function usageRowFromEntry(
 // The single roll-up surface is `kubic cost --session <run>`, which reads
 // the committed session usage directly. Rows are built here for the lane's
 // usage events.
-
-export function formatCost(total: number): string {
-  return `$${total.toFixed(2)}`;
-}

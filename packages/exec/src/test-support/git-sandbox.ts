@@ -40,7 +40,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export interface GitSandboxResult {
+interface GitSandboxResult {
   readonly status: number | null;
   readonly stdout: string;
   readonly stderr: string;

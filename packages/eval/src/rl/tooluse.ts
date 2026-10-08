@@ -15,9 +15,9 @@ import {
 } from './types.js';
 import { referenceVerifier, type VerifierVerdict } from './verifier.js';
 
-export const TOOLUSE_SCHEMA = 'tool-use/1';
+const TOOLUSE_SCHEMA = 'tool-use/1';
 
-export interface ToolUseStep {
+interface ToolUseStep {
   seq: number;
   tool: string;
   args: unknown;

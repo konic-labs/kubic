@@ -8,7 +8,6 @@
 // no network, no filesystem.
 
 import { type EscalationLadder, escalateModel } from './model-select.js';
-import type { Usage } from './pi-boundary.js';
 
 export class PromptCacheError extends Error {
   constructor(message: string) {
@@ -28,11 +27,11 @@ export interface SystemPromptInput {
   extraSections?: string[];
 }
 
-export function sortedToolNames(names: string[]): string[] {
+function sortedToolNames(names: string[]): string[] {
   return [...names].sort();
 }
 
-export function serializeMetadata(meta: Record<string, string>): string {
+function serializeMetadata(meta: Record<string, string>): string {
   return Object.keys(meta)
     .sort()
     .map((k) => `${k}=${meta[k]}`)
@@ -55,7 +54,7 @@ export function assembleSystemPrompt(input: SystemPromptInput): string {
 // pi.system entry is committed. The per-task model pin below keeps the model
 // stable across turns.
 
-export interface AffinityEscalation {
+interface AffinityEscalation {
   from: string;
   to: string;
   reason: string;
@@ -76,16 +75,6 @@ export function pinModelForTask(taskId: string, modelId: string): TaskAffinity {
 
 export function taskModelForTurn(affinity: TaskAffinity): string {
   return affinity.modelId;
-}
-
-export function assertSingleModelId(ids: string[]): string {
-  const distinct = [...new Set(ids)];
-  if (distinct.length !== 1) {
-    throw new PromptCacheError(
-      `per-action re-select detected: ${distinct.join(', ')}`,
-    );
-  }
-  return distinct[0] as string;
 }
 
 export interface ModelEscalationEvent {
@@ -128,90 +117,4 @@ export function escalatePinnedModel(
     },
     event,
   };
-}
-
-export interface CompactionRoute {
-  routingId: string;
-  cacheRetention: 'none';
-  cacheWriteEnabled: boolean;
-}
-
-// Compaction/summary must not poison the cache under the live
-// routing id, and must not write cache entries of its own.
-export function buildCompactionRoute(
-  currentSessionId: string,
-  freshRoutingId: string,
-): CompactionRoute {
-  if (freshRoutingId.length === 0 || freshRoutingId === currentSessionId) {
-    throw new PromptCacheError(
-      'compaction requires a fresh routing id distinct from the live session',
-    );
-  }
-  return {
-    routingId: freshRoutingId,
-    cacheRetention: 'none',
-    cacheWriteEnabled: false,
-  };
-}
-
-export interface SessionCacheCounters {
-  requests: number;
-  hits: number;
-  misses: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-export function emptyCacheCounters(): SessionCacheCounters {
-  return { requests: 0, hits: 0, misses: 0, cacheRead: 0, cacheWrite: 0 };
-}
-
-type CacheUsage = Pick<Usage, 'cacheRead' | 'cacheWrite'>;
-
-export function recordCacheUsage(
-  counters: SessionCacheCounters,
-  usage: CacheUsage,
-): SessionCacheCounters {
-  const hit = usage.cacheRead > 0;
-  return {
-    requests: counters.requests + 1,
-    hits: counters.hits + (hit ? 1 : 0),
-    misses: counters.misses + (hit ? 0 : 1),
-    cacheRead: counters.cacheRead + usage.cacheRead,
-    cacheWrite: counters.cacheWrite + usage.cacheWrite,
-  };
-}
-
-export function cacheHitRate(counters: SessionCacheCounters): number | null {
-  if (counters.requests === 0) return null;
-  return counters.hits / counters.requests;
-}
-
-// Hit/miss observability per session: every record updates the counters,
-// hitRate/format expose them to the status surface.
-export class SessionCacheStats {
-  private sessions = new Map<string, SessionCacheCounters>();
-
-  record(sessionId: string, usage: CacheUsage): void {
-    const prev = this.sessions.get(sessionId) ?? emptyCacheCounters();
-    this.sessions.set(sessionId, recordCacheUsage(prev, usage));
-  }
-
-  counters(sessionId: string): SessionCacheCounters {
-    return this.sessions.get(sessionId) ?? emptyCacheCounters();
-  }
-
-  hitRate(sessionId: string): number | null {
-    return cacheHitRate(this.counters(sessionId));
-  }
-
-  format(sessionId: string): string {
-    const c = this.counters(sessionId);
-    const rate = cacheHitRate(c);
-    const pct = rate === null ? 'n/a' : `${Math.round(rate * 100)}%`;
-    return (
-      `cache session ${sessionId} | hit-rate ${pct} ` +
-      `(${c.hits}/${c.requests}) | read ${c.cacheRead} write ${c.cacheWrite}`
-    );
-  }
 }

@@ -27,7 +27,7 @@ import { buildSftRecord } from './sft.js';
 import { buildToolUseRecord } from './tooluse.js';
 import { referenceVerifier } from './verifier.js';
 
-export const DATASET_SCHEMA = 'dataset/1';
+const DATASET_SCHEMA = 'dataset/1';
 
 export type ExportDatasetType =
   | 'sft'
@@ -95,7 +95,7 @@ export class DatasetError extends Error {
   }
 }
 
-export interface DatasetExclusion {
+interface DatasetExclusion {
   file: string;
   tag: string;
   reason: string;

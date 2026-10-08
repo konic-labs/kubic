@@ -28,7 +28,7 @@ import type { CliConfigResult } from '../config-runtime.js';
 
 // One analysis runner: commander's parsed options plus the process-wide
 // config load in, the exit code out (production wiring: ../prod-runners.ts).
-export type AnalysisRunner<Options> = (
+type AnalysisRunner<Options> = (
   options: Options,
   config: CliConfigResult,
 ) => number | Promise<number>;
@@ -46,7 +46,7 @@ export interface AnalysisRunners {
 // `--session <id>`: read the session's own trajectory
 // (<sessions-root>/<id>/trajectory.json) instead of naming the file. The
 // prod runner resolves it (./run-trajectory.ts resolveSessionTrajectory).
-export interface SessionOption {
+interface SessionOption {
   readonly session?: string;
 }
 

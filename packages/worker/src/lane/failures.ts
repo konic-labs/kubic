@@ -7,7 +7,7 @@
 
 import type { ResultErrorKind } from './settle.js';
 
-export const FAILURE_CODES = [
+const FAILURE_CODES = [
   'model_failed',
   'model_refused',
   'provider_transient',
@@ -33,7 +33,7 @@ export const FAILURE_CODES = [
 
 export type FailureCode = (typeof FAILURE_CODES)[number];
 
-export const RETRY_STRATEGIES = [
+const RETRY_STRATEGIES = [
   'retry_same',
   'retry_with_new_context',
   'retry_with_new_agent',
@@ -48,7 +48,7 @@ export const RETRY_STRATEGIES = [
 // agent are DECIDED here and executed by their owners; wider capability only
 // ever arises through an explicit approval, never from this chooser.
 
-export type RetryStrategy = (typeof RETRY_STRATEGIES)[number];
+type RetryStrategy = (typeof RETRY_STRATEGIES)[number];
 
 export type RetryDecisionKind = RetryStrategy | 'escalate' | 'abandon';
 

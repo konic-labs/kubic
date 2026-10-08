@@ -14,8 +14,7 @@ import {
   Harness,
   MemoryStorage,
   Type,
-} from '../../../../worker/src/pi-boundary.js';
-import { SpanRecorder } from '../../spans.js';
+} from '../../worker/src/pi-boundary.js';
 import {
   RUN_SPAN_NAMES,
   RunSpans,
@@ -23,6 +22,7 @@ import {
   serializeSpanArtifact,
   TurnSpans,
 } from './run-spans.js';
+import { SpanRecorder } from './spans.js';
 
 function ticks(values: number[]): () => number {
   const queue = [...values];

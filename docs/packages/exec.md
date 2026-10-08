@@ -14,14 +14,14 @@ escapes, not a sandbox boundary.
 
 | Module | Exports |
 | --- | --- |
-| `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `UpdateCallback`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `FakeSpawnCall`, `FakeOptions`, `argvKey`, `MemoryCheckpointStore`, `CHECKPOINT_INTERVAL_MS`, `MAX_CHILD_OUTPUT_BYTES`, `KILL_GRACE_MS`, `TOOL_ENV_ALLOWLIST`, `toolSpawnEnv` (every spawned child gets the allowlisted env, secrets dropped) |
-| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `UNREADABLE_HASH`, `ReconcileContext`, `RestoreResult`, `LARGE_FILE_BYTES`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `DEFAULT_JOURNAL_MAX_BYTES`, `sha256Hex`, `sha256HexOfFile`, `sha256HexOfBytes`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile`, `journalMutationLockPath` |
+| `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `FakeSpawnCall`, `FakeOptions`, `argvKey`, `MemoryCheckpointStore`, `MAX_CHILD_OUTPUT_BYTES`, `toolSpawnEnv` (every spawned child gets the allowlisted env, secrets dropped) |
+| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `UNREADABLE_HASH`, `ReconcileContext`, `RestoreResult`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `sha256Hex`, `sha256HexOfFile`, `sha256HexOfBytes`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `loadBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile`, `journalMutationLockPath` |
 | `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
-| `journal-status.ts` | `JournalStatus`, `RepoState`, `journalStatus`, `renderLog` |
+| `journal-status.ts` | `JournalStatus`, `journalStatus`, `renderLog` |
 | `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
 | `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation` (`baseline`, `baselinePath`, `sweep()`, `rebaseline(turn)`: re-capture the baseline and the run start for a new interactive turn), `beginReconciliation` |
 | `ignore.ts` | `IgnoreRule`, `parseIgnoreFile`, `isIgnored` — the shared `.gitignore`-subset matcher: the journal baseline walk and the worker's find/grep walk cannot disagree on what is ignored |
-| `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `BridgeLineReader`, `createNodeFileBridge` |
+| `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
 | `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts`; path confinement in `env.ts` + `@kubic/worker` `lane/interceptors.ts` |
@@ -49,8 +49,8 @@ Supporting shapes, field-for-field:
 | `ShellResult` | `exitCode: number`, `stdout: string`, `stderr: string`, `provenance: Provenance` |
 | `ProcessSnapshot` | `stdout: string`, `stderr: string`, `exitCode: number \| null` |
 | `CheckpointStore` | `record(key, snapshot): void`, `recordFinal(key, snapshot): void`, `latest(key): ProcessSnapshot \| undefined` |
-| `SpawnOptions` | `provenance: Provenance`, `onUpdate?: UpdateCallback`, `checkpointKey?: string`, `checkpointStore?: CheckpointStore` |
-| `ProcessHandle` | `pid: number \| undefined`, `wait(): Promise<ShellResult>`, `kill(): void` — SIGTERM to the whole process group, escalating to SIGKILL after `killGraceMs` (default `KILL_GRACE_MS`, 2 s) if the child has not settled, so a child that traps SIGTERM can never leave `wait()` hanging |
+| `SpawnOptions` | `provenance: Provenance`, `onUpdate?: (snapshot: ProcessSnapshot, options?: { checkpoint?: boolean }) => void`, `checkpointKey?: string`, `checkpointStore?: CheckpointStore` |
+| `ProcessHandle` | `pid: number \| undefined`, `wait(): Promise<ShellResult>`, `kill(): void` — SIGTERM to the whole process group, escalating to SIGKILL after `killGraceMs` (default 2 s) if the child has not settled, so a child that traps SIGTERM can never leave `wait()` hanging |
 | `Shell` | `spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle` |
 
 `ROOT_PROVENANCE` is `{ sessionId: '', agentId: '', toolCallId: 'root',
@@ -181,9 +181,7 @@ re-derives truth) when the index's
 size changed between its read and its rename (a writer that does not hold the
 lock), leaving the interleaved line in place and dropping its caches so the
 next pass re-derives truth. The blob sweep skips `*.tmp` names and blobs newer
-than the pass started. `liveLockHolder(lockPath)` is the read-only view: the
-pid when that process is alive, undefined for missing/torn/stale residue —
-what the read-time self-heal uses to step aside.
+than the pass started.
 
 Retention fast path: both bounds are proven from
 cache on every append — the tracked byte total (index + blobs) must be at or
@@ -310,18 +308,13 @@ faithful round-trip (the walk hash itself cannot make this call — at or
 under `HASH_CHUNK_BYTES` it IS the hash of the decode). A hash-only
 after-side is a designed absence, never `corrupt`.
 
-### Effects / replay (deleted, not wired)
+### Effects / replay
 
-There is **no Kubic-side replay kernel**. `effects.ts` (the `ToolCall`
-state machine, `EffectGate`, replay policies) and `checkpoint-store.ts`
-(`FileCheckpointStore`) were deleted: both reimplemented machinery the
-execution engine already owns — the tool-call machine and its replay
-policy, and the abort-aware admission gate. In Pi 1.0 that engine is
-`@earendil-works/pi-durable`'s `pi.tool` task over a
-`ToolRegistration` (`packages/worker/src/pi-boundary.ts` is the only file
-that may import it); the 0.87 `AgentHarnessTool.replay`,
-`planned → effect_pending → outcome_ready → completed` machine and
-`execution/effect-gate.ts` are gone.
+There is **no Kubic-side replay kernel**. The tool-call state machine, its
+replay policy and the abort-aware admission gate belong to the execution
+engine. In Pi 1.0 that engine is `@earendil-works/pi-durable`'s `pi.tool`
+task over a `ToolRegistration` (`packages/worker/src/pi-boundary.ts` is the
+only file that may import it), so Kubic keeps no copy of its own.
 
 What actually ships in Kubic:
 

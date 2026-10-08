@@ -95,7 +95,7 @@ import {
   PROMPT_PREFIX,
   sanitizeLaneText,
 } from './lane-cells.js';
-import { buildLayoutRoot, type Viewport } from './layout.js';
+import { buildLayoutRoot } from './layout.js';
 import { PaletteView } from './palette-view.js';
 import { PickerView } from './picker-view.js';
 import { type PreflightInfo, renderPreflight } from './preflight.js';
@@ -153,7 +153,7 @@ import {
 import type { PickerGroup } from './ui/picker.js';
 
 // The editor footer wraps to at most this many rows.
-export const FOOTER_MAX_ROWS = 2;
+const FOOTER_MAX_ROWS = 2;
 
 // An idle, empty Ctrl-C arms the quit for this long; a second
 // press inside the window quits.
@@ -164,17 +164,17 @@ export const QUIT_ARM_MS = 2000;
 export const CARD_CHROME_ROWS = 6;
 
 // The queue box's prompt mid-turn.
-export const QUEUE_PLACEHOLDER = 'type to queue — sent when this turn ends';
+const QUEUE_PLACEHOLDER = 'type to queue — sent when this turn ends';
 
 // A thinking cell's generation time is measured only for entries
 // this app saw arrive live, and only when the gap is plausible (a resumed
 // session's old entries would otherwise read as hours of thought).
-export const THINKING_MEASURE_MAX_MS = 10 * 60_000;
+const THINKING_MEASURE_MAX_MS = 10 * 60_000;
 
 // Lines added and removed across a turn's journal rows — a
 // multiset count (exact for the usual in-place edit), nothing when the
 // content is unknown on both sides.
-export function journalLineCounts(
+function journalLineCounts(
   rows: ReadonlyArray<JournalChangeLike>,
 ): { readonly added: number; readonly removed: number } | undefined {
   let added = 0;
@@ -209,7 +209,7 @@ import {
   type PanelMode,
 } from './view-panel.js';
 
-export type { JournalChangeLike, LaneEntryLike, PanelMode, Viewport };
+export type { JournalChangeLike };
 
 // The request the overlay answers: approval-view.ts's own request shape, named
 // here so the composition root and the app agree on one type.
@@ -228,7 +228,7 @@ export interface TuiWorkspace {
 
 // The facts only the composition root has for the preflight; the app supplies
 // the model, workspace and keys.
-export interface TuiPreflightSeed {
+interface TuiPreflightSeed {
   readonly version?: string;
   /** Where a provider's key comes from (`ANTHROPIC_API_KEY`). */
   readonly keySource?: (provider: string) => string | undefined;
@@ -241,7 +241,7 @@ export interface TuiPreflightSeed {
 }
 
 // One recent session on the first screen.
-export interface TuiRecentSession {
+interface TuiRecentSession {
   readonly title: string;
   readonly age: string;
   readonly detail: string;
@@ -317,7 +317,7 @@ export function seedFromPresentation(
   };
 }
 
-export interface TuiInputResult {
+interface TuiInputResult {
   readonly quit: boolean;
   readonly consumed: boolean;
   // Ctrl-C during a turn aborts the operation instead of
@@ -379,7 +379,7 @@ function keyIdOf(data: string): string | undefined {
 
 // One row of the `/model` picker overlay. `label` is the
 // `provider/id` the operator sees and the value the loop resolves.
-export interface TuiModelPickerRow {
+interface TuiModelPickerRow {
   readonly provider: string;
   readonly id: string;
   readonly label: string;
@@ -396,7 +396,7 @@ export interface TuiModelPickerRow {
 
 // A provider's header in the model picker. A provider without
 // a key is listed with what to set, its models never offered.
-export interface TuiModelPickerProvider {
+interface TuiModelPickerProvider {
   readonly id: string;
   readonly usable: boolean;
   /** Where its key comes from (`ANTHROPIC_API_KEY`). */
@@ -419,7 +419,7 @@ export interface TuiPickerRow {
   readonly note?: string;
 }
 
-export interface TuiPickerOptions {
+interface TuiPickerOptions {
   /** The frame's title (`Session`, `Theme`). */
   readonly title?: string;
   readonly rows: readonly TuiPickerRow[];
@@ -433,7 +433,7 @@ export interface TuiPickerOptions {
 // registry), the file rows (`listFiles`) and what they do in the editor;
 // the composition root supplies the rows only it can read and the actions
 // only it can take. Models and sessions load after the palette opens.
-export interface TuiPaletteModel {
+interface TuiPaletteModel {
   readonly provider: string;
   readonly id: string;
   readonly current: boolean;
@@ -441,7 +441,7 @@ export interface TuiPaletteModel {
   readonly reasoning?: boolean;
 }
 
-export interface TuiPaletteSession {
+interface TuiPaletteSession {
   readonly id: string;
   /** Its first prompt; the id when absent. */
   readonly title?: string;
@@ -462,15 +462,15 @@ export interface TuiPaletteSources {
 
 // The palette is 80 cells wide, or 70% of a narrower terminal,
 // and takes at most 70% of the rows.
-export const PALETTE_WIDTH = 80;
-export const PALETTE_WIDTH_PERCENT = 70;
-export const PALETTE_HEIGHT_PERCENT = 70;
+const PALETTE_WIDTH = 80;
+const PALETTE_WIDTH_PERCENT = 70;
+const PALETTE_HEIGHT_PERCENT = 70;
 
 // The confirmation dialog (the full-access toggle's "are you
 // sure?"). The accept key is explicit and deliberate — never a bare
 // printable letter — and every other key is swallowed while it shows, so
 // text typed ahead in the editor can never accept it.
-export interface TuiConfirmOptions {
+interface TuiConfirmOptions {
   readonly title: string;
   readonly body: readonly string[];
   /** The key id that accepts (`'ctrl+s'`); everything else is ignored. */
@@ -481,7 +481,7 @@ export interface TuiConfirmOptions {
   readonly onCancel?: () => void;
 }
 
-export interface TuiModelPickerOptions {
+interface TuiModelPickerOptions {
   readonly rows: readonly TuiModelPickerRow[];
   /** Every provider, keyless ones included (headers only). */
   readonly providers?: readonly TuiModelPickerProvider[];
@@ -494,7 +494,7 @@ export interface TuiModelPickerOptions {
 
 // Below this the overlay cannot composite (Pi's own visible() gate refuses),
 // so the picker stays closed and the loop reports it on the footer.
-export const MODEL_PICKER_MIN_WIDTH = 60;
+const MODEL_PICKER_MIN_WIDTH = 60;
 
 // The `?` overlay's groups, by action prefix.
 const KEY_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
@@ -676,7 +676,7 @@ export interface TuiApp {
 // Structural mirror of journal-view's JournalFilter (kept local so the app's
 // public surface does not re-export another module's type name for callers
 // that only pass a filter through).
-export interface JournalFilterLike {
+interface JournalFilterLike {
   readonly path?: string;
   readonly agent?: string;
 }
@@ -685,7 +685,7 @@ export interface JournalFilterLike {
 // activity, or undefined when there is none. The 1.0 harness reports the
 // attempt and the error (no maxAttempts, no notBefore — the contract), so
 // that is what the line names; a retry outranks a compaction.
-export function laneActivityLine(lane: {
+function laneActivityLine(lane: {
   readonly retrying?: { readonly attempt: number; readonly error?: string };
   readonly compacting: boolean;
 }): string | undefined {

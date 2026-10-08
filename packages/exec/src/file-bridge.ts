@@ -52,7 +52,7 @@ export interface BridgeFileInfo {
   mtimeMs: number;
 }
 
-export interface BridgeLineReader {
+interface BridgeLineReader {
   readLine(): string | undefined;
   close(): void;
 }
@@ -441,29 +441,6 @@ export function withFileLocked<T>(
   } finally {
     closeSync(fd);
     rmSync(lockPath, { force: true });
-  }
-}
-
-// The pid recorded in a lockfile when that process is still alive: the
-// read-only view a destructive command uses to skip work instead of racing a
-// live writer. undefined for a missing, unreadable, torn or stale file — and
-// for a pid that is gone, which is exactly what makes a crashed holder's
-// residue harmless.
-export function liveLockHolder(lockPath: string): number | undefined {
-  let raw: string;
-  try {
-    raw = readFileSync(lockPath, 'utf8').trim();
-  } catch {
-    return undefined;
-  }
-  const pid = Number(raw);
-  if (!Number.isInteger(pid) || pid <= 0) return undefined;
-  try {
-    // Signal 0: the permission and existence probe, no signal delivered.
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return undefined;
   }
 }
 

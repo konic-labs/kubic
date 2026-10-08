@@ -99,13 +99,13 @@ export interface JournalCommandDeps {
 }
 
 // The store selector every journal command shares.
-export interface JournalSelection {
+interface JournalSelection {
   // `<id>` or the `journal:<id>` ref `kubic run` prints.
   session?: string | undefined;
   json?: boolean | undefined;
 }
 
-export interface JournalDiffOptions extends JournalSelection {
+interface JournalDiffOptions extends JournalSelection {
   path?: string | undefined;
   // `--stat` prints the per-file summary (path, added/removed
   // counts, tool, turn) instead of hunks. Human render only — `--json`
@@ -115,7 +115,7 @@ export interface JournalDiffOptions extends JournalSelection {
   maxContentBytes?: number | undefined;
 }
 
-export interface JournalUndoOptions extends JournalSelection {
+interface JournalUndoOptions extends JournalSelection {
   // The undo scope (the positional operand), never the --session value.
   path?: string | undefined;
   step?: boolean | undefined;
@@ -125,7 +125,7 @@ export interface JournalUndoOptions extends JournalSelection {
 
 // `journal prune`: entries older than the keep window leave the store that
 // `log` reads. A dry run unless `yes`.
-export interface JournalPruneOptions extends JournalSelection {
+interface JournalPruneOptions extends JournalSelection {
   // The keep window in days (`--keep-days`); undefined falls back to
   // `journal.retentionDays`. 0 means retention is off.
   keepDays?: number | undefined;
@@ -140,7 +140,7 @@ export type JournalRequest =
   | ({ command: 'status' } & JournalSelection)
   | ({ command: 'prune' } & JournalPruneOptions);
 
-export function defaultJournalDir(root: string): string {
+function defaultJournalDir(root: string): string {
   return join(root, '.kubic', 'journal');
 }
 

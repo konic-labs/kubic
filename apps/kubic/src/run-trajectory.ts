@@ -31,12 +31,12 @@ import type { TrajectoryEscalation } from '../../../packages/trajectory/src/sche
 // Recorded when the workspace is not a git checkout: the journal, not git,
 // is Kubic's change record, so there is no revision to pin — named,
 // never an invented sha.
-export const NO_VCS_REVISION = 'no-vcs';
+const NO_VCS_REVISION = 'no-vcs';
 
 // Recorded when the run ended before a model was selected (a refused role,
 // an invalid provider override): provenance.model must be non-empty, and
 // "none" is the truth.
-export const NO_MODEL = { provider: 'none', id: 'none' } as const;
+const NO_MODEL = { provider: 'none', id: 'none' } as const;
 
 export interface PersistRunTrajectoryInput {
   sessionsRoot: string;

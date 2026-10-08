@@ -26,15 +26,15 @@ export interface GitRun {
 // default, 600s max); unlike bash there is no model timeout argument (git
 // argument contracts are frozen), so the default always applies unless a
 // direct runGit caller passes its own.
-export const GIT_DEFAULT_TIMEOUT_SEC = 120;
-export const GIT_MAX_TIMEOUT_SEC = 600;
+const GIT_DEFAULT_TIMEOUT_SEC = 120;
+const GIT_MAX_TIMEOUT_SEC = 600;
 
 export interface GitRunOptions {
   /** Seconds before the child is killed; clamped to GIT_MAX_TIMEOUT_SEC. */
   timeoutSec?: number;
 }
 
-export function isNotARepo(stderr: string): boolean {
+function isNotARepo(stderr: string): boolean {
   return /not a git repository/i.test(stderr);
 }
 
@@ -144,14 +144,14 @@ async function gitStatSummary(
   }
 }
 
-export function notARepoError(op: string, stderr: string): OpError {
+function notARepoError(op: string, stderr: string): OpError {
   return new OpError(
     'not_a_repo',
     `${op}: unavailable — not a git repository (${stderr.trim().slice(0, 120)}). Journal diff/undo still work without git.`,
   );
 }
 
-export interface GitRename {
+interface GitRename {
   /** The file's current (new) path. */
   path: string;
   /** The path it came from; omitted when git records no original. */
@@ -291,7 +291,7 @@ export function parsePorcelainStatus(out: string): GitStatus {
   };
 }
 
-export interface GitSubmodule {
+interface GitSubmodule {
   path: string;
   state: 'clean' | 'modified' | 'uninitialized' | 'conflict';
 }
@@ -299,7 +299,7 @@ export interface GitSubmodule {
 // One `git submodule status` line: a flag char, the sha, the path, and an
 // optional describe suffix. `+` checked out at a different commit,
 // `-` uninitialized, `U` conflicted, anything else clean.
-export function parseSubmoduleStatus(out: string): GitSubmodule[] {
+function parseSubmoduleStatus(out: string): GitSubmodule[] {
   const rows: GitSubmodule[] = [];
   for (const line of out.split('\n')) {
     if (line === '') continue;
@@ -372,7 +372,7 @@ export const gitStatusOperation: Operation<
   },
 };
 
-export interface GitLogEntry {
+interface GitLogEntry {
   sha: string;
   author: string;
   date: string;
@@ -684,7 +684,7 @@ function rejectPathEscape(path: string, op: string): void {
   }
 }
 
-export function isValidBranchName(name: string): boolean {
+function isValidBranchName(name: string): boolean {
   if (name === '') return false;
   if (name.startsWith('-') || name.includes('..') || name.includes('@{')) {
     return false;
@@ -1062,7 +1062,7 @@ export const gitConflictStatusOperation: Operation<
   },
 };
 
-export interface GitWorktreeRow {
+interface GitWorktreeRow {
   path: string;
   head: string;
   /** Branch short name, or null when detached or bare. */
@@ -1078,7 +1078,7 @@ export interface GitWorktreeListResult {
 // One `git worktree list --porcelain` block per worktree: `worktree <path>`,
 // `HEAD <sha>`, then `branch <ref>` or `detached` or `bare`. Blocks are
 // blank-line separated; paths are never quoted in this format.
-export function parseWorktreeList(out: string): GitWorktreeRow[] {
+function parseWorktreeList(out: string): GitWorktreeRow[] {
   const rows: GitWorktreeRow[] = [];
   for (const block of out.split('\n\n')) {
     let path = '';

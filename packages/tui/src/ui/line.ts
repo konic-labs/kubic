@@ -8,7 +8,7 @@ import {
   wrapTextWithAnsi,
 } from '../tui-boundary.js';
 
-export const ELLIPSIS = '…';
+const ELLIPSIS = '…';
 
 const RESET = '\u001b[0m';
 

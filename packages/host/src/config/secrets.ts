@@ -14,9 +14,9 @@ import {
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { SecretCommandError } from '../../../exec/src/secret-runner.js';
 
-export const REDACTED = '[REDACTED]';
+const REDACTED = '[REDACTED]';
 
-export class SecretError extends Error {
+class SecretError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SecretError';
@@ -105,7 +105,7 @@ export async function resolveSecretRef(
 // skip — a missing variable leaves the provider unconfigured. The shapes
 // are told apart by field (`envVar` vs `ref`); a literal never reaches the
 // resolver (literals touch no env, runner, audit, or inventory).
-export type ModelKeyUse =
+type ModelKeyUse =
   | {
       provider: string;
       envVar: string;

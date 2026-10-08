@@ -30,10 +30,6 @@ export function composeTools(
   });
 }
 
-export function compositionOrder(contributions: ToolContribution[]): string {
-  return contributions.map((contribution) => contribution.id).join('>');
-}
-
 export class PolicyDeniedError extends Error {
   constructor(toolName: string) {
     super(`tool '${toolName}' denied by policy wrapper`);

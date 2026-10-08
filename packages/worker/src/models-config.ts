@@ -20,10 +20,10 @@ import {
   openAIResponsesApiLazy,
 } from './pi-boundary.js';
 
-export const CUSTOM_APIS = ['openai-completions', 'openai-responses'] as const;
-export type CustomApi = (typeof CUSTOM_APIS)[number];
+const CUSTOM_APIS = ['openai-completions', 'openai-responses'] as const;
+type CustomApi = (typeof CUSTOM_APIS)[number];
 
-export interface CustomModelSpec {
+interface CustomModelSpec {
   id: string;
   name?: string;
   contextWindow?: number;
@@ -49,8 +49,8 @@ export interface CustomModelSpec {
 // does not re-export them yet. They move there — and this copy goes — when
 // it does; the shapes are pi-ai's verbatim.
 /** Merged into the provider request body verbatim (provider-specific keys). */
-export type SamplingParams = Record<string, unknown>;
-export type SamplingParamsByThinkingLevel = Partial<
+type SamplingParams = Record<string, unknown>;
+type SamplingParamsByThinkingLevel = Partial<
   Record<ModelThinkingLevel, SamplingParams>
 >;
 
@@ -159,8 +159,8 @@ function optPositiveInt(
 
 // Fail-safe defaults for a model that declares no window (small local
 // servers overflow above them).
-export const DEFAULT_CONTEXT_WINDOW = 8192;
-export const DEFAULT_MAX_TOKENS = 2048;
+const DEFAULT_CONTEXT_WINDOW = 8192;
+const DEFAULT_MAX_TOKENS = 2048;
 
 const MODALITIES = ['text', 'image'] as const;
 type Modality = (typeof MODALITIES)[number];
@@ -533,7 +533,7 @@ export const LOCAL_MODELS_EXAMPLE = {
 // returns the key, auditing the use; a ref use runs the host's secret
 // command runner instead. Neither ever sees a stored credential — those
 // resolve through Pi as before.
-export type ApiKeyUse =
+type ApiKeyUse =
   | {
       provider: string;
       envVar: string;

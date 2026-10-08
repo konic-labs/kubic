@@ -11,7 +11,7 @@ import type { UiTheme } from '../../../core/src/ui/style.js';
 import { fitLine } from './line.js';
 import { fillLine } from './surface.js';
 
-export type DiffRowKind = 'context' | 'add' | 'del' | 'gap';
+type DiffRowKind = 'context' | 'add' | 'del' | 'gap';
 
 export interface DiffRow {
   readonly kind: DiffRowKind;
@@ -52,7 +52,7 @@ function tokens(text: string): string[] {
 }
 
 /** Lines past this length are not word-diffed. */
-export const WORD_DIFF_MAX_CHARS = 400;
+const WORD_DIFF_MAX_CHARS = 400;
 
 /**
  * Which tokens of each side changed, or undefined when the lines are too

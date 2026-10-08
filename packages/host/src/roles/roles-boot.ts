@@ -26,7 +26,7 @@ import {
   roleDoctorChecks,
 } from './resolver.js';
 
-export const ROLES_DIR = '.kubic/roles';
+const ROLES_DIR = '.kubic/roles';
 
 /**
  * True when `error` is the filesystem saying `dir` is not there — ENOENT for a
@@ -97,7 +97,7 @@ export interface RolesDirInput {
 // Where a role's winning document came from: the preset bundled
 // with the binary, a `~/.kubic/roles/*.md` personal document,
 // or a project document the workspace overrides both with.
-export type RoleSource = 'builtin' | 'global' | 'repo';
+type RoleSource = 'builtin' | 'global' | 'repo';
 
 export interface LoadedRoles {
   docs: ParsedRoleDoc[];

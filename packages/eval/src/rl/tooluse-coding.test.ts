@@ -3,9 +3,8 @@
 // records carry diff refs (paths only) plus the reference-verifier
 // verdict. Both validate fail-closed.
 import { describe, expect, it } from 'vitest';
+import { makeExport } from '../test-support/fixtures.js';
 import { buildCodingRecord, validateCodingRecord } from './coding.js';
-import { makeExport } from './fixtures.js';
-import * as rl from './index.js';
 import { buildToolUseRecord, validateToolUseRecord } from './tooluse.js';
 
 describe('buildToolUseRecord', () => {
@@ -76,19 +75,6 @@ describe('buildCodingRecord', () => {
     if (!checked.valid) {
       expect(checked.errors.join(' ')).toMatch(/provenance/i);
       expect(checked.record).toBeUndefined();
-    }
-  });
-});
-
-describe('rl index', () => {
-  it('round-trips an SFT record through the index export, fail-closed', () => {
-    const built = rl.buildSftRecord(makeExport({}));
-    expect(rl.validateSftRecord(built)).toEqual({ valid: true, record: built });
-    const corrupted = rl.validateSftRecord({ ...built, completion: '' });
-    expect(corrupted.valid).toBe(false);
-    if (!corrupted.valid) {
-      expect(corrupted.errors).toEqual(['completion is required']);
-      expect(corrupted.record).toBeUndefined();
     }
   });
 });

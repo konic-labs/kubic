@@ -13,11 +13,11 @@ export const NARROW_COLUMNS = 80;
 
 // The panel row's height while a panel is open. Same basis as
 // the tree so toggling a panel does not resize the transcript unevenly.
-export const PANEL_BASIS = 12;
+const PANEL_BASIS = 12;
 
 // Structural viewport (matches Pi's LayoutViewport {width, height} without
 // importing its layout internals through the seam).
-export interface Viewport {
+interface Viewport {
   width: number;
   height: number;
 }

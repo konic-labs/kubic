@@ -16,8 +16,8 @@ export const READ_MAX_LINES = 2000;
 // declined. Whenever the scan stops before EOF the flag says so —
 // `truncated` derives from scan completeness (did the scan see EOF?), not
 // from comparing the possibly-low totalLines against a cap.
-export const READ_CHUNK_BYTES = 512 * 1024;
-export const READ_MAX_BYTES = 8 * 1024 * 1024;
+const READ_CHUNK_BYTES = 512 * 1024;
+const READ_MAX_BYTES = 8 * 1024 * 1024;
 
 // Model-facing output cap: READ_MAX_BYTES above bounds the SCAN; this bounds
 // the RESULT — Pi's DEFAULT_MAX_BYTES (50 KiB), the byte twin of
@@ -32,9 +32,9 @@ export const READ_RESULT_MAX_BYTES = 50 * 1024;
 // Why the first chunk sniffed as binary: a NUL codepoint (the
 // file may still decode cleanly — UTF-16 text) or a UTF-8 validity failure
 // (the PNG signature's 0x89 lead).
-export type ReadBinaryReason = 'nul' | 'invalid_utf8';
+type ReadBinaryReason = 'nul' | 'invalid_utf8';
 
-export interface ReadBinaryRefusal {
+interface ReadBinaryRefusal {
   reason: ReadBinaryReason;
   // The file's size in bytes; absent when the seam cannot stat it (a race
   // against the read that already succeeded).
@@ -72,7 +72,7 @@ export interface ReadResult {
 // What readWindowed returns: the file's text from the start of line
 // `offset` (the window's region) plus bookkeeping execute() cannot recover
 // from a bounded scan.
-export interface ReadWindow {
+interface ReadWindow {
   text: string;
   // Exact when the scan reached EOF; when the scan stopped early this is
   // only a lower bound — a line whose start was scanned counts even if it
@@ -224,7 +224,7 @@ function countNewlines(text: string): number {
 // boundary survive. Fallback: seams without readFileRange (test doubles,
 // older bridges) get a whole read — correct but unbounded — windowed by the
 // same slice as always.
-export function readWindowed(
+function readWindowed(
   fs: FileSystem,
   path: string,
   offset: number,

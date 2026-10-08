@@ -9,7 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { makeExport } from '../../../packages/eval/src/rl/fixtures.js';
+import { makeExport } from '../../../packages/eval/src/test-support/fixtures.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import {
   createGitSandbox,

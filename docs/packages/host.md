@@ -18,7 +18,7 @@ no isolation — docs and code must never imply otherwise.
 | `approvals-credentials.ts` | The credential-path detector behind the `credentials` permission class |
 | `approval-display.ts`, `approval-preview.ts` | What an approval dialog shows: the command display and the change an edit or write would make |
 | `config/config.ts` | `CONFIG_LAYERS`, `KubicConfig` and its section types, `parseTomlConfig`, `serializeTomlConfig`, `mergeLayered`, `loadLayered`, the per-key checks, `COMMITTED_CONFIG_FILES`, `GITIGNORE_REQUIRED_ENTRIES`, `checkGitignoreSplit`, `EXAMPLE_TOML` |
-| `config/runtime.ts` | `loadRuntimeConfig` — the load the binary actually runs on — plus `effectiveConfigView`, `renderEffectiveConfig`, `RUNTIME_KEY_EFFECTS`, `RUNTIME_ENV_OVERRIDES`, `RUNTIME_DEFAULTS` |
+| `config/runtime.ts` | `loadRuntimeConfig` — the load the binary actually runs on — plus `effectiveConfigView`, `renderEffectiveConfig`, `RUNTIME_KEY_EFFECTS`, `RUNTIME_ENV_OVERRIDES` |
 | `config/config-cli.ts`, `config/config-doctor.ts` | `kubic config [--json]` and doctor's config check |
 | `config/trust-store.ts` | The per-user project-trust store (`~/.kubic/trust.json`) |
 | `config/secrets.ts`, `config/model-key-audit.ts` | Request-time secret references and the audit record each provider-key use appends |
@@ -28,7 +28,7 @@ no isolation — docs and code must never imply otherwise.
 | `limits/` | The honest-limit doctor checks and the solo warning every process start prints |
 | `roles/` | `builtin-presets.ts` (the five built-in roles), `resolver.ts` (role documents, layer merge, tool guard), `roles-boot.ts` (loading `.kubic/roles/*.md`) |
 | `skills-boot.ts`, `skills-cli.ts` | The skills boot the lane runs and `kubic skills` |
-| `spans.ts`, `ops/perf/run-spans.ts` | The span recorder, the debug vocabulary and the run/turn span wiring (see below) |
+| `spans.ts`, `run-spans.ts` | The span recorder, the debug vocabulary and the run/turn span wiring (see below) |
 | `ops/cost/` | `kubic cost`: per-session usage rows and the prompt-cache hit rate |
 | `policy/` | `enterprise.ts` (the effective enterprise policy), `policy-cli.ts` (`kubic policy`), `audit.ts` / `audit-ledger.ts` / `audit-cli.ts` (the audit ledger and `kubic audit`), `syslog-transport.ts` |
 | `presentation/projector.ts` | Folds lane events and approval facts into the `KubicPresentationState` the TUI renders |
@@ -41,11 +41,11 @@ no isolation — docs and code must never imply otherwise.
 
 ## Contracts
 
-### Spans and the debug channel (`spans.ts`, `ops/perf/run-spans.ts`)
+### Spans and the debug channel (`spans.ts`, `run-spans.ts`)
 
 `spans.ts` is the span recorder (`SpanRecorder` over `SPAN_NAMES`), the
-`--debug` vocabulary (`DEBUG_CLASSES`, seven classes) and the transcript
-sinks. `ops/perf/run-spans.ts` maps what the lane and the harness actually
+`--debug` vocabulary (seven classes) and the transcript
+sinks. `run-spans.ts` maps what the lane and the harness actually
 do onto it and `apps/kubic/src/headless-run.ts` drives it, so a real
 `kubic run` records `kubic.agent.run` → `kubic.lane.accept` /
 `kubic.lane.drive` → `pi.tool.execute`, with parent linkage and per-span
@@ -126,7 +126,7 @@ committable. Pinned by `config.test.ts` and gated repo-wide by
 
 Exit codes: 0 ok, 1 fail, 2 usage, 6 provider. `DoctorStatus` is
 `pass|warn|fail|skip`; `collectDoctorChecks` folds `DoctorDeps` (provider
-and dep probes) into a `DoctorReport` of `DoctorCheck`s.
+and dep probes) into a report of `DoctorCheck`s.
 `probeSessionOverlap` adds the repo-level `session:overlap` note: warn
 when two or more sessions are recorded against the workspace — a
 disclosure of the end-of-run sweep's blind spot, never a block and never

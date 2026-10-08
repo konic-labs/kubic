@@ -42,7 +42,7 @@ export interface GrepArgs {
   maxMatches?: number;
 }
 
-export interface GrepMatch {
+interface GrepMatch {
   path: string;
   line: number;
   text: string;
@@ -69,7 +69,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function validateGrepArgs(raw: unknown): GrepArgs {
+function validateGrepArgs(raw: unknown): GrepArgs {
   if (!isRecord(raw))
     throw new OpError('invalid_args', 'grep args must be an object');
   for (const key of Object.keys(raw)) {

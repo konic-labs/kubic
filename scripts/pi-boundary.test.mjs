@@ -21,6 +21,8 @@ const PI_DEPS = [
   '@earendil-works/pi-durable',
   '@earendil-works/pi-tui',
 ];
+// Only the tui boundary imports pi-tui, so the tui manifest declares it.
+const TUI_PI_DEPS = ['@earendil-works/pi-tui'];
 // Dropped in the Pi 1.0 migration: pi-agent-core lost the
 // harness, and nothing imports pi-protocol / pi-telemetry directly.
 const REMOVED_PI_DEPS = [
@@ -91,15 +93,30 @@ function duplicatePiCopies(lock) {
 }
 
 describe('pi pinning + boundary', () => {
-  it('worker pins all four Pi deps exactly and drops the removed three', () => {
+  it('worker and tui pin their Pi deps exactly and drop the removed three', () => {
     const pkg = JSON.parse(
       readFileSync(join(ROOT, 'packages', 'worker', 'package.json'), 'utf8'),
     );
-    for (const dep of PI_DEPS) {
+    for (const dep of PI_DEPS.filter((d) => !TUI_PI_DEPS.includes(d))) {
       assert.equal(
         pkg.dependencies?.[dep],
         PI_VERSION,
         `${dep} must be pinned to ${PI_VERSION}`,
+      );
+    }
+    assert.equal(
+      pkg.dependencies?.['@earendil-works/pi-tui'],
+      undefined,
+      'pi-tui must not be declared by the worker manifest',
+    );
+    const tui = JSON.parse(
+      readFileSync(join(ROOT, 'packages', 'tui', 'package.json'), 'utf8'),
+    );
+    for (const dep of TUI_PI_DEPS) {
+      assert.equal(
+        tui.dependencies?.[dep],
+        PI_VERSION,
+        `${dep} must be pinned to ${PI_VERSION} in the tui manifest`,
       );
     }
     for (const dep of REMOVED_PI_DEPS) {
@@ -126,7 +143,7 @@ describe('pi pinning + boundary', () => {
     const file = join(ROOT, 'packages', 'worker', 'src', 'pi-boundary.ts');
     assert.ok(existsSync(file), 'missing packages/worker/src/pi-boundary.ts');
     const src = readFileSync(file, 'utf8');
-    for (const needle of ['ExecutionEnv', 'beforeTool', 'JUSTIFICATION']) {
+    for (const needle of ['FileSystem', 'beforeTool', 'JUSTIFICATION']) {
       assert.ok(src.includes(needle), `pi-boundary.ts must document ${needle}`);
     }
   });

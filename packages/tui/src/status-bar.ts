@@ -24,7 +24,7 @@ import { fitLine, leftRight } from './ui/line.js';
 import { gauge } from './ui/marks.js';
 import { fillLine } from './ui/surface.js';
 
-export interface StatusUsageCost {
+interface StatusUsageCost {
   readonly input: number;
   readonly output: number;
   readonly cacheRead: number;
@@ -32,7 +32,7 @@ export interface StatusUsageCost {
   readonly total: number;
 }
 
-export interface StatusUsage {
+interface StatusUsage {
   readonly input: number;
   readonly output: number;
   readonly cacheRead: number;

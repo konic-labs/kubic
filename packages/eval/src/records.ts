@@ -13,7 +13,7 @@ import type { EvalSignals } from './signals.js';
 // The record's size class (how much was run). Deliberately NOT called a
 // tier: tiers are the determinism tiers below, and the two were
 // conflated.
-export const EVAL_SIZES = ['smoke', 'standard', 'extended'] as const;
+const EVAL_SIZES = ['smoke', 'standard', 'extended'] as const;
 
 export type EvalSize = (typeof EVAL_SIZES)[number];
 
@@ -24,11 +24,11 @@ export function isEvalSize(value: string): value is EvalSize {
 // Determinism tiers, published with every result: recorded
 // scores an existing trajectory without re-executing anything;
 // deterministic re-executes pinned; live executes a model-backed suite.
-export const DETERMINISM_TIERS = ['recorded', 'deterministic', 'live'] as const;
+const DETERMINISM_TIERS = ['recorded', 'deterministic', 'live'] as const;
 
 export type EvalDeterminism = (typeof DETERMINISM_TIERS)[number];
 
-export function isEvalDeterminism(value: string): value is EvalDeterminism {
+function isEvalDeterminism(value: string): value is EvalDeterminism {
   return (DETERMINISM_TIERS as readonly string[]).includes(value);
 }
 

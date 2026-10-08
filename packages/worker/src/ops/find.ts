@@ -33,7 +33,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function validateFindArgs(raw: unknown): FindArgs {
+function validateFindArgs(raw: unknown): FindArgs {
   if (!isRecord(raw))
     throw new OpError('invalid_args', 'find args must be an object');
   for (const key of Object.keys(raw)) {

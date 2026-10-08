@@ -14,8 +14,11 @@ import { createLineLogger } from '../../../core/src/cli/logger.js';
 import { formatJson } from '../../../core/src/cli/output.js';
 import { renderTable } from '../../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
+import {
+  REDACTED_SECRET,
+  redactSecretShapes,
+} from '../../../core/src/secret-shapes.js';
 import { type AuditResult, type OrgAuditRecord, queryAudits } from './audit.js';
-import { REDACTED_SECRET, redactSecretShapes } from './secret-shapes.js';
 
 // The parsed `kubic audit` options (commander's `opts()`).
 export interface AuditOptions {
@@ -63,7 +66,7 @@ function isAuditResult(value: string): value is AuditResult {
 // listed-secret inventory value become the fixed placeholder. Applied to
 // the wire form so nested fields are covered, then parsed back so --json
 // keeps the record shape.
-export function redactAuditRecord(
+function redactAuditRecord(
   record: OrgAuditRecord,
   secrets: readonly string[] = [],
 ): OrgAuditRecord {

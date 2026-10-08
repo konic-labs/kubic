@@ -20,9 +20,9 @@ import {
 } from './types.js';
 import type { VerifierVerdict } from './verifier.js';
 
-export const DPO_SCHEMA = 'dpo/1';
+const DPO_SCHEMA = 'dpo/1';
 
-export interface DpoRecord {
+interface DpoRecord {
   schema: typeof DPO_SCHEMA;
   prompt: string;
   chosen: string;

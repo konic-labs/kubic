@@ -20,7 +20,7 @@ import type { TuiCommandOptions } from '../tui-run.js';
 // A command's runner takes the options commander parsed (the `Input`
 // parameter). `config` is the one process-wide config load, so every runner
 // reads the same result the refusal gate saw.
-export type CommandRunner<Input> = (
+type CommandRunner<Input> = (
   rest: Input,
   config: CliConfigResult,
 ) => number | Promise<number>;

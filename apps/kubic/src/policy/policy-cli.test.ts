@@ -3,6 +3,7 @@
 // enforces, never mutates. Faux-only, zero network.
 import { describe, expect, it } from 'vitest';
 import { createCliTheme } from '../../../../packages/core/src/cli/theme.js';
+import { REDACTED_SECRET } from '../../../../packages/core/src/secret-shapes.js';
 import {
   type EffectivePolicy,
   isToolAllowed,
@@ -12,7 +13,6 @@ import {
   policyWithInstalledAllowlist,
   runPolicyCommand,
 } from '../../../../packages/host/src/policy/policy-cli.js';
-import { REDACTED_SECRET } from '../../../../packages/host/src/policy/secret-shapes.js';
 
 // stdout (`lines`) and stderr (`errs`) captured separately.
 function capture() {

@@ -28,7 +28,7 @@ function stripCursor(line: string): string {
 // The live alt-screen with a filter over the base frame, run
 // BEFORE the overlays are composited on it — the dimmed background behind
 // the palette and the pickers never touches the overlay itself.
-export class KubicAltScreen extends TuiAltScreen {
+class KubicAltScreen extends TuiAltScreen {
   baseFilter: ((lines: string[]) => string[]) | undefined;
 
   protected override compositeOverlays(

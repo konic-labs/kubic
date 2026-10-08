@@ -99,7 +99,7 @@ export function parseCompactCommand(input: string): string {
   throw new CompactionError(`not a /compact command: '${input}'`);
 }
 
-export class CompactionError extends Error {
+class CompactionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CompactionError';
@@ -173,7 +173,7 @@ export async function compactSoloLane(
 // cut selection found no older history to summarize, and NO `pi.compaction`
 // entry was placed (`CompactionResult`'s `entryId`/`submissionId` both
 // absent, pi-durable's types.ts). Reporting that as a cut would be a lie.
-export type ManualCompactionStatus =
+type ManualCompactionStatus =
   | 'completed'
   | 'nothing'
   | 'failed'
@@ -254,101 +254,3 @@ export async function runManualCompaction(
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-export type FileOpKind = 'created' | 'modified' | 'deleted' | 'renamed';
-
-export interface FileOp {
-  kind: FileOpKind;
-  path: string;
-}
-
-export interface CumulativeFileOps {
-  created: string[];
-  modified: string[];
-  deleted: string[];
-  renamed: string[];
-}
-
-export function emptyFileOps(): CumulativeFileOps {
-  return { created: [], modified: [], deleted: [], renamed: [] };
-}
-
-function pushUnique(into: string[], path: string): void {
-  if (into.includes(path) === false) into.push(path);
-}
-
-// Cumulative across the session: repeat ops on one path collapse to a
-// single structural entry per bucket.
-export function accumulateFileOps(
-  base: CumulativeFileOps,
-  ops: FileOp[],
-): CumulativeFileOps {
-  const next: CumulativeFileOps = {
-    created: [...base.created],
-    modified: [...base.modified],
-    deleted: [...base.deleted],
-    renamed: [...base.renamed],
-  };
-  for (const op of ops) pushUnique(next[op.kind], op.path);
-  return next;
-}
-
-export interface StructuredSummary {
-  goal: string;
-  decisions: string[];
-  openWork: string[];
-  fileOps: CumulativeFileOps;
-  spillRefs: string[];
-}
-
-export function formatStructuredSummary(summary: StructuredSummary): string {
-  const lines = [
-    `goal: ${summary.goal}`,
-    `decisions: ${summary.decisions.join('; ')}`,
-    `open work: ${summary.openWork.join('; ')}`,
-    'file ops:',
-    `  created: ${summary.fileOps.created.join(', ')}`,
-    `  modified: ${summary.fileOps.modified.join(', ')}`,
-    `  deleted: ${summary.fileOps.deleted.join(', ')}`,
-    `  renamed: ${summary.fileOps.renamed.join(', ')}`,
-    `spill refs: ${summary.spillRefs.join(', ')}`,
-  ];
-  return lines.join('\n');
-}
-
-export interface TruncatedToolOutput {
-  truncated: boolean;
-  preview: string;
-  spillPath: string;
-}
-
-export interface SpillArtifact {
-  kind: 'spill';
-  path: string;
-}
-
-// Truncated bash resolves via its spill path: the preview stays in
-// context, the full output is referenced — never re-truncated.
-export function resolveTruncatedOutput(output: TruncatedToolOutput): string {
-  return output.spillPath;
-}
-
-export function buildSpillArtifact(spillPath: string): SpillArtifact {
-  return { kind: 'spill', path: spillPath };
-}
-
-// No Kubic-side truncation scheme: Pi output bounds are respected as
-// given and long content passes through byte-identical. Kubic never
-// slices, ellipsizes, or re-budgets tool output.
-export function passThroughOutput(output: string): string {
-  return output;
-}
-
-export interface CompactedState {
-  summary: StructuredSummary;
-  artifacts: SpillArtifact[];
-}
-
-// NOTE: the buildCompactedState constructor was deleted — no
-// caller ever built one (spill artifacts are not implemented). The
-// CompactedState shape stays for the spill work that needs it.

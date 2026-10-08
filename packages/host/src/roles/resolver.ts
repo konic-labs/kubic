@@ -35,7 +35,7 @@ export class RoleParseError extends Error {
   }
 }
 
-export interface RoleToolPolicy {
+interface RoleToolPolicy {
   filesystem?: unknown;
   shell?: unknown;
   network?: unknown;
@@ -221,8 +221,7 @@ const FULL_CLASSES: PermissionClasses = {
   credentials: 'allowlist',
 };
 
-export const KNOWN_ROLE_TOOLS: readonly string[] =
-  toolsForClasses(FULL_CLASSES);
+const KNOWN_ROLE_TOOLS: readonly string[] = toolsForClasses(FULL_CLASSES);
 
 export interface RoleLayerSpec {
   tools?: string[];
@@ -597,13 +596,6 @@ export function createRoleToolGuard(
 // its resolved tool set — no new line class is introduced.
 export function roleDebugLine(resolved: ResolvedRole): string {
   return `[policy] role=${resolved.name} tools=${resolved.tools.join(',')}`;
-}
-
-export function emitRoleDebug(
-  sink: (line: string) => void,
-  resolved: ResolvedRole,
-): void {
-  sink(roleDebugLine(resolved));
 }
 
 // Doctor surfacing: every resolved role becomes a

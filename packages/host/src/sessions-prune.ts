@@ -40,20 +40,20 @@ export class SessionsRootError extends Error {
   }
 }
 
-export interface SessionPruneCandidate {
+interface SessionPruneCandidate {
   id: string;
   // Bytes over the session dir tree (regular files only; symlinks are
   // never followed).
   bytes: number;
 }
 
-export interface SessionPruneLocked {
+interface SessionPruneLocked {
   id: string;
   pid: number;
   startedAt?: number;
 }
 
-export interface SessionPruneKept {
+interface SessionPruneKept {
   id: string;
   // `--keep-session` for an explicit name; `child of <id>` for a run
   // member kept with its explicitly kept parent.

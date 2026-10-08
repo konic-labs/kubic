@@ -116,7 +116,7 @@ export function renderHeader(
 }
 
 /** At most this many cells of the first prompt name the session. */
-export const SESSION_TITLE_CELLS = 24;
+const SESSION_TITLE_CELLS = 24;
 
 /** The header's session title: the first prompt on one line, cut to 24 cells. */
 export function sessionTitle(prompt: string): string {

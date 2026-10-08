@@ -1113,6 +1113,86 @@ describe('session state permissions', () => {
       await reopened.release(BACKGROUND_CONTEXT);
     });
 
+    it('lists, attaches and reads a session whose durable document still carries role and agentId', async () => {
+      // Older builds wrote the identity into the kubic.session document and
+      // into the listing header. Such a session must still list, attach and
+      // read, and it must expose no role or agentId.
+      const root = tmpRoot();
+      const store = storeFor(root);
+      const session = track(
+        await createSession(store, { cwd: '/repo' }, BACKGROUND_CONTEXT),
+      );
+      const id = session.id;
+      await session.release(BACKGROUND_CONTEXT);
+      // Adds the identity keys to every object that carries the session's
+      // cwd and createdAt, wherever the storage keeps the document.
+      const withLegacyIdentity = (value: unknown): unknown => {
+        if (Array.isArray(value)) return value.map(withLegacyIdentity);
+        if (value === null || typeof value !== 'object') return value;
+        const record = value as Record<string, unknown>;
+        if ('cwd' in record && 'createdAt' in record) {
+          return { ...record, role: 'implementer', agentId: 'aaa' };
+        }
+        return Object.fromEntries(
+          Object.entries(record).map(([key, child]) => [
+            key,
+            withLegacyIdentity(child),
+          ]),
+        );
+      };
+      for (const name of readdirSync(join(root, id))) {
+        if (!/^(main|doc-\d+)\.jsonl$/.test(name)) continue;
+        const path = join(root, id, name);
+        const lines = readFileSync(path, 'utf8')
+          .split('\n')
+          .filter((line) => line.trim() !== '');
+        writeFileSync(
+          path,
+          lines
+            .map(
+              (line) =>
+                `${JSON.stringify(withLegacyIdentity(JSON.parse(line) as unknown))}\n`,
+            )
+            .join(''),
+        );
+      }
+      // The premise: the legacy keys really reached the stored document.
+      expect(
+        readdirSync(join(root, id))
+          .filter((name) => /^(main|doc-\d+)\.jsonl$/.test(name))
+          .some((name) =>
+            readFileSync(join(root, id, name), 'utf8').includes(
+              '"agentId":"aaa"',
+            ),
+          ),
+      ).toBe(true);
+      writeFileSync(
+        join(root, id, 'session.json'),
+        JSON.stringify({
+          ...readHeader(root, id),
+          role: 'implementer',
+          agentId: 'aaa',
+        }),
+      );
+      const listed = await listSessions(store, BACKGROUND_CONTEXT);
+      const entry = listed.find((item) => item.id === id);
+      expect(entry?.meta?.cwd).toBe('/repo');
+      expect(entry?.meta).not.toHaveProperty('role');
+      expect(entry?.meta).not.toHaveProperty('agentId');
+      const attached = track(
+        await attachSession(store, id, BACKGROUND_CONTEXT),
+      );
+      expect(attached.meta).not.toHaveProperty('role');
+      expect(attached.meta).not.toHaveProperty('agentId');
+      expect(
+        await readSessionMetadata(attached.storage, BACKGROUND_CONTEXT),
+      ).toEqual(attached.meta);
+      expect(
+        await readSessionEntries(attached.storage, BACKGROUND_CONTEXT),
+      ).toEqual([]);
+      await attached.release(BACKGROUND_CONTEXT);
+    });
+
     it('keeps the listing header free of transcript references', async () => {
       const root = tmpRoot();
       const store = storeFor(root);

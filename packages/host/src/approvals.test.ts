@@ -163,6 +163,17 @@ describe('approval service', () => {
     expect(service.pendingRequests()).toEqual([]);
   });
 
+  it('a failing surface rejects the request and leaves nothing pending', async () => {
+    const service = new ApprovalService({
+      policy: validatePolicy({ maxPendingMs: 10_000 }),
+      awaitAnswer: () => Promise.reject(new Error('seat unavailable')),
+    });
+    await expect(service.request(request())).rejects.toThrow(
+      'seat unavailable',
+    );
+    expect(service.pendingRequests()).toEqual([]);
+  });
+
   it('restores decisions across restart and never re-asks', async () => {
     const store = new MemoryApprovalStore();
     const first = new ApprovalService({ policy: validatePolicy({}), store });

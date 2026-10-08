@@ -25,6 +25,7 @@ npm run typecheck
 npm run lint
 npm run lint:deps
 npm run lint:dead
+npm run lint:dead:prod
 npm run check:pi
 npm run docs:check
 npm test

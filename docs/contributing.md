@@ -28,6 +28,7 @@ npm run typecheck
 npm run lint                  # biome ci — exact CI parity
 npm run lint:deps             # package dependency direction
 npm run lint:dead             # knip: unused files, exports, dependencies, types
+npm run lint:dead:prod        # knip, production code only: test imports count as no use
 npm run check:pi              # exact pins on every dependency
 npm run docs:check            # no dangling internal doc links
 npm test                      # repo gates: scripts/*.test.mjs via node --test
@@ -61,20 +62,18 @@ files, exports, types and dependencies, and unlisted or unresolved imports.
   reported, so it must be module-private.
 
 The default gate does **not** report an export that only tests import, and it
-does not report a source file that only tests reach. Those are the production
-gate's job: `npm run lint:dead:prod` runs knip with `knip.production.jsonc` and
+does not report a source file that only tests reach. The production gate does
+both: `npm run lint:dead:prod` runs knip with `knip.production.jsonc` and
 `--production`, which skips the test files, so no test import counts as use.
-Its `ignoreExportsUsedInFile` is on, so an export that production code uses
-inside its own module counts as live; the gate reports exports that no
-production code uses at all. The boundary seams in `knip.production.jsonc` are
-exempt, with the reason beside them.
+It runs in CI next to `lint:dead`. The boundary seams in `knip.production.jsonc`
+are exempt, with the reason beside them.
 
-The production gate is not in CI yet. It reports two exports whose tests still
-call them through a dead path: `createApprovalAsk` (the lane's ask builder, the
-installer builds its own) and `loadLayered` (the path-based layer loader; the
-live loader is `loadRuntimeConfig`). Rewrite those tests through the live path,
-remove the two, and add `npm run lint:dead:prod` to the CI job next to
-`lint:dead`.
+One gap remains, stated here so a green run is not read as more than it proves.
+`ignoreExportsUsedInFile` is on in `knip.production.jsonc`: an export that
+production code uses inside its own module counts as live. With the option off,
+the gate would also flag 227 exports and 50 types. Production code uses each of
+them only inside its own module, and tests import it from outside. Clearing
+those is test restructuring for a later change; this gate does not report them.
 
 ## Tests
 
@@ -146,7 +145,7 @@ than history, no tracker references) are in
 ## CI
 
 A push runs the `test` job: the static checks first (typecheck, biome,
-`lint:deps`, `lint:dead`, `check:pi`, `docs:check`), then the suites and the built
+`lint:deps`, `lint:dead`, `lint:dead:prod`, `check:pi`, `docs:check`), then the suites and the built
 binary. It runs on Node 22 (the lowest supported) on every ref and on
 Node 22 and 24 on `main`. A newer push cancels the older run of the same
 ref; `main` is keyed by commit and never cancelled. Workflow permissions

@@ -12,7 +12,7 @@ note id, for example `` or ``.
 | Page | Screen |
 | --- | --- |
 | [index.html](index.html) | Principles, colour tokens, glyphs, screen list |
-| [01-session.html](01-session.html) | Solo session: transcript blocks, tool cards, inline diff, thinking, receipt, editor, status line, key hints; mid-turn state |
+| [01-session.html](01-session.html) | Session: transcript blocks, tool cards, inline diff, thinking, receipt, editor, status line, key hints; mid-turn state |
 | [02-approval.html](02-approval.html) | Inline approval cards: shell command, file edit with diff preview |
 | [03-palette.html](03-palette.html) | `^P` command palette and the bare `/model` picker |
 | [05-welcome.html](05-welcome.html) | First launch preflight; the no-key exit |

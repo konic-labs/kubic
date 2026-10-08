@@ -14,7 +14,7 @@ controls: approvals + journal
 ```
 
 There is exactly one trust zone — the user's own authority. See
-[solo](solo.md) and [change journal and safety](journal-and-safety.md).
+[the in-process runtime](in-process.md) and [change journal and safety](journal-and-safety.md).
 
 ## Package map
 
@@ -24,16 +24,15 @@ Eight packages plus the composition root:
 | --- | --- |
 | `packages/core` | Shared contracts the packages build on |
 | `packages/exec` | Execution environment and change journal; the only package that touches `node:fs` / `node:child_process` |
-| `packages/agent` | The agent lane: one pi-durable `Harness` and its root conversation |
+| `packages/agent` | The agent lane: one pi-durable `Harness` and its root conversation, with the permission classes and skills |
 | `packages/host` | Host wiring: config, approvals, models, sessions, audit, the command handlers |
-| `packages/agent` | Permission policy and skills |
 | `packages/trajectory` | Versioned run records for replay and eval |
 | `packages/eval` | Benchmark suites and RL dataset export |
-| `packages/tui` | Presentation only; imports contracts from `core`, never `host`/`worker` implementation |
+| `packages/tui` | Presentation only; imports contracts from `core`, never `host`/`agent` implementation |
 | `apps/kubic` | Composition root: wires the packages into the `kubic` CLI |
 
 Dependencies flow one way (`scripts/dep-lint.mjs` enforces it): `tui`
-never imports `host`/`worker` implementation, the worker never imports
+never imports `host`/`agent` implementation, the agent never imports
 `host`, and only the app root wires `host` and `tui` together.
 
 **Test contract.** There is no `VirtualTerminal` in the pinned Pi

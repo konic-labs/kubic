@@ -6,9 +6,8 @@ neighbours — no architecture rationale, no CLI usage.
 
 - [core.md](core.md) — `packages/core`
 - [exec.md](exec.md) — `packages/exec`
-- [worker.md](worker.md) — `packages/agent`
+- [agent.md](agent.md) — `packages/agent`
 - [host.md](host.md) — `packages/host`
-- [agents-pkg.md](agents-pkg.md) — `packages/agent`
 - [trajectory.md](trajectory.md) — `packages/trajectory`
 - [eval.md](eval.md) — `packages/eval`
 - [tui.md](tui.md) — `packages/tui`
@@ -25,10 +24,9 @@ lint governs.
 @kubic/exec         ← core
 @kubic/trajectory   ← core
 @kubic/agent       ← core, exec
-@kubic/eval         ← core, agents, trajectory
-@kubic/agent       ← core, exec, agents, trajectory, eval
-@kubic/host         ← core, exec, worker, agents, trajectory, eval
-@kubic/tui          ← core only (never host/worker implementation)
+@kubic/eval         ← core, agent, trajectory
+@kubic/host         ← core, exec, agent, trajectory, eval
+@kubic/tui          ← core only (never host/agent implementation)
 apps/kubic          ← composition root: wires host + tui together
 ```
 

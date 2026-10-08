@@ -73,13 +73,13 @@ failures throw `TrajectoryExportError` (exit 2) with
 The package imports none of the shapes it records: the execution
 environment (`exec` `env.ts`), file-change diffs (`exec`
 `journal-diff.ts`), approval verdicts (`host` `approvals.ts`), usage rows
-(`worker` `usage.ts`) and failure codes (`worker` `lane/failures.ts`) are
+(`agent` `usage.ts`) and failure codes (`agent` `lane/failures.ts`) are
 structural snapshots pinned by the golden fixture test.
 
 ## Dep-direction neighbours
 
 - May import: [@kubic/core](core.md) only — never
-  exec/worker/host/agents/eval/tui.
+  exec/agent/host/eval/tui.
 - Read by: `kubic replay` and [@kubic/eval](eval.md) via
   `parseTrajectoryExport` — no shim, no adapter.
 

@@ -3,7 +3,7 @@
 > How to build, test and change Kubic, and the checks every change passes.
 
 Kubic is a model-agnostic terminal coding agent with a VCS-independent
-change journal. Solo mode has no isolation — never imply otherwise in
+change journal. Kubic has no isolation — never imply otherwise in
 code, docs, or CLI text.
 
 ## Getting set up
@@ -92,7 +92,7 @@ those is test restructuring for a later change; this gate does not report them.
 - **Clean up.** A test removes every temp dir, environment change and child
   process it creates.
 - **Lanes.** Boot a lane with `bootFauxLane`
-  (`packages/agent/src/lane/test-harness.ts`): the real `bootSoloLane`
+  (`packages/agent/src/lane/test-harness.ts`): the real `bootLane`
   over in-memory or temp-dir storage. A faux tool round must end with
   `stopReason: 'toolUse'` (`fauxToolUse(...)`), or the tool never runs.
 - **The TUI.** Render functions are pure and tested as headless snapshots;
@@ -111,7 +111,7 @@ those is test restructuring for a later change; this gate does not report them.
   `namespace`, `import =` / `export =`.
 - **Exact pins** — no `^` / `~` on any dependency (`npm run check:pi`).
 - **Dependency direction** — packages import "downward" only, and the TUI
-  never imports `host` / `worker` implementation; contracts come from
+  never imports `host` / `agent` implementation; contracts come from
   `core` (`npm run lint:deps`, see the [package map](packages/README.md)).
 - **The Pi boundary** — only `packages/agent/src/pi-boundary.ts` and
   `packages/tui/src/tui-boundary.ts` import `@earendil-works/*`. Every
@@ -133,7 +133,7 @@ those is test restructuring for a later change; this gate does not report them.
 
 [Conventional Commits](https://www.conventionalcommits.org/):
 `type(scope): summary` — imperative, lower-case, no trailing period
-(`feat(journal): …`, `fix(worker): …`, `docs(cli): …`). Types are `feat`,
+(`feat(journal): …`, `fix(agent): …`, `docs(cli): …`). Types are `feat`,
 `fix`, `refactor`, `perf`, `test`, `docs`, `style`, `chore`, `build`,
 `ci`; a breaking change uses `type(scope)!:` and a `BREAKING CHANGE:`
 footer.

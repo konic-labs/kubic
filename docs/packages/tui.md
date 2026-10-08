@@ -1,6 +1,6 @@
 # `@kubic/tui`
 
-> Facet split: the TUI never imports host/worker implementation
+> Facet split: the TUI never imports host/agent implementation
 > (contracts come from core only).
 > Source: `packages/tui/src`.
 
@@ -9,7 +9,7 @@
 from `@kubic/core` and never `@kubic/host` or `@kubic/agent`
 implementation — enforced by `scripts/dep-lint.mjs`. All Pi
 presentation imports flow through `src/tui-boundary.ts`, the
-TUI-side analogue of the worker Pi boundary.
+TUI-side analogue of the agent Pi boundary.
 
 ## Public API (`packages/tui/src`)
 
@@ -239,8 +239,8 @@ field table and command list.
 
 ## Dep-direction neighbours
 
-- May import: [@kubic/core](core.md) only — never exec/worker/host/
-  agents/trajectory/eval implementation.
+- May import: [@kubic/core](core.md) only — never exec/agent/host/
+  trajectory/eval implementation.
 - Wired by: `apps/kubic` (composition root composes host + tui).
 - Pi seam: `tui-boundary.ts` only.
 

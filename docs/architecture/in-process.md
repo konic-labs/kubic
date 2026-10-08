@@ -1,22 +1,22 @@
-# Solo mode
+# In-process runtime
 
-Solo is Kubic's default and its architecture: one agent working
+Kubic is one agent working
 directly in the user's directory. One Pi session plus one agent lane
 run in-process — harness, lane, and tools in a single process with
-zero IPC on the path. There is no delegation in solo mode and no
+zero IPC on the path. There is no delegation and no
 second trust zone.
 
 ## No isolation — stated plainly
 
-**Solo mode has no isolation.** The run executes in-process with the
+**Kubic has no isolation.** The run executes in-process with the
 user's own authority over files, network, and credentials. There is no
 containment and no prompt-injection prevention: model output is never
 trusted, and anything the agent can reach, a mistaken or manipulated
-instruction can reach too. Solo is a single trust zone, and these docs
+instruction can reach too. Kubic is a single trust zone, and these docs
 never imply otherwise.
 
 This is announced, not buried: every process start announces it from one
-source (`packages/host/src/limits/solo-warning.ts`), so the two surfaces
+source (`packages/host/src/limits/no-isolation-notice.ts`), so the two surfaces
 cannot drift apart. `kubic run` prints the three-line warning block on
 stderr before the first turn; `kubic tui` shows the one-line form in the
 welcome block from the first render and prints the full text on `/safety`. The opt-out
@@ -25,7 +25,7 @@ because the rule is per process start, not per session.
 
 ## The controls that exist instead
 
-With no boundary to lean on, solo relies on two controls:
+With no boundary to lean on, Kubic relies on two controls:
 
 - **Approvals** — dangerous operations ask the user first
   (ask-user by default) and deny on timeout. See
@@ -76,7 +76,7 @@ no second process.
   of the conversation's *current* model (the reserve is clamped to at most a
   quarter of the window, the kept window to a quarter of the room below the
   reserve). The getters read the committed `pi.agent` document, so every model
-  switch — `escalateSoloModel`, the TUI picker, a headless `--model` run —
+  switch — `escalateLaneModel`, the TUI picker, a headless `--model` run —
   re-clamps on the next request with no explicit re-clamp step. A pending
   manual `/compact` narrows the kept window to 2000 tokens through the lane's
   `ManualKeepScope`, released when the task settles on every exit path.
@@ -107,7 +107,7 @@ it before accepting a prompt (`packages/agent/src/lane/pending.ts`):
 The decision is durable: an abort a dead process already requested stays an
 abort, and the next prompt is never a re-run of what already happened.
 
-Implementation detail lives on the [worker package page](../packages/worker.md);
+Implementation detail lives on the [agent package page](../packages/agent.md);
 command behaviour on the [CLI pages](../cli/README.md).
 
 Back to the [docs index](../README.md). See also

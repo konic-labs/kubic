@@ -7,7 +7,7 @@
 contract, the CLI output kit, the terminal design tokens, the secret
 classifiers and the license constants. It imports nothing internal —
 `scripts/dep-lint.mjs` rejects any
-`core → exec/worker/host/agents/trajectory/eval/tui` edge structurally.
+`core → exec/agent/host/trajectory/eval/tui` edge structurally.
 
 ## Public API (`packages/core/src`)
 

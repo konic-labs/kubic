@@ -88,7 +88,7 @@ isolation, no containment — approvals plus the journal are the controls.
 
 ## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--thinking <level>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--debug] [--autonomous] [--json] [--dangerously-skip-approvals]`
 
-Non-interactive solo run: no alt-screen, no prompt, consumable output.
+Non-interactive run: no alt-screen, no prompt, consumable output.
 
 | Flag | Meaning |
 | --- | --- |
@@ -146,7 +146,7 @@ on a colour terminal; plain text under a pipe or `NO_COLOR`); on failure an
 
 **On an interactive terminal** (stdout **and** stderr a colour
 TTY, no `--json`) the run shows its progress instead of those lines. On
-stderr: a heading (`■ kubic run · solo · <provider/id> · <cwd>`), the solo
+stderr: a heading (`■ kubic run · solo · <provider/id> · <cwd>`), the
 notice as one line (`○ Kubic has no isolation — approvals + journal are the
 controls · details: kubic doctor`, same opt-outs as the full block), a
 spinner with the elapsed time while the model works, and one settled line
@@ -189,7 +189,7 @@ that write (an unreadable audit ledger or journal) is a transcript notice
 there, not a stderr line: the screen owns the terminal.
 
 **Usage errors (exit 2, stderr, no lane).** commander parses the argv
-(`apps/kubic/src/commands/solo.ts`): a missing `-p`, a flag without its
+(`apps/kubic/src/commands/session.ts`): a missing `-p`, a flag without its
 value, an unknown option, an invalid `--session` id, a non-positive or
 non-integer `--timeout`/`--max-turns` (or a `--timeout` above
 `2147483647`), and a stray operand all exit 2 with one `error: …` line.
@@ -227,7 +227,7 @@ refused (`the prompt is empty`).
 
 **Installed policy**. A run always boots the lane with a
 permission policy, whether or not a config names one: the five permission
-classes (`[permissions]` when configured, the documented solo defaults
+classes (`[permissions]` when configured, the documented defaults
 otherwise — `filesystem = workspace-write`, `shell = true`,
 `network = none`, `git = workspace`, `credentials = none`), the derived
 tool allowlist (a tool outside it is refused at execute time, not merely
@@ -316,7 +316,7 @@ Lane and tool spans have two destinations:
 
 Both are additive: a run with no spans still exits exactly as before.
 
-A fresh solo start announces its trust model before the first turn: three
+A fresh start announces its trust model before the first turn: three
 `warning: Kubic runs in-process with your authority: no isolation …` lines on **stderr** (never stdout —
 `--json` stays one parseable envelope). Suppressed by the opt-out
 `KUBIC_NO_NOTICE=1`. A `--session` resume still announces it: the rule is
@@ -504,7 +504,7 @@ same context the headless one does:
   stderr.
 - **Roles:** `--role <name>` loads `.kubic/roles/<name>.md` — else `~/.kubic/roles/<name>.md` — or the
   matching preset embedded in the binary when neither has such a
-  document (the five presets ship with `kubic`, and a repo document of the same name replaces its preset) — the document's prompt text replaces the solo
+  document (the five presets ship with `kubic`, and a repo document of the same name replaces its preset) — the document's prompt text replaces the built-in
   constant and its tool set narrows the lane (absence, not approval). Every refusal is fail-closed
   with the named reason (unknown role, contradictory document, missing `## Prompt`, parse failure, untrusted project root); the boot exits before the alt-screen.
 - **Journal retention:** the session journal takes the same
@@ -630,7 +630,7 @@ a large workspace pays it (and the screen pauses) after every turn that used
   shows the op's own count instead (`✓ 2 replacements`).
   The model's reasoning shows as one line, `⋯ thought for 4.1s — <its first
   sentence>` (the time is the response's generation time, measured for turns that arrive while the TUI watches — a resumed session's older reasoning reads `⋯ thinking — …`); `Ctrl-X` shows all of
-  it. Every settled solo turn ends with a receipt:
+  it. Every settled turn ends with a receipt:
   `✓ turn 18.4s · 4 tools · 1 file +1 −1 · $0.031` with
   `^O review diff   /undo revert` when it changed files (counted from the
   journal rows the turn recorded), or `✕ turn failed · 2.1s · <reason>` /
@@ -1127,7 +1127,7 @@ journal entries at read time (see the read-time self-heal note under
   **process-local**: it reads this machine's process table, so a session
   held by a run on another machine or in another container is not seen as
   held (the same local-filesystem-only caveat the lock itself carries —
-  see [worker](../packages/worker.md#session-locking)). The
+  see [agent](../packages/agent.md#session-locking)). The
   probe is `process.kill(pid, 0)`: any result other than success —
   including `EPERM` for a pid this user cannot signal — reads as dead;
   same-user holders always signal, so a per-user sessions root never

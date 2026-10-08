@@ -210,7 +210,7 @@ It promises: every edit recorded and reversible by default, every
 dangerous operation gated on an explicit user decision, every timeout
 and restart failing closed to deny.
 
-It does not promise isolation (solo runs in-process with the user's own
+It does not promise isolation (Kubic runs in-process with the user's own
 authority) or containment, and there is no prompt-injection prevention
 (model output is never trusted). Nor does it promise airtight
 confinement (the workspace check is lexical and must be re-checked at
@@ -228,4 +228,4 @@ Journal mechanics live on the [exec package page](../packages/exec.md),
 approval wiring on the [host package page](../packages/host.md), and
 command behaviour on the [CLI pages](../cli/README.md).
 
-Back to the [docs index](../README.md). See also [solo](solo.md).
+Back to the [docs index](../README.md). See also [the in-process runtime](in-process.md).

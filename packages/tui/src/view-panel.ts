@@ -6,8 +6,8 @@
 // them.
 //
 // Sanitisation belongs HERE, at ingress (the finding, applied to the
-// list): journal rows come from tool calls — a path, an agent id and a
-// tool-call id are model-supplied strings, and the before/after bodies are
+// list): journal rows come from tool calls — a path and a tool-call id are
+// model-supplied strings, and the before/after bodies are
 // file content a tool read off disk. Whatever the model wrote into a file is
 // therefore untrusted terminal content, and it must be cleaned before any
 // render function sees it (renderDiffLines/renderJournalLines render the text
@@ -33,7 +33,6 @@ export type PanelMode = 'closed' | 'diff' | 'journal';
 export interface JournalChangeLike {
   readonly path: string;
   readonly op: DiffOp;
-  readonly agentId: string;
   readonly toolCallId: string | null;
   readonly sessionId: string;
   readonly timestamp: number;
@@ -57,7 +56,6 @@ function sanitizeJournalChange(change: JournalChangeLike): JournalChangeLike {
   return {
     ...change,
     path: sanitizeLaneText(change.path),
-    agentId: sanitizeLaneText(change.agentId),
     toolCallId:
       change.toolCallId === null ? null : sanitizeLaneText(change.toolCallId),
     sessionId: sanitizeLaneText(change.sessionId),
@@ -168,7 +166,7 @@ export class DiffPanel implements Component {
 }
 
 // `J`-reachable journal view: the whole session journal, with the filters
-// journal-view.ts already implements (exact path / agent match).
+// journal-view.ts already implements (exact path match).
 export class JournalPanel implements Component {
   private readonly view: JournalView;
   private rows: JournalChangeLike[];
@@ -197,9 +195,7 @@ export class JournalPanel implements Component {
 
   visibleRows(): ReadonlyArray<JournalChangeLike> {
     return this.rows.filter(
-      (row) =>
-        (this.filter.path === undefined || row.path === this.filter.path) &&
-        (this.filter.agent === undefined || row.agentId === this.filter.agent),
+      (row) => this.filter.path === undefined || row.path === this.filter.path,
     );
   }
 

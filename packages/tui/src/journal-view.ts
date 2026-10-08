@@ -1,6 +1,6 @@
 // JournalView: file→hunks journal diffs.
-// Text only. Filters mirror `kubic diff --path/--agent` (host
-// journal-cli.ts over exec diffEntries): exact match on path and agent.
+// Text only. The path filter mirrors `kubic diff --path` (host
+// journal-cli.ts over exec diffEntries): exact match on path.
 // The flattened text is line-for-line equal to `kubic diff` output:
 // each file contributes the CLI-identical ---/+++/attribution/hunk
 // block (the op-labelled header is omitted here — the CLI
@@ -14,24 +14,17 @@ import { Text } from './tui-boundary.js';
 
 export interface JournalFilter {
   readonly path?: string;
-  readonly agent?: string;
 }
 
 // Post-aggregation filter over one FileChange per path (assumes the
-// caller passes already-aggregated rows, at most one entry per path).
-// NOTE: this diverges from CLI diffEntries (exec journal-diff.ts),
-// which filters raw journal rows BEFORE aggregation: a path with
-// mixed-agent history keeps only matching rows there, while here the
-// agent predicate tests the aggregated row's last-agentId. Same exact-
-// match predicate otherwise: path (resp. agentId) equals the filter.
+// caller passes already-aggregated rows, at most one entry per path): exact
+// match on the path.
 export function filterJournalChanges(
   changes: ReadonlyArray<DiffFileChange>,
   filter: JournalFilter,
 ): DiffFileChange[] {
   return changes.filter(
-    (change) =>
-      (filter.path === undefined || change.path === filter.path) &&
-      (filter.agent === undefined || change.agentId === filter.agent),
+    (change) => filter.path === undefined || change.path === filter.path,
   );
 }
 

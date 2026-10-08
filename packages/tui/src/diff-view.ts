@@ -17,7 +17,6 @@ export type DiffOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 export interface DiffFileChange {
   readonly path: string;
   readonly op: DiffOp;
-  readonly agentId: string;
   readonly toolCallId: string | null;
   readonly sessionId: string;
   readonly timestamp: number;
@@ -137,7 +136,7 @@ export function renderDiffLines(
   change: DiffFileChange,
   options: DiffRenderOptions = {},
 ): string[] {
-  const who = `agent=${change.agentId} toolCall=${change.toolCallId ?? 'none'}`;
+  const who = `toolCall=${change.toolCallId ?? 'none'}`;
   const flags = [
     change.unattributed ? 'unattributed' : null,
     change.reversible ? null : 'non-reversible',

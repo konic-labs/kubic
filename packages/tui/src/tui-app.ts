@@ -678,7 +678,6 @@ export interface TuiApp {
 // that only pass a filter through).
 interface JournalFilterLike {
   readonly path?: string;
-  readonly agent?: string;
 }
 
 // The footer line for a lane's transient

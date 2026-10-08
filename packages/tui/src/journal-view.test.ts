@@ -1,8 +1,8 @@
-// JournalView file→hunks + path/agent filters.
-// Filters mirror `kubic diff --path/--agent` (host journal-cli.ts over
-// exec diffEntries): exact match on path and agent. The flattened text
+// JournalView file→hunks + path filter.
+// The path filter mirrors `kubic diff --path` (host journal-cli.ts over
+// exec diffEntries): exact match on path. The flattened text
 // of a 2-file view equals `kubic diff` output line-for-line (the view
-// emits the CLI-identical ---/+++/attribution/hunk blocks; the op label
+// emits the CLI-identical ---/+++/tool-call/hunk blocks; the op label
 // lives on the op-labelled header, which the CLI does not print).
 // Headless snapshots render directly (no VirtualTerminal in Pi 0.85.1).
 import { describe, expect, it } from 'vitest';
@@ -18,7 +18,6 @@ function changes(): DiffFileChange[] {
     {
       path: 'a.txt',
       op: 'write',
-      agentId: 'root',
       toolCallId: 'call-1',
       sessionId: 's1',
       timestamp: 100,
@@ -30,7 +29,6 @@ function changes(): DiffFileChange[] {
     {
       path: 'b.txt',
       op: 'create',
-      agentId: 'worker-1',
       toolCallId: 'call-2',
       sessionId: 's1',
       timestamp: 200,
@@ -42,7 +40,6 @@ function changes(): DiffFileChange[] {
     {
       path: 'c.txt',
       op: 'write',
-      agentId: 'root',
       toolCallId: null,
       sessionId: 's1',
       timestamp: 300,
@@ -61,16 +58,9 @@ describe('journal filters (mirrors `kubic diff`)', () => {
     ).toEqual(['b.txt']);
   });
 
-  it('narrows by agent exactly like --agent', () => {
-    expect(
-      filterJournalChanges(changes(), { agent: 'worker-1' }).map((c) => c.path),
-    ).toEqual(['b.txt']);
-  });
-
   it('empty filter keeps every file; unknown values match nothing', () => {
     expect(filterJournalChanges(changes(), {}).length).toBe(3);
     expect(filterJournalChanges(changes(), { path: 'nope' })).toEqual([]);
-    expect(filterJournalChanges(changes(), { agent: 'nobody' })).toEqual([]);
   });
 });
 
@@ -81,7 +71,7 @@ describe('journal view', () => {
       [
         '--- a/a.txt',
         '+++ b/a.txt',
-        '# agent=root toolCall=call-1',
+        '# toolCall=call-1',
         '@@ -1,4 +1,4 @@',
         ' one',
         '-two',
@@ -90,7 +80,7 @@ describe('journal view', () => {
         ' ',
         '--- a/b.txt',
         '+++ b/b.txt',
-        '# agent=worker-1 toolCall=call-2 [non-reversible]',
+        '# toolCall=call-2 [non-reversible]',
         '@@ -1,1 +1,2 @@',
         '+new',
         ' ',
@@ -104,7 +94,7 @@ describe('journal view', () => {
     expect(renderJournalLines(changes().slice(2))).toEqual([
       '--- a/c.txt',
       '+++ b/c.txt',
-      '# agent=root toolCall=none [unattributed, non-reversible]',
+      '# toolCall=none [unattributed, non-reversible]',
       '~ content unavailable: c.txt (missing before-blob)',
     ]);
   });
@@ -119,7 +109,7 @@ describe('journal view', () => {
     expect(renderJournalLines([bad])).toEqual([
       '--- a/bin.dat',
       '+++ b/bin.dat',
-      '# agent=root toolCall=call-1',
+      '# toolCall=call-1',
       placeholder,
     ]);
     const view = new JournalView([bad]);
@@ -144,27 +134,16 @@ describe('journal view', () => {
     expect(doc).toContain('+new');
   });
 
-  it('view-level filters narrow the snapshot identically to the CLI', () => {
-    const view = new JournalView(changes(), { filter: { agent: 'root' } });
+  it('view-level path filter narrows the snapshot identically to the CLI', () => {
+    const view = new JournalView(changes(), { filter: { path: 'a.txt' } });
     const doc = view.render(100).join('\n');
     expect(doc).toContain('--- a/a.txt');
-    expect(doc).toContain('--- a/c.txt');
+    expect(doc).not.toContain('--- a/c.txt');
     expect(doc).not.toContain('b.txt');
   });
 });
 
 describe('journal mutation hardening', () => {
-  it('combines path and agent filters with AND', () => {
-    expect(
-      filterJournalChanges(changes(), { path: 'a.txt', agent: 'root' }).map(
-        (c) => c.path,
-      ),
-    ).toEqual(['a.txt']);
-    expect(
-      filterJournalChanges(changes(), { path: 'a.txt', agent: 'worker-1' }),
-    ).toEqual([]);
-  });
-
   it('setChanges repaints the snapshot to the new file set', () => {
     const view = new JournalView(changes().slice(0, 1));
     expect(view.render(100).join('\n')).toContain('--- a/a.txt');
@@ -183,7 +162,7 @@ describe('journal mutation hardening', () => {
   it('setFilter repaints the snapshot to the narrowed set', () => {
     const view = new JournalView(changes());
     expect(view.render(100).join('\n')).toContain('--- a/b.txt');
-    view.setFilter({ agent: 'worker-1' });
+    view.setFilter({ path: 'b.txt' });
     const doc = view.render(100).join('\n');
     expect(doc).toContain('--- a/b.txt');
     expect(doc).not.toContain('--- a/a.txt');

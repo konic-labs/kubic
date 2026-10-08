@@ -18,7 +18,6 @@ function row(
   return {
     path,
     op: 'write',
-    agentId: 'root',
     toolCallId,
     sessionId: 's1',
     timestamp,

@@ -118,7 +118,6 @@ describe('status line state word', () => {
     const change = (path: string) => ({
       path,
       op: 'edit' as const,
-      agentId: 'root',
       toolCallId: 'tc-1',
       sessionId: 's',
       timestamp: 1,
@@ -265,7 +264,6 @@ describe('turn receipts and thinking time on the app', () => {
       {
         path: 'src/cart.js',
         op: 'edit',
-        agentId: 'root',
         toolCallId: 'tc1',
         sessionId: 's',
         timestamp: Date.now(),

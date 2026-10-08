@@ -171,7 +171,7 @@ describe('config feeds the live run path', () => {
     expect(result.terminus).toBe('completed');
     expect(existsSync(join(workspace, 'created.txt'))).toBe(false);
     // The run wrote a real session whose journal exists at the documented
-    // location (§E3) — the config did not stop the run, it shaped it.
+    // location — the config did not stop the run, it shaped it.
     const journalDir = join(root, result.sessionId, 'journal');
     expect(existsSync(journalDir)).toBe(true);
     expect(new FileJournalStore(journalDir).entries()).toEqual([]);

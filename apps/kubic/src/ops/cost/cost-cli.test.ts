@@ -679,9 +679,9 @@ describe('kubic cost durable usage', () => {
     }
   });
 
-  it('refuses an explicit --session written by Pi 0.87, instead of an (unreadable) row', async () => {
+  it('refuses an explicit --session in the legacy layout, instead of an (unreadable) row', async () => {
     const root = tmpRoot();
-    // Exactly what 0.87's JsonlSessionRepo wrote.
+    // The legacy layout.
     const dir = join(root, '--work--');
     mkdirSync(dir, { recursive: true });
     writeFileSync(

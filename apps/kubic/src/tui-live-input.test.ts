@@ -88,7 +88,7 @@ function fauxLaneBoot(
     steps.map((step) => {
       if (typeof step === 'function') return step;
       // A message carrying a tool call must say so (pi-durable dispatches
-      // the calls of a `toolUse` turn; 0.87 inferred them from the parts).
+      // the calls of a `toolUse` turn).
       const toolUse =
         Array.isArray(step) &&
         step.some(

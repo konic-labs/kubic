@@ -1,8 +1,8 @@
 // The live-replay runtime through the real builder:
 // `createProdRunners().replay` must hand the lane the same `[session]`
 // compaction policy and `[agent]` prompt section `kubic run` threads — the
-// construction used to ride an untyped spread invisible to types and pinned by
-// no test. Everything here is real (prod runner, tier validation, lockfile
+// construction rides a typed projection that a test pins. Everything here is real
+// (prod runner, tier validation, lockfile
 // check, trajectory load, runProdReplay up to the lane) except the lane itself,
 // captured at the `runHeadlessPrompt` seam: if the production spread is
 // dropped, the captured deps miss the fields and this fails. Lane behavior

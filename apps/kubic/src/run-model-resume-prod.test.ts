@@ -3,7 +3,7 @@
 // resumed session whose stored model differs (with a notice); without a pin
 // the session keeps its own model. Either way the result/envelope, the
 // status bar and the usage rows name the model the lane actually runs, and
-// a stored model that is no longer available fails closed by name.
+// a stored model that is not available fails closed by name.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

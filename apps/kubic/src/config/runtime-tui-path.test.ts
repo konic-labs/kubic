@@ -1,7 +1,7 @@
 // Config → live TUI path: `kubic tui` spreads the SAME
 // runtimeLaneDeps projection `kubic run` consumes into tuiDepsWithDefaults,
-// which used to keep only the policy/journal keys — so `[agent].name` and
-// the `[roles.<name>]` layers never reached bootTuiLane. These drive the
+// which keeps the `[agent].name` and `[roles.<name>]` layers, not only the
+// policy/journal keys, so they reach bootTuiLane. These drive the
 // production deps builder (tuiDepsWithDefaults) with the same fixtures as the
 // Run tests (runtime-run-path.test.ts).
 //

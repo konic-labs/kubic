@@ -590,7 +590,7 @@ describe('createLedgerModelKeyResolver with a short or provider-named key', () =
       envVar: 'OLLAMA_API_KEY',
       readEnv: async () => 'ollama',
     };
-    // The second use is the one the live-value refusal used to drop: by then
+    // The second use is the one the live-value refusal must not drop: by then
     // the resolved value was in the inventory and matched the row's own
     // provider name.
     expect(await resolver.resolve(use)).toBe('ollama');

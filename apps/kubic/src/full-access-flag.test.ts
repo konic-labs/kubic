@@ -118,11 +118,11 @@ describe('enableSessionFullAccess: the one enable path', () => {
   });
 });
 
-// Full access used to append a `trigger:full-access` row for
-// EVERY call — read and ls included — so a session wrote one fsync'd ledger
-// record per tool call and the trail could not name what was actually
-// waived. Now the detectors run first: an untriggered call is neither
-// audited nor marked challenged, and a triggered call gets one record per
+// A `trigger:full-access` row is appended only for a triggered call, not for
+// EVERY call (read and ls included): one fsync'd ledger record per tool call
+// would not name what was actually waived. The detectors run first: an
+// untriggered call is neither audited nor marked challenged, and a triggered
+// call gets one record per
 // capability it raised, all under posture 'full-access'.
 describe('full access audits only the capabilities it waived', () => {
   function fullAccessPolicy(workspace: string, sessionDir: string) {

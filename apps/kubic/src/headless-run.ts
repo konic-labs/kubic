@@ -678,7 +678,7 @@ async function appendPromptEntry(
 // `submit` writes `pi.user` itself, so a run that reached its turn has
 // exactly ONE user entry. Every other exit path — no model, a refused role,
 // a signal between boot and the turn, a busy refusal — still keeps the
-// prompt durable (the pre-1.0 guarantee `kubic run -p` always had) through
+// prompt durable (the guarantee `kubic run -p` gives) through
 // one plain entry write. The TRANSCRIPT decides, in both directions: a
 // prompt already carried by an entry (the turn's own, a resumed run's, an
 // earlier identical prompt) is never written twice, and a lane that booted
@@ -1169,7 +1169,7 @@ async function runHeadlessPromptImpl(
   // the session exists, cleared on every exit path.
   let deadline: ReturnType<typeof setTimeout> | undefined;
   // Interrupts (SIGINT/SIGTERM/SIGHUP): installed from here until the finally
-  // has drained, so the default handler can no longer kill the run past its
+  // has drained, so the default handler cannot kill the run past its
   // own cleanup. The first signal kills the running children synchronously
   // (they sit in their own process groups and never saw the signal — keys
   // them by conversation id) and cancels the guard; the listeners detach at
@@ -1465,7 +1465,7 @@ async function runHeadlessPromptImpl(
     // same function doctor reads (host/approvals.installSoloPolicy). Config-
     // sourced classes replace the documented SOLO_DEFAULTS; the
     // destructive/network/confine guards and the approval ask are installed
-    // either way, so a run with no config is no longer a run with no policy.
+    // either way, so a run with no config is not a run with no policy.
     // The workspace root is explicit — the lane cannot invent one.
     const warnLine =
       deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
@@ -1833,7 +1833,7 @@ async function runHeadlessPromptImpl(
         },
       });
     } catch (error) {
-      // A stored session model that is no longer registered
+      // A stored session model that is not registered
       // is the same terminus as an unknown selection: exit 6, named.
       if (error instanceof ModelSelectError) {
         return finished(

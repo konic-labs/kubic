@@ -414,7 +414,7 @@ export interface TuiLaneLoop {
   // The resolved model's context window and compaction
   // threshold, so the gauge follows a `/model` switch. Absent (injected
   // viewer loops) leaves the seeded limits in place — the gauge never keeps
-  // a window that belongs to a model the session no longer runs.
+  // a window that belongs to a model the session does not run.
   contextLimits?: (provider: string, id: string) => ContextLimits;
   /**
    * The thinking level the live conversation's agent carries (the
@@ -489,7 +489,7 @@ interface TuiTurnRecord {
 }
 
 // The terminus of a durable failure: the reason code carries
-// the classification the old terminal-status mapping used to derive, so the
+// the classification the terminal-status mapping derives, so the
 // TUI trajectory keeps the same envelope vocabulary as `kubic run`. A code
 // this map does not know stays a plain failure — never an invented terminus.
 function terminusOfFailure(reason: string): RunTerminusKind {
@@ -1200,7 +1200,7 @@ export async function bootTuiLane(
   // The session's committed spend, read from its own `pi.usage`
   // ledger (the reader — the same numbers `kubic cost` prints) BEFORE the
   // lane adopts the storage. Best-effort: a torn or foreign usage document
-  // must never block a boot; the bar then starts from zero as it used to.
+  // must never block a boot; the bar then starts from zero.
   let usageRows: StatusUsageRow[] = [];
   try {
     usageRows = statusRowsFromSessionUsage(
@@ -1477,7 +1477,7 @@ export async function bootTuiLane(
     // completes against the boot's gated set — never the raw load.
     let bootedSkillList: LoadedSkill[] = [];
     // The skills the loader met but did not load — the TUI
-    // used to drop these lines; they now ride the boot notices once.
+    // drops none of these lines: they ride the boot notices once.
     let skillSkips: SkippedSkill[] = [];
     // Installed policy: `kubic tui` drives the same solo lane as
     // `kubic run`, so it installs the same policy — one derivation
@@ -1885,8 +1885,8 @@ export async function bootTuiLane(
         : { pendingNotice: pendingNotices.join('; ') }),
       fullAccess,
       usageRows,
-      // The loader lines the TUI used to drop — skipped
-      // skills as one boot notice (warning on stderr before the
+      // The loader lines for skipped skills ride the boot notices once: one
+      // notice (warning on stderr before the
       // alt-screen opens, via the runner below). A clean boot stays
       // silent: `describeSkillSkips` is undefined when nothing was
       // skipped.
@@ -2355,7 +2355,7 @@ type TuiConfigProjection = {
   // `kubic run` gates with (`HeadlessRunDeps.modelPolicy`). It is the only
   // Dep the run path threads — the role-grant check, the model gate and
   // the lane tool intersection all derive from it — so a projection that
-  // drops it (the audit's finding) leaves every enterprise gate inert on the
+  // drops it leaves every enterprise gate inert on the
   // interactive lane.
   modelPolicy?: EffectivePolicy;
   // The pin above is a frozen enterprise `[model]`, so the
@@ -4382,7 +4382,7 @@ export async function runTuiCommand(
     const booted = bootScreen(terminal, app.root);
     screen = booted;
     // Focus the editor, not the tree — the loop's primary input
-    // target is the prompt. T/t no longer toggle (they type); Ctrl-T does.
+    // target is the prompt. T/t do not toggle (they type); Ctrl-T does.
     booted.tui.setFocus(app.editor);
     app.editor.bind(booted.tui);
     // The overlay seat. The app renders the approval through the

@@ -471,7 +471,7 @@ describe('autoApprove never answers an always-ask capability', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]?.capability).toBe(KUBIC_STATE_WRITE);
     // The seat branch carries the full command; the autoApprove
-    // branch it used to take sent a bare summary.
+    // branch must not send a bare summary.
     expect(seen[0]?.command).toBe('echo x > .kubic/config.toml');
   });
 
@@ -1002,9 +1002,9 @@ describe('cd tracking recognises shell compound forms', () => {
   });
 });
 
-// The auditor's reproductions, end to end through `kubic run`'s headless
-// path (faux provider, zero network): before the fixes each of these bash
-// calls exited 0 with no ask.
+// Regression reproductions, end to end through `kubic run`'s headless
+// path (faux provider, zero network): each of these bash calls must ask,
+// never exit 0 with no ask.
 function modelsWith(
   steps: ReturnType<typeof fauxAssistantMessage>[],
 ): MutableModels {
@@ -1062,7 +1062,7 @@ describe('prod run path: the bypasses are challenged', () => {
     expect(result.summary).toContain('git-push');
   });
 
-  it('a 200-repeat option chain no longer stalls the run (it took 14 s at 34 repeats)', async () => {
+  it('a 200-repeat option chain does not stall the run', async () => {
     const workspace = mkTmp('kubic-bypass-ws-');
     const started = Date.now();
     const result = await runBash(

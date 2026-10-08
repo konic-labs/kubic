@@ -325,7 +325,7 @@ describe('dispatch routing', () => {
     expect(h.calls).toEqual([]);
   });
 
-  it('an empty token gets no dead-end hint (review finding)', async () => {
+  it('an empty token gets no dead-end hint', async () => {
     // `kubic ""` cannot be run as a prompt (the prompt is empty), so the
     // hint would name a command that exits 2 again.
     const h = harness();

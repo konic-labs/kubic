@@ -1,9 +1,8 @@
 // The enterprise policy and the model-pin semantics on the PRODUCTION
 // runners. Every case builds its deps through
 // `createProdRunners` / `prodRunDeps` — the functions the binary calls — over
-// a real `loadRuntimeConfig`, never a hand-spread dep: the audit found that
-// tests which spread the deps themselves stay green when the production
-// spread is dropped.
+// a real `loadRuntimeConfig`, never a hand-spread dep: a test that spreads the
+// deps itself cannot notice when the production spread is dropped.
 //
 // Faux provider only (`KUBIC_PROVIDER=faux` or injected faux catalogs): zero
 // network, zero paid tokens. Temp workspace, `process.cwd()` mocked, temp HOME
@@ -840,8 +839,8 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
 
 describe('`kubic tui` through the prod runner enforces the enterprise model gate', () => {
   it('refuses a model outside allowed_models with the named refusal, before any terminal opens (exit 6)', async () => {
-    // The audit's finding: the gate was inert on the interactive runner
-    // because the policy never reached the boot. `r.tui` builds its deps with
+    // The gate must apply on the interactive runner: the policy reaches the boot.
+    // `r.tui` builds its deps with
     // prodTuiDeps and boots the real lane; a refusal here happens before the
     // alt-screen (no terminal is created in this test).
     vi.stubEnv('KUBIC_PROVIDER', 'faux');

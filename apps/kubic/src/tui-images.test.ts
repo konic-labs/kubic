@@ -453,8 +453,8 @@ describe('kubic tui /image', () => {
     });
   });
 
-  // The payload used to be decoded before the size check,
-  // so an oversize paste allocated a second, larger buffer first.
+  // The size check runs before the payload is decoded, so an oversize paste
+  // never allocates a second, larger buffer first.
   it('refuses an oversize inline paste without decoding it', async () => {
     const { fake, exit } = startStubSession();
     await waitFor(() => fake.counts.started === 1);

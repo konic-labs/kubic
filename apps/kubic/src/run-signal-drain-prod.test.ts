@@ -192,9 +192,8 @@ describe('headless run signal handling (solo lane)', () => {
   });
 
   it('keeps the prompt durable when a signal lands after the boot but before the turn', async () => {
-    // The reviewer's case: the lane booted, the turn never submitted. The
-    // pre-1.0 `recordPrompt` wrote the prompt BEFORE the boot, so this path
-    // must still leave exactly one durable pi.user entry — the fallback
+    // The case: the lane booted, the turn never submitted. Whatever recorded the
+    // prompt, this path must still leave exactly one durable pi.user entry — the fallback
     // write is derived from the transcript, not from a submit flag.
     const root = tmpRoot();
     const signals = new EventEmitter();

@@ -100,7 +100,7 @@ describe('the --model flag feeds the one config load', () => {
 // p/id`. The pre-scan must read the SAME argv the runner receives — for the bare
 // form the flag is the requested "command" token, not part of `rest` — or the
 // interactive session boots the default model with no error and no note (the
-// TUI no longer patches the flag over the loaded config).
+// TUI does not patch the flag over the loaded config).
 describe('the bare `kubic --model` form feeds the one config load', () => {
   async function bareLoad(
     requested: string,

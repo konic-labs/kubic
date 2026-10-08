@@ -1,5 +1,5 @@
 // The TUI's one-time skill warning notice: loader lines the
-// TUI used to drop (a skipped skill) ride the boot notices once — stderr
+// TUI does not drop (a skipped skill) ride the boot notices once — stderr
 // `warning: …` before the alt-screen opens — instead of vanishing. A clean
 // boot stays silent. Real `bootTuiLane` over tmp dirs, faux models only:
 // zero network, zero paid tokens; temp dirs removed in `afterEach`.

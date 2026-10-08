@@ -819,8 +819,8 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
           ? {}
           : { probeSessionOverlap: sessionOverlapProbe }),
         // Full-access sessions: one warning per live
-        // session running with approvals off (named grant + way back when
-        // recorded). With --session exactly the named session is checked.
+        // session running with approvals off (named grant recorded). With
+        // --session exactly the named session is checked.
         ...(fullAccessProbe === undefined
           ? {}
           : { probeFullAccessSessions: fullAccessProbe }),
@@ -927,7 +927,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
       // through the real solo lane at the declared model pin.
       // The runtime object is built
       // against the named type, so a dropped or mistyped projection fails
-      // compile — the spreads below used to ride unchecked.
+      // compile — the spreads below are checked, not carried unchecked.
       const runtime: ReplayRuntimeDeps = {
         ...runtimeRunDeps(cliConfig),
         trustProject: projectTrustFor(cliConfig),

@@ -1113,7 +1113,7 @@ describe('selectModelUnderPolicy gates before the registry', () => {
         scope,
       ),
     ).toThrow(/role 'reviewer' allows/);
-    // In-set selects; no scope keeps the old behaviour.
+    // In-set selects; with no scope the pick is unchanged.
     expect(
       selectModelUnderPolicy(
         models,

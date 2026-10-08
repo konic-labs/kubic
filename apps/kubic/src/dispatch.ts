@@ -1,6 +1,6 @@
-// Command dispatch seam for the kubic CLI: the routing table
-// `main()` used to hold inline — which command runs which runner, which
-// exit code a refused config yields, and the front-door special cases
+// Command dispatch seam for the kubic CLI: the routing table — which command
+// runs which runner, which exit code a refused config yields, and the front-door
+// special cases
 // (help, version, the contract crash probe, the usage fallthrough). The
 // runners arrive injected (production wiring: ./prod-runners.js), so this
 // module holds no lanes, no fs and no process state of its own — the

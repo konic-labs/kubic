@@ -24,8 +24,6 @@ import {
   type PaletteBuiltin,
 } from '../../core/src/ui/tokens.js';
 
-// Re-exported through value imports: the reachability gate
-// (scripts/reachability.mjs) follows `import` edges only.
 export type { ColorLevel };
 export {
   detectColorLevel,

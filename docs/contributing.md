@@ -27,6 +27,7 @@ CI runs these commands in this order; run them locally first:
 npm run typecheck
 npm run lint                  # biome ci — exact CI parity
 npm run lint:deps             # package dependency direction
+npm run lint:dead             # knip: unused files, exports, dependencies, types
 npm run check:pi              # exact pins on every dependency
 npm run docs:check            # no dangling internal doc links
 npm test                      # repo gates: scripts/*.test.mjs via node --test
@@ -43,6 +44,27 @@ provider-less `kubic run -p` exiting 6 while still printing the
 `session:`/`journal:`/`usage:`/`trajectory:` refs. It is hermetic — the
 probes run under a temp `HOME` with no `models.json` in the cwd, so no
 provider and no network.
+
+### Dead-code gate
+
+`npm run lint:dead` runs knip (pinned exactly in `package.json`) with
+`knip.jsonc`, which carries the reason for each choice. It reports unused
+files, exports, types and dependencies, and unlisted or unresolved imports.
+
+- Entries are `scripts/*.mjs` and `test/*.ts` at the root, and each package's
+  and the app's `*.test.ts` files; the app's `src/main.ts` is its entry, and
+  `bin/kubic.js` comes from the `bin` field. A test file is an entry, so an
+  export that only tests import counts as used.
+- `mkfifo` is in `ignoreBinaries`: one exec journal test calls the POSIX
+  utility to make a named pipe. It is a system tool, not a dependency.
+- `ignoreExportsUsedInFile` is on for now: an export that its own module uses
+  is not reported.
+
+The gate does **not** guarantee that every export has a caller in production
+code. It does not report an export that only tests import, nor an export used
+only inside its own module. It also does not report a source file that only
+tests reach. Those checks need a production-only configuration, which the
+repo does not yet have.
 
 ## Tests
 
@@ -112,7 +134,7 @@ A behaviour change ships its docs page in the same commit, and
 ## CI
 
 A push runs the `test` job: the static checks first (typecheck, biome,
-`lint:deps`, `check:pi`, `docs:check`), then the suites and the built
+`lint:deps`, `lint:dead`, `check:pi`, `docs:check`), then the suites and the built
 binary. It runs on Node 22 (the lowest supported) on every ref and on
 Node 22 and 24 on `main`. A newer push cancels the older run of the same
 ref; `main` is keyed by commit and never cancelled. Workflow permissions

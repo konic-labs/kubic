@@ -18,7 +18,7 @@
 // admitted input and its wait — the same `submit()` → `wait()` shape `kubic
 // run` drives (lane/turn.ts owns the production turn glue).
 // Test-only: imported by `*.test.ts` files. The build compiles it but no
-// runtime path reaches it (scripts/dead-surface.mjs lists it).
+// runtime path reaches it.
 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

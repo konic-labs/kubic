@@ -22,12 +22,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
     "lint": "biome ci .",
     "lint:deps": "node scripts/dep-lint.mjs",
+    "lint:dead": "knip",
     "check:pi": "node scripts/check-pinned-deps.mjs",
     "test:unit": "vitest run",
     "test": "node --test \"scripts/*.test.mjs\"",
     "docs:check": "node scripts/check-docs-links.mjs",
     "test:binary-contract": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs",
-    "surface:check": "node scripts/reachability.mjs",
     "test:mutation:vitest": "stryker run",
     "test:mutation:tap": "stryker run stryker.tap.conf.json",
     "test:mutation": "npm run test:mutation:vitest && npm run test:mutation:tap && node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80 && node scripts/mutation-check.mjs --report reports/mutation-tap/mutation.json --min 80"

@@ -29,8 +29,6 @@ export const RUN_SPAN_NAMES = {
   tool: 'pi.tool.execute',
 } as const;
 
-export type RunSpanName = (typeof RUN_SPAN_NAMES)[keyof typeof RUN_SPAN_NAMES];
-
 export interface RunSpanRecord extends SpanRecord {
   // Present on pi.tool.execute spans only: which tool the call ran.
   toolName?: string;

@@ -32,8 +32,6 @@ export const AUDIT_FIELDS = [
   'reason',
 ] as const;
 
-export type AuditField = (typeof AUDIT_FIELDS)[number];
-
 export type AuditDecision = 'allow' | 'deny';
 
 export type AuditResult = 'ok' | 'deny' | 'error';

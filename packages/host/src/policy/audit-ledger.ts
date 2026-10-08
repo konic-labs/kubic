@@ -307,8 +307,6 @@ export const PRIVILEGED_ACTION_KINDS = [
   'undo-restore',
 ] as const;
 
-export type PrivilegedActionKind = (typeof PRIVILEGED_ACTION_KINDS)[number];
-
 // The `level = "privileged"` filter: a `[[audit]]` sink
 // at the privileged level keeps approval decisions (`tool:<name>`) and the
 // privileged-action whats, and drops the rest (`credential:<provider>`).

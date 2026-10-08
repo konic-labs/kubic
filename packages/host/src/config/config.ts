@@ -248,10 +248,6 @@ const KNOWN_SECTIONS = new Set([
   'audit',
 ]);
 
-// Exported for the docs-drift gate: the page's Shape paragraph
-// and example.toml must name exactly these sections.
-export const KNOWN_CONFIG_SECTIONS: readonly string[] = [...KNOWN_SECTIONS];
-
 // Canonical example — kept in sync with example.toml (pinned by
 // test). Committed shape only: sessions/journal/artifacts/audit are runtime
 // state, never config.

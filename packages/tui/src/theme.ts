@@ -9,12 +9,7 @@
 // composition root opts into colour after checking the real terminal
 // (`setTuiTheme(createTuiTheme(detectColorLevel(env, isTTY)))`).
 
-import {
-  type ColorLevel,
-  detectColorLevel,
-  nearestAnsi16,
-  nearestXterm256,
-} from '../../core/src/ui/color.js';
+import { type ColorLevel, detectColorLevel } from '../../core/src/ui/color.js';
 import { SPINNER_FRAMES, spinnerFrame } from '../../core/src/ui/glyphs.js';
 import {
   createUiTheme,
@@ -25,7 +20,6 @@ import { parseThemeJson, ThemeError } from '../../core/src/ui/theme-file.js';
 import {
   builtinPalette,
   isPaletteBuiltin,
-  PALETTE_BUILTINS,
   type Palette,
   type PaletteBuiltin,
 } from '../../core/src/ui/tokens.js';
@@ -35,8 +29,6 @@ import {
 export type { ColorLevel };
 export {
   detectColorLevel,
-  nearestAnsi16,
-  nearestXterm256,
   parseThemeJson,
   SPINNER_FRAMES,
   spinnerFrame,
@@ -68,9 +60,6 @@ export interface TuiTheme {
   readonly prompt: Style;
 }
 
-// The shipped built-ins: `default` and `dark` are the Konic brand palette,
-// `light` the light-background variant, `terminal` the terminal's own colours.
-export const THEME_BUILTINS = PALETTE_BUILTINS;
 export type ThemeBuiltin = PaletteBuiltin;
 
 export function isThemeBuiltin(name: string): name is ThemeBuiltin {
@@ -123,12 +112,6 @@ export function tuiTheme(): TuiTheme {
 export function setTuiTheme(theme: TuiTheme): void {
   active = theme;
 }
-
-// The Kubic wordmark: a square Konic mark (radius 0, like the site) and the
-// product name. Kept to one line so the header costs a single row.
-export const WORDMARK_GLYPH = '■';
-export const WORDMARK_NAME = 'kubic';
-export const WORDMARK_TAGLINE = 'by konic';
 
 export function formatElapsed(elapsedMs: number): string {
   const seconds = Math.floor(Math.max(0, elapsedMs) / 1000);

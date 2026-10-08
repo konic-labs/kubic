@@ -95,7 +95,7 @@ import {
   PROMPT_PREFIX,
   sanitizeLaneText,
 } from './lane-cells.js';
-import { buildLayoutRoot, type Viewport } from './layout.js';
+import { buildLayoutRoot } from './layout.js';
 import { PaletteView } from './palette-view.js';
 import { PickerView } from './picker-view.js';
 import { type PreflightInfo, renderPreflight } from './preflight.js';
@@ -209,7 +209,7 @@ import {
   type PanelMode,
 } from './view-panel.js';
 
-export type { JournalChangeLike, LaneEntryLike, PanelMode, Viewport };
+export type { JournalChangeLike, LaneEntryLike, PanelMode };
 
 // The request the overlay answers: approval-view.ts's own request shape, named
 // here so the composition root and the app agree on one type.

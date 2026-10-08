@@ -599,13 +599,6 @@ export function roleDebugLine(resolved: ResolvedRole): string {
   return `[policy] role=${resolved.name} tools=${resolved.tools.join(',')}`;
 }
 
-export function emitRoleDebug(
-  sink: (line: string) => void,
-  resolved: ResolvedRole,
-): void {
-  sink(roleDebugLine(resolved));
-}
-
 // Doctor surfacing: every resolved role becomes a
 // `role:<name>` check. Contradictory roles report fail/policy-mismatch
 // with the refusal reason — the same shape runDoctorCommand renders,

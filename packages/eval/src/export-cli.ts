@@ -85,7 +85,6 @@ export interface ExportCommandOptions {
   readonly json?: boolean;
 }
 
-export type { ExportDatasetType } from './rl/dataset.js';
 export { DATASET_TYPES } from './rl/dataset.js';
 
 // Pair/group types consume two trajectory files (--trajectory + --against);

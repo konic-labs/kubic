@@ -483,10 +483,6 @@ export interface TuiTurnRecord {
   turn?: TurnOutcome;
 }
 
-// The lane record of one settled turn: the durable outcome kind and, for
-// a failure, the classified error.
-export type TuiTurnLaneRecord = ReturnType<typeof turnLaneRecord>;
-
 // The terminus of a durable failure: the reason code carries
 // the classification the old terminal-status mapping used to derive, so the
 // TUI trajectory keeps the same envelope vocabulary as `kubic run`. A code

@@ -444,29 +444,6 @@ export function withFileLocked<T>(
   }
 }
 
-// The pid recorded in a lockfile when that process is still alive: the
-// read-only view a destructive command uses to skip work instead of racing a
-// live writer. undefined for a missing, unreadable, torn or stale file — and
-// for a pid that is gone, which is exactly what makes a crashed holder's
-// residue harmless.
-export function liveLockHolder(lockPath: string): number | undefined {
-  let raw: string;
-  try {
-    raw = readFileSync(lockPath, 'utf8').trim();
-  } catch {
-    return undefined;
-  }
-  const pid = Number(raw);
-  if (!Number.isInteger(pid) || pid <= 0) return undefined;
-  try {
-    // Signal 0: the permission and existence probe, no signal delivered.
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return undefined;
-  }
-}
-
 // Atomic, serialized update of one small state file (the trust store): an
 // O_EXCL lockfile (stale after `staleMs`, so a crashed
 // holder never wedges the next run) guards a read → update → tmp+rename

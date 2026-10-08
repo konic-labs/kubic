@@ -128,8 +128,6 @@ export const ENV_FAILURE_CODES = [
   'provider_auth',
 ] as const;
 
-export type EnvFailureCode = (typeof ENV_FAILURE_CODES)[number];
-
 export function isEnvFailure(
   category: TrajectoryFailureCode | string | null,
 ): boolean {

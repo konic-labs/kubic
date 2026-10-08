@@ -78,22 +78,6 @@ export class SpanRecorder {
   }
 }
 
-// --debug stderr vocabulary: exactly 7 line classes —
-// [policy]/[session]/[tool]/[model]/[agent] + [exit] + handler_error. Tool lines carry the in/out/cached phase;
-// model lines carry in/out/cached token counts. Constructed with a sink
-// (stderr in prod, an array in tests) so TUI code never touches io here.
-// The `[handles]` class is dropped — nothing ever measured a
-// leak count, so the vocabulary carries no leak line.
-export const DEBUG_CLASSES = [
-  '[policy]',
-  '[session]',
-  '[tool]',
-  '[model]',
-  '[agent]',
-  '[exit]',
-  'handler_error',
-] as const;
-
 export type DebugSink = (line: string) => void;
 
 export type ToolPhase = 'in' | 'out' | 'cached';

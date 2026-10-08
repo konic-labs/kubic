@@ -16,12 +16,10 @@
 
 export const SCHEMA_VERSION = '1.3';
 export const SCHEMA_MAJOR = 1;
-export const SCHEMA_MINOR = 3;
 
 // Stability promise: `stable` means additive-only within a major —
 // replay and eval pinned to major 1 keep parsing.
 export const TRAJECTORY_STABILITY = 'stable' as const;
-export type TrajectoryStability = typeof TRAJECTORY_STABILITY;
 
 export interface TrajectoryChangelogEntry {
   version: string;

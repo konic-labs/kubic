@@ -14,12 +14,7 @@ import {
 // License identity: constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
-import {
-  EXIT_FAILED,
-  EXIT_OK,
-  EXIT_PROVIDER,
-  EXIT_USAGE,
-} from '../../core/src/cli/exit-codes.js';
+import { EXIT_OK, EXIT_USAGE } from '../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
 import {
@@ -42,11 +37,7 @@ import {
 } from './limits/doctor-limits.js';
 
 export const DOCTOR_EXIT_OK = EXIT_OK;
-export const DOCTOR_EXIT_FAIL = EXIT_FAILED;
 export const DOCTOR_EXIT_USAGE = EXIT_USAGE;
-// Provider-failure code, mirroring kubic run: a doctor matrix with a
-// provider-down failure exits 6 (see limitsDoctorExit).
-export const DOCTOR_EXIT_PROVIDER = EXIT_PROVIDER;
 
 // warn is informational only: it is
 // rendered, counted, and never exit-flipping — only fail flips the exit.
@@ -69,12 +60,6 @@ export interface DoctorCheck {
   status: DoctorStatus;
   reason: DoctorReason;
   detail: string;
-}
-
-export interface DoctorReport {
-  ok: boolean;
-  exitCode: number;
-  checks: DoctorCheck[];
 }
 
 // Provider probe input mirrors CustomProviderSpec (models-config.ts)

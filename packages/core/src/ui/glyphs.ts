@@ -11,15 +11,10 @@ export const PROSE = '◆';
 export const TOOL = '●';
 /** Collapsed, queued or not set. */
 export const COLLAPSED = '○';
-/** Thinking, collapsed. */
-export const THINKING = '⋯';
 export const OK = '✓';
 export const FAIL = '✕';
 export const WARN = '▲';
 export const INFO = 'ℹ';
-/** Tool-card gutter and footer corner. */
-export const GUTTER = '│';
-export const CORNER = '└';
 /** Light frame. */
 export const FRAME_LIGHT = {
   topLeft: '┌',
@@ -44,10 +39,6 @@ export const FRAME_HEAVY = {
 } as const;
 /** Gauge cells and the run timeline. */
 export const GAUGE = '━';
-export const ELLIPSIS = '…';
-export const MIDDOT = '·';
-export const ARROW_UP = '↑';
-export const ARROW_DOWN = '↓';
 export const BRANCH = '⎇';
 export const RETURN_KEY = '⏎';
 

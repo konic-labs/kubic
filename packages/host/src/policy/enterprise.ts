@@ -1012,11 +1012,6 @@ export function isModelAllowed(
   return true;
 }
 
-export interface BrokerSecret {
-  ref: string;
-  value: string;
-}
-
 export interface EnterpriseDoctorEnv {
   syslogAvailable: boolean;
 }

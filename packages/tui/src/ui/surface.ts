@@ -22,12 +22,3 @@ export function fillLine(
   if (open === '') return fitLine(text, width);
   return `${open}${reassertBackground(exactWidth(text, width), open)}${ui.close({ bg })}`;
 }
-
-export function surfaceLines(
-  ui: UiTheme,
-  lines: readonly string[],
-  width: number,
-  bg: TokenRole,
-): string[] {
-  return lines.map((line) => fillLine(ui, line, width, bg));
-}

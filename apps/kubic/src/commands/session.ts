@@ -134,7 +134,7 @@ function registerRun(program: Command, ctx: CommandContext): void {
   program
     .command('run')
     .description(
-      'run one headless prompt in this repo (solo: no isolation — approvals and the journal are the controls)',
+      'run one headless prompt in this repo (Kubic has no isolation — approvals and the journal are the controls)',
     )
     .option(
       '-p, --prompt <text>',
@@ -271,7 +271,7 @@ function registerRun(program: Command, ctx: CommandContext): void {
 function registerTui(program: Command, ctx: CommandContext): void {
   program
     .command('tui')
-    .description('open the interactive terminal UI (solo: no isolation)')
+    .description('open the interactive terminal UI (Kubic has no isolation)')
     .option(
       '--session <id>',
       'resume into an existing session ([A-Za-z0-9_-])',

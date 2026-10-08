@@ -59,7 +59,7 @@ describe('header facts', () => {
 
   it('carries the lane notice in the welcome block, wrapped whole', () => {
     const notice =
-      'solo: no isolation - in-process with your authority (files, network, credentials); controls: approvals + journal';
+      'Kubic runs in-process with your authority: no isolation (files, network, credentials); controls: approvals + journal';
     const app = seed({ laneNotice: () => notice });
     // It is the preflight's isolation row, wrapped under the value column.
     const narrow = app.render(60).join('\n').replace(/\s+/gu, ' ');

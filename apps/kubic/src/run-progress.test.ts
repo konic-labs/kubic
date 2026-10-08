@@ -119,7 +119,7 @@ describe('run progress', () => {
     progress.settle();
     expect(settledLines(chunks)).toEqual([
       '■ kubic run · solo · anthropic/claude · ~/project',
-      '○ solo has no isolation — approvals + journal are the controls · details: kubic doctor',
+      '○ Kubic has no isolation — approvals + journal are the controls · details: kubic doctor',
       '',
       '✕ bash    npm test  exit 1  0.4s',
       '✓ read    src/cart.js  0.0s',

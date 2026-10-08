@@ -147,7 +147,7 @@ on a colour terminal; plain text under a pipe or `NO_COLOR`); on failure an
 **On an interactive terminal** (stdout **and** stderr a colour
 TTY, no `--json`) the run shows its progress instead of those lines. On
 stderr: a heading (`■ kubic run · solo · <provider/id> · <cwd>`), the solo
-notice as one line (`○ solo has no isolation — approvals + journal are the
+notice as one line (`○ Kubic has no isolation — approvals + journal are the
 controls · details: kubic doctor`, same opt-outs as the full block), a
 spinner with the elapsed time while the model works, and one settled line
 per tool call when it finishes (`✓ read  src/cart.js  0.0s`, `✕ bash  npm
@@ -317,7 +317,7 @@ Lane and tool spans have two destinations:
 Both are additive: a run with no spans still exits exactly as before.
 
 A fresh solo start announces its trust model before the first turn: three
-`warning: solo mode has no isolation …` lines on **stderr** (never stdout —
+`warning: Kubic runs in-process with your authority: no isolation …` lines on **stderr** (never stdout —
 `--json` stays one parseable envelope). Suppressed by the opt-out
 `KUBIC_NO_NOTICE=1`. A `--session` resume still announces it: the rule is
 per process start, not per session. On an interactive terminal the three lines become one compact line under the run heading,

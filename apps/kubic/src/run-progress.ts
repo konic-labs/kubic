@@ -173,7 +173,7 @@ export function createRunProgress(
       write(heading);
       if (info.notice) {
         write(
-          `${ui.fg('fg2')('○ solo has no isolation — approvals + journal are the controls · details: ')}${ui.fg('fg1')('kubic doctor')}`,
+          `${ui.fg('fg2')('○ Kubic has no isolation — approvals + journal are the controls · details: ')}${ui.fg('fg1')('kubic doctor')}`,
         );
       }
       write('');

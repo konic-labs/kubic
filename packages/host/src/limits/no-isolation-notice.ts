@@ -10,12 +10,12 @@
 // first turn; apps/kubic/src/tui-run.ts shows the one-line statement in the
 // welcome block from the first render and the full block on `/safety`.
 export function noIsolationTuiLine(): string {
-  return 'solo: no isolation - in-process with your authority (files, network, credentials); controls: approvals + journal';
+  return 'Kubic runs in-process with your authority: no isolation (files, network, credentials); controls: approvals + journal';
 }
 
 export function noIsolationNoticeLines(): string[] {
   return [
-    'warning: solo mode has no isolation: this run executes in-process with your user authority.',
+    'warning: Kubic runs in-process with your authority: no isolation.',
     'warning: authority covers your files, network, and credentials - there is no containment and no prompt-injection prevention.',
     'warning: controls are approvals (ask-user by default) + the change journal: review with `kubic diff`, revert with `kubic undo` (honest limits).',
   ];

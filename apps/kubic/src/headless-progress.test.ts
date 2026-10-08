@@ -88,7 +88,7 @@ describe('headless run progress', () => {
     expect(events).toEqual(['begin:faux/small', 'start:ls', 'end:ls:ok']);
     expect(notice).toBe(true);
     expect(stderr.join('')).not.toContain(
-      'warning: solo mode has no isolation',
+      'warning: Kubic runs in-process with your authority: no isolation.',
     );
   });
 
@@ -113,6 +113,8 @@ describe('headless run progress', () => {
     } finally {
       spy.mockRestore();
     }
-    expect(stderr.join('')).toContain('warning: solo mode has no isolation');
+    expect(stderr.join('')).toContain(
+      'warning: Kubic runs in-process with your authority: no isolation.',
+    );
   });
 });

@@ -67,9 +67,9 @@ const CHECKS: DoctorCheck[] = [
   ),
   check('license:kubic', 'pass', 'MIT (see LICENSE)'),
   check(
-    'limit:solo-no-isolation',
+    'limit:no-isolation',
     'warn',
-    'honest limit (not enforced): solo runs in-process',
+    'honest limit (not enforced): Kubic runs in-process',
   ),
   check(
     'limit:journal-not-backup',
@@ -143,7 +143,7 @@ describe('the grouped summary', () => {
       '▲ guards are detection-only (lexical), not a sandbox',
     );
     expect(text).toContain(
-      '▲ honest limits: solo no isolation · journal not backup',
+      '▲ honest limits: no isolation · journal not backup',
     );
     expect(text).toMatch(/^ROLES {7}✓ planner {3}✓ reviewer/m);
     expect(lines.at(-1)).toBe(

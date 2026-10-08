@@ -839,7 +839,7 @@ not. The split, exactly as shipped:
   `kubic journal prune` removes entries older than the keep window on
   request, a dry run unless `--yes`.
 
-Honest limits, stated plainly: solo runs in-process with your
+Honest limits, stated plainly: Kubic runs in-process with your
 user authority — no isolation, no containment; approval policy is an
 offer for routing, not enforcement; the journal is a review/undo log,
 not a backup. `kubic doctor` reports each of these as an informational

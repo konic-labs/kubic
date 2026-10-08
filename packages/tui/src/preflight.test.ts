@@ -23,7 +23,7 @@ const BASE: PreflightInfo = {
   project: { path: '~/Desktop/kubic-playground', branch: 'main', dirty: 0 },
   trust: 'loaded',
   isolation:
-    'solo: no isolation - in-process with your authority; controls: approvals + journal',
+    'Kubic: no isolation - in-process with your authority; controls: approvals + journal',
   keys: { palette: '^P', help: '?' },
 };
 
@@ -42,7 +42,7 @@ describe('preflight', () => {
       '  ✓ project      ~/Desktop/kubic-playground  git main · clean',
       '  ✓ trust        .kubic/config.toml loaded',
       '  ✓ journal      on  every change is recorded; /undo reverts a turn',
-      '  ○ isolation    solo: no isolation - in-process with your authority; controls: approvals + journal  /safety',
+      '  ○ isolation    Kubic: no isolation - in-process with your authority; controls: approvals + journal  /safety',
       '',
       '  START',
       '  ⏎  describe a task below        e.g. "run npm test and fix the failing test"',

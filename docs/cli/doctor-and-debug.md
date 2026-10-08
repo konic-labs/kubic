@@ -28,7 +28,7 @@ PROJECT     ▲ overlap — 5 sessions recorded against /repo
 POLICY      ✓ approvals ask-user   ✓ workspace-write · network none · 18 tools   ✓ routing policy
             ▲ guards are detection-only (lexical), not a sandbox
 LIMITS      ▲ memory and disk caps are not enforced; wall clock is
-            ▲ honest limits: solo no isolation · no injection prevention · …
+            ▲ honest limits: no isolation · no injection prevention · …
 ROLES       ✓ debugger   ✓ implementer   ✓ planner   ✓ reviewer
 SKILLS      ✓ skills 0 loaded
 
@@ -101,12 +101,12 @@ the exit code.
 | `policy:enforceability` | Can this version actually honor the policy? `[mcp]` keys and `mcp:`/`extensions:`/`third-party:` autoApprove values fail here with the refusal. Invalid shapes are **not** double-failed — they point at `policy:approvals`. | Remove the unsupported key. |
 | `limit:provider-availability` | Is at least one provider available? (`listed, not dialled` unless a probe really dialled.) | Same as `provider:<id>` — configure a provider. |
 | `limit:deps-present` | Are all dep probes present? | Same as `dep:<id>`. |
-| `limit:<…>` (five static notices) | Honest limits, always `warn`: solo has no isolation, no injection prevention, policy is an offer not enforcement, journal is not a backup, no third-party MCP. | Nothing to fix — they are disclosures, not failures. If your matrix is all-green except warns, you are healthy (exit 0). |
+| `limit:<…>` (five static notices) | Honest limits, always `warn`: no isolation, no injection prevention, policy is an offer not enforcement, journal is not a backup, no third-party MCP. | Nothing to fix — they are disclosures, not failures. If your matrix is all-green except warns, you are healthy (exit 0). |
 
 ## Debugging with `--skip`
 
 `--skip` marks checks skipped (comma-separated, e.g.
-`--skip license:kubic,limit:solo-no-isolation`) — useful to isolate a
+`--skip license:kubic,limit:no-isolation`) — useful to isolate a
 red check from noise. Skipping an id that matches no check exits 2, so
 a typo fails closed instead of silently passing.
 

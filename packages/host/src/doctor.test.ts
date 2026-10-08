@@ -205,7 +205,7 @@ describe('runDoctorCommand', () => {
       // License identity rides the same command.
       'license:kubic',
       // Honest-limits registration rides the same command.
-      'limit:solo-no-isolation',
+      'limit:no-isolation',
       'limit:no-injection-prevention',
       'limit:policy-offer',
       'limit:journal-not-backup',

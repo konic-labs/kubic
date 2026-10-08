@@ -134,7 +134,7 @@ describe('marks', () => {
     expect(gauge(rich, 1, 4)).toBe(`${rich.fg('err')('━━━━')}`);
   });
 
-  it('section labels and rules', () => {
+  it('section labels', () => {
     expect(sectionLabel(plain, 'commands')).toBe('COMMANDS');
   });
 });

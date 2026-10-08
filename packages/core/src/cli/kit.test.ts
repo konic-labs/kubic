@@ -64,7 +64,7 @@ describe('kit helpers at depth none are plain text', () => {
     );
   });
 
-  it('next actions, hints and key/value lines', () => {
+  it('next actions and hint lines', () => {
     expect(
       nextActions(plain, [
         ['review', 'kubic diff'],

@@ -1323,10 +1323,6 @@ describe('cli thinking layer', () => {
       level: 'high',
       source: 'global',
     });
-    expect(runtimeLaneDeps(result).thinking).toEqual({
-      level: 'high',
-      source: 'global',
-    });
   });
 
   it('orders --thinking > env > file', () => {

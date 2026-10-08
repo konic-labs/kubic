@@ -981,7 +981,7 @@ describe('config serialization hardening', () => {
 });
 
 describe('[verify] section', () => {
-  it('parses the four gate commands and the timeout, and round-trips', () => {
+  it('parses the four gate commands and the timeout', () => {
     const text =
       '[verify]\ntests = "npm test"\nbuild = "npm run build"\nlint = "npm run lint"\ntypecheck = "npm run typecheck"\ntimeoutMs = 60000\n';
     const parsed = parseTomlConfig(text);

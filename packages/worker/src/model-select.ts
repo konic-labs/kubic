@@ -7,7 +7,7 @@
 // Thinking levels clamp to what the model supports (Pi owns the map);
 // the level itself persists as durable agent state through `configure()`
 // + `pi.agent`, never a sidecar — attach restores it from
-// the storage, so save/loadThinkingLevel were deleted.
+// the storage.
 
 import { suggest } from '../../core/src/suggest.js';
 import { isThinkingLevel, THINKING_LEVELS } from './models-config.js';

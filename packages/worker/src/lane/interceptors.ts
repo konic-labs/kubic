@@ -129,9 +129,9 @@ const WHOLE_COMMAND_PATTERNS = [
 // tokens: `dd … of=/dev/`, `git clean … -f`, `chmod|chown … -R`, `find …
 // -delete`, `git … push … --force|-f|+refspec`, `git … reset …
 // --hard`, `git … checkout … (-- | . | -f | --force)` and `git … restore …
-// (--worktree | -W)`. They used to be one regex each with `[^|;&]*` gaps,
-// which backtracks polynomially: `git push ` repeated 2000 times took 13 s
-// and `git restore --staged ` repeated 2000 times 50 s, before every bash call.
+// (--worktree | -W)`. A regex per shape with `[^|;&]*` gaps would backtrack
+// polynomially: `git push ` repeated 2000 times took 13 s and `git restore
+// --staged ` repeated 2000 times 50 s, before every bash call.
 //
 // A chain is walked leftmost-first inside one segment — each step searches
 // from the end of the previous one. That is exactly as strong as the gapped
@@ -246,9 +246,9 @@ export function isNetworkCommand(command: string): boolean {
 
 // --- read-only shell allowlist -------------------
 //
-// `shell: 'read-only-allowlist'` used to mean "full shell minus network", so
-// a read-only role could still write files and git state through bash. The
-// level now enforces an explicit, closed allowlist: every pipeline/`&&`/`;`
+// `shell: 'read-only-allowlist'` is an explicit, closed allowlist, not "full
+// shell minus network": a read-only role must not write files or git state
+// through bash. Every pipeline/`&&`/`;`
 // segment must head with a read-only verb, redirection is refused, and the
 // verbs that can write as a side effect (git, find, sed/perl) are checked
 // for their write forms. Anything else is blocked with a named reason —
@@ -455,7 +455,7 @@ const CREDENTIAL_WORD = '[A-Za-z0-9][A-Za-z0-9\\-._~+=]{9,}';
 
 // The FULL credential after an authorization scheme. The scheme
 // word is kept so the reader sees what was hidden; `Authorization: Bearer
-// sk-live-123` used to redact only `Bearer` and leave the token in the clear.
+// sk-live-123` redacts the whole credential, not only `Bearer`.
 const AUTH_CREDENTIAL = new RegExp(
   [
     // Header form: `Authorization[:=] [scheme] <credential>` — the separator

@@ -382,7 +382,7 @@ describe('entriesToTranscript over a real harness', () => {
     const { entries } = await root.context(BACKGROUND_CONTEXT);
     const items = entriesToTranscript(entries);
     // A reset starts a new context: the transcript begins at the reset
-    // entry and the turn before it is no longer active.
+    // entry and the turn before it is inactive.
     expect(items[0]).toMatchObject({ kind: 'reset', text: 'handoff text' });
     expect(items.some((item) => item.text === 'first turn')).toBe(false);
   });

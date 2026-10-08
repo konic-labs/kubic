@@ -291,8 +291,8 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
     } catch (error) {
       // An absent `.kubic/roles/` is the NORMAL case, not a failure: most
       // workspaces have no role documents and the solo default is unaffected.
-      // Letting the raw ENOENT escape made every `kubic doctor` red once the
-      // probe was wired to the binary (measured). An unreadable directory that
+      // Letting the raw ENOENT escape would make every `kubic doctor` red, since
+      // the probe is wired to the binary. An unreadable directory that
       // DOES exist still throws — the distinction is between "nothing there"
       // and "there but broken", and only the former is silent.
       if (!isAbsentDir(error, dir)) throw error;

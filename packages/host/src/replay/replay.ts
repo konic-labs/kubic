@@ -954,7 +954,7 @@ export async function runReplayCommand(
     };
   }
 
-  // Later slices: none — every tier is implemented. Compare closes the
+  // Every tier is implemented. Compare closes the
   // four invocations.
   const other = loadOtherTrajectory(options.diffAgainst as string);
   if ('exit' in other) {

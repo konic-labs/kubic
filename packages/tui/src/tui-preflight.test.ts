@@ -10,7 +10,7 @@ import type { Component } from './tui-boundary.js';
 
 function setup(extra: Partial<TuiAppSeed> = {}, rows = 40) {
   const app = createTuiApp({
-    sessionId: 'sess-462',
+    sessionId: 'sess-preflight',
     model: 'anthropic/sonnet',
     approvalsSkipped: false,
     approvalSurface: createApprovalSurface({ armingMs: 0 }),

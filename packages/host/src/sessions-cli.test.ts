@@ -250,9 +250,9 @@ describe('sessions CLI', () => {
     expect(o.lines).toEqual(['[]']);
   });
 
-  it('marks a Pi 0.87 session in the listing as legacy', async () => {
+  it('marks a legacy session in the listing as legacy', async () => {
     const root = tmpRoot();
-    // Exactly what 0.87's JsonlSessionRepo wrote: <root>/--<cwd>--/<ts>_<id>.jsonl
+    // The legacy layout: <root>/--<cwd>--/<ts>_<id>.jsonl
     // whose first line is the format-4 header.
     const dir = join(root, '--work--');
     mkdirSync(dir, { recursive: true });

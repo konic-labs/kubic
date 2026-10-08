@@ -91,7 +91,7 @@ export function providerAvailabilityCheck(
     id: 'limit:provider-availability',
     label: 'limit provider availability',
   };
-  // `dialled` is the issue honesty switch (mirrors ProviderProbe): absent
+  // `dialled` is the honesty switch (mirrors ProviderProbe): absent
   // means the provider was only LISTED, and the line says so rather than
   // claiming reachability it never measured.
   const dialled = (

@@ -1,8 +1,8 @@
 // The destructive matcher runs synchronously before EVERY bash call, so a
 // model-generated command must never be able to stall it. Its git/dd/find/
-// chmod shapes used to be one gapped regex each (`\bgit\b[^|;&]*\spush\b…`),
+// chmod shapes are not one gapped regex each (`\bgit\b[^|;&]*\spush\b…`),
 // which backtracks polynomially: `git push ` repeated 2000 times took 13 s,
-// `git checkout ` 19 s and `git restore --staged ` 50 s. They are now a
+// `git checkout ` 19 s and `git restore --staged ` 50 s. They are a
 // leftmost-first walk per command segment — linear — and the differential
 // sweep below pins that exactly the same commands are recognised.
 import { describe, expect, it } from 'vitest';

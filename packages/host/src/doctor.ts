@@ -97,7 +97,7 @@ export interface DoctorDeps extends CliIo {
   // Role documents: the loaded `.kubic/roles/*.md`
   // set projected onto DoctorChecks — a contradictory role reports
   // fail/policy-mismatch with the resolver's named reason, and a refused
-  // run can never print green. Absent: no role checks (legacy matrices are
+  // run can never print green. Absent: no role checks (matrices without it are
   // unchanged).
   probeRoles?: () => DoctorCheck[];
   // The skills gate probe — absent means no skills
@@ -124,7 +124,7 @@ export interface DoctorDeps extends CliIo {
   // Full-access sessions: the composition root's
   // enumeration of the workspace's live sessions whose posture.json
   // records fullAccess (host/doctor-full-access). Absent: no per-session
-  // checks (legacy matrices are unchanged). A throwing probe becomes one
+  // checks (matrices without it are unchanged). A throwing probe becomes one
   // warn check, never a crash: an unlistable store must not flip the exit.
   probeFullAccessSessions?: () => FullAccessSession[];
   // A state directory that other local users can read (session
@@ -571,7 +571,7 @@ export function collectDoctorChecks(
     });
   }
   // Installed policy: opt-in via the injected probe — absent
-  // means no check, so legacy matrices are unchanged. A throwing probe
+  // means no check, so matrices without it are unchanged. A throwing probe
   // becomes a failing check, never a crash: an unenforceable install must
   // fail the matrix with policy-mismatch, never pass quietly.
   if (deps.installedPolicy !== undefined) {
@@ -644,7 +644,7 @@ export function collectDoctorChecks(
     }
   }
   // Configured audit sinks: opt-in via the injected
-  // probe — absent means no sink checks, so legacy matrices are unchanged.
+  // probe — absent means no sink checks, so matrices without it are unchanged.
   // A throwing probe becomes one named failing check, never a crash.
   if (deps.probeAuditSinks !== undefined) {
     try {
@@ -660,7 +660,7 @@ export function collectDoctorChecks(
     }
   }
   // Repo-level session overlap: opt-in via the injected probe —
-  // absent means no check (legacy matrices are unchanged). A throwing probe
+  // absent means no check (matrices without it are unchanged). A throwing probe
   // reports warn with the named reason, never fail: the note is
   // informational by design (overlap is legal), so a store hiccup must not
   // flip doctor's exit code.
@@ -741,8 +741,8 @@ export function collectDoctorChecks(
 }
 
 // Limit aggregates from captured probe results. Probes whose
-// per-item check was skipped are excluded, so a skipped refusal no longer
-// fails the aggregate; when skipping empties a section entirely the
+// per-item check was skipped are excluded, so a skipped refusal does not
+// fail the aggregate; when skipping empties a section entirely the
 // aggregate reports skip (it has nothing to assess), never a failure.
 function limitChecksFromResults(
   probed: {

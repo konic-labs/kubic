@@ -43,7 +43,7 @@ function inv(): ToolInvocation {
 
 describe('grep bounds', () => {
   it('clips a matching line at the line cap and sets linesTruncated', async () => {
-    const root = tmp('grep-180-line-');
+    const root = tmp('grep-tool-line-');
     const long = `needle ${'x'.repeat(1_000_000)}`;
     writeFileSync(join(root, 'big.txt'), `${long}\n`);
     const out = await callOperation(
@@ -63,7 +63,7 @@ describe('grep bounds', () => {
   });
 
   it('leaves a short matching line whole and reports linesTruncated false', async () => {
-    const root = tmp('grep-180-short-');
+    const root = tmp('grep-tool-short-');
     writeFileSync(join(root, 'a.txt'), 'needle here\n');
     const out = await callOperation(
       'grep',
@@ -80,7 +80,7 @@ describe('grep bounds', () => {
   });
 
   it('skips a file containing NUL bytes and counts it', async () => {
-    const root = tmp('grep-180-binary-');
+    const root = tmp('grep-tool-binary-');
     writeFileSync(join(root, 'blob.dat'), Buffer.from('needle\u0000needle\n'));
     writeFileSync(join(root, 'text.txt'), 'needle\n');
     const out = await callOperation(
@@ -99,7 +99,7 @@ describe('grep bounds', () => {
   });
 
   it('skips a file over the size bound, counts it, and never reads it', async () => {
-    const root = tmp('grep-180-size-');
+    const root = tmp('grep-tool-size-');
     writeFileSync(join(root, 'huge.txt'), 'needle\n');
     writeFileSync(join(root, 'small.txt'), 'needle\n');
     const base = new NodeExecutionEnv(root);
@@ -149,7 +149,7 @@ describe('grep bounds', () => {
   });
 
   it('bounds the total result bytes and names the cap', async () => {
-    const root = tmp('grep-180-bytes-');
+    const root = tmp('grep-tool-bytes-');
     const line = `needle ${'y'.repeat(400)}`;
     for (let i = 0; i < 200; i += 1) {
       writeFileSync(

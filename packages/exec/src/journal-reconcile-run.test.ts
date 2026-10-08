@@ -1,6 +1,5 @@
-// Slice: run-scoped reconciliation lifecycle. The mechanism
-// (captureBaseline/reconcile) landed but every caller was a test; this module
-// is the wrapper the composition root calls: capture ONCE at lane boot, persist
+// Run-scoped reconciliation lifecycle: the wrapper the composition root
+// calls around captureBaseline/reconcile — capture ONCE at lane boot, persist
 // the hashes beside the session journal, sweep ONCE at run end.
 import { execFileSync } from 'node:child_process';
 import {
@@ -230,8 +229,8 @@ describe('run-scoped reconciliation lifecycle', () => {
     expect(Object.keys(run.baseline)).toEqual(['keep.txt']);
   });
 
-  // The docs used to promise unattributed entries are ALWAYS non-reversible
-  // and exit 2. They are not: `readBefore` serves any entry whose `beforeHash`
+  // Unattributed entries are not always non-reversible and exit 2:
+  // `readBefore` serves any entry whose `beforeHash`
   // resolves to a stored blob, and the sweep sets `beforeHash` from the
   // baseline. When an earlier tool entry in the same run already stored that
   // pre-image, undo CAN restore it — and must, rather than refusing.
@@ -282,8 +281,8 @@ describe('per-turn rebaseline', () => {
     beginReconciliation({
       store,
       root,
-      runId: 'sess-374',
-      sessionId: 'sess-374',
+      runId: 'sess-reconcile',
+      sessionId: 'sess-reconcile',
       agentId: 'root',
       now: () => NOW,
     });
@@ -307,7 +306,7 @@ describe('per-turn rebaseline', () => {
     ]);
     expect(entries.some((entry) => entry.path === 'keep.txt')).toBe(false);
     expect(
-      loadBaseline(dirname(store.indexPath), 'sess-374')?.['keep.txt'],
+      loadBaseline(dirname(store.indexPath), 'sess-reconcile')?.['keep.txt'],
     ).toBe(sha256Hex('operator edit\n'));
   });
 
@@ -341,7 +340,7 @@ describe('per-turn rebaseline', () => {
 
 // Git pre-images end to end: the sweep restores bash-made
 // changes to clean tracked files from the object store, through the
-// existing before-blob mechanism — `journal-undo.ts` needed no new path.
+// existing before-blob mechanism, which `journal-undo.ts` reads unchanged.
 //
 // Real git in sandboxed throwaway repos: the repo setup runs
 // through the sandbox's scrubbed env, and the sandbox is activated into

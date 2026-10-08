@@ -132,7 +132,7 @@ at a blob whose bytes were still in the page cache when the power went.
 The retention compaction rewrite is the mirror case: its bytes are fsynced
 before the rename over `index.jsonl` and the journal directory after it,
 so a crash right after a compaction cannot leave an empty or truncated
-index where the whole history was. An existing blob is no longer trusted
+index where the whole history was. An existing blob is not trusted
 because its name is right: `putBlob` checks its size first (one stat,
 which catches the zero-length crash shape) and then its hash, and rewrites
 a file that fails either check from the bytes in hand — so a blob lost to
@@ -249,7 +249,7 @@ in force and the walk continues: the documented widening, never a throw.
 never disagree about what is in scope.
 
 Walk races: a walk never turns "I could not look" into "it is
-gone". One entry vanishing between the listing and its lstat no longer fails
+gone". One entry vanishing between the listing and its lstat does not fail
 the whole listing — the entry is skipped and its siblings stay in the walk.
 A file that could be seen but not read (`chmod 000`, a permission-denied
 mount) is kept in the baseline with the `UNREADABLE_HASH` sentinel instead of
@@ -284,7 +284,7 @@ directory entered — the same order as the `listDir` already paid, with no read
 at all for a directory without an ignore file.
 
 Sweep delete candidates: a path is journaled as deleted when its
-expected state is a file and the sweep walk no longer sees it. The candidates
+expected state is a file and the sweep walk does not see it. The candidates
 are the baseline keys plus every path a tool journaled this run. A path only a
 tool journaled (not in the boot baseline) can be absent from the walk while
 the file is still there — gitignored, under `.git/` or `.kubic/` — so for

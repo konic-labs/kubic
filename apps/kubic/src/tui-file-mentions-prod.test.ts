@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 function workspace(): string {
-  const root = tmpRoot('tui-336-ws-');
+  const root = tmpRoot('tui-file-mentions-ws-');
   mkdirSync(join(root, 'src'));
   mkdirSync(join(root, 'dist'));
   writeFileSync(join(root, 'src', 'main.ts'), 'main\n');
@@ -50,7 +50,7 @@ describe('@ mention file source', () => {
     faux.setResponses([fauxAssistantMessage('hi')]);
     models.setProvider(faux.provider);
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-336-sessions-'),
+      sessionsRoot: tmpRoot('tui-file-mentions-sessions-'),
       models,
       env: new NodeExecutionEnv(root),
     });

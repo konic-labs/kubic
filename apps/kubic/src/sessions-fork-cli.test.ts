@@ -27,7 +27,7 @@ import { createProdRunners } from './prod-runners.js';
 const made: string[] = [];
 
 function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-265-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-sessions-fork-'));
   made.push(dir);
   return dir;
 }

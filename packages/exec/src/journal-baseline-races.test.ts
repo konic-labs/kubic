@@ -1,14 +1,14 @@
 // Baseline + sweep walk races.
 //
-// The walk must never turn "I could not look" into "it is gone". Three ways
-// it used to:
-//   - `listDir` lstats every name readdirSync returned, so ONE entry
-//     vanishing in between threw ENOENT for the whole listing and dropped the
-//     entire subtree from the baseline/sweep (siblings included).
-//   - a hash failure was treated as "vanished" whatever its cause, so
-//     `chmod 000 secret.txt` read as a delete of a file that still exists.
-//   - a directory listing that failed at sweep time dropped its subtree from
-//     `current`, so reconcile recorded every file under it as deleted.
+// The walk must never turn "I could not look" into "it is gone". Three races
+// it must survive:
+//   - one entry vanishing between readdirSync and lstat must not throw ENOENT
+//     for the whole listing and drop the entire subtree from the baseline/sweep
+//     (siblings included).
+//   - a hash failure must not count as "vanished" whatever its cause: `chmod 000
+//     secret.txt` must not read as a delete of a file that still exists.
+//   - a directory listing that fails at sweep time must not drop its subtree from
+//     `current`, or reconcile records every file under it as deleted.
 import {
   chmodSync,
   mkdirSync,
@@ -30,7 +30,7 @@ import {
 } from './journal.js';
 
 // Make one path vanish between readdirSync and lstatSync: exactly the race
-// the node bridge's own listing used to lose the whole directory to.
+// the node bridge's own listing must survive.
 const hooks = vi.hoisted(() => ({
   vanishOnce: null as null | string,
   vanishDirOnce: null as null | string,
@@ -197,7 +197,7 @@ describe('baseline walk races', () => {
   });
 
   it('leaves the file content alone through every race', () => {
-    // The races are read-side only: nothing in this issue may write, move or
+    // The races are read-side only: nothing on the baseline path may write, move or
     // delete a workspace file.
     const root = tmpRoot('ws-');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');

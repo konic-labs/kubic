@@ -85,7 +85,7 @@ Benchmark matrix (exit 0 all pass, 1 a suite failed, 2 usage):
 
 ## 4. Checklist before review
 
-- [ ] New suite has ≥1 test in `packages/eval/src/` (TDD: RED first).
+- [ ] New suite has ≥1 test in `packages/eval/src/` (test first).
 - [ ] `npx vitest run packages/eval` green.
 - [ ] `npx tsc --noEmit -p tsconfig.base.json` clean.
 - [ ] `npx biome ci packages/eval` clean.

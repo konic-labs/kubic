@@ -430,8 +430,7 @@ describe('kubic tui parses the parity flags', () => {
 
 describe('the TUI footer names the lane failure', () => {
   it('reports the failed turn message, never a TTY excuse', async () => {
-    // The 0.87 drive loop had a 'waiting-deferred' kind the footer had to
-    // explain; the durable turn polls a deferred response inside generation, so
+    // The durable turn polls a deferred response inside generation, so
     // the runner's contract is simply: the lane's failure message reaches the
     // footer verbatim.
     const app = {
@@ -469,7 +468,7 @@ describe('the TUI footer names the lane failure', () => {
   });
 
   it("forgets a settled turn's kills, never an unsettled one's", async () => {
-    // Review finding: `forgetLaneKills` drains the conversation
+    // `forgetLaneKills` drains the conversation
     // key, so forgetting a failed turn would strip a still-live run's bash
     // process groups of their handles and a later quit could not kill them.
     let forgotten = 0;

@@ -39,7 +39,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
 }
 
 function boot(answer: string): TuiRunDeps['bootLane'] {
-  const root = mkdtempSync(join(tmpdir(), 'tui-463-'));
+  const root = mkdtempSync(join(tmpdir(), 'tui-blocks-'));
   made.push(root);
   const faux = fauxProvider();
   const models = createModels();

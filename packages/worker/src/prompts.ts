@@ -16,9 +16,8 @@ export class PromptCacheError extends Error {
   }
 }
 
-// NOTE: the PROMPT_CACHE_RULES list was deleted — it named
-// no production reader (the rules live in and are pinned by the
-// assembly, lifecycle and two-turn tests, not by a constant).
+// The prompt-cache rules are pinned by the assembly, lifecycle and
+// two-turn tests, not by a constant.
 export interface SystemPromptInput {
   role: string;
   cwd: string;

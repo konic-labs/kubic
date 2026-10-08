@@ -18,7 +18,7 @@ export const MAX_VITEST_FILES = 25;
 // Upper bound on the CHANGED LINES the per-push vitest run may mutate. A
 // mutant costs ~1 s on a hosted runner and changed code yields ~0.7 mutants
 // per line, so the 30-minute job holds ~1500 mutants — about 2000 lines. The
-// file cap alone let a wave-sized push through to the job timeout, which ends
+// file cap alone would let a large push through to the job timeout, which ends
 // 'cancelled' (neither scored nor red); this keeps every push scoreable.
 // Files are taken first-fit in sorted order; a lone first file over the
 // budget is trimmed to it rather than run unbounded.

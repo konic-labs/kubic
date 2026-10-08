@@ -1,5 +1,5 @@
-// Recovery of the work a dead process left mid-flight. Pi 0.87's OpenOperations
-// are gone: a reopened Harness holds the unfinished tasks and submissions
+// Recovery of the work a dead process left mid-flight. A reopened Harness
+// holds the unfinished tasks and submissions
 // durably, `harness.inspect()` reports them, `harness.resume()` starts the
 // scheduler, and the lane decides between resuming and aborting so the
 // conversation is free for the next prompt. These tests drive that decision

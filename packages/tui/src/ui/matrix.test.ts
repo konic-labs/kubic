@@ -443,7 +443,7 @@ describe('16 colours', () => {
         explainKey: '?',
       },
     ).join('\n');
-    // The warn surface is gone; the badge reads by inverse video instead.
+    // The badge reads by inverse video; there is no warn surface.
     expect(backgrounds(card)).toEqual([]);
     expect(card).toContain('\u001b[1;7;');
     const header = renderHeader(ansi16, { approvalsSkipped: false }, 100);

@@ -1,9 +1,8 @@
 // The enterprise policy and the model-pin semantics on the PRODUCTION
 // runners. Every case builds its deps through
 // `createProdRunners` / `prodRunDeps` — the functions the binary calls — over
-// a real `loadRuntimeConfig`, never a hand-spread dep: the audit found that
-// tests which spread the deps themselves stay green when the production
-// spread is dropped.
+// a real `loadRuntimeConfig`, never a hand-spread dep: a test that spreads the
+// deps itself cannot notice when the production spread is dropped.
 //
 // Faux provider only (`KUBIC_PROVIDER=faux` or injected faux catalogs): zero
 // network, zero paid tokens. Temp workspace, `process.cwd()` mocked, temp HOME
@@ -240,7 +239,7 @@ describe('explicit skill invocation reaches hidden skills', () => {
   });
 
   function hiddenSkillWorkspace(): { workspace: string; marker: string } {
-    const workspace = tmpRoot('kubic-prod-183-');
+    const workspace = tmpRoot('kubic-prod-skills-');
     const marker = join(workspace, 'invoked');
     // Project skills load inside a repository (the walk stops
     // at the git top level), so mark the workspace root.
@@ -313,7 +312,7 @@ describe('role classes and approval requires reach the installed policy', () => 
     `---\nrole: reviewer\ntools: [read, bash]\nfilesystem: read\nshell: true\nnetwork: ${network}\ngit: false\ncredentials: none\n---\n\n# reviewer\n\n## Prompt\n\nReview.\n`;
 
   function reviewerWorkspace(network: string): string {
-    const workspace = tmpRoot('kubic-prod-196-');
+    const workspace = tmpRoot('kubic-prod-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'reviewer.md'),
@@ -369,7 +368,7 @@ describe('role classes and approval requires reach the installed policy', () => 
   });
 
   it("the role document's requires challenge an otherwise-allowed tool", async () => {
-    const workspace = tmpRoot('kubic-prod-196-');
+    const workspace = tmpRoot('kubic-prod-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'reviewer.md'),
@@ -394,7 +393,7 @@ describe('role classes and approval requires reach the installed policy', () => 
   });
 
   it('a [roles.<name>] requires layer challenges like the document list', async () => {
-    const workspace = tmpRoot('kubic-prod-196-');
+    const workspace = tmpRoot('kubic-prod-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'reviewer.md'),
@@ -840,8 +839,8 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
 
 describe('`kubic tui` through the prod runner enforces the enterprise model gate', () => {
   it('refuses a model outside allowed_models with the named refusal, before any terminal opens (exit 6)', async () => {
-    // The audit's finding: the gate was inert on the interactive runner
-    // because the policy never reached the boot. `r.tui` builds its deps with
+    // The gate must apply on the interactive runner: the policy reaches the boot.
+    // `r.tui` builds its deps with
     // prodTuiDeps and boots the real lane; a refusal here happens before the
     // alt-screen (no terminal is created in this test).
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
@@ -894,9 +893,9 @@ describe('role documents under the enterprise tool policy on the doctor runner',
       checks: { id: string; status: string; detail: string }[];
     };
     const roles = report.checks.filter((c) => /(^|:)role:/.test(c.id));
-    // Every role declaring `bash` is refused by name — the repo's implementer
+    // Every role declaring `bash` is refused by name — the workspace's implementer
     // override and the four embedded presets that run a shell.
-    // The repo's own planner declares no bash, so it stays green.
+    // The built-in planner declares no bash, so it stays green.
     const failed = roles
       .filter((c) => c.status === 'fail')
       .map((c) => c.id.replace(/^.*role:/, 'role:'));

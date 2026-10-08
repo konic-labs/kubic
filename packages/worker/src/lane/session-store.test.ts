@@ -2,7 +2,7 @@
 //
 // One pi-durable Storage per <sessions-root>/<id>/, one durable Session per
 // storage, one Kubic `kubic.session` document written in the creating commit,
-// and the Kubic lock wrapping every storage open. Legacy 0.87 transcripts
+// and the Kubic lock wrapping every storage open. Legacy transcripts
 // (`<root>/--<cwd>--/<ts>_<id>.jsonl`) are detected and refused, never read.
 import {
   chmodSync,
@@ -107,9 +107,9 @@ function readHeader(root: string, id: string): Record<string, unknown> {
   ) as Record<string, unknown>;
 }
 
-// A 0.87 session: `<root>/--<cwd with /, \ and : mapped to -->--/` holding
+// A legacy session: `<root>/--<cwd with /, \ and : mapped to -->--/` holding
 // `<iso-timestamp>_<encoded id>.jsonl` whose first line is the format-4
-// header. Exactly what `JsonlSessionRepo` wrote.
+// header. The shape the legacy writer produced.
 function writeLegacySession(
   root: string,
   cwd: string,
@@ -355,7 +355,7 @@ describe('pi-durable session storage', () => {
     const root = tmpRoot();
     const store = storeFor(root);
     // `--a--` matches the id class but is the shape of pi's transcript
-    // directories: listing classifies it as a 0.87 layout, so a session with
+    // directories: listing classifies it as the legacy layout, so a session with
     // that id would be invisible to `sessions list`, the overlap probe and
     // `kubic doctor`. Refused on both paths, before any directory is made.
     await expect(
@@ -389,11 +389,11 @@ describe('pi-durable session storage', () => {
     expect(readHeader(root, 'kept').cwd).toBe('/work');
   });
 
-  it('refuses to create a durable session over a 0.87 session id', async () => {
+  it('refuses to create a durable session over a legacy session id', async () => {
     const root = tmpRoot();
     const store = storeFor(root);
     writeLegacySession(root, '/work', 'legacy-3', Date.now() - 60_000);
-    // The id belongs to a 0.87 session: reusing it would mix a new durable
+    // The id belongs to a legacy session: reusing it would mix a new durable
     // session into the old session's journal and spans.
     await expect(
       createSession(
@@ -529,7 +529,7 @@ describe('session listing', () => {
       await createSession(store, { cwd: '/one' }, BACKGROUND_CONTEXT),
     );
     await current.release(BACKGROUND_CONTEXT);
-    // A 0.87 transcript recorded a minute earlier, so the order assertion
+    // A legacy transcript recorded a minute earlier, so the order assertion
     // never depends on two sessions landing in the same millisecond.
     const earlier = Date.parse(current.meta.createdAt) - 60_000;
     writeLegacySession(root, '/two', 'legacy-older', earlier);
@@ -582,7 +582,7 @@ describe('session listing', () => {
     ).toEqual([mine.id]);
   });
 
-  it('reports a 0.87 session directory as legacy and refuses to attach it', async () => {
+  it('reports a session directory in the legacy layout and refuses to attach it', async () => {
     const root = tmpRoot();
     const store = storeFor(root);
     const createdAt = Date.now() - 60_000;
@@ -615,7 +615,7 @@ describe('session listing', () => {
     expect(existsSync(path)).toBe(true);
   });
 
-  it('skips a 0.87 header whose id is not a session id', async () => {
+  it('skips a legacy header whose id is not a session id', async () => {
     const root = tmpRoot();
     const store = storeFor(root);
     // A hand-edited or foreign header: its id never reaches a listing that
@@ -638,7 +638,7 @@ describe('session listing', () => {
       ),
     );
     await current.release(BACKGROUND_CONTEXT);
-    // A 0.87 transcript that claims the same id (a hand-copied leftover):
+    // A legacy transcript that claims the same id (a hand-copied leftover):
     // the current format wins, and attach opens the storage, not the file.
     writeLegacySession(root, '/work', 'legacy-2', Date.now() - 60_000);
     const listed = await listSessions(store, BACKGROUND_CONTEXT);

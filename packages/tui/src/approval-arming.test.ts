@@ -15,7 +15,7 @@ import {
 import { createTuiApp } from './tui-app.js';
 
 const REQUEST: ApprovalViewRequest = {
-  key: 'k-315',
+  key: 'k-arming-first',
   capability: 'destructive-shell',
   toolName: 'bash',
   command: 'rm -rf build',
@@ -80,7 +80,7 @@ describe('approval arming delay', () => {
       setTimer: () => () => {},
     });
     const first = surface.ask(REQUEST);
-    const second = surface.ask({ ...REQUEST, key: 'k-316' });
+    const second = surface.ask({ ...REQUEST, key: 'k-arming-second' });
     time.advance(APPROVAL_ARMING_MS);
     expect(surface.decide('a')).toBe(true);
     await first;
@@ -275,7 +275,7 @@ describe('the arming window restarts on every swallowed key', () => {
     const pending = surface.ask(REQUEST);
     time.advance(300);
     expect(surface.decide('a')).toBe(false);
-    // The short arming delay no longer unlocks it...
+    // The short arming delay does not unlock it...
     time.advance(APPROVAL_ARMING_MS);
     expect(surface.isArmed()).toBe(false);
     time.advance(APPROVAL_QUIET_MS - APPROVAL_ARMING_MS - 1);
@@ -585,7 +585,7 @@ describe('arming after typing and against auto-repeat', () => {
   });
 
   describe('through the app', () => {
-    it('the reviewer scenarios: legacy held a and a prose pause both stay pending', async () => {
+    it('a held a on a legacy terminal and a prose pause both stay pending', async () => {
       const time = clock(0);
       const surface = createApprovalSurface({
         now: time.now,

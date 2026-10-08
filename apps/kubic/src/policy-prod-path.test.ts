@@ -47,7 +47,7 @@ import { runHeadlessPrompt } from './headless-run.js';
 const roots: string[] = [];
 
 function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'kubic-86-run-'));
+  const root = mkdtempSync(join(tmpdir(), 'kubic-policy-run-'));
   roots.push(root);
   return root;
 }
@@ -114,6 +114,7 @@ describe('prod run path: destructive call', () => {
     // now under an honest status.
     expect(result.summary).toMatch(/^approval refused: /);
     expect(result.summary).toContain(NO_ANSWER_SURFACE_REASON);
+    expect(result.summary).toContain('answer approvals in kubic tui');
     expect(result.summary).toContain('(bash)');
     expect(result.error?.message).toBe(result.summary);
     const envelope = buildRunEnvelope(
@@ -216,7 +217,8 @@ describe('prod run path: second-segment outside redirect', () => {
         models: modelsWith([
           fauxToolUse([
             fauxToolCall('bash', {
-              command: 'echo a > notes.txt && echo b > /etc/cron.d/kubic-326',
+              command:
+                'echo a > notes.txt && echo b > /etc/cron.d/kubic-cron-probe',
             }),
           ]),
           fauxAssistantMessage('done'),
@@ -285,7 +287,7 @@ describe('prod run path: allowlist', () => {
 
   it('the default posture is deny-by-default on network and credentials', () => {
     // The shipped default's restrictive tail is the point of
-    // the issue. Pinned as an assertion, not prose: if someone loosens the
+    // the default posture. Pinned as an assertion, not prose: if someone loosens the
     // default to make a test pass, this fails.
     const posture = installedPolicyPosture({ workspace: '/tmp/x' });
     expect(posture.source).toBe('default');

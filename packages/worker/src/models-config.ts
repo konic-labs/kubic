@@ -631,7 +631,7 @@ async function headersAvailable(
 // The no-hook resolver: env refs read env-direct through
 // Pi's auth context, literals serve direct, and a `!command` refuses by
 // name — the resolve path has no runner of its own, so executing one here
-// would be a silent drop of the audit + sandboxing the host runner owns.
+// would silently drop the audit record and the approvals the host runner owns.
 async function directSecretResolve(
   use: ApiKeyUse,
 ): Promise<string | undefined> {

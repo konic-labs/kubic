@@ -34,8 +34,8 @@ const HOME_PREFIX = String.raw`(?:~|\$HOME|\$\{HOME(?::?-[^}]*)?\}|\/Users\/[^\/
 // original is the same secret). `~/.ssh` is key material by default: every
 // child matches except the known-public files (`known_hosts*`,
 // `authorized_keys*`, `*.pub`) — a common key name like `~/.ssh/github` and
-// the `~/.ssh/*` glob used to be silent misses. `config`
-// stays in, as the issue's pattern list names it; an over-trigger is an ask,
+// the `~/.ssh/*` glob are both matched. `config`
+// stays in, as the pattern list names it; an over-trigger is an ask,
 // never a grant.
 const HOME_CREDENTIAL_PATHS = [
   String.raw`\.aws(?:\/|(?![-\w]))`,

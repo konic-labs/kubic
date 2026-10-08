@@ -12,7 +12,7 @@ const OUTPUT = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join('\n');
 
 function setup(clipboard?: (text: string) => boolean) {
   const app = createTuiApp({
-    sessionId: 'sess-463',
+    sessionId: 'sess-blocks',
     model: 'faux/m',
     approvalsSkipped: false,
     approvalSurface: createApprovalSurface({ armingMs: 0 }),

@@ -387,13 +387,13 @@ describe('control-plane detector: $HOME expands like ~', () => {
   });
 
   it('full access does not auto-approve an $HOME write into ~/.kubic', async () => {
-    const root = mkTmp('kubic-324-home-');
-    const workspace = mkTmp('kubic-324-ws-');
+    const root = mkTmp('kubic-approvals-bypass-home-');
+    const workspace = mkTmp('kubic-approvals-bypass-ws-');
     enableFullAccess(new FileApprovalStore(root), 'test');
     const policy = installSoloPolicy({
       workspace,
       sessionDir: root,
-      home: mkTmp('kubic-324-h-'),
+      home: mkTmp('kubic-approvals-bypass-h-'),
     });
     const verdict = await policy.ask({
       toolName: 'bash',
@@ -418,7 +418,7 @@ describe('still-documented misses stay misses (honest limits)', () => {
 
 describe('autoApprove never answers an always-ask capability', () => {
   function workspaceWithState(): string {
-    const workspace = mkTmp('kubic-230-ws-');
+    const workspace = mkTmp('kubic-approvals-bypass-ws-');
     mkdirSync(join(workspace, '.kubic'), { recursive: true });
     return workspace;
   }
@@ -428,7 +428,7 @@ describe('autoApprove never answers an always-ask capability', () => {
     const policy = installSoloPolicy({
       workspace,
       autoApprove: [KUBIC_STATE_WRITE],
-      // A long bound: the pre-fix path waited it out (the 60 s stall).
+      // A long bound: the call must not wait it out.
       maxPendingMs: 30_000,
     });
     const started = Date.now();
@@ -471,7 +471,7 @@ describe('autoApprove never answers an always-ask capability', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]?.capability).toBe(KUBIC_STATE_WRITE);
     // The seat branch carries the full command; the autoApprove
-    // branch it used to take sent a bare summary.
+    // branch must not send a bare summary.
     expect(seen[0]?.command).toBe('echo x > .kubic/config.toml');
   });
 
@@ -627,7 +627,7 @@ describe('autoApprove never answers an always-ask capability', () => {
 
 describe('route=deny beats autoApprove on the lane', () => {
   it('denies an autoApprove capability the doctor says can never apply', async () => {
-    const workspace = mkTmp('kubic-230-deny-');
+    const workspace = mkTmp('kubic-approvals-bypass-deny-');
     const policy = installSoloPolicy({
       workspace,
       route: 'deny',
@@ -652,7 +652,7 @@ describe('route=deny beats autoApprove on the lane', () => {
   });
 
   it('denies a capability that no autoApprove entry names, without consulting a seat', async () => {
-    const workspace = mkTmp('kubic-230-deny-seat-');
+    const workspace = mkTmp('kubic-approvals-bypass-deny-seat-');
     let asked = 0;
     const policy = installSoloPolicy({
       workspace,
@@ -676,7 +676,7 @@ describe('route=deny beats autoApprove on the lane', () => {
   });
 
   it('headless with no autoApprove entry at all: the route is named, not the missing surface', async () => {
-    const workspace = mkTmp('kubic-230-deny-headless-');
+    const workspace = mkTmp('kubic-approvals-bypass-deny-headless-');
     const policy = installSoloPolicy({ workspace, route: 'deny' });
     const verdict = await policy.ask({
       toolName: 'bash',
@@ -690,7 +690,7 @@ describe('route=deny beats autoApprove on the lane', () => {
   });
 
   it('with route=ask-user the same autoApprove entry is approved (the control)', async () => {
-    const workspace = mkTmp('kubic-230-ask-');
+    const workspace = mkTmp('kubic-approvals-bypass-ask-');
     const policy = installSoloPolicy({
       workspace,
       route: 'ask-user',
@@ -957,7 +957,7 @@ describe('outside-write targets are read as the shell reads them', () => {
 
 describe('cd tracking recognises shell compound forms', () => {
   it.each([
-    ['a brace group', '{ cd /tmp; echo x > kubic-355-z; }'],
+    ['a brace group', '{ cd /tmp; echo x > kubic-bypass-brace-z; }'],
     ['then', 'if true; then cd /tmp; echo x > z; fi'],
     ['then on its own line', 'if true\nthen\n cd /tmp\n echo x > z\nfi'],
     ['do', 'for d in a; do cd /tmp; echo x > z; done'],
@@ -1002,9 +1002,9 @@ describe('cd tracking recognises shell compound forms', () => {
   });
 });
 
-// The auditor's reproductions, end to end through `kubic run`'s headless
-// path (faux provider, zero network): before the fixes each of these bash
-// calls exited 0 with no ask.
+// Regression reproductions, end to end through `kubic run`'s headless
+// path (faux provider, zero network): each of these bash calls must ask,
+// never exit 0 with no ask.
 function modelsWith(
   steps: ReturnType<typeof fauxAssistantMessage>[],
 ): MutableModels {
@@ -1047,12 +1047,12 @@ describe('prod run path: the bypasses are challenged', () => {
     const workspace = mkTmp('kubic-bypass-ws-');
     const outside = mkTmp('kubic-bypass-out-');
     const result = await runBash(
-      `{ cd ${outside}; echo x > kubic-355-z; }`,
+      `{ cd ${outside}; echo x > kubic-bypass-brace-z; }`,
       workspace,
     );
     expect(result.terminus).toBe('approval_denied');
     expect(result.summary).toContain('outside-write');
-    expect(existsSync(join(outside, 'kubic-355-z'))).toBe(false);
+    expect(existsSync(join(outside, 'kubic-bypass-brace-z'))).toBe(false);
   });
 
   it('an absolute-path git push is challenged before it runs', async () => {
@@ -1062,7 +1062,7 @@ describe('prod run path: the bypasses are challenged', () => {
     expect(result.summary).toContain('git-push');
   });
 
-  it('a 200-repeat option chain no longer stalls the run (it took 14 s at 34 repeats)', async () => {
+  it('a 200-repeat option chain does not stall the run', async () => {
     const workspace = mkTmp('kubic-bypass-ws-');
     const started = Date.now();
     const result = await runBash(

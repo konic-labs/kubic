@@ -202,7 +202,7 @@ export function renderDoctorGrouped(
       const mark = statusMark(theme, MARK[check.status]);
       if (check.status === 'fail') {
         // A failure reads whole: its detail wraps under it, never cut
-        // (it used to run past the terminal's edge).
+        // so it never runs past the terminal's edge.
         const [first = '', ...rest] = wrapVisible(
           `${check.id} ${check.detail}`,
           Math.max(1, room - 2),

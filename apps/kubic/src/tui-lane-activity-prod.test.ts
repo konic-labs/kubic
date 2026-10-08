@@ -57,8 +57,8 @@ describe('retry activity on the kubic tui footer', () => {
   it('names the retry while it waits, then clears it', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-150-ws-');
-    const sessionsRoot = tmpRoot('tui-150-sessions-');
+    const workspace = tmpRoot('tui-lane-activity-ws-');
+    const sessionsRoot = tmpRoot('tui-lane-activity-sessions-');
     const models = transientThenRecovered();
     const fake = terminalRig(120, 30);
     const printed: string[] = [];
@@ -104,9 +104,9 @@ describe('retry activity on kubic run --debug', () => {
       'say hi',
       { debug: true },
       {
-        sessionsRoot: tmpRoot('run-150-sessions-'),
+        sessionsRoot: tmpRoot('run-lane-activity-sessions-'),
         models: transientThenRecovered(),
-        env: new NodeExecutionEnv(tmpRoot('run-150-ws-')),
+        env: new NodeExecutionEnv(tmpRoot('run-lane-activity-ws-')),
         debugSink: (line) => debug.push(line),
         warn: () => undefined,
       },

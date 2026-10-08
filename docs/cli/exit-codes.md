@@ -25,7 +25,7 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
 | 3 | `turn_limit` | A headless `kubic run` hit its turn guard (`--max-turns`). The wall-clock `--timeout` is **not** here: it is `timeout`, exit 1. |
 | 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
 | 5 | `workspace_unavailable` | Session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. Keywords that appear only inside a filesystem path (e.g. a checkout under `.claude/worktrees/` or `~/My workspace/`) do not count: a quoted string or a whitespace-delimited word containing `/` or `\` is ignored, an unquoted path with spaces whose final segment is the keyword (e.g. `/home/My workspace`) still counts; quote it. |
-| 6 | `provider_probe_failed` / provider-down | The **pre-run probe**: no reachable provider, or a resumed `--session` whose stored model is no longer registered (named: `session model '<id>' is unavailable: …`). A provider error **during** the run is not this code: it is exit 1 with `status: provider_transient` or `provider_auth` and the matching `failure.code`. Doctor exits 6 when any failing check has reason `provider-down`. |
+| 6 | `provider_probe_failed` / provider-down | The **pre-run probe**: no reachable provider, or a resumed `--session` whose stored model is not registered (named: `session model '<id>' is unavailable: …`). A provider error **during** the run is not this code: it is exit 1 with `status: provider_transient` or `provider_auth` and the matching `failure.code`. Doctor exits 6 when any failing check has reason `provider-down`. |
 ## Per-command notes
 
 - **Unknown command / subcommand**: exit 2, stdout empty,
@@ -98,8 +98,8 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   `KUBIC_JOURNAL_RETENTION_DAYS=0.5`), an unknown `--session`, a live-run
   refusal (the session is attached by a live pid), or a pass that removed
   nothing while entries were listed; 2 for usage errors (a `--keep-days` that
-  is not a non-negative integer of days, a file-configured
-  `retentionDays = 0.5`-style value that is not one, an unknown option,
+  is not a non-negative integer of days, a file value that is not a
+  non-negative integer, an unknown option,
   `kubic journal` without a subcommand).
 - **`kubic trust`**: 0 recorded, revoked or listed; 2 usage errors
   (unknown option, a path that is not a directory, `--list` combined with

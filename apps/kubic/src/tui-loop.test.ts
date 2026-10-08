@@ -85,7 +85,7 @@ function fauxModels(steps: FauxStep[]): {
       next.map((step) => {
         if (typeof step === 'function') return step;
         // A message carrying a tool call must say so (pi-durable dispatches
-        // the calls of a `toolUse` turn; 0.87 inferred them from the parts).
+        // the calls of a `toolUse` turn).
         const toolUse =
           Array.isArray(step) &&
           step.some(
@@ -271,12 +271,12 @@ describe('kubic tui prompt loop', () => {
   });
 
   it('surfaces a refused abort as a footer, never an unhandled rejection', async () => {
-    // Before the fix, TuiTurnRunner.cancel() awaited requestLaneAbort,
-    // which THROWS LaneDriveError when the lane refuses (lane/abort.ts:59),
-    // and the key path did `void turn.cancel().then(...)` with no catch — so
-    // a refusal escaped as an unhandledRejection (observed:
+    // TuiTurnRunner.cancel() must not await requestLaneAbort unguarded: that call
+    // THROWS LaneDriveError when the lane refuses (lane/abort.ts:59), and the key
+    // path must not `void turn.cancel().then(...)` without a catch, or a refusal
+    // escapes as an unhandledRejection (example:
     // "lane abort failed for <id>: {\"message\":\"lane refuses abort\"}") and
-    // the operator saw nothing happen at all.
+    // the operator sees nothing happen at all.
     const root = tmpRoot();
     const lines: string[] = [];
     const fake = fakeTerminal(100);
@@ -314,7 +314,7 @@ describe('kubic tui prompt loop', () => {
         model: booted.model,
         loop: {
           ...loop,
-          // The lane refuses every abort request — the reviewer's scenario
+          // The lane refuses every abort request — the refusal case
           // (the real abortLane aggregates it into this named error).
           abort: async () => {
             throw new Error('lane abort failed: lane refuses abort');
@@ -1380,12 +1380,12 @@ describe('kubic tui prompt loop', () => {
   });
 
   it('quits on the Kitty-protocol form of Ctrl-C and Ctrl-D, not only legacy bytes', async () => {
-    // Before the fix, the loop compared raw input against legacy
-    // control bytes ('\x03', '\x04'), so a Kitty-class terminal — which
+    // The loop must not compare raw input against legacy control bytes alone,
+    // so a Kitty-class terminal — which
     // sends CSI-u sequences ('\x1b[99;5u' for Ctrl-C, '\x1b[100;5u' for
-    // Ctrl-D) — hit the fall-through branch and did nothing: `consumed: true`
+    // Ctrl-D) must not hit the fall-through branch and do nothing: `consumed: true`
     // with no effect, the exact silent no-op key the criterion forbids. Esc
-    // ('\x1b[27u') no longer quits at all; Ctrl-C quits on its
+    // ('\x1b[27u') does not quit at all; Ctrl-C quits on its
     // double press.
     for (const presses of [['\x1b[99;5u', '\x1b[99;5u'], ['\x1b[100;5u']]) {
       const root = tmpRoot();

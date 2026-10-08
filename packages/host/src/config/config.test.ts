@@ -318,7 +318,7 @@ describe('[policy] + [[audit]]', () => {
     ).toThrow(/unknown key 'bogus'/);
   });
 
-  // Review finding: docs promise `facility` as "name or
+  // Docs promise `facility` as "name or
   // number 0–23", so TOML `facility = 19` must parse to the number.
   it('accepts a numeric facility 0–23 in [[audit]]', () => {
     const parsed = parseTomlConfig(

@@ -234,7 +234,7 @@ function truncate(text: string): string {
   return `${bounded.slice(0, TOOL_RESULT_MAX_CHARS - 1)}…`;
 }
 
-// Lane text is untrusted terminal input (reviewer finding 1):
+// Lane text is untrusted terminal input:
 // assistant text and tool output can contain ESC-prefixed control sequences
 // ('\x1b[2J' clears the screen, '\x1b[31m' repaints colour, '\x1b[<n>A'
 // moves the cursor over the status bar) and C0 controls like BEL. Passing
@@ -526,7 +526,7 @@ function cellsForEntry(entry: LaneEntryLike): TranscriptEntry[] {
       if (name !== undefined) {
         // The tool NAME is untrusted too: it comes from the model's tool
         // call, so it can carry the same control sequences as the text
-        // (reviewer finding, second pass — a name of `evil\x1b[2Jname`
+        // (a name of `evil\x1b[2Jname`
         // rendered the clear-screen sequence into the frame).
         const callId = toolCallIdOf(part, index);
         const detail = summarizeToolArguments(argumentsOf(part));

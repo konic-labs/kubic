@@ -3,8 +3,8 @@
 // call's own task — which is what `lane/tools-adapter.ts` wires its
 // ToolInvocation to. What the lane does NOT do is copy a never-replay result
 // into a memo: pi-durable's `replay: 'unsafe'` already settles an interrupted
-// effect without re-entering execute, so that copy could never be read (the
-// finding, resolved by dropping the write rather than by making it durable).
+// effect without re-entering execute, so that copy could never be read: the write is dropped rather than made
+// durable.
 // MemoryMemoStore therefore stays for callers that drive an op WITHOUT a
 // durable engine — `kubic git` (host/src/git-cli.ts) and the op test suites —
 // where one in-process scope per invocation is the only gate there is. Those

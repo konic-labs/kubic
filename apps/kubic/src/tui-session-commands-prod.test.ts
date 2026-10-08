@@ -81,8 +81,8 @@ describe('/new, /resume and /undo on the kubic tui path', () => {
   it('starts a fresh session with /new without leaving the alt-screen', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-305-new-ws-');
-    const sessionsRoot = tmpRoot('tui-305-new-sessions-');
+    const workspace = tmpRoot('tui-session-commands-new-ws-');
+    const sessionsRoot = tmpRoot('tui-session-commands-new-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     // ONE catalog per process, like the real boot: the shared faux script is
@@ -135,8 +135,8 @@ describe('/new, /resume and /undo on the kubic tui path', () => {
   it('lists the store with /resume and loads the chosen transcript', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-305-resume-ws-');
-    const sessionsRoot = tmpRoot('tui-305-resume-sessions-');
+    const workspace = tmpRoot('tui-session-commands-resume-ws-');
+    const sessionsRoot = tmpRoot('tui-session-commands-resume-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const models = providers([
@@ -191,8 +191,8 @@ describe('/new, /resume and /undo on the kubic tui path', () => {
   it('restores the journaled change with /undo', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-305-undo-ws-');
-    const sessionsRoot = tmpRoot('tui-305-undo-sessions-');
+    const workspace = tmpRoot('tui-session-commands-undo-ws-');
+    const sessionsRoot = tmpRoot('tui-session-commands-undo-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     writeFileSync(join(workspace, 'a.txt'), 'before\n');

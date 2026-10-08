@@ -354,7 +354,7 @@ interface TuiInputResult {
 export type TuiSubmitOutcome = 'accepted' | 'queued' | 'refused' | 'command';
 
 // The global keys are classified by pi-tui's own `parseKey`, never by
-// comparing raw bytes (reviewer finding): a Kitty-class terminal
+// comparing raw bytes: a Kitty-class terminal
 // negotiates the keyboard protocol and sends CSI-u sequences — Esc arrives
 // as '\x1b[27u', Ctrl-D as '\x1b[100;5u', Ctrl-C as '\x1b[27;5;99~' — so a
 // `data === '\x1b'` test silently misses them and the key becomes a no-op
@@ -565,8 +565,7 @@ export interface TuiApp {
   onSubmit(handler: (prompt: string) => TuiSubmitOutcome | undefined): void;
   setBusy(busy: boolean): void;
   isBusy(): boolean;
-  // The transient notice row above the editor (the name is the
-  // pre one: the row used to sit under the editor). Empty clears it.
+  // The transient notice row above the editor. Empty clears it.
   setEditorFooter(text: string): void;
   // The status line's state word. A cancel the loop asked for
   // reads `cancelling…` until the turn settles; a failed turn reads `error`
@@ -2115,7 +2114,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         cancel: false,
       };
       // A pending approval is denied first by every cancel-class key: nobody
-      // is left waiting on a verdict that can no longer arrive (the turn
+      // is left waiting on a verdict that cannot arrive (the turn
       // would otherwise hang to the lane's timeout).
       const denyPending = (): void => {
         if (!approvalSurface.isShowing()) return;

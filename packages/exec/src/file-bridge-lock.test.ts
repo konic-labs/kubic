@@ -164,9 +164,9 @@ describe('temp + range primitives', () => {
       const cwd = scratch();
       return { bridge: createNodeFileBridge(cwd) };
     })();
-    const first = bridge.createTempFile('kubic-360-', '.tmp');
+    const first = bridge.createTempFile('kubic-file-bridge-lock-', '.tmp');
     dirs.push(first);
-    const second = bridge.createTempFile('kubic-360-', '.tmp');
+    const second = bridge.createTempFile('kubic-file-bridge-lock-', '.tmp');
     dirs.push(second);
     // The first call occupies attempt 0, so the second skips to attempt 1.
     expect(second).not.toBe(first);

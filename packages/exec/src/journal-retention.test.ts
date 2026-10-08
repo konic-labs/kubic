@@ -2,8 +2,8 @@
 // referenced blob (`blobBytes` over the kept set) and the byte-bound loop
 // re-stat'd everything once per dropped entry. These tests count `fileInfo`
 // calls through an instrumented FileBridge double. What they pin (drop set,
-// ordering, removed/bytes shape) is deliberately identical to pre-change
-// behavior — the retention semantics do not move; only their I/O cost does.
+// ordering, removed/bytes shape) must stay exact: the retention semantics
+// do not move; only their I/O cost does.
 
 import {
   existsSync,
@@ -36,7 +36,7 @@ vi.mock('./file-bridge.js', async (importOriginal) => {
         ...bridge,
         fileInfo: (path: string) => {
           counts.fileInfo += 1;
-          // Blob stats are the O(M) cost this issue removed; the append's
+          // Blob stats are the O(M) cost under test; the append's
           // own index tail probe is one lstat per append and
           // is deliberately not counted here.
           if (path.includes(`${'/'}blobs${'/'}`)) counts.blobInfo += 1;
@@ -461,13 +461,11 @@ describe('prune stats bound', () => {
   });
 });
 
-// Review finding 1: `append` with the reconcile shape (before: null plus a
-// hash-only beforeHash) never accounted that hash's bytes, so an existing
-// but unaccounted blob (crash-residue orphan from a putBlob-then-failed
-// appendFile, or a sweep's best-effort remove leak) made trackedBytes
-// under-count — and the fast path then skipped pruning passes while the
-// journal grew past its bound. The pre-change code stayed bounded after
-// every append; this must too.
+// `append` with the reconcile shape (before: null plus a hash-only beforeHash)
+// must account that hash's bytes. An existing but unaccounted blob (crash-residue
+// orphan from a putBlob-then-failed appendFile, or a sweep's best-effort remove
+// leak) must not make trackedBytes under-count: the fast path would skip pruning
+// passes while the journal grew past its bound. Every append keeps it bounded.
 describe('hash-only before refs are tracked', () => {
   it('reconcile-shaped appends over unaccounted orphan blobs stay within maxBytes after every append', () => {
     const dir = tmpRoot();
@@ -495,8 +493,7 @@ describe('hash-only before refs are tracked', () => {
           unattributed: true,
         }),
       );
-      // Bounded by construction: the pre-change code kept the journal
-      // within its bound after EVERY append, and so must this one.
+      // Bounded by construction: the journal stays within its bound after EVERY append.
       expect(referencedBytes(dir, store)).toBeLessThanOrEqual(maxBytes);
     }
     // Pruning passes must have run — 11 entries of 60 referenced bytes
@@ -505,13 +502,12 @@ describe('hash-only before refs are tracked', () => {
   });
 });
 
-// Review finding 2: the blob size cache is write-once per hash and never
+// The blob size cache is write-once per hash and never
 // revalidated, so external mutation of a blob file (replacement with
 // different-length content, or deletion) leaves stale/phantom sizes that
-// corrupt the drop set — a phantom size drops entries the old live-stat
-// loop kept (a missing blob counted zero) — and inflate the returned bytes.
-// The pre-change code live-statted every pass; a slow pass must re-derive
-// its truth the same way.
+// corrupt the drop set — a phantom size drops entries a live stat would keep
+// (a missing blob counted zero) — and inflate the returned bytes.
+// A slow pass must re-derive its truth by live-statting every referenced blob.
 describe('slow passes re-stat referenced blobs', () => {
   it('external blob mutation never corrupts the drop set or the reported freed bytes', () => {
     const dir = tmpRoot();

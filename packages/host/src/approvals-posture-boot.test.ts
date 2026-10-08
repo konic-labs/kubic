@@ -1,8 +1,8 @@
-// The full-access posture is resolved ONCE, at session boot. Before this issue
-// installSoloPolicy re-read <session>/posture.json on every ask, so one
-// model-issued bash redirect (`echo '{"fullAccess":true}' > …/posture.json`)
-// switched approvals off for the rest of the session — and the ledger recorded
-// it as if the user had.
+// The full-access posture is resolved ONCE, at session boot. installSoloPolicy
+// must not re-read <session>/posture.json on every ask: one model-issued bash
+// redirect (`echo '{"fullAccess":true}' > …/posture.json`) would otherwise switch
+// approvals off for the rest of the session, and the ledger would record it as
+// if the user had.
 //
 // Hermetic: temp session/workspace dirs removed in afterEach, no model.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -25,7 +25,7 @@ import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 const made: string[] = [];
 
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-325-${prefix}`));
+  const dir = mkdtempSync(join(tmpdir(), `kubic-approvals-posture-${prefix}`));
   made.push(dir);
   return dir;
 }
@@ -79,7 +79,7 @@ describe('posture is decided at boot', () => {
     const sessionDir = tmpRoot('session-');
     enableSessionFullAccess({
       sessionDir,
-      sessionId: 'sess-325',
+      sessionId: 'sess-posture-other',
       command: 'sessions create',
       workspace,
     });
@@ -151,7 +151,7 @@ describe('the in-session full-access toggle', () => {
     const installed = installSoloPolicy({
       workspace,
       sessionDir,
-      sessionId: 'sess-309',
+      sessionId: 'sess-posture',
       answer: async () => {
         asks += 1;
         return { approved: true, by: 'user' };
@@ -218,14 +218,14 @@ describe('the in-session full-access toggle', () => {
     const sessionDir = tmpRoot('session-');
     enableSessionFullAccess({
       sessionDir,
-      sessionId: 'sess-309',
+      sessionId: 'sess-posture',
       command: 'tui',
       workspace,
       clock: () => 1_700_000_000_000,
     });
     const revoked = disableSessionFullAccess({
       sessionDir,
-      sessionId: 'sess-309',
+      sessionId: 'sess-posture',
       command: 'tui /approvals off',
       workspace,
       clock: () => 1_700_000_000_500,
@@ -290,7 +290,7 @@ describe('the in-session full-access toggle', () => {
     // produced by ONE writer, so they cannot drift into two shapes.
     enableSessionFullAccess({
       sessionDir: toggleDir,
-      sessionId: 'sess-309',
+      sessionId: 'sess-posture',
       command: 'tui',
       workspace,
       clock,
@@ -298,19 +298,19 @@ describe('the in-session full-access toggle', () => {
     installSoloPolicy({
       workspace,
       sessionDir: toggleDir,
-      sessionId: 'sess-309',
+      sessionId: 'sess-posture',
       clock,
     }).setFullAccess?.(false, 'kubic tui /approvals off');
     enableSessionFullAccess({
       sessionDir: helperDir,
-      sessionId: 'sess-309',
+      sessionId: 'sess-posture',
       command: 'tui',
       workspace,
       clock,
     });
     disableSessionFullAccess({
       sessionDir: helperDir,
-      sessionId: 'sess-309',
+      sessionId: 'sess-posture',
       command: 'tui /approvals off',
       workspace,
       clock,
@@ -340,7 +340,7 @@ describe('the in-session full-access toggle', () => {
     const sessionDir = tmpRoot('session-');
     enableSessionFullAccess({
       sessionDir,
-      sessionId: 'sess-309',
+      sessionId: 'sess-posture',
       command: 'sessions create',
       workspace,
     });

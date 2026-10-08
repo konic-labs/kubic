@@ -504,7 +504,7 @@ describe('binary contract failure probes', () => {
     assert.match(result.problems[0], /exited 0 \(expected 1/);
   });
 
-  it('fails when a raw stack leaks without KUBIC_DEBUG (the pre-fix behaviour)', () => {
+  it('fails when a raw stack leaks without KUBIC_DEBUG', () => {
     const result = contractWith({ crash: debugCrashOut() });
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /one named line, no stack/);

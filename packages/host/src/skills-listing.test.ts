@@ -186,8 +186,8 @@ function writeSkill(home: string, cwd: string): void {
 
 describe('skillsDoctorProbe carries the counts line first', () => {
   it('summary first, then the per-skill warns', () => {
-    const home = tmpRoot('kubic-238-home-');
-    const cwd = tmpRoot('kubic-238-cwd-');
+    const home = tmpRoot('kubic-skills-home-');
+    const cwd = tmpRoot('kubic-skills-cwd-');
     writeSkill(home, cwd);
     const checks = skillsDoctorProbe({
       bridge: createNodeFileBridge(cwd),
@@ -202,14 +202,14 @@ describe('skillsDoctorProbe carries the counts line first', () => {
 
 describe('bootSkills passes discovery skips through', () => {
   it('an untrusted project skill reaches the listing as excluded', () => {
-    const cwd = tmpRoot('kubic-238-skipped-');
+    const cwd = tmpRoot('kubic-skills-skipped-');
     const dir = join(cwd, '.pi', 'skills', 'gem');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, 'SKILL.md'),
       '---\nname: gem\ndescription: Left out\n---\n\nBody.\n',
     );
-    const home = tmpRoot('kubic-238-home-');
+    const home = tmpRoot('kubic-skills-home-');
     const result = bootSkills({
       bridge: createNodeFileBridge(cwd),
       cwd,

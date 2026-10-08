@@ -31,8 +31,8 @@ afterEach(() => {
 });
 
 function skillTree(): { workspace: string; skillDir: string; skill: string } {
-  const workspace = tmp('kubic-173-ws-');
-  const home = tmp('kubic-173-home-');
+  const workspace = tmp('kubic-read-roots-ws-');
+  const home = tmp('kubic-read-roots-home-');
   const skillDir = join(home, '.agents', 'skills', 'a');
   mkdirSync(join(skillDir, 'refs'), { recursive: true });
   const skill = join(skillDir, 'SKILL.md');

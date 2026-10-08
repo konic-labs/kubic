@@ -9,9 +9,9 @@
 //   2. `.kubic/config.toml` and `.kubic/roles/*.md` stay trackable — the
 //      directory is mixed by construction, so `.kubic/` itself is never
 //      ignored;
-//   3. THIS repo ships the same split in its `.gitignore` (ground truth
-//      from `git check-ignore`, not from the file text), and no runtime
-//      path is tracked.
+//   3. THIS repo ignores its whole `.kubic/` directory (ground truth from
+//      `git check-ignore`, not from the file text), and nothing under it is
+//      tracked.
 //
 // Real code, real git, zero network. Runs from `npm test` (node --test) so
 // it gates CI alongside the other script gates.
@@ -34,7 +34,7 @@ import {
   RUNTIME_EXCLUDE_ENTRIES,
 } from '../packages/exec/src/runtime-exclude.ts';
 
-// The rule checker (`checkGitignoreSplit`) now runs on
+// The rule checker (`checkGitignoreSplit`) runs on
 // a production path — `loadCliConfig` → `checkWorkspaceIgnoreSplit` on every
 // `kubic config` / `kubic doctor`. The host module cannot be imported here
 // (plain-node resolution does not map its `.js` specifiers), so this gate
@@ -305,11 +305,11 @@ describe('this repo ships the split', () => {
         `the checker's input must carry the rule ${entry}`,
       );
     }
-    assert.equal(isIgnored(ROOT, '.kubic/config.toml'), false);
-    assert.equal(isIgnored(ROOT, '.kubic/roles/reviewer.md'), false);
+    assert.equal(isIgnored(ROOT, '.kubic/config.toml'), true);
+    assert.equal(isIgnored(ROOT, '.kubic/roles/reviewer.md'), true);
   });
 
-  it('ignores its own runtime state, keeps roles trackable', () => {
+  it('ignores its own .kubic/ directory, so nothing under it is tracked', () => {
     for (const entry of RUNTIME_EXCLUDE_ENTRIES) {
       assert.equal(
         isIgnored(ROOT, `${entry}probe`),
@@ -317,27 +317,18 @@ describe('this repo ships the split', () => {
         `${entry} must be ignored by this repo's .gitignore`,
       );
     }
-    assert.equal(isIgnored(ROOT, '.kubic/roles/reviewer.md'), false);
-    assert.equal(isIgnored(ROOT, '.kubic/config.toml'), false);
+    assert.equal(isIgnored(ROOT, '.kubic/roles/reviewer.md'), true);
+    assert.equal(isIgnored(ROOT, '.kubic/config.toml'), true);
 
-    // No runtime path may be tracked (a force-added one would defeat the
-    // split: `git status` would stay quiet while state sits in history).
-    // `git ls-files .kubic` may only return the committed half.
+    // No path under .kubic/ may be tracked: a force-added file would sit in
+    // history while `git status` stays quiet.
     const tracked = git(ROOT, ['ls-files', '.kubic'])
       .split('\n')
       .filter((line) => line.length > 0);
-    const leaked = tracked.filter(
-      (path) =>
-        !(path === '.kubic/config.toml' || path.startsWith('.kubic/roles/')),
-    );
     assert.deepEqual(
-      leaked,
+      tracked,
       [],
-      `runtime paths must not be tracked: ${leaked.join(', ')}`,
-    );
-    assert.ok(
-      tracked.some((path) => path.startsWith('.kubic/roles/')),
-      'the role documents must stay tracked (the committed half)',
+      `nothing under .kubic/ may be tracked: ${tracked.join(', ')}`,
     );
   });
 });

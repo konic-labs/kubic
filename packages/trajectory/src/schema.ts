@@ -373,7 +373,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // Structural validation: presence is not enough. A
 // published contract read from community files must fail closed with a
 // named path BEFORE a consumer dereferences a section — an `actions:
-// null` used to reach replay and die as a raw TypeError (generic exit 1)
+// null` must not reach replay and die as a raw TypeError (generic exit 1)
 // instead of TrajectorySchemaError 'malformed'. Types only: unknown extra
 // keys survive (additive-only within major 1), and internals beyond the
 // required keys stay the exporter's job.

@@ -229,8 +229,8 @@ describe('replay recorded exact (exact; Recorded)', () => {
   });
 
   it('exits 2 with trajectory-malformed when a trajectory section is structurally wrong', async () => {
-    // Actions:null used to reach the describe/compare code and
-    // die as a raw TypeError (generic exit 1). It is now refused by the
+    // Actions:null must not reach the describe/compare code and
+    // die as a raw TypeError (generic exit 1). It is refused by the
     // parser with a named path, on the same exit-2 code as any other
     // malformed trajectory.
     const dir = tmpRoot();

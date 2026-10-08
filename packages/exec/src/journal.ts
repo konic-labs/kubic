@@ -266,7 +266,7 @@ export function sha256HexOfFile(
 ): string {
   const readRange = bridge.readFileRange?.bind(bridge);
   if (readRange === undefined) {
-    // Silence was the option the issue ruled out. Every production bridge
+    // A silent fallback is not allowed. Every production bridge
     // supplies the method, so this is a partial double or a future adapter —
     // but an unlogged revert to whole-file reads cannot be detected in the
     // field, so it is reported through the caller's receipt hook.
@@ -281,9 +281,9 @@ export function sha256HexOfFile(
   // `ignoreBOM: true` is load-bearing, not a stylistic choice. The default
   // decoder STRIPS a leading U+FEFF while `readFileSync(path, 'utf8')` keeps
   // it, so without this flag a BOM-prefixed file above the chunk size hashed
-  // differently from the pre-change code — measured: 8MiB with a BOM diverged
-  // while the no-BOM control matched. The consequence was the exact failure
-  // this bound must not cause: a baseline written by the older build swept by
+  // differently from a whole-file read — measured: 8MiB with a BOM diverged
+  // while the no-BOM control matched. The consequence would be the failure
+  // this bound must not cause: a baseline written by another build, swept by
   // this one appends a spurious unattributed write, and a tool-authored change
   // gets a duplicate entry shadowing it. A BOM-prefixed CSV/JSON export is all
   // it takes, nothing malicious.
@@ -1401,7 +1401,7 @@ export interface BaselineOptions {
   bridge?: FileBridge;
   /**
    * Report a walk condition the operator should know about. Used for the one
-   * case that used to be silent: a bridge without `readFileRange` reverts to
+   * case that is reported: a bridge without `readFileRange` reverts to
    * whole-file reads, so a file larger than `HASH_CHUNK_BYTES` costs its size
    * at boot. Production bridges always implement it; the hook exists so the
    * fallback can never be invisible.
@@ -1658,7 +1658,7 @@ function hasSymlinkParent(target: string, root: string): boolean {
   return false;
 }
 
-// Undo primitive for the next issue's CLI: writes the recorded
+// Undo primitive for the `kubic undo` command: writes the recorded
 // before-content back. Entries without before-content (unattributed
 // reconciliation finds) are reported non-reversible — never guessed.
 // Entry paths are contained to the workspace root: a path escaping via
@@ -1911,7 +1911,7 @@ export function restoreEntry(
 // included; the walk hash must also stay digest-identical for files already
 // journaled, so it cannot be redefined to hash bytes). The raw bytes are
 // what diverge: a binary file's decode collapses invalid sequences to
-// U+FFFD, its re-encoding no longer matches the file, and the caller records
+// U+FFFD, its re-encoding does not match the file, and the caller records
 // hash-only instead of a mangled blob. Returns null when the decode was
 // lossy.
 function decodeLossless(bytes: Uint8Array): string | null {
@@ -2001,11 +2001,9 @@ export function reconcile(
   ctx: ReconcileContext,
   options: BaselineOptions = {},
 ): number {
-  // Same read seam as captureBaseline (review finding): the hash honoured
-  // `options.bridge` but this after-content read used the module-level node
-  // bridge, so an injected double observed only half the walk — and a test
-  // proved a bound production did not fully have. One bridge for the whole
-  // reconcile now.
+  // Same read seam as captureBaseline: the hash honours `options.bridge`, and so
+  // must this after-content read, or an injected double observes only half the
+  // walk. One bridge serves the whole reconcile.
   const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = options.outOfScope ?? [];
   const current = captureBaseline(root, { ...options, previous: baseline });

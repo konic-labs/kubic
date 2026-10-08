@@ -148,8 +148,8 @@ describe('doctor reports the role posture on the production path', () => {
     ]).policy;
     const gated = await report(cwd, denyBash);
     const failing = gated.checks.filter((c) => c.status === 'fail');
-    // The repo's implementer (bash) and the embedded presets that run a shell
-    // are refused by name; the repo's own planner declares no bash and stays
+    // The workspace's implementer (bash) and the embedded presets that run a
+    // shell are refused by name; the built-in planner declares no bash and stays
     // green.
     expect(failing.map((c) => c.id)).toEqual([
       'role:debugger',

@@ -60,8 +60,8 @@ function catalog(texts: string[]): MutableModels {
 describe('kubic run --model', () => {
   it('selects the model the flag names, over the first provider', async () => {
     const config = loadCliConfig({
-      cwd: tmpRoot('run-227-cwd-'),
-      home: tmpRoot('run-227-home-'),
+      cwd: tmpRoot('run-model-override-cwd-'),
+      home: tmpRoot('run-model-override-home-'),
       env: {},
       model: { provider: 'faux', id: 'small' },
     });
@@ -72,7 +72,7 @@ describe('kubic run --model', () => {
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot('run-227-sessions-'),
+        sessionsRoot: tmpRoot('run-model-override-sessions-'),
         env: new FakeExecutionEnv({}),
         models: catalog(['answered']),
         ...(pin === undefined ? {} : { model: pin }),
@@ -84,8 +84,8 @@ describe('kubic run --model', () => {
 
   it('beats the KUBIC_MODEL env pin, as the cli layer', () => {
     const config = loadCliConfig({
-      cwd: tmpRoot('run-227-cwd2-'),
-      home: tmpRoot('run-227-home2-'),
+      cwd: tmpRoot('run-model-override-cwd2-'),
+      home: tmpRoot('run-model-override-home2-'),
       env: { KUBIC_MODEL: 'faux/big' },
       model: { provider: 'faux', id: 'small' },
     });
@@ -94,8 +94,8 @@ describe('kubic run --model', () => {
 
   it('an unknown model fails closed by name with exit 6', async () => {
     const config = loadCliConfig({
-      cwd: tmpRoot('run-227-cwd3-'),
-      home: tmpRoot('run-227-home3-'),
+      cwd: tmpRoot('run-model-override-cwd3-'),
+      home: tmpRoot('run-model-override-home3-'),
       env: {},
       model: { provider: 'faux', id: 'nope' },
     });
@@ -104,7 +104,7 @@ describe('kubic run --model', () => {
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot('run-227-sessions3-'),
+        sessionsRoot: tmpRoot('run-model-override-sessions3-'),
         env: new FakeExecutionEnv({}),
         models: catalog([]),
         ...(pin === undefined ? {} : { model: pin }),
@@ -126,8 +126,8 @@ describe('kubic run --model', () => {
         exists: (path: string) => files.has(path),
         readTextFile: (path: string) => files.get(path) as string,
       },
-      home: tmpRoot('run-227-home4-'),
-      cwd: tmpRoot('run-227-cwd4-'),
+      home: tmpRoot('run-model-override-home4-'),
+      cwd: tmpRoot('run-model-override-cwd4-'),
       env: {},
       cli: { model: { provider: 'faux', id: 'small' } },
     });

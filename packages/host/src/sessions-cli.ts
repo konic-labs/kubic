@@ -371,7 +371,7 @@ export async function runSessionsCommand(
     // A live second attachment: the refusal is the answer —
     // printed as-is (it names the holder pid + start time), exit 1, and
     // no transcript was ever read (attach acquires before it opens).
-    // A 0.87 session directory is refused by name the same way.
+    // A legacy session directory is refused by name the same way.
     if (
       error instanceof SessionLockError ||
       error instanceof SessionAttachError ||
@@ -429,7 +429,7 @@ function renderTranscriptItem(item: TranscriptItem): string {
 // fork at an entry (default: the newest), or the whole tree with --tree. The
 // new id is printed (or `{id, source, at}` with --json) and is usable at once
 // with `kubic run --session` / `kubic tui --session`. The store refuses a
-// live-locked source, a missing one and a 0.87 one; all exit 1, like attach.
+// live-locked source, a missing one and a legacy one; all exit 1, like attach.
 async function runForkCommand(
   invocation: Extract<SessionsInvocation, { command: 'fork' }>,
   deps: SessionsCommandDeps,

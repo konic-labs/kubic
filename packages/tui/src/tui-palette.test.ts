@@ -25,7 +25,7 @@ interface Shown {
 function setup(listFiles?: () => readonly string[]) {
   const surface = createApprovalSurface({ armingMs: 0 });
   const app = createTuiApp({
-    sessionId: 'sess-460',
+    sessionId: 'sess-palette',
     model: 'faux/m',
     approvalsSkipped: false,
     approvalSurface: surface,

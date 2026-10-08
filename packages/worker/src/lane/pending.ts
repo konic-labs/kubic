@@ -122,8 +122,8 @@ export async function settlePending(
   if (!reportInspection(inspection).pending) {
     return { outcome: 'none', fellBack: false };
   }
-  // An abort the dead process already requested stays an abort (0.87's
-  // op.aborting): the durable mark is the operator's cancel, so the
+  // An abort the dead process already requested stays an abort: the durable
+  // mark is the operator's cancel, so the
   // interrupted run is never started for it.
   if (policy === 'abort' || abortedPending(inspection)) {
     await abortPending(solo, opts);

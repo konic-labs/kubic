@@ -164,7 +164,7 @@ export interface UnsupportedLevel {
 // (PermissionClasses has nowhere to put one), and an allowlist naming no
 // domains allows nothing — so it is enforced as `none`: every network verb
 // is blocked by the guard and raises the network approval trigger. Never
-// the unrestricted `full` it used to behave as (false confidence).
+// the unrestricted `full` level (false confidence).
 export function effectiveNetworkLevel(level: NetworkLevel): NetworkLevel {
   return level === 'allowlist' ? 'none' : level;
 }
@@ -174,7 +174,7 @@ export function effectiveNetworkLevel(level: NetworkLevel): NetworkLevel {
 // credential list and no credential tool exists, so it is enforced as
 // `none` — the credential-path detector stays gated and every credential
 // access raises the trigger, never the unrestricted access the level name
-// used to imply.
+// implies.
 export function effectiveCredentialLevel(
   level: CredentialLevel,
 ): CredentialLevel {

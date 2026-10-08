@@ -9,7 +9,7 @@
 //
 // These tests drive real git in sandboxed scratch repositories (scrubbed env,
 // never the inherited one) with no mocks: the assertions are the exact
-// user-visible promise from the issue. Only packages/exec may spawn processes
+// user-visible promise. Only packages/exec may spawn processes
 // and touch node:fs.
 import {
   existsSync,
@@ -146,7 +146,7 @@ describe('ensureRuntimeExcludeRules', () => {
     ensureRuntimeExcludeRules({ cwd: repo.path });
     createRuntimeState(repo);
 
-    // The whole promise of the issue: nothing of Kubic's own state in the
+    // The whole promise: nothing of Kubic's own state in the
     // user's commit path.
     expect(status(repo)).toEqual([]);
 

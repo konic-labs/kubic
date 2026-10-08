@@ -276,8 +276,8 @@ export function summarizeSkills(booted: BootSkills): SkillRow[] {
   return rows;
 }
 
-// The TUI's one-time boot notice: the loader lines the TUI
-// used to drop, as a single summary — `undefined` when nothing was
+// The TUI's one-time boot notice: the loader lines (a skipped skill) ride
+// the boot notices once, as a single summary — `undefined` when nothing was
 // skipped, so a clean boot stays silent.
 export function describeSkillSkips(
   skipped: readonly SkippedSkill[],

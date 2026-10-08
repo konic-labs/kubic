@@ -1,6 +1,6 @@
-// Command dispatch seam for the kubic CLI: the routing table
-// `main()` used to hold inline — which command runs which runner, which
-// exit code a refused config yields, and the front-door special cases
+// Command dispatch seam for the kubic CLI: the routing table — which command
+// runs which runner, which exit code a refused config yields, and the front-door
+// special cases
 // (help, version, the contract crash probe, the usage fallthrough). The
 // runners arrive injected (production wiring: ./prod-runners.js), so this
 // module holds no lanes, no fs and no process state of its own — the
@@ -397,7 +397,7 @@ export async function dispatchCommand(
   // on that same load.
   const cliModel = cliModelFromArgs(command, args);
   // The `--thinking` override is the `cli` thinking
-  // layer of the same load — never a post-load patch (AGENTS.md Pitfalls).
+  // layer of the same load — never a post-load patch.
   const cliThinking = cliThinkingFromArgs(command, args);
   const cliConfig = deps.loadConfig(
     cliModel === undefined && cliThinking === undefined && trust === undefined

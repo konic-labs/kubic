@@ -29,7 +29,7 @@ export interface SlashCommandSpec {
   /** The usage line (`'/help [command]'`). */
   readonly usage: string;
   /**
-   * The presentation command this issues. Absent for a local action or a local
+   * The presentation command this emits. Absent for a local action or a local
    * read (`/help`, `/session`, `/diff`, `/undo`) — those never reach the lane.
    */
   readonly command?: PresentationCommand;
@@ -100,8 +100,8 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     argumentHint: 'on|off',
   },
   {
-    // The honest limits on demand — the permanent footer that
-    // carried them is gone (the header keeps the mode badge on every frame).
+    // The honest limits on demand; no permanent footer carries them, and the
+    // header keeps the mode badge on every frame.
     name: 'safety',
     summary: 'what this mode does and does not protect',
     usage: '/safety',

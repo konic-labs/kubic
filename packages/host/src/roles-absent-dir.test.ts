@@ -1,15 +1,15 @@
 // An absent `.kubic/roles/` is the NORMAL case.
 //
-// `rolesDoctorProbe` was wired into `kubic doctor`, and in a workspace with no
-// roles directory it reported `FAIL role:documents (policy-mismatch): ENOENT
-// ... scandir '.kubic/roles'` — measured on the built binary. Most workspaces
-// have no roles directory, so the newly-wired check made doctor red for
-// everyone. Root cause: `loadRoles` only translates `RoleParseError`; a
+// `rolesDoctorProbe` is wired into `kubic doctor`, and in a workspace with no
+// roles directory it must not report `FAIL role:documents (policy-mismatch):
+// ENOENT ... scandir '.kubic/roles'`. Most workspaces have no roles directory,
+// and that state must not make doctor red for everyone. `loadRoles` only
+// translates `RoleParseError`; a
 // filesystem error escapes it, and the probe's catch-all renders any thrown
-// error as a policy mismatch. Two distinct conditions were conflated:
+// error as a policy mismatch. Two distinct conditions must stay distinct:
 //   - absent directory      → nothing to report (the solo default is intact)
 //   - unreadable/corrupt    → a real failure the operator must see
-// These tests pin the distinction so the fix cannot just swallow errors.
+// These tests pin the distinction, so the probe cannot just swallow errors.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -158,10 +158,10 @@ describe('an absent roles directory is not an error', () => {
     );
   });
 
-  // Review finding: the repo text used to be re-read from
+  // The repo text must not be re-read from
   // `.kubic/roles/<parsed role name>.md`, so a document whose file stem
   // differs from its `role:` line (a rename, a copy whose frontmatter was not
-  // updated) threw a raw ENOENT for EVERY consumer — doctor red, every
+  // updated) would throw a raw ENOENT for EVERY consumer — doctor red, every
   // `--role` boot dead. The text must come from the path that
   // was listed, and the role registers under its DECLARED name.
   it('reads a document whose file stem differs from its declared role', () => {

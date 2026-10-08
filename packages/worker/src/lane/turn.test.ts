@@ -410,7 +410,7 @@ describe('durable retry', () => {
       });
       expect(outcome.kind).toBe('completed');
       // Both attempts hit the provider, and the retry is visible in the
-      // lane's own events — not in a Kubic sleep loop that no longer exists.
+      // lane's own events, not in a Kubic sleep loop.
       expect(faux.state.callCount).toBe(2);
       const starts = events.filter(
         (event) => event.type === 'retry' && event.phase === 'start',

@@ -27,7 +27,7 @@ import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
 const made: string[] = [];
 
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-309-${prefix}`));
+  const dir = mkdtempSync(join(tmpdir(), `kubic-tui-full-access-${prefix}`));
   made.push(dir);
   return dir;
 }
@@ -229,7 +229,7 @@ describe('the TUI full-access toggle', () => {
     await waitFor(() =>
       fake.output().includes('approvals: enforced — challenged calls ask'),
     );
-    // Review finding 1: `off` while already off is a REPORT — no
+    // `off` while already off is a REPORT — no
     // dialog, no second posture row for a change that did not happen.
     const beforeOff = fake.writes.length;
     run('/approvals off');

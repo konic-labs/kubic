@@ -32,7 +32,9 @@ const made: string[] = [];
 const chmodded: string[] = [];
 
 function tmpRoot(prefix: string): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), `kubic-279-${prefix}`)));
+  const dir = realpathSync(
+    mkdtempSync(join(tmpdir(), `kubic-approvals-audit-${prefix}`)),
+  );
   made.push(dir);
   return dir;
 }

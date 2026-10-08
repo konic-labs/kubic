@@ -196,10 +196,10 @@ describe('kubic doctor: enterprise policy and detection-only', () => {
   }
 
   it('the default install names the lexical classes and stays exit 0', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-289-default-'));
+    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-default-'));
     roots.push(root);
     providerFixture(root, 9102);
-    vi.stubEnv('GW_API_KEY', 'sk-doctor-289-not-a-real-key');
+    vi.stubEnv('GW_API_KEY', 'sk-doctor-not-a-real-key');
     vi.stubEnv('KUBIC_MODEL', 'gw/m1');
     vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
     vi.spyOn(process, 'cwd').mockReturnValue(root);
@@ -208,7 +208,7 @@ describe('kubic doctor: enterprise policy and detection-only', () => {
       home: root,
       env: {
         ...process.env,
-        GW_API_KEY: 'sk-doctor-289-not-a-real-key',
+        GW_API_KEY: 'sk-doctor-not-a-real-key',
         KUBIC_MODEL: 'gw/m1',
         KUBIC_TRUST_PROJECT: '1',
       },
@@ -231,7 +231,7 @@ describe('kubic doctor: enterprise policy and detection-only', () => {
   });
 
   it('a configured [policy] runs the enterprise checks in --json', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-289-policy-'));
+    const root = mkdtempSync(join(tmpdir(), 'prod-doctor-policy-'));
     roots.push(root);
     providerFixture(root, 9103);
     mkdirSync(join(root, '.kubic'), { recursive: true });
@@ -240,7 +240,7 @@ describe('kubic doctor: enterprise policy and detection-only', () => {
       '[policy]\nnetwork_policy = "proxy"\n',
     );
     vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-    vi.stubEnv('GW_API_KEY', 'sk-doctor-289-not-a-real-key');
+    vi.stubEnv('GW_API_KEY', 'sk-doctor-not-a-real-key');
     vi.stubEnv('KUBIC_MODEL', 'gw/m1');
     vi.spyOn(process, 'cwd').mockReturnValue(root);
     const config = loadCliConfig({
@@ -249,7 +249,7 @@ describe('kubic doctor: enterprise policy and detection-only', () => {
       env: {
         ...process.env,
         KUBIC_TRUST_PROJECT: '1',
-        GW_API_KEY: 'sk-doctor-289-not-a-real-key',
+        GW_API_KEY: 'sk-doctor-not-a-real-key',
         KUBIC_MODEL: 'gw/m1',
       },
     });
@@ -327,19 +327,19 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
     // The runner reads the default sessions root (a temp HOME under test).
     const sroot = defaultSessionsRoot();
     mkdirSync(sroot, { recursive: true });
-    agedSession(sroot, 'aged-381', 31 * DAY_MS);
+    agedSession(sroot, 'aged-prune', 31 * DAY_MS);
     const { lines, r } = runners();
     expect(
       (await r.sessions({ command: 'prune', yes: true }, config)).exitCode,
     ).toBe(0);
-    expect(existsSync(join(sroot, 'aged-381'))).toBe(false);
-    expect(lines.join('\n')).toContain('pruned aged-381');
+    expect(existsSync(join(sroot, 'aged-prune'))).toBe(false);
+    expect(lines.join('\n')).toContain('pruned aged-prune');
   });
 
   it('journal log heals aged entries under the same window', async () => {
     const config = configWithRetention(7);
     const sroot = defaultSessionsRoot();
-    const journalDir = join(sroot, 'sess-381', 'journal');
+    const journalDir = join(sroot, 'sess-journal', 'journal');
     const store = new FileJournalStore(journalDir);
     store.append({
       path: 'aged.txt',
@@ -347,7 +347,7 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
       before: 'old\n',
       after: 'older\n',
       bytesDelta: 0,
-      sessionId: 'sess-381',
+      sessionId: 'sess-journal',
       agentId: 'root',
       toolCallId: 'call-aged',
       timestamp: Date.now() - 30 * DAY_MS,
@@ -358,14 +358,14 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
       before: 'new\n',
       after: 'newer\n',
       bytesDelta: 0,
-      sessionId: 'sess-381',
+      sessionId: 'sess-journal',
       agentId: 'root',
       toolCallId: 'call-fresh',
       timestamp: Date.now(),
     });
     const { lines, r } = runners();
     expect(
-      (await r.journal({ command: 'log', session: 'sess-381' }, config))
+      (await r.journal({ command: 'log', session: 'sess-journal' }, config))
         .exitCode,
     ).toBe(0);
     const text = lines.join('\n');
@@ -378,7 +378,7 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
 
   it('journal prune takes its default keep window from [journal] retentionDays', async () => {
     const config = configWithRetention(7, 'journal');
-    const journalDir = join(defaultSessionsRoot(), 'sess-382', 'journal');
+    const journalDir = join(defaultSessionsRoot(), 'sess-prune', 'journal');
     const store = new FileJournalStore(journalDir);
     store.append({
       path: 'aged.txt',
@@ -386,7 +386,7 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
       before: 'old\n',
       after: 'older\n',
       bytesDelta: 0,
-      sessionId: 'sess-382',
+      sessionId: 'sess-prune',
       agentId: 'root',
       toolCallId: 'call-aged',
       timestamp: Date.now() - 30 * DAY_MS,
@@ -397,7 +397,7 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
       before: 'new\n',
       after: 'newer\n',
       bytesDelta: 0,
-      sessionId: 'sess-382',
+      sessionId: 'sess-prune',
       agentId: 'root',
       toolCallId: 'call-fresh',
       timestamp: Date.now(),
@@ -406,7 +406,7 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
     // No --yes: the window is applied, the dry run lists the aged entry, and
     // nothing is deleted.
     expect(
-      (await r.journal({ command: 'prune', session: 'sess-382' }, config))
+      (await r.journal({ command: 'prune', session: 'sess-prune' }, config))
         .exitCode,
     ).toBe(0);
     expect(lines.join('\n')).toContain('dry run: 1 entry would be pruned');
@@ -414,7 +414,7 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
     expect(
       (
         await r.journal(
-          { command: 'prune', session: 'sess-382', yes: true },
+          { command: 'prune', session: 'sess-prune', yes: true },
           config,
         )
       ).exitCode,

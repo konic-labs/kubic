@@ -137,8 +137,8 @@ async function storedModel(
 
 describe('/model on the kubic tui path', () => {
   it('switches the live lane and the frame shows the new model', async () => {
-    const workspace = tmpRoot('tui-227-switch-ws-');
-    const sessionsRoot = tmpRoot('tui-227-switch-sessions-');
+    const workspace = tmpRoot('tui-model-switch-ws-');
+    const sessionsRoot = tmpRoot('tui-model-switch-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     let sessionId = '';
@@ -187,9 +187,9 @@ describe('/model on the kubic tui path', () => {
   it('does not resurrect an accepted /model steer', async () => {
     // Alt+Enter submits like Enter when idle. A `/model` steer the loop
     // ACCEPTED ran the command, so the draft must not come back as if it had
-    // been refused (the pre-fix branch restored on anything but 'queued').
-    const workspace = tmpRoot('tui-334-steer-ws-');
-    const sessionsRoot = tmpRoot('tui-334-steer-sessions-');
+    // been refused: a draft is restored only when the steer was 'queued'.
+    const workspace = tmpRoot('tui-model-switch-steer-ws-');
+    const sessionsRoot = tmpRoot('tui-model-switch-steer-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const pending = runTuiCommand(
@@ -221,8 +221,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('switches the thinking level and sends it with the next request', async () => {
-    const workspace = tmpRoot('tui-328-thinking-ws-');
-    const sessionsRoot = tmpRoot('tui-328-thinking-sessions-');
+    const workspace = tmpRoot('tui-model-switch-thinking-ws-');
+    const sessionsRoot = tmpRoot('tui-model-switch-thinking-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const seen: Array<string | undefined> = [];
@@ -282,8 +282,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('picks a model from the Alt+M overlay', async () => {
-    const workspace = tmpRoot('tui-328-picker-ws-');
-    const sessionsRoot = tmpRoot('tui-328-picker-sessions-');
+    const workspace = tmpRoot('tui-model-switch-picker-ws-');
+    const sessionsRoot = tmpRoot('tui-model-switch-picker-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     let sessionId = '';
@@ -328,8 +328,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('switches the model from the ^P palette', async () => {
-    const workspace = tmpRoot('tui-460-palette-ws-');
-    const sessionsRoot = tmpRoot('tui-460-palette-sessions-');
+    const workspace = tmpRoot('tui-model-switch-palette-ws-');
+    const sessionsRoot = tmpRoot('tui-model-switch-palette-sessions-');
     const fake = fakeTerminal(120);
     let sessionId = '';
     const pending = runTuiCommand(
@@ -379,8 +379,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('re-clamps the thinking level when /model moves to a shorter ladder', async () => {
-    const workspace = tmpRoot('tui-328-clamp-ws-');
-    const sessionsRoot = tmpRoot('tui-328-clamp-sessions-');
+    const workspace = tmpRoot('tui-model-switch-clamp-ws-');
+    const sessionsRoot = tmpRoot('tui-model-switch-clamp-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const pending = runTuiCommand(
@@ -418,8 +418,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('cancels the picker with Esc, leaving the model alone', async () => {
-    const workspace = tmpRoot('tui-328-cancel-ws-');
-    const sessionsRoot = tmpRoot('tui-328-cancel-sessions-');
+    const workspace = tmpRoot('tui-model-switch-cancel-ws-');
+    const sessionsRoot = tmpRoot('tui-model-switch-cancel-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const pending = runTuiCommand(
@@ -451,8 +451,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('reports the current model and refuses an unknown one by name', async () => {
-    const workspace = tmpRoot('tui-227-report-ws-');
-    const sessionsRoot = tmpRoot('tui-227-report-sessions-');
+    const workspace = tmpRoot('tui-model-switch-report-ws-');
+    const sessionsRoot = tmpRoot('tui-model-switch-report-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const pending = runTuiCommand(
@@ -503,8 +503,8 @@ describe('/model on the kubic tui path', () => {
 
 describe('tui audit identity', () => {
   it('an approval record carries the model provider/id the lane runs', async () => {
-    const workspace = tmpRoot('tui-227-audit-ws-');
-    const sessionsRoot = tmpRoot('tui-227-audit-sessions-');
+    const workspace = tmpRoot('tui-model-switch-audit-ws-');
+    const sessionsRoot = tmpRoot('tui-model-switch-audit-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     let sessionId = '';

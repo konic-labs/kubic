@@ -320,7 +320,7 @@ export function isPrivilegedAuditWhat(what: string): boolean {
     // kinds stay closed.
     what === 'run:start' ||
     what === 'posture:full-access' ||
-    // Review finding: the revoke half of a privileged
+    // The revoke half of a privileged
     // posture change reaches privileged sinks too — the disable half of
     // a grant must never vanish while the grant is kept.
     what === 'posture:approvals' ||

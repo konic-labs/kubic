@@ -1,9 +1,8 @@
 // The interactive lane under the enterprise policy, built through the REAL
-// production deps builder: the
-// audit found the enterprise model/tool/role gates inert on `kubic tui` and
-// bare `kubic` because `modelPolicy` was spread into `tuiDepsWithDefaults` but
-// missing from the projection's forwarding table — and every test hand-spread
-// the deps, so dropping the production spread stayed green. These tests build
+// production deps builder. The enterprise model/tool/role gates must reach
+// `kubic tui` and bare `kubic`: `modelPolicy` is forwarded through the projection's
+// table, and a test that hand-spreads the deps cannot catch a dropped production
+// spread. These tests build
 // the deps with `prodTuiDeps(io, cliConfig)` (the function the runner calls)
 // and boot the real `bootTuiLane`.
 //

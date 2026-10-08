@@ -1,8 +1,8 @@
 // The approval SEAT's cancellation on the composition path ("maxPendingMs …
 // then deny, not hang"). When the service's bound expires the call is denied —
-// and the question must go away with it: the TUI surface used to keep showing
-// the obsolete ask, blocking the next real ask behind it, while a late approval
-// was dropped without a word.
+// and the question must go away with it: the TUI surface must not keep showing
+// the obsolete ask, blocking the next real ask behind it, or drop a late approval
+// without a word.
 //
 // This file lives in the composition root because it is the only place that
 // may import BOTH sides: the host's ApprovalService and the TUI's

@@ -279,7 +279,7 @@ export async function loadSessionCostRows(
   }
   // The default scope is the invoking project — sessions
   // touching its workspace — with `--all` for the machine-global total the
-  // command used to print.
+  // command prints.
   const workspace = query?.workspace;
   const scoped =
     named !== undefined
@@ -442,7 +442,7 @@ export async function readSessionRunUsage(
     createNodeFileBridge(sessionsRoot),
   );
   // The same lock-free contract as `loadSessionCostRows` — a
-  // named unknown id, a live lock and a 0.87 transcript escape exactly as
+  // named unknown id, a live lock and a legacy transcript escape exactly as
   // `attachSession` reported them, but nothing is ever locked.
   const found = (await listSessions(store, BACKGROUND_CONTEXT)).find(
     (entry) => entry.id === sessionId,

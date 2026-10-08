@@ -32,7 +32,7 @@ suite, success } }`; rejection `{ ok: false, exitCode: 2, error: {
 code, message } }`; benchmark matrix `{ ok: true, exitCode, results: [{
 suite, category, stub, skipped, success }] }` (exit 0 all pass, 1 a
 suite failed, 2 usage). Checklist before review: ≥1 test in
-`packages/eval/src` (TDD RED first), vitest green, `tsc` clean, `biome
+`packages/eval/src` (test first), vitest green, `tsc` clean, `biome
 ci` clean, usage reconciliation, RL export fields untouched.
 
 ## Public API (`packages/eval/src`)

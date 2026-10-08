@@ -66,7 +66,7 @@ function refusal(command: string): string | undefined {
 
 const REFUSED = 'control-plane state';
 
-describe('a cd that does not change the directory at the write cannot hide it (BLOCKER 1)', () => {
+describe('a cd that does not change the directory at the write cannot hide it', () => {
   it.each([
     ['a subshell cd', '(cd x); echo pwned > .kubic/journal/index.jsonl'],
     ['a conditional cd', 'false && cd x; echo p > .kubic/journal/y'],
@@ -166,7 +166,7 @@ describe('a cd that does not change the directory at the write cannot hide it (B
   });
 });
 
-describe('cd is only a cd at a command start (MAJOR 2)', () => {
+describe('cd is only a cd at a command start', () => {
   it.each([
     [
       'then',
@@ -227,7 +227,7 @@ describe('cd is only a cd at a command start (MAJOR 2)', () => {
   });
 });
 
-describe('git-push survives quotes, escapes and bangs (MAJOR 3)', () => {
+describe('git-push survives quotes, escapes and bangs', () => {
   it.each([
     [
       'an escaped quote in an -c value',
@@ -257,7 +257,7 @@ describe('git-push survives quotes, escapes and bangs (MAJOR 3)', () => {
   });
 });
 
-describe('git-push only ever widens (the original regex is a lower bound) (MAJOR 4)', () => {
+describe('git-push only ever widens (the original regex is a lower bound)', () => {
   const OLD_GLOBALS = String.raw`(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S+|\s+\S+)|--[a-z][a-z-]*|-[pP]))*`;
   const OLD_PUSH = new RegExp(
     String.raw`(^|[|;&\s(])git${OLD_GLOBALS}\s+push\b`,
@@ -355,7 +355,7 @@ describe('git-push only ever widens (the original regex is a lower bound) (MAJOR
   );
 });
 
-describe('the cheap remaining bypasses of the new surface (MAJOR 5)', () => {
+describe('the remaining bypasses of the approval surface', () => {
   it('cd -- <dir> and option words are not the directory', () => {
     expect(refusal('cd -- .kubic && rm journal/x')).toContain(REFUSED);
     expect(refusal('cd -L -- .kubic && rm journal/x')).toContain(REFUSED);
@@ -489,7 +489,7 @@ describe('the cheap remaining bypasses of the new surface (MAJOR 5)', () => {
   });
 });
 
-describe('the cd trail is computed once per command (MINOR 6/7)', () => {
+describe('the cd trail is computed once per command', () => {
   it('8000 cd/redirect pairs classify in bounded time', () => {
     const command = 'cd a; echo > x; '.repeat(8_000);
     const started = performance.now();

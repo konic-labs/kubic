@@ -214,7 +214,7 @@ describe('privilege escalation + indirection', () => {
     expect(
       detectTriggers('bash', { command: 'sudo systemctl restart foo' }, ctx),
     ).toEqual(['privilege-escalation']);
-    // The issue's motivating command: outside-write AND privilege-escalation.
+    // The motivating command: outside-write AND privilege-escalation.
     expect(
       detectTriggers(
         'bash',
@@ -406,7 +406,7 @@ describe('privilege escalation + indirection', () => {
   });
 
   it('requires every raised capability: autoApprove covers only what it names', async () => {
-    const dir = mkTmp('approvals-131-');
+    const dir = mkTmp('approvals-detectors-');
     const store = new FileApprovalStore(dir);
     const service = new ApprovalService({
       policy: validatePolicy({
@@ -549,7 +549,7 @@ describe('shell-expanded and cd-relative write targets', () => {
   });
 
   it('wires the home directory through triggerContextFor', () => {
-    const home = mkTmp('kubic-355-home-');
+    const home = mkTmp('kubic-detectors-home-');
     const ctx = triggerContextFor(SOLO_DEFAULTS, home, home);
     expect(ctx.home).toBe(home);
     expect(
@@ -754,7 +754,7 @@ describe('credential-access detector', () => {
   it('flags ~/.ssh children except the known-public files', () => {
     const ctx = triggerContext();
     // A widened arm: `~/.ssh/github` is a common key
-    // name and `~/.ssh/*` a common glob — both used to be silent misses.
+    // name and `~/.ssh/*` a common glob — both are matched.
     for (const command of [
       'cat ~/.ssh/github',
       'cat ~/.ssh/*',
@@ -853,8 +853,8 @@ describe('credential-access detector', () => {
 });
 
 describe('git-dir writes raise kubic-state-write', () => {
-  // Written before the isGitDirTarget check landed in
-  // detectTriggers — each of these returned [] on the unpatched detector.
+  // Each case below relies on the isGitDirTarget check in detectTriggers;
+  // without it, each one returns [].
   const ctx = triggerContext();
   it('raises for write/edit paths under .git/', () => {
     expect(

@@ -253,9 +253,9 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   });
 
   // A `bash` write is not intercepted by the file tools, so the
-  // change reaches the journal only through the sweep. It used to run
-  // at quit alone, so both panels said `no changes` (Ctrl-O) / listed
-  // nothing (Ctrl-R) for a change the user had just watched happen.
+  // change reaches the journal only through the sweep, so both panels must show
+  // it when the turn settles: never `no changes` (Ctrl-O) or an empty list (Ctrl-R)
+  // for a change the user had just watched happen.
   it('a change made with bash shows in Ctrl-R and Ctrl-O when the turn settles, before any quit', async () => {
     const workspace = tmpRoot();
     const { fake, exit } = await openTui(tmpRoot(), workspace, [
@@ -423,9 +423,9 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     expect((await exit).exitCode).toBe(0);
   });
 
-  // `apply` reads `stopped` / `screen`, which used to be
-  // declared AFTER the synchronous boot read — a TDZ ReferenceError on every
-  // boot that the feed's catch swallowed. Nothing may be swallowed now.
+  // `apply` reads `stopped` / `screen`, which must be declared before the
+  // synchronous boot read: a TDZ ReferenceError would be swallowed by the feed's
+  // catch. Nothing may be swallowed.
   it('the feed swallows nothing at boot or at a settlement (no TDZ in the apply path)', async () => {
     const workspace = tmpRoot();
     const failures: unknown[] = [];

@@ -67,8 +67,8 @@ function twoProviders(): MutableModels {
 
 // A workspace whose committed config pins `alt/m1`.
 function pinnedWorkspace(): { cwd: string; home: string } {
-  const cwd = tmpRoot('tui-227-cwd-');
-  const home = tmpRoot('tui-227-home-');
+  const cwd = tmpRoot('tui-model-override-cwd-');
+  const home = tmpRoot('tui-model-override-home-');
   mkdirSync(join(cwd, '.kubic'), { recursive: true });
   writeFileSync(
     join(cwd, '.kubic', 'config.toml'),
@@ -91,7 +91,7 @@ async function newSession(root: string): Promise<string> {
 
 describe('kubic tui model selection', () => {
   it('a config [model] pin selects the pinned model, not the first provider', async () => {
-    const sessionsRoot = tmpRoot('tui-227-sessions-');
+    const sessionsRoot = tmpRoot('tui-model-override-sessions-');
     const { cwd, home } = pinnedWorkspace();
     const config = loadCliConfig({
       cwd,
@@ -115,7 +115,7 @@ describe('kubic tui model selection', () => {
   });
 
   it('KUBIC_MODEL overrides the config pin, exactly as it does for kubic run', async () => {
-    const sessionsRoot = tmpRoot('tui-227-sessions2-');
+    const sessionsRoot = tmpRoot('tui-model-override-sessions2-');
     const { cwd, home } = pinnedWorkspace();
     const config = loadCliConfig({
       cwd,
@@ -139,7 +139,7 @@ describe('kubic tui model selection', () => {
   });
 
   it('without a pin the first usable provider still answers', async () => {
-    const sessionsRoot = tmpRoot('tui-227-sessions3-');
+    const sessionsRoot = tmpRoot('tui-model-override-sessions3-');
     const boot = await bootTuiLane(undefined, {
       sessionsRoot,
       models: twoProviders(),
@@ -153,7 +153,7 @@ describe('kubic tui model selection', () => {
   });
 
   it('a pin switches a resumed session whose stored model differs', async () => {
-    const sessionsRoot = tmpRoot('tui-227-sessions4-');
+    const sessionsRoot = tmpRoot('tui-model-override-sessions4-');
     const id = await newSession(sessionsRoot);
     // First boot stored faux/small (an explicit pin on a fresh session).
     const first = await bootTuiLane(id, {

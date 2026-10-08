@@ -2,7 +2,7 @@
 // tool set. The prompt's `tools:` line and the conversation's offered set
 // are one intersection — base tools, narrowed by the permission classes when
 // declared and by the role allowlist when declared — in every combination,
-// including the classes-only one the pre-fix code advertised in full.
+// including the classes-only one, which must not be advertised in full.
 // Ported to the durable harness.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -287,7 +287,7 @@ describe('the prompt tools line is the same intersection the conversation offers
     await SOLOS.at(-1)?.close(BACKGROUND_CONTEXT);
 
     // The narrowing was durably stored; this boot has none, so it must clear
-    // the stored filter instead of keeping a set the prompt no longer names.
+    // the stored filter instead of keeping a set the prompt does not name.
     const cleared = await bootOn({});
     expect(cleared.advertised).toEqual(all);
     expect(cleared.offered).toEqual(all);

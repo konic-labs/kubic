@@ -134,7 +134,7 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   `cancelling…`, `error`) on the right; the `StatusBar` component reads the
   live turn facts through its `live` option. The state also holds the
   approvals posture, which the header renders. The TTFT and tool-ms
-  segments were deleted (Pi 1.0 routes no timing Kubic could read),
+  segments are absent (Pi 1.0 routes no timing Kubic could read),
   and `kubic tui --session` seeds the rows from the session's `pi.usage`
   ledger before the first frame. the context gauge shows when
   `StatusBarState.contextWindow` is known and a committed request reported

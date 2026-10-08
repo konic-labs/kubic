@@ -576,7 +576,7 @@ const DEPLOY =
 // `echo x > /etc/cron.d/x` must raise outside-write like the write tool.
 // EVERY redirect operator in the command is scanned, within a
 // segment and across `;`/`&&`/`||`/`|`/newline segments, so an inside
-// redirect first can no longer hide `> /etc/cron.d/x` after it. Operators:
+// redirect first cannot hide `> /etc/cron.d/x` after it. Operators:
 // `>`, `>>`, fd-prefixed `2>`/`1>>` (the digit is just text before the
 // operator), `&>`, `&>>`, clobber `>|`, and `>&` — whose target is an fd
 // duplication (`2>&1`, `>&-`) and skipped when it is a digit run or `-`,
@@ -793,7 +793,7 @@ function segmentsBelow(root: string, target: string): string[] | undefined {
 // above it) and `~/.kubic` (global config.toml, the session root). An
 // overridden session root is refused wholesale. A leading `~/`, `$HOME/` or
 // `${HOME}/` is the home directory, as the shell expands it (the
-// variable forms used to slip through as plain outside-writes, which full
+// variable forms are home paths, not plain outside-writes, which full
 // access auto-approves). Case-folded, because the default
 // macOS/Windows filesystems are case-insensitive (`.KUBIC/Config.toml` IS the
 // config file there). Symlinks are not followed — lexical, like every shell
@@ -2057,10 +2057,10 @@ interface RecordedApprovalDeny {
 }
 
 // The named reason a challenged call is refused with while no surface can
-// collect a verdict. Named once, here, so the block reason, the doctor line
-// and the headless terminus all say the same sentence.
+// collect a verdict. Named once, here, so the block reason and the headless
+// run's terminus say the same sentence.
 export const NO_ANSWER_SURFACE_REASON =
-  'approval required, but no approval surface is installed on this command (headless has no TTY; the TUI overlay has not landed) — refusing the operation instead of running it unapproved';
+  'approval required, but no approval surface is installed on this command: kubic run has no ask prompt, so the call is refused; answer approvals in kubic tui, or change the approval route or policy';
 
 export interface InstalledSoloPolicy {
   classes: PermissionClasses;
@@ -2435,7 +2435,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       }
       // route=deny refuses everything challenged — autoApprove entries never
       // apply under it, which is exactly what `kubic doctor` says (`route=deny
-      // ignores autoApprove`); the lane used to approve them.
+      // ignores autoApprove`); the lane never approves them.
       if (posture.route === 'deny') {
         // Configured refusal: named as the route, never as a timeout.
         const reason = `denied by policy route (capability: ${capability})`;

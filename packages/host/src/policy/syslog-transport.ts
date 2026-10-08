@@ -14,7 +14,7 @@ type SocketFactory = typeof createSocket;
 interface Sendable {
   send: (...args: never[]) => void;
   close: () => void;
-  // Review finding: a target that vanishes after the doctor
+  // A target that vanishes after the doctor
   // probe raises an async socket error — the no-op listener keeps it
   // from escaping the synchronous, best-effort sink as an unhandled
   // 'error' throw. Optional so older injected fakes without `on` still

@@ -552,7 +552,7 @@ describe('git output bounds', () => {
 
   it('git_show clips a huge patch and spills the full text when sunk', async () => {
     const big = `commit abc\n${'y'.repeat(200 * 1024)}\n`;
-    const session = tmp('git-190-session-');
+    const session = tmp('git-tool-session-');
     const sunk = {
       ...ctx({
         'git show --format= --patch HEAD': {

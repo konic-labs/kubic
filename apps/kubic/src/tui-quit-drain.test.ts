@@ -414,10 +414,9 @@ describe('quitting mid-turn drains the operation', () => {
     expect(fake.counts.stopped).toBe(1);
   });
 
-  // The bound used to cover only the wait AFTER the abort
-  // request. A requestAbort that never settles blocked the quit (and the kill
-  // drain queued behind it) with no way out — a second Ctrl-C ended a wait
-  // nobody was in.
+  // The bound covers the whole drain, the abort request included. A requestAbort
+  // that never settles must not block the quit (or the kill drain queued behind
+  // it): a second Ctrl-C ends a wait nobody is in.
   describe('an abort request that never settles', () => {
     function hungAbort(h: Harness): void {
       const inner = h.bootLane;

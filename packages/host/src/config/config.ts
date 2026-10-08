@@ -200,7 +200,7 @@ export interface AuditTableConfig {
   sink: string;
   level?: string;
   target?: string;
-  // Review finding: docs promise a name or a number 0–23.
+  // Docs promise a name or a number 0–23.
   facility?: string | number;
 }
 
@@ -1149,7 +1149,7 @@ function parseAuditTables(raw: unknown): AuditTableConfig[] {
       );
     }
     const target = reqString(entry, 'target', path, true);
-    // Review finding: docs promise a name or a number
+    // Docs promise a name or a number
     // 0–23, so a TOML number rides through as-is; a fractional or
     // out-of-range number is refused here, by name.
     const facilityRaw = entry.facility;

@@ -11,19 +11,18 @@
 // schema before execute, and Kubic's validators stay authoritative after it.
 // read/bash/grep results reach the model as plain text under a short header
 // (raw lines, never JSON-escaped); the other ops keep their JSON result.
-// Structured op errors are returned as model-readable content (as they were
-// with the 0.87 harness); only unexpected throws propagate to the harness,
-// which turns them into its own error result.
+// Structured op errors are returned as model-readable content; only
+// unexpected throws propagate to the harness, which turns them into its own
+// error result.
 //
 // Pi 1.0 surface: the durable execute signature is
-// `execute(args, api, context)` — the 0.87 positional `toolCallId`/`onUpdate`
-// arguments and the harness `toolContext` are gone, so the Kubic context
+// `execute(args, api, context)`, so the Kubic context
 // (env, sessionId, agentId, journal, kills) is captured in this closure:
 //
 // - identity: `api.callId` is the invocationId (and the journal's
 //   `toolCallId`), `api.taskId` is the operationId, and `context` carries
-//   cancellation. The durable task IS the call's identity: 0.87's separate
-//   turn id has no 1.0 equivalent, so operationId and turnId both name it.
+//   cancellation. The durable task IS the call's identity: operationId and
+//   turnId both name it.
 // - cancellation: `context.abortSignal` becomes `OpContext.signal`, so an
 //   aborted lane run kills in-flight children through the same op code path
 //   as a timeout (bash's own abort listener). The kill registry stays as the
@@ -88,8 +87,8 @@ export interface KubicToolContext {
   spill?: SpillSink;
 }
 
-// What a tool result records for the UI and the transcript. Unchanged from
-// the 0.87 harness (no consumer reads it today, but the record keeps naming
+// What a tool result records for the UI and the transcript. No consumer
+// reads it today, but the record keeps naming
 // the call and the invocation). A union, not optional fields: pi-durable
 // types tool details as JsonValue, which has no `undefined` property.
 type KubicToolDetails =
@@ -160,8 +159,8 @@ const OUTPUT_BACKSTOP = {
 // the tail within four times the per-stream cap keeps that content the same
 // order of magnitude as a normal bash result (two capped streams plus their
 // markers stay well inside the window, so the head/tail choice never edits a
-// completed call), while a command that streams megabytes before a crash can
-// no longer put the 8 MiB backstop into the model's context. `retain: 'tail'`
+// completed call), while a command that streams megabytes before a crash cannot
+// put the 8 MiB backstop into the model's context. `retain: 'tail'`
 // matches `clip()`: endings carry the error.
 const BASH_OUTPUT_LIMITS = {
   maxBytes: 4 * BASH_RESULT_MAX_CHARS,
@@ -189,7 +188,7 @@ function toInvocation(api: ToolExecutionApi, context: Context): ToolInvocation {
       await api.memo(name, value, context);
     },
     // First-writer-wins in the durable task record — atomic across a crash
-    // and a recovery rerun, unlike 0.87's check-then-set.
+    // and a recovery rerun, not a check-then-set.
     memoOnce: (name, candidate) => api.memo(name, candidate, context),
   };
 }
@@ -204,9 +203,8 @@ function appended(previous: string, next: string): string {
 
 // Running output for the live view: pi-durable exposes one
 // append-only output stream per call, while a Kubic ProcessSnapshot is two
-// cumulative streams. Only what was appended is pushed (the old harness got
-// a full JSON snapshot per update), each stream announced once so the live
-// text reads like the tail of the final result.
+// cumulative streams. Only what was appended is pushed, each stream
+// announced once so the live text reads like the tail of the final result.
 function createOutputStreamer(
   api: ToolExecutionApi,
 ): (snapshot: ProcessSnapshot) => void {

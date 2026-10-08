@@ -5,7 +5,7 @@
 // produces plus the sanitisation of the journal rows that feed
 // them.
 //
-// Sanitisation belongs HERE, at ingress (the finding, applied to the
+// Sanitisation belongs HERE, at ingress (applied to the
 // list): journal rows come from tool calls — a path and a tool-call id are
 // model-supplied strings, and the before/after bodies are
 // file content a tool read off disk. Whatever the model wrote into a file is

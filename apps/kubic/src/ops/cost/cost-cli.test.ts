@@ -679,9 +679,9 @@ describe('kubic cost durable usage', () => {
     }
   });
 
-  it('refuses an explicit --session written by Pi 0.87, instead of an (unreadable) row', async () => {
+  it('refuses an explicit --session in the legacy layout, instead of an (unreadable) row', async () => {
     const root = tmpRoot();
-    // Exactly what 0.87's JsonlSessionRepo wrote.
+    // The legacy layout.
     const dir = join(root, '--work--');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -770,7 +770,7 @@ describe('kubic cost lock-free reads', () => {
   const open: Harness[] = [];
 
   function tmpRoot(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'cost-251-'));
+    const dir = mkdtempSync(join(tmpdir(), 'cost-cli-'));
     made.push(dir);
     return dir;
   }
@@ -932,7 +932,7 @@ describe('kubic cost lock-free reads', () => {
     await fauxRun(session.adopt());
     await session.release(BACKGROUND_CONTEXT);
     // Dead at the pre-read probe, live at the post-read probe: the race
-    // the issue names. Our own pid is trivially alive.
+    // this test simulates. Our own pid is trivially alive.
     attached.lockScript.push(undefined, { pid: process.pid });
     try {
       const rows = await loadSessionCostRows(root, session.id);
@@ -958,7 +958,7 @@ describe('kubic cost project scope and grouping', () => {
   const MODEL_REF = `${FAUX_PROVIDER_ID}/faux-1`;
 
   function tmpRoot(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'cost-250-'));
+    const dir = mkdtempSync(join(tmpdir(), 'cost-cli-'));
     made.push(dir);
     return dir;
   }

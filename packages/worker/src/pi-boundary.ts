@@ -5,9 +5,9 @@
 // `packages/tui/src/tui-boundary.ts`, and CODEOWNERS flags every diff touching
 // this file for maintainer review.
 //
-// Pi 1.0 removed the experimental harness from `@earendil-works/pi-agent-core`
+// Pi 1.0 has no experimental harness in `@earendil-works/pi-agent-core`
 // (AgentHarness, AgentLane, sessions, drive, OpenOperation, harness tools,
-// hooks, events). The approved seams are now:
+// hooks, events). The approved seams are:
 // - pi-durable Harness over a Storage (conversations, durable tasks, resume)
 // - Kubic operations as pi-durable ToolRegistration, composed with wrapTool
 // - ToolTask beforeTool/afterTool, GenerationTask and CompactionTask hooks
@@ -40,8 +40,8 @@ export type { Context, JsonValue } from '@earendil-works/chord';
 //   used by: packages/worker/src/lane/* (harness calls), apps/kubic/src/
 //     {prod-runners,headless-run,tui-run}.ts and
 //     packages/host/src/{sessions-cli,journal-cli,ops/cost/cost-cli}.ts
-//   why Pi has no alternative: Pi 1.0 removed the pi-agent-core re-export;
-//     chord owns Context now, and every durable call (Harness.open, submit,
+//   why Pi has no alternative: Pi 1.0 has no pi-agent-core re-export;
+//     chord owns Context, and every durable call (Harness.open, submit,
 //     wait, abort, watchEvents) takes one. BACKGROUND_CONTEXT is the
 //     never-cancelling context; a Kubic copy would have to reimplement
 //     chord's cancellation plumbing and would not type against the harness.
@@ -149,7 +149,7 @@ export { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 //     session id)
 //   why Pi has no alternative: the session id is part of the store's public
 //     contract (`kubic run --session`, `kubic sessions list`, the session
-//     directory name) and 0.87 minted it with this generator; another source
+//     directory name), and this generator mints it; another source
 //     would change every printed id's shape and lose the time-ordered
 //     property operators rely on. node:crypto only mints v4.
 export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
@@ -204,16 +204,15 @@ export type {
 //     per-process registry holding the Kubic extension)
 //   why Pi has no alternative: the durable harness IS the execution engine
 //     — Harness.open over a Storage owns conversations, durable
-//     tasks, resume and the registry of tools/sections/hooks; the 0.87
-//     AgentHarness it replaces is gone in 1.0.
+//     tasks, resume and the registry of tools/sections/hooks.
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#defineTool, wrapTool
 //   used by: packages/worker/src/lane/tools-adapter.ts (the seven Kubic ops
 //     as ToolRegistrations) and lane/wrap.ts (composeTools/wrappers become
 //     wrapTool decorators)
 //   why Pi has no alternative: a ToolRegistration is what the harness
-//     validates, durably runs and replays; the 0.87 AgentHarnessTool is
-//     gone, and defining Kubic's own tool type would not be executed.
+//     validates, durably runs and replays; defining Kubic's own tool type
+//     would not be executed.
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#section (prompt sections) and #hook,
 //     #ToolTask, #GenerationTask, #CompactionTask (hook targets)
@@ -323,8 +322,8 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 //     <sessions-root>/<id>/) and lane/session-fs.test.ts (the storage
 //     conformance suite runs over the exec bridge)
 //   why Pi has no alternative: JSONL durability, commit markers and crash
-//     recovery are pi-durable Storage internals; the 0.87 JsonlSessionRepo is
-//     gone in 1.0 and Kubic owns no storage format of its own. The portable
+//     recovery are pi-durable Storage internals, and Kubic owns no storage
+//     format of its own. The portable
 //     core — not the `/node` entry point — is what takes the exec bridge, so
 //     every session byte crosses the I/O seam (confinement, secret
 //     scrubbing, file modes).
@@ -334,8 +333,8 @@ export { JsonlStorage } from '@earendil-works/pi-durable/storage/jsonl';
 //   used by: packages/worker/src/lane/session-store.ts (one storage per
 //     <sessions-root>/<id>/)
 //   why Pi has no alternative: JSONL durability, commit markers and crash
-//     recovery are pi-durable Storage internals; the 0.87 JsonlSessionRepo
-//     is gone in 1.0, and Kubic owns no storage format of its own.
+//     recovery are pi-durable Storage internals, and Kubic owns no storage
+//     format of its own.
 export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/node';
 
 // JUSTIFICATION:

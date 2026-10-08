@@ -1,8 +1,8 @@
 // npm test scope guard.
 //
 // `docs/contributing.md` promises `npm test` runs every `scripts/*.test.mjs`
-// via `node --test`. The root `package.json` used to list the files by hand,
-// so a new gate test landed on disk but never ran unless someone remembered
+// via `node --test`. The root `package.json` must not list the files by hand,
+// so a new gate test could land on disk but never run unless someone remembered
 // to edit the script too. The script now globs the suite; this guard keeps
 // the property structural: the glob form stays, no single gate file is
 // named, and the glob provably matches every gate file on disk.

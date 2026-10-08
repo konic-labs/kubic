@@ -15,8 +15,8 @@ every diff touching the boundary for maintainer review.
 
 | Module | Exports |
 | --- | --- |
-| `pi-boundary.ts` | Worker Pi seam (moved it to the Pi 1.0 surface). pi-durable harness: values `Harness`, `createRegistry`, `defineExtension`, `defineTool`, `hook`, `section`, `ToolTask`, `GenerationTask`, `AgentDoc`, `LiveDoc`, `UsageDoc`, `defineDoc`, the entry-kind tokens (`UserEntry`, `AssistantEntry`, `ToolResultEntry`, `SystemEntry`, `CompactionEntry`), `MemoryStorage`, `watchEvents`, `ConversationBusy`; types `Conversation`, `Submission`, `ToolRegistration`, `ToolExecutionApi`, `HookRegistration`, `HarnessSettings`, `CompactionPolicy`, `AgentEvent`, `EntryRecord`, `Storage`; storage `openNodeJsonlStorage`. `@earendil-works/chord`: `Context`, `BACKGROUND_CONTEXT`, `JsonValue`. `@earendil-works/pi-durable/env`: `FileSystem`, `Result`, `ok`, `err`, `FileError`, `FileErrorCode`. Model layer (`Model`, `MutableModels`, `Usage`, `ModelThinkingLevel`, thinking clamp, providers, `Type`, the lazy `api/*.lazy` subpaths, `builtinProviders`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review, and the pi-boundary gate fails an export without one |
-| `lane/solo.ts` | `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput` (policy options: `spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; the pre-1.0 `memos` option is gone — tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` ), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; `lane/turn.ts` owns the glue |
+| `pi-boundary.ts` | Worker Pi seam (the Pi 1.0 surface). pi-durable harness: values `Harness`, `createRegistry`, `defineExtension`, `defineTool`, `hook`, `section`, `ToolTask`, `GenerationTask`, `AgentDoc`, `LiveDoc`, `UsageDoc`, `defineDoc`, the entry-kind tokens (`UserEntry`, `AssistantEntry`, `ToolResultEntry`, `SystemEntry`, `CompactionEntry`), `MemoryStorage`, `watchEvents`, `ConversationBusy`; types `Conversation`, `Submission`, `ToolRegistration`, `ToolExecutionApi`, `HookRegistration`, `HarnessSettings`, `CompactionPolicy`, `AgentEvent`, `EntryRecord`, `Storage`; storage `openNodeJsonlStorage`. `@earendil-works/chord`: `Context`, `BACKGROUND_CONTEXT`, `JsonValue`. `@earendil-works/pi-durable/env`: `FileSystem`, `Result`, `ok`, `err`, `FileError`, `FileErrorCode`. Model layer (`Model`, `MutableModels`, `Usage`, `ModelThinkingLevel`, thinking clamp, providers, `Type`, the lazy `api/*.lazy` subpaths, `builtinProviders`) — each re-export carries a JUSTIFICATION block naming seam, user, why-Pi, and review, and the pi-boundary gate fails an export without one |
+| `lane/solo.ts` | `SOLO_PROMPT_SECTION`, `SOLO_ROLE`, `assembleSoloPrompt`, `SoloPromptInput` (policy options: `spanHooks`/`contributions`/`classes`/`interceptors`; enterprise `toolAllowed`/`modelAllowed`), `SoloCompactionOptions`, `SoloBootOptions` (`session` is the handle, handed to the harness through `session.adopt()` so a `release()` cannot close a storage a live harness owns; `settings` excludes `compaction`/`extensions`, which the lane owns; tool memos are pi-durable `api.memo`; `modelPolicy`/`onModelNotice`: a resumed lane keeps its stored model unless the selection is an explicit pin, which switches it; an unregistered stored model fails closed with `ModelSelectError` ), `SoloLane` (`harness`/`conversation`/`registry`/`kills`/`model`; `close()` closes the harness and leaves `session.release()` to the caller), `bootSoloLane` (installs the per-process registry `kubic.policy` → `kubic.spans` → `kubic` — install order is hook order), `splitSoloModelId`, `escalateSoloModel`. One turn is `conversation.submit(...)` → `submission.wait(...)`; `lane/turn.ts` owns the glue |
 | `lane/events.ts` | `KubicLaneEvent`, `LaneEventSink`, `toKubicLaneEvent`, `subscribeLaneEvents` |
 | `lane/failures.ts` | `FailureCode`, `RetryDecisionKind`, `ClassifiedFailure`, `classifyFailure`, `RetryHints`, `RetryDecision`, `RetryBudget`, `chooseRetry` |
 | `lane/tools-adapter.ts` | `KubicToolContext`, `kubicToolsToPiTools` (registry schemas + json_schema/`prefer` constrained sampling), `renderGrepText` (plain-text results with a header; [tools](../cli/tools.md)). A successful `edit` or `write` also puts its display record in the result `details` — never in the model's text |
@@ -269,10 +269,10 @@ refusal names targeted shell tooling as the actionable alternative.
 `edit` (`ops/edit.ts`) normalizes before matching and restores on write,
 following Pi's `edit-diff.ts` shape with three deliberate deviations from
 the installed Pi 1.0.2 (`edit-diff.js`, `tools/edit.js`), so nobody
-"aligns with Pi" later and reintroduces the `no_match` this issue fixes:
+"aligns with Pi" later and reintroduces the `no_match` failure:
 
 - `detectLineEnding` takes the **dominant** ending (Pi takes the first
-  line's), which is what the issue asks for; a tie goes to LF.
+  line's), which is deliberate; a tie goes to LF.
 - `normalizeToLF` folds **`\r\n` only**, not Pi's lone `\r` as well: an
   old-Mac file keeps its bytes rather than being silently rewritten.
 - The model's `oldText`/`newText` are BOM-stripped too (Pi strips only the
@@ -311,10 +311,10 @@ bytes are streamed through the sha256 one `PREIMAGE_CHUNK_BYTES` (4 MiB)
 chunk at a time and the pre-image is recorded hash-only (`text: null`, so
 `write` sets `beforeOmitted: true` alongside the digest). The digest is over
 the raw bytes on both paths, so it is identical either way; what changes is
-memory: overwriting a 1.5 GB file used to allocate roughly 3x its size
-(buffer + decode + re-encode lossless check) and journal the content
-verbatim — one `write` call away from OOMing the worker — and now costs one
-chunk. Undo reports the step non-reversible exactly as it does for a binary
+memory: a 1.5 GB overwrite costs one chunk. A whole-file read would allocate
+roughly 3x the file size (buffer, decode and re-encode lossless check) and journal
+the content verbatim, one `write` call away from OOMing the worker.
+Undo reports the step non-reversible exactly as it does for a binary
 pre-image: it skips the entry (`non-reversible (skipped)`) instead of
 inventing content. `edit` is unaffected — it refuses above `EDIT_MAX_BYTES`
 before calling `readPreImage` — and a seam without `readFileRange` (a test
@@ -367,7 +367,7 @@ that touches `node:fs`.
 | --- | --- |
 | `main.jsonl` + `doc-<n>.jsonl` | the pi-durable JSONL storage: the session's transcript, documents and durable tasks — the session's truth |
 | `session.json` | Kubic's **listing header**: the metadata projection `listSessions` reads |
-| `lock.json` | the session lock ([below](#session-locking-issue-118)) |
+| `lock.json` | the session lock ([below](#session-locking)) |
 | `journal/`, `spans.jsonl`, `posture.json`, `trajectory.json` | the rest of the session's state, unchanged |
 
 The metadata itself is the session-scoped `kubic.session` document
@@ -385,8 +385,7 @@ and in `kubic doctor`, so they read one small header file per session
 instead. The header is written once from the same value as the document and
 re-synced from the document on attach, so the two cannot drift.
 
-**fsync is off** — pi-durable's default, and what 0.87's JSONL session
-storage did, so this is parity rather than a downgrade. A process crash loses
+**fsync is off** — pi-durable's default. A process crash loses
 nothing (the page cache outlives it); a power loss costs at most the newest
 commit, which recovery drops whole instead of leaving a torn session. The
 change journal stays Kubic's fsync'd store: that is where "this
@@ -400,11 +399,10 @@ creation only — an existing file keeps its own). An existing loose directory i
 tightened when the next session lock is taken, and `kubic doctor`'s
 `state:permissions` check names one that is still loose.
 
-**Legacy sessions (Pi 0.87).** A transcript written by the removed
-`JsonlSessionRepo` lives at `<root>/--<cwd>--/<ts>_<id>.jsonl` with a
-format-4 header. There is no converter (the repo is unreleased):
+**Legacy sessions.** A transcript in the JSONL layout lives at `<root>/--<cwd>--/<ts>_<id>.jsonl` with a
+format-4 header. There is no converter:
 `listSessions` reports it as `{ format: 'legacy' }` (and
-`sessionsTouchingWorkspace` skips it — a 0.87 transcript can never be the
+`sessionsTouchingWorkspace` skips it — a legacy transcript can never be the
 live sibling that probe warns about), and `attachSession` refuses it with
 `SessionFormatError`:
 
@@ -414,14 +412,14 @@ session <id> was written by Kubic on Pi 0.87; start a new session
 
 A session id must be a plain path segment (`[A-Za-z0-9_-]`) **and** must not
 be shaped like one of pi's transcript directories (`--…--`): `listSessions`
-classifies that shape as the 0.87 layout, so a session with such an id would
+classifies that shape as the legacy layout, so a session with such an id would
 be attachable but invisible to `sessions list`, the overlap probe and
 `kubic doctor`. Both paths refuse it (`SessionIdError` on create,
 
 `SessionAttachError` on attach) before any path join — containment by
 construction. `createSession` also refuses an id that already has a session
-(`Session already exists: <id>`, 0.87's message) and an id that belongs to a
-0.87 transcript (`SessionFormatError`): a durable session is never written
+(`Session already exists: <id>`) and an id that belongs to a
+legacy transcript (`SessionFormatError`): a durable session is never written
 
 over an existing session's journal, spans and posture. A legacy transcript's
 header id is validated against the same rule before it enters a listing: a
@@ -496,7 +494,7 @@ already held.
   debug channel, and `kubic doctor` reports `session:overlap` (warn when
   two or more sessions are recorded). It matches the session's recorded
   `workspace` when it declared one, its `cwd` otherwise, and it skips
-  `format: 'legacy'` transcripts (a 0.87 session cannot be attached, so it
+  `format: 'legacy'` transcripts (a legacy session cannot be attached, so it
   cannot be a live sibling). The reason it warns: each run's
   end-of-run sweep compares against its own boot baseline, so a sibling
   session's in-flight changes land in this run's journal as unattributed,
@@ -508,8 +506,7 @@ dir) — the journal is not locked separately.
 ### Session transcript (`lane/transcript.ts`)
 
 One adapter turns a session's durable entries into Kubic's
-`TranscriptItem` vocabulary. Pi 0.87 stored a tree of
-`{id, parentId, type: 'message', message}` entries; pi-durable stores
+`TranscriptItem` vocabulary. pi-durable stores
 typed records (`pi.user`, `pi.assistant` with `model: [AssistantMessage]`,
 `pi.tool-result`, `pi.system`, `pi.compaction`, `pi.reset`), so every
 reader — `kubic sessions attach`, the run-envelope usage, the

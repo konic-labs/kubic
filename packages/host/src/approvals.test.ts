@@ -252,7 +252,7 @@ describe('approval service', () => {
       ),
     ).toEqual([]);
     // An allowlist with no domains allows nothing — never the
-    // silent unrestricted network it used to be.
+    // silent unrestricted network.
     expect(
       detectTriggers(
         'bash',
@@ -356,8 +356,8 @@ describe('approval adapter, file store, posture', () => {
       store,
       // The seat presents the dialog and waits; the answer arrives below
       // via submit() exactly as a surface delivers it (the waiter path).
-      // (Previously this seat resolved undefined immediately and the ask
-      // was answered through the timeout-denial's latch — the backdoor closed.)
+      // The seat waits for its verdict: it never resolves undefined immediately,
+      // and the ask is not answered through the timeout-denial's latch.
       awaitAnswer: () => new Promise<ApprovalVerdict | undefined>(() => {}),
     });
     const askApproved = createApprovalAsk(approved, triggerContext(), store);
@@ -417,8 +417,8 @@ describe('approval adapter, file store, posture', () => {
     expect(store.loadPosture()).toEqual({ fullAccess: false });
   });
 
-  // A state file that PARSES but is the wrong shape used to be
-  // cast and then crash the boot (`Object.entries(null)` in the service
+  // A state file that PARSES but is the wrong shape must never be cast and
+  // then crash the boot (`Object.entries(null)` in the service
   // constructor, `.fullAccess` on null in installedPolicyPosture). Load is
   // corrupt-tolerant by contract — the fallback is the documented safe
   // default, and malformed individual entries are dropped, not the file.
@@ -472,7 +472,7 @@ describe('approval adapter, file store, posture', () => {
     expect(installed.posture.fullAccess).toBe(false);
     expect(installed.approvalsSkipped()).toBe(false);
     // The service reads the same store at construction (Object.entries(null)
-    // used to throw there).
+    // must not throw there).
     expect(
       () =>
         new ApprovalService({

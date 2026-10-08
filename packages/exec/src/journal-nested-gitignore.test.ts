@@ -16,7 +16,7 @@
 // With the root-only walk the fixture's `packages/foo/build/out.js`
 // IS in the baseline, the nested `!keep.log` has no effect, the walk probes
 // `.gitignore` once (root only), and the sweep records the nested-ignored
-// write. Each test below states the failure it expects before the fix.
+// write. Each test below states the failure it guards against.
 
 import {
   chmodSync,
@@ -60,7 +60,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-// The issue's fixture: a root ignore file whose rules must keep applying
+// The fixture: a root ignore file whose rules must keep applying
 // inside children (`*.log`, `node_modules/`) plus a nested one whose rules
 // must apply to its own subtree and nowhere else.
 function workspace(): string {

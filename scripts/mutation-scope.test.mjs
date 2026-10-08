@@ -95,7 +95,7 @@ describe('vitestScope', () => {
 
   // A mutant costs about a second on a hosted runner, so the per-push job is
   // bounded by changed LINES (a core file alone can hold ~1k mutants), not
-  // just by file count: a wave-sized push used to run into the 30-minute job
+  // just by file count: a large push must not run into the 30-minute job
   // limit and end 'cancelled' instead of scored.
   it('caps the total changed lines: a file that does not fit is dropped, later ones that do fit stay', () => {
     const scope = vitestScope(

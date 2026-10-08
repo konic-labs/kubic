@@ -42,7 +42,7 @@ import {
 const made: string[] = [];
 
 function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-96-tui-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-approval-'));
   made.push(dir);
   return dir;
 }
@@ -55,7 +55,7 @@ afterEach(() => {
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 
 // A message carrying a tool call must say so: pi-durable dispatches the calls
-// of a `toolUse` turn (0.87 inferred them from the parts alone).
+// of a `toolUse` turn.
 function toolUse(message: FauxMessage): FauxMessage {
   const hasCall = message.content.some((part) => part.type === 'toolCall');
   return hasCall ? fauxToolUse(message.content) : message;

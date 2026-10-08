@@ -2,13 +2,12 @@
 // Rows arrive from the lane's routed usage events; pi sessions
 // persist them. This module is pure: summarize any row list (including
 // fixtures — cost tests never need network or paid tokens) and format the
-// one-line model/thinking/cost readout the run status consumes. Since
+// one-line model/thinking/cost readout the run status consumes.
 // The rows are built from committed pi.assistant entries, so the
 // provider/model are the ones that really answered.
 //
-// The never-written ttftMs/latencyMs fields were deleted with
-// the status bar's TTFT/tool-ms segments — Pi 1.0 reports no timing Kubic
-// can read, and dead fields are the defect.
+// Pi 1.0 reports no timing that Kubic can read, so there are no ttftMs or
+// latencyMs fields: a field nothing writes is the defect.
 
 import type { EntryRecord, Usage } from './pi-boundary.js';
 

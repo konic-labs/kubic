@@ -53,7 +53,7 @@ async function rig(options: {
     : never;
   requires?: string[];
 }): Promise<Rig> {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-467-'));
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-approvals-steer-'));
   made.push(dir);
   mkdirSync(join(dir, 'session'), { recursive: true });
   const asks: ApprovalRequest[] = [];
@@ -241,7 +241,7 @@ describe('allow all edits this turn', () => {
           : { approved: true, by: ALLOW_TURN_EDITS },
       responses: [
         fauxToolUse([writeCall('a.md')]),
-        fauxToolUse([writeCall('/etc/kubic-467')]),
+        fauxToolUse([writeCall('/etc/kubic-steer-probe')]),
         fauxAssistantMessage('done'),
       ],
     });

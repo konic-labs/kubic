@@ -1,8 +1,8 @@
 // `kubic tui --session` seeds the status bar from the session's committed
 // `pi.usage` spend ("token usage, cache hits, and cost").
-// Before the fix the rows started empty and were filled only by live usage
-// events, so a resumed session that had already spent money rendered $0.00
-// until its next turn. Faux provider only: zero network, zero paid tokens.
+// The rows are seeded from the committed usage, so a resumed session that has
+// already spent money shows the spend at once, not $0.00 until its next turn.
+// Faux provider only: zero network, zero paid tokens.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

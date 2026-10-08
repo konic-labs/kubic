@@ -72,8 +72,8 @@ function depsOver(
 
 describe('runSkillsCommand', () => {
   it('lists user/project/settings sources and hidden skills', () => {
-    const home = tmpRoot('kubic-238-home-');
-    const cwd = tmpRoot('kubic-238-cwd-');
+    const home = tmpRoot('kubic-skills-home-');
+    const cwd = tmpRoot('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'lint'),
       'name: lint\ndescription: Lint skill',
@@ -82,7 +82,7 @@ describe('runSkillsCommand', () => {
       join(cwd, '.pi', 'skills', 'gem'),
       'name: gem\ndescription: Project skill',
     );
-    const settingsDir = join(tmpRoot('kubic-238-settings-'), 'team');
+    const settingsDir = join(tmpRoot('kubic-skills-settings-'), 'team');
     writeSkillMd(settingsDir, 'name: team\ndescription: Team skill');
     const { deps, captured } = depsOver(cwd, home, true);
     const code = runSkillsCommand(
@@ -104,8 +104,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('marks disable-model-invocation skills hidden', () => {
-    const home = tmpRoot('kubic-238-home-');
-    const cwd = tmpRoot('kubic-238-cwd-');
+    const home = tmpRoot('kubic-skills-home-');
+    const cwd = tmpRoot('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'quiet'),
       'name: quiet\ndescription: Helper\ndisable-model-invocation: true',
@@ -116,8 +116,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('shows untrusted project skills as excluded with the reason', () => {
-    const home = tmpRoot('kubic-238-home-');
-    const cwd = tmpRoot('kubic-238-cwd-');
+    const home = tmpRoot('kubic-skills-home-');
+    const cwd = tmpRoot('kubic-skills-cwd-');
     writeSkillMd(
       join(cwd, '.pi', 'skills', 'gem'),
       'name: gem\ndescription: Left out',
@@ -131,8 +131,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('--role marks role-withheld skills as withheld', () => {
-    const home = tmpRoot('kubic-238-home-');
-    const cwd = tmpRoot('kubic-238-cwd-');
+    const home = tmpRoot('kubic-skills-home-');
+    const cwd = tmpRoot('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'deploy'),
       'name: deploy\ndescription: Deploy\nroles: [implementer]',
@@ -153,8 +153,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('--json parses and matches the fixture shape', () => {
-    const home = tmpRoot('kubic-238-home-');
-    const cwd = tmpRoot('kubic-238-cwd-');
+    const home = tmpRoot('kubic-skills-home-');
+    const cwd = tmpRoot('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'lint'),
       'name: lint\ndescription: Lint skill',
@@ -184,8 +184,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('a refusing --role fails closed with its reason', () => {
-    const home = tmpRoot('kubic-238-home-');
-    const cwd = tmpRoot('kubic-238-cwd-');
+    const home = tmpRoot('kubic-skills-home-');
+    const cwd = tmpRoot('kubic-skills-cwd-');
     const { deps, captured } = depsOver(cwd, home, false);
     const code = runSkillsCommand(
       { role: 'nope' },
@@ -201,8 +201,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('resolves --role through the real selectRole (builtin preset)', () => {
-    const home = tmpRoot('kubic-238-home-');
-    const cwd = tmpRoot('kubic-238-cwd-');
+    const home = tmpRoot('kubic-skills-home-');
+    const cwd = tmpRoot('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'deploy'),
       'name: deploy\ndescription: Deploy\nroles: [implementer]',
@@ -237,8 +237,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('says so when nothing was discovered', () => {
-    const home = tmpRoot('kubic-238-home-');
-    const cwd = tmpRoot('kubic-238-cwd-');
+    const home = tmpRoot('kubic-skills-home-');
+    const cwd = tmpRoot('kubic-skills-cwd-');
     const { deps, captured } = depsOver(cwd, home, false);
     expect(runSkillsCommand({}, deps).exitCode).toBe(0);
     expect(captured.info.join('\n')).toContain('no skills discovered');

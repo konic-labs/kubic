@@ -779,7 +779,7 @@ describe('undo refuses to record a lossy pre-undo copy', () => {
       timestamp: 100,
     });
     // The file has since become binary (invalid utf-8), and the entry is
-    // restored with --force (the disk no longer matches the recorded state).
+    // restored with --force (the disk does not match the recorded state).
     const binary = Buffer.from([0xff, 0xfe, 0x00, 0x41]);
     writeFileSync(join(root, 'bin.dat'), binary);
 

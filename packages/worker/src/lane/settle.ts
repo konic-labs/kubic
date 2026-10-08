@@ -49,8 +49,7 @@ export interface SettledResult {
   error?: ResultError;
 }
 
-// Kubic's terminal vocabulary for a settled turn (was Pi 0.87's
-// `TerminalStatus`, removed in Pi 1.0). 'completed' is a durable `done`
+// Kubic's terminal vocabulary for a settled turn. 'completed' is a durable `done`
 // answer, 'failed' an `unanswered` settlement with a reason, and 'aborted' the
 // durable `unanswered`/'aborted' settlement or the conversation abort.
 export type LaneTerminalStatus = 'completed' | 'failed' | 'aborted';

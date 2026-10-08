@@ -239,7 +239,7 @@ export function parseInlineImageSequence(
 /** The opening of the iTerm2 inline-image sequence, matched at the tail. */
 const INLINE_IMAGE_PREFIX = '\u001b]1337;File=';
 
-// The most characters a sequence can hold before its payload can no longer
+// The most characters a sequence can hold before its payload would not
 // fit under IMAGE_MAX_BYTES: base64's 4/3 expansion plus framing slack. A
 // partial sequence beyond this is dropped rather than buffered.
 export const INLINE_IMAGE_MAX_CHARS =

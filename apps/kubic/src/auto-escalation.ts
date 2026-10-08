@@ -7,8 +7,8 @@
 
 // "Repeated tool failure" made concrete: one failure is noise, five is a
 // session nobody finishes — three is the streak that says the model, not
-// the tools, is stuck. A named export, not config: the issue scopes the
-// ladder and maxEscalations as config, the trigger threshold is fixed.
+// the tools, is stuck. A named export, not config: the ladder and
+// maxEscalations are config; the trigger threshold is fixed.
 export const AUTO_ESCALATION_TOOL_FAILURES = 3;
 
 // The execution failures that count: the tool ran (or was

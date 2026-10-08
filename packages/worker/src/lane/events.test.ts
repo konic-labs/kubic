@@ -571,8 +571,7 @@ describe('subscribeLaneEvents over watchEvents', () => {
       totals.output += event.row.usage.output;
       totals.totalTokens += event.row.usage.totalTokens;
     }
-    // Non-zero measured usage flowed end to end (the old length>0 pin
-    // passed on an empty stream of zero rows too). No input+output
+    // Non-zero measured usage flowed end to end. No input+output
     // identity: the harness measures totalTokens on its own accounting.
     expect(totals.input).toBeGreaterThan(0);
     expect(totals.output).toBeGreaterThan(0);

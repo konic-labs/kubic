@@ -662,7 +662,7 @@ describe('kubicToolsToPiTools on the pi-durable surface', () => {
 
   it('restarts the live view from what the seam still holds after a trimmed stream', async () => {
     // env.ts keeps the tail once its 10 MiB per-stream cap trips: the
-    // retained text is no longer an extension of what was streamed.
+    // retained text is not an extension of what was streamed.
     const shell = shellEnv({
       updates: [
         { stdout: 'head-tail', stderr: '', exitCode: null },

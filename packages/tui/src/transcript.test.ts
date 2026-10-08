@@ -482,8 +482,8 @@ describe('steady-state markdown caching', () => {
       kind: 'prompt' | 'text';
       markdown: string;
     }> = [];
-    // ~15 rows per turn, the shape the audit measured (a long session's
-    // document is thousands of rows, and every one used to be rebuilt).
+    // ~15 rows per turn, the shape a long session produces (its
+    // document is thousands of rows, and a steady frame rebuilds none of them).
     const body = Array.from(
       { length: 10 },
       (_, i) => `- point ${i} with **bold** and \`code\``,

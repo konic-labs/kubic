@@ -2,7 +2,7 @@
 //
 // Baseline capture and the end-of-run sweep hash every in-scope regular file.
 // Reading whole files made a 256MB artifact cost a 256MB boot spike, measured
-// (file=256MB → heapDelta=256.1MB) before this issue. The walk now streams in
+// (file=256MB → heapDelta=256.1MB). The walk streams in
 // chunks, and the load-bearing property is that the digest is UNCHANGED: the
 // baseline is compared against digests written by older versions, so a changed
 // digest would read as "every file changed" and rewrite journal history.
@@ -137,11 +137,11 @@ describe('bounded baseline hashing', () => {
   });
 
   it('keeps the digest byte-identical when the file starts with a UTF-8 BOM', () => {
-    // Review finding on a4a37cd: `TextDecoder('utf-8')` STRIPS a leading BOM
+    // `TextDecoder('utf-8')` STRIPS a leading BOM
     // while `readFileSync(path, 'utf8')` keeps it as U+FEFF, so a BOM-prefixed
-    // file above the chunk size hashed differently from the pre-change code —
-    // the exact "every file changed, journal history rewritten" failure this
-    // issue forbids. A BOM-prefixed CSV/JSON export is all it takes.
+    // file above the chunk size must hash the same as a whole-file read, or every
+    // file reads as changed and the journal history is rewritten. A BOM-prefixed
+    // CSV/JSON export is all it takes.
     const body = 'a'.repeat(HASH_CHUNK_BYTES * 2);
     const root = tmpFile('bom.csv', `\uFEFF${body}`);
     const bridge = createNodeFileBridge('/');
@@ -211,9 +211,8 @@ describe('bounded baseline hashing', () => {
   });
 
   it('names a very large file instead of hashing it silently', () => {
-    // A sparse file (the reviewer's case: 4 GiB apparent, 0 real blocks) costs
-    // its apparent size in boot I/O. Memory stays bounded, but the cost used to
-    // be invisible — the walk now reports it. The notice keys off the size the
+    // A sparse file (4 GiB apparent, 0 real blocks) costs its apparent size in boot I/O.
+    // Memory stays bounded, and the walk reports that cost. The notice keys off the size the
     // bridge's listing reports, so a double reports an apparent size above the
     // threshold for a tiny real file: the walk still streams it through range
     // reads, without the test paying ~256 MiB of zero-hashing.
@@ -259,8 +258,8 @@ describe('bounded baseline hashing', () => {
   });
 
   it('reports rather than silently reverting when a bridge cannot read ranges', () => {
-    // The issue ruled silence out. A partial bridge must not quietly restore
-    // whole-file reads: the fallback is announced through the notice hook.
+    // A partial bridge must not quietly restore whole-file reads: the fallback is
+    // announced through the notice hook.
     const root = tmpFile('big.txt', 'a'.repeat(HASH_CHUNK_BYTES * 2));
     const inner = createNodeFileBridge('/');
     const noRange: FileBridge = {
@@ -280,9 +279,9 @@ describe('bounded baseline hashing', () => {
   });
 
   it('routes the after-content read through the same bridge as the hash', () => {
-    // Review finding: the hash honoured options.bridge while reconcile's
-    // after-read used the module-level node bridge, so an injected double saw
-    // only half the walk. One bridge for the whole reconcile now.
+    // The hash honours options.bridge, and reconcile's after-read must use the
+    // same bridge, or an injected double sees only half the walk. One bridge
+    // serves the whole reconcile.
     const root = tmpFile('changed.txt', 'before\n');
     const inner = createNodeFileBridge('/');
     const reads: string[] = [];
@@ -307,10 +306,10 @@ describe('bounded baseline hashing', () => {
     expect(reads.some((path) => path.endsWith('changed.txt'))).toBe(true);
   });
 
-  it('appends nothing when sweeping over a journal hashed by the pre code', () => {
-    // The acceptance criterion: prove against a journal written BEFORE the
-    // change. The legacy digest is computed the old way and planted as the
-    // baseline; if the new walk disagreed by one byte, the sweep would report
+  it('appends nothing when sweeping over a journal hashed by the legacy digest', () => {
+    // Compatibility: the walk must agree with a journal written by the legacy
+    // digest. That digest is computed the legacy way and planted as the
+    // baseline; if the walk disagreed by one byte, the sweep would report
     // every large file as changed and rewrite journal history.
     const root = tmpFile('legacy.txt', 'a'.repeat(HASH_CHUNK_BYTES * 2));
     const bridge = createNodeFileBridge('/');

@@ -35,13 +35,7 @@
     "packages/host/src/config/**/*.ts",
     "!packages/host/src/config/**/*.test.ts"
   ],
-  "ignorePatterns": [
-    "pi/**",
-    "dist/**",
-    "reports/**",
-    ".beads/**",
-    ".claude/**"
-  ],
+  "ignorePatterns": ["dist/**", "reports/**", ".beads/**", ".claude/**"],
   "plugins": ["@stryker-mutator/vitest-runner"],
   "dryRunTimeoutMinutes": 5
 }

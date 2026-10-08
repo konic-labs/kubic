@@ -20,7 +20,7 @@ TUI-side analogue of the worker Pi boundary.
 | `screen.ts` | `Screen`, `bootScreen` (Pi's alt-screen with a `baseFilter` run over the base frame before the overlays are composited — the dimmed background) |
 | `status-bar.ts` | `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusBarState`, `StatusBarOptions`, `StatusBar` |
 | `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptOp`, `TranscriptView` (block mode: `blocks`, `select`, `toggleBlock`, `blockLines`, `reveal` on the view), `createTranscriptView`, `replayTranscript` |
-| `tree.ts` | `RunStatus`, `ToolCallState`, `rootGlyph`, `toolGlyph`, `AgentTreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
+| `tree.ts` | `RunStatus`, `ToolCallState`, `statusGlyph`, `toolGlyph`, `TreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
 | `editor-view.ts` | `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding, `insertText` at the cursor) |
 | `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `TOOL_DETAIL_MAX_CHARS`, `TOOL_OUTCOME_MAX_CHARS`, `sanitizeLaneText`, `summarizeToolArguments`, `summarizeToolOutcome`, `entriesToCells` — committed lane entries → coarse transcript cells; every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal. `sanitizeLaneText` strips complete ECMA-48 sequences (CSI, OSC, C1 CSI, 2-byte ESC forms — not just the ESC byte), collapses carriage-return overwrites to the text after the last `\r`, expands tabs by visible column width, and drops the remaining C0/C1 controls |
 | `tui-app.ts` | `TuiAppSeed`, `TuiApp`, `createTuiApp`, `seedFromPresentation` — the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
@@ -67,7 +67,7 @@ VStack root, rows in order:
 | Row | Slot | Sizing |
 | --- | --- | --- |
 | *one-row header* (`chrome.ts`) | `header` | basis 1 |
-| `AgentTreeView` | `tree` | auto, at most `TREE_MAX_ROWS`; hidden below 80 columns and while `treeVisible()` is false |
+| `TreeView` | `tree` | auto, at most `TREE_MAX_ROWS`; hidden below 80 columns and while `treeVisible()` is false |
 | ScrollView transcript | `transcript` | grow 1, follow-end |
 | *diff / journal panel* | `panel` | basis 12 while open |
 | *notice row* | `notice` | auto — no row when empty |
@@ -177,7 +177,7 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   (`createTranscriptView({ ops: true })`, for `replayTranscript` and tests)
   — production applies a snapshot per lane event and keeps no copy of it.
 - **Tree** (`tree.ts`): `RunStatus` is `idle|running|done`;
-  `AgentTreeState` toggles (`toggleTree`), takes ONE lane input —
+  `TreeState` toggles (`toggleTree`), takes ONE lane input —
   `applyTreeSnapshot(state, lane)`, the `TreeLaneSnapshot` the host
   projector folds (the tree never sees a raw lane event) — and renders
   (`renderTreeLines`, `collapsedSummary`, glyphs, `formatTreeTokens`). Tool

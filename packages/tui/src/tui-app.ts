@@ -123,7 +123,7 @@ import {
   type TranscriptView,
   type TurnReceipt,
 } from './transcript.js';
-import { AgentTreeView, applyTreeSnapshot } from './tree.js';
+import { applyTreeSnapshot, TreeView } from './tree.js';
 import type {
   AutocompleteProvider,
   Component,
@@ -531,7 +531,7 @@ export function clampThinking(
 
 export interface TuiApp {
   readonly root: VStack;
-  readonly tree: AgentTreeView;
+  readonly tree: TreeView;
   readonly transcript: TranscriptView;
   readonly status: StatusBar;
   readonly editor: PromptEditor;
@@ -795,7 +795,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
           };
         })();
   // The tree row starts hidden (collapsed); Ctrl-T opens it.
-  const tree = new AgentTreeView(undefined, {
+  const tree = new TreeView(undefined, {
     label: seed.label ?? 'solo',
     collapsed: true,
   });

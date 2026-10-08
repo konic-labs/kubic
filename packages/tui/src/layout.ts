@@ -1,5 +1,5 @@
 // VStack root (panel row; order). Rows top to bottom: the one-row header; the
-// AgentTreeView (sized to its content, hidden below 80 cols and wherever the
+// TreeView (sized to its content, hidden below 80 cols and wherever the
 // caller turns it off); the ScrollView transcript (grow 1, follow-end); the
 // inspectable panel (diff / journal, basis 12, present only while open); the
 // transient notice row (0–2 rows); the editor; the one-row status line; the

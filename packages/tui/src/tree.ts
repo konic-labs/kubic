@@ -1,7 +1,7 @@
-// AgentTreeView: always-visible one-node tree.
+// TreeView: always-visible one-node tree.
 // Tree always visible one node with live tool calls; one-node +
-// collapsing; AgentTreeView; click expand/collapse, wheel
-// chains; glyphs ✓/●/◌ with the root's $cost in/out tokens: the root
+// collapsing; TreeView; click expand/collapse, wheel
+// chains; glyphs ✓/●/◌ with the head row's $cost in/out tokens: the head row
 // and its tool children. Tool rows carry their args + outcome and the ✗ error
 // glyph; calls are grouped per turn (run-start closes a group) and truncation
 // is measured in columns.
@@ -10,7 +10,7 @@
 // (packages/worker/src/lane/events.ts) WITHOUT importing it: the tui
 // package must never import host/worker implementation (dep-lint), so
 // only the fields the tree reads are typed here. `usage` rows sum into the
-// root row; `fault` events are ignored.
+// head row; `fault` events are ignored.
 
 import {
   sanitizeLaneText,
@@ -25,7 +25,7 @@ import { MouseRegion, truncateToWidth } from './tui-boundary.js';
 export type RunStatus = 'idle' | 'running' | 'done';
 export type ToolCallState = 'running' | 'done';
 
-export function rootGlyph(status: RunStatus): string {
+export function statusGlyph(status: RunStatus): string {
   if (status === 'running') return '●';
   if (status === 'done') return '✓';
   return '◌';
@@ -53,7 +53,7 @@ interface TreeToolCall {
 }
 
 // The conversation's own spend, summed from usage events: the
-// root row shows `$cost in/out`. `seen` keeps the segment off a fresh tree
+// head row shows `$cost in/out`. `seen` keeps the segment off a fresh tree
 // that has not heard a usage row yet.
 interface TreeUsage {
   seen: boolean;
@@ -70,9 +70,9 @@ interface TreeTurnSummary {
   durationMs: number;
 }
 
-export interface AgentTreeState {
+export interface TreeState {
   label: string;
-  rootStatus: RunStatus;
+  status: RunStatus;
   // The LIVE turn's calls; a run-start rolls them into `previousTurns`.
   tools: TreeToolCall[];
   // One entry per completed turn, oldest first: earlier turns fold
@@ -83,10 +83,10 @@ export interface AgentTreeState {
   usage: TreeUsage;
 }
 
-export function createTreeState(label = 'solo'): AgentTreeState {
+export function createTreeState(label = 'solo'): TreeState {
   return {
     label,
-    rootStatus: 'idle',
+    status: 'idle',
     tools: [],
     previousTurns: [],
     collapsed: false,
@@ -94,15 +94,15 @@ export function createTreeState(label = 'solo'): AgentTreeState {
   };
 }
 
-export function toggleTree(state: AgentTreeState): void {
+export function toggleTree(state: TreeState): void {
   state.collapsed = !state.collapsed;
 }
 
-function previousCalls(state: AgentTreeState): number {
+function previousCalls(state: TreeState): number {
   return state.previousTurns.reduce((sum, turn) => sum + turn.calls, 0);
 }
 
-function previousDurationMs(state: AgentTreeState): number {
+function previousDurationMs(state: TreeState): number {
   return state.previousTurns.reduce((sum, turn) => sum + turn.durationMs, 0);
 }
 
@@ -131,14 +131,14 @@ export interface TreeLaneSnapshot {
 }
 
 export function applyTreeSnapshot(
-  state: AgentTreeState,
+  state: TreeState,
   lane: TreeLaneSnapshot,
 ): void {
-  // A new turn (the root goes back to running) closes the previous group, the
+  // A new turn (the session goes back to running) closes the previous group, the
   // same boundary the run-start event draws in the event-driven path.
   if (
     lane.status === 'running' &&
-    state.rootStatus !== 'running' &&
+    state.status !== 'running' &&
     state.tools.length > 0
   ) {
     state.previousTurns.push({
@@ -150,7 +150,7 @@ export function applyTreeSnapshot(
     });
     state.tools = [];
   }
-  state.rootStatus = lane.status;
+  state.status = lane.status;
   state.tools = lane.tools.map((tool) => ({
     id: tool.toolCallId,
     name: sanitizeLaneText(tool.toolName),
@@ -172,7 +172,7 @@ export function applyTreeSnapshot(
   }
 }
 
-export function collapsedSummary(state: AgentTreeState): string {
+export function collapsedSummary(state: TreeState): string {
   const calls = previousCalls(state) + state.tools.length;
   const total =
     previousDurationMs(state) +
@@ -203,8 +203,8 @@ function formatTreeTokens(count: number): string {
   return `${(n / 1000).toFixed(1)}k`;
 }
 
-function rootLine(state: AgentTreeState): string {
-  const head = `${rootGlyph(state.rootStatus)} ${state.label}`;
+function headLine(state: TreeState): string {
+  const head = `${statusGlyph(state.status)} ${state.label}`;
   if (!state.usage.seen) return head;
   const cost = formatStatusCost(state.usage.costTotal);
   const tokens = `${formatTreeTokens(state.usage.inputTokens)}/${formatTreeTokens(
@@ -227,12 +227,9 @@ function fitLine(line: string, width: number): string {
 
 // Pure headless render (no VirtualTerminal in Pi 0.85.1): callers render
 // these lines directly like renderLayout in layout.test.ts.
-export function renderTreeLines(
-  state: AgentTreeState,
-  width: number,
-): string[] {
+export function renderTreeLines(state: TreeState, width: number): string[] {
   const w = Math.max(0, Math.floor(width));
-  const lines = [rootLine(state)];
+  const lines = [headLine(state)];
   if (state.collapsed) {
     if (previousCalls(state) + state.tools.length > 0) {
       lines.push(`  ${collapsedSummary(state)}`);
@@ -262,7 +259,7 @@ export function renderTreeLines(
 }
 
 // Tool lines shown before older calls fold into a count (one row is the
-// root, so root + TREE_MAX_TOOL_LINES fits layout's TREE_MAX_ROWS of 6).
+// head, so head + TREE_MAX_TOOL_LINES fits layout's TREE_MAX_ROWS of 6).
 // A previous-turns fold line takes one of these slots, so the live turn
 // shows one call fewer.
 const TREE_MAX_TOOL_LINES = 5;
@@ -302,9 +299,9 @@ const TOGGLE_KEYS: ReadonlySet<string> = new Set(['t', 'T', '\r', '\n', ' ']);
 // headless snapshots assert content, not pixels. Pi's Text pads to the
 // full width, which would bury the tree lines in spaces.
 class TreeBody implements Component {
-  private treeState: AgentTreeState;
+  private treeState: TreeState;
 
-  constructor(state: AgentTreeState) {
+  constructor(state: TreeState) {
     this.treeState = state;
   }
 
@@ -315,13 +312,13 @@ class TreeBody implements Component {
   invalidate(): void {}
 }
 
-export class AgentTreeView implements Component {
+export class TreeView implements Component {
   private body: TreeBody;
   private region: MouseRegion;
-  private treeState: AgentTreeState;
+  private treeState: TreeState;
   private focusEditor: () => void;
 
-  constructor(state?: AgentTreeState, options?: TreeViewOptions) {
+  constructor(state?: TreeState, options?: TreeViewOptions) {
     this.treeState = state ?? createTreeState(options?.label);
     if (options?.collapsed !== undefined) {
       this.treeState.collapsed = options.collapsed;
@@ -331,7 +328,7 @@ export class AgentTreeView implements Component {
     this.region = new MouseRegion(this.body, (event) => this.onMouse(event));
   }
 
-  getState(): AgentTreeState {
+  getState(): TreeState {
     return this.treeState;
   }
 

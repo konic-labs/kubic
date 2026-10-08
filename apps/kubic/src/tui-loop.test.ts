@@ -260,7 +260,7 @@ describe('kubic tui prompt loop', () => {
     // the projector and the app applies the state, so the tree's
     // snapshot path has a production caller. Asserted on the TREE's own
     // rendering — the glyph + name + args + duration line ('✓ bash echo hi
-    // 1ms') that only AgentTreeView produces (the transcript writes 'tool
+    // 1ms') that only TreeView produces (the transcript writes 'tool
     // bash', with no glyph and no duration), so dropping the projector fold or
     // the `applyPresentation` call in the sink turns this red.
     expect(doc).toMatch(/✓ bash echo hi \d+ms/);

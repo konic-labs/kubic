@@ -150,7 +150,7 @@ describe('terminal control sequences from lane content', () => {
 
   it('does not let a TREE toolName emit raw escapes (third-pass finding)', () => {
     // The second pass sanitized the transcript's toolCall cell, but the TREE
-    // path takes the lane event's `toolName` verbatim into AgentTreeState
+    // path takes the lane event's `toolName` verbatim into TreeState
     // (tree.ts). Both come from the same model-supplied name, so the tree is
     // the same class of untrusted input and was still a live leak.
     const app = createTuiApp({

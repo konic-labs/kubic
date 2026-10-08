@@ -316,6 +316,7 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
   function agedSession(root: string, id: string, ageMs: number): void {
     const dir = join(root, id);
     mkdirSync(join(dir, 'journal'), { recursive: true });
+    writeFileSync(join(dir, 'main.jsonl'), '');
     writeFileSync(join(dir, 'journal', 'index.jsonl'), 'index!!');
     writeFileSync(join(dir, 'spans.jsonl'), 'spans');
     const secs = (Date.now() - ageMs) / 1000;

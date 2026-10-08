@@ -2019,7 +2019,7 @@ async function runHeadlessPromptImpl(
       // The installed policy refused an approval. The block reaches
       // the model as a tool error, so the lane settles `completed` — but a
       // dangerous operation the user never approved did NOT happen, and
-      // reporting exit 0 would be the dishonest half of this issue. Read the
+      // reporting exit 0 would be the dishonest half of the problem. Read the
       // recorded refusals directly: a run whose policy denied an approval maps
       // to the approval terminus (exit 4) with the refusal named. Checked
       // BEFORE the outcome is mapped: a denial OUTRANKS a settled turn.

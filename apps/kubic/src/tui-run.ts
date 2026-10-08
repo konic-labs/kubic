@@ -989,8 +989,7 @@ export interface TuiRunOptions {
   // hermetically with faux models. Absent means the assembled prod catalog.
   models?: MutableModels;
   // The answer seat: the interactive path's approval surface.
-  // Attached by runTuiCommand; absent means the no-surface refusal, which is
-  // what `kubic tui` had before the overlay landed.
+  // Attached by runTuiCommand; absent means the no-surface refusal.
   answer?: (
     request: ApprovalRequest,
     signal?: AbortSignal,
@@ -1427,7 +1426,7 @@ export async function bootTuiLane(
     // The run's escalation ladder: the role's own
     // rungs win over the merged `[model]` ones (`resolveLaneLadder`),
     // and the record lives here — one ladder object per boot, so every
-    // explicit climb and the single auto climb (slice 4) draw from the
+    // explicit climb and the single auto climb draw from the
     // same budget. Undefined when nothing configured a ladder: the
     // `/model` switch keeps its existing path.
     const laneLadderSteps = resolveLaneLadder(
@@ -1444,7 +1443,7 @@ export async function bootTuiLane(
           };
     // The climbs this run recorded: the sink every
     // escalateSoloModel call reports to — the trajectory event and the
-    // transcript line (slice 5) read them from here.
+    // transcript line read them from here.
     const escalationEvents: ModelEscalationEvent[] = [];
     // The single automatic trigger's streak:
     // consecutive tool-failure turns climb one rung, once per run.
@@ -1483,7 +1482,7 @@ export async function bootTuiLane(
     // `kubic run`, so it installs the same policy — one derivation
     // (host/approvals.installSoloPolicy), which is also what `doctor`
     // reports. Without this the interactive path would be the unprotected
-    // one, which is the defect this issue exists to close.
+    // one, which is the gap this install closes.
     // The explicit flag records full access for THIS
     // session (posture.json + one audit row) before the policy is installed.
     const fullAccessGrant =

@@ -1,8 +1,8 @@
 // Config `[approvals]` reaches the solo lanes.
-// Before this issue `kubic run` and `kubic tui` installed the solo policy with
-// the hardcoded defaults (route ask-user, maxPendingMs 60 000, no
-// autoApprove), while `kubic config` and doctor's `policy:approvals` printed
-// the configured values — two contradictory green lines.
+// `kubic run` and `kubic tui` install the solo policy from the configured
+// values. Installing the hardcoded defaults (route ask-user, maxPendingMs 60 000,
+// no autoApprove) while `kubic config` and doctor's `policy:approvals` print the
+// configured values would show two contradictory green lines.
 //
 // Faux provider only: zero network, zero paid tokens. Every temp dir and env
 // stub is undone in afterEach.

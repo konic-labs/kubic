@@ -181,7 +181,7 @@ describe('configured ladder on the TUI lane', () => {
       throw new Error('the prod boot returned no switchable loop');
     }
     // The reason rides the same ladder gate as `/model` — the climb
-    // resolves (the event naming it is slice 5's assertion).
+    // resolves (the event naming it is checked by the trajectory and transcript tests below).
     await expect(
       loop.switchModel(
         { provider: 'local', modelId: 'b' },
@@ -220,7 +220,7 @@ describe('configured ladder on the TUI lane', () => {
   });
 
   it('climbs once after N consecutive tool failures and never steps back', async () => {
-    // Slice 4: the automatic trigger. Three turns settled
+    // The automatic trigger. Three turns settled
     // with tool-classified failures climb the lane one rung with
     // {from,to,reason} recorded; further failures never climb again.
     // Drives the real recordTurn (every TUI turn settles through it)
@@ -255,7 +255,7 @@ describe('configured ladder on the TUI lane', () => {
     await loop.recordTurn(failedTurn('tool_failed'));
     await loop.recordTurn(failedTurn('tool_failed'));
     expect(await loop.model?.(loop.context)).toBe('local/b');
-    // Slice 5: the exported trajectory carries exactly the one climb.
+    // The exported trajectory carries exactly the one climb.
     const exported = parseTrajectoryExportJSON(
       readFileSync(join(sessions, boot.sessionId, 'trajectory.json'), 'utf8'),
     );
@@ -303,7 +303,7 @@ describe('configured ladder on the TUI lane', () => {
   });
 
   it('reports an explicit climb as a transcript row on the next drain', async () => {
-    // Slice 5: the /model climb records the event and the
+    // The /model climb records the event and the
     // runner drain reports it as a transcript row — each climb once.
     // Full loop level: /model through runTuiCommand on a fake terminal.
     const workspace = tmpRoot();
@@ -332,7 +332,7 @@ describe('configured ladder on the TUI lane', () => {
   });
 
   it('the runner drain reports recorded climbs exactly once', async () => {
-    // Slice 5 mechanics: a stub loop with one recorded climb drains a
+    // Drain mechanics: a stub loop with one recorded climb drains a
     // single row onto the transcript; the second settled turn drains
     // nothing (the lane snapshot lifecycle owns notice cells after that
     // — the drain itself must not re-yield).

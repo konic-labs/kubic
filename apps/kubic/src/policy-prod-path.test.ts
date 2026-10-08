@@ -286,7 +286,7 @@ describe('prod run path: allowlist', () => {
 
   it('the default posture is deny-by-default on network and credentials', () => {
     // The shipped default's restrictive tail is the point of
-    // the issue. Pinned as an assertion, not prose: if someone loosens the
+    // the default posture. Pinned as an assertion, not prose: if someone loosens the
     // default to make a test pass, this fails.
     const posture = installedPolicyPosture({ workspace: '/tmp/x' });
     expect(posture.source).toBe('default');

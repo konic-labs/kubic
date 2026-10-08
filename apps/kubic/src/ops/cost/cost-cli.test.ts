@@ -932,7 +932,7 @@ describe('kubic cost lock-free reads', () => {
     await fauxRun(session.adopt());
     await session.release(BACKGROUND_CONTEXT);
     // Dead at the pre-read probe, live at the post-read probe: the race
-    // the issue names. Our own pid is trivially alive.
+    // this test simulates. Our own pid is trivially alive.
     attached.lockScript.push(undefined, { pid: process.pid });
     try {
       const rows = await loadSessionCostRows(root, session.id);

@@ -90,7 +90,7 @@ export interface CliConfigResult {
   // distrusted project layer, a secret ref in config).
   error: string | undefined;
   // The repo's committed-vs-ignored split, reported by
-  // `kubic config` and by doctor: the five runtime prefixes must be ignored
+  // `kubic config` and by doctor: the four runtime prefixes must be ignored
   // and config.toml + roles/*.md must stay committable.
   ignoreSplit: { missing: string[]; checked: string[]; applicable: boolean };
   // The project root every consumer resolves from —
@@ -1015,8 +1015,8 @@ export function installedPolicyClasses(result: CliConfigResult): {
 }
 
 // `kubic doctor` config probe: the same load the rest of the process uses,
-// projected onto doctor's dependency-probe shape (doctor.ts is not this
-// issue's file and has no generic section hook, so the check rides the
+// projected onto doctor's dependency-probe shape (doctor.ts has no generic
+// section hook, so the check rides the
 // `checkDeps` channel and renders in both the human and --json output).
 export function doctorConfigProbe(result: CliConfigResult): DepProbe {
   const { missing, applicable } = result.ignoreSplit;

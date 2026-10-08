@@ -397,7 +397,7 @@ export async function dispatchCommand(
   // on that same load.
   const cliModel = cliModelFromArgs(command, args);
   // The `--thinking` override is the `cli` thinking
-  // layer of the same load — never a post-load patch (AGENTS.md Pitfalls).
+  // layer of the same load — never a post-load patch.
   const cliThinking = cliThinkingFromArgs(command, args);
   const cliConfig = deps.loadConfig(
     cliModel === undefined && cliThinking === undefined && trust === undefined

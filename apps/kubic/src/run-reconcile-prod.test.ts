@@ -55,7 +55,7 @@ afterEach(() => {
 
 // bash-mutates-then-settles: the tool call writes a file Kubic never
 // intercepts (bash is replay:"never" and journals nothing), then the lane
-// settles. This is the issue's exact regression shape.
+// settles. This is the exact regression shape.
 function bashMutationModels(): MutableModels {
   const faux = fauxProvider();
   const models = createModels();

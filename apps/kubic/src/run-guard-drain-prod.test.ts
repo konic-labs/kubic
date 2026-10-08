@@ -128,7 +128,7 @@ describe('guard drain, prod path', () => {
     expect(Number.isFinite(pid)).toBe(true);
     observedPid = pid;
     // The drain ran before runHeadlessPrompt returned: the process group
-    // got SIGKILL. A live `sh` here is the bug this issue exists for.
+    // got SIGKILL. A live `sh` here would mean the drain left the process group running.
     const dead = await pollUntil(() => shState(pid) !== 'alive', 2_000);
     expect(dead).toBe(true);
   });

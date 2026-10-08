@@ -65,8 +65,10 @@ The default gate does **not** report an export that only tests import, and it
 does not report a source file that only tests reach. The production gate does
 both: `npm run lint:dead:prod` runs knip with `knip.production.jsonc` and
 `--production`, which skips the test files, so no test import counts as use.
-It runs in CI next to `lint:dead`. The boundary seams in `knip.production.jsonc`
-are exempt, with the reason beside them.
+It runs in CI next to `lint:dead`. Apart from `ignoreExportsUsedInFile` (below),
+the only exports it exempts are the nine boundary seams, each tagged `@internal`
+where it is re-exported (`pi-boundary.ts` and `tui-boundary.ts`). knip ignores
+`@internal` only in production mode, so the default gate still checks them.
 
 One gap remains, stated here so a green run is not read as more than it proves.
 `ignoreExportsUsedInFile` is on in `knip.production.jsonc`: an export that

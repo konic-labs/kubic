@@ -11,14 +11,10 @@
   // mkfifo is a POSIX utility, not a dependency (see knip.jsonc).
   "ignoreBinaries": ["mkfifo"],
 
-  // Boundary seams, reported per seam. The Pi boundary is the only module that
-  // imports @earendil-works/*; its re-exports are the seam the worker uses, and
-  // the test harness uses some of them. The TUI boundary's capability-cache
-  // seams are used by tests only.
-  "ignoreIssues": {
-    "packages/worker/src/pi-boundary.ts": ["exports", "types"],
-    "packages/tui/src/tui-boundary.ts": ["exports", "types"]
-  },
+  // The nine boundary seams are tagged @internal where they are re-exported
+  // (pi-boundary.ts, tui-boundary.ts). knip ignores @internal exports in
+  // production mode only, so the default gate still checks them. No other
+  // export in those files is exempt.
 
   "workspaces": {
     ".": {

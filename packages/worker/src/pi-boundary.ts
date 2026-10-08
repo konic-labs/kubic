@@ -113,7 +113,7 @@ export {
   getSupportedThinkingLevels,
   InMemoryCredentialStore,
   Type,
-  validateToolArguments,
+  /** @internal */ validateToolArguments,
 } from '@earendil-works/pi-ai';
 
 // JUSTIFICATION:
@@ -278,11 +278,11 @@ export {
   defineDoc,
   defineExtension,
   defineTool,
-  GenerationTask,
+  /** @internal */ GenerationTask,
   Harness,
   hook,
-  LiveDoc,
-  MemoryStorage,
+  /** @internal */ LiveDoc,
+  /** @internal */ MemoryStorage,
   SystemEntry,
   section,
   ToolResultEntry,
@@ -335,7 +335,9 @@ export { JsonlStorage } from '@earendil-works/pi-durable/storage/jsonl';
 //   why Pi has no alternative: JSONL durability, commit markers and crash
 //     recovery are pi-durable Storage internals, and Kubic owns no storage
 //     format of its own.
-export { openNodeJsonlStorage } from '@earendil-works/pi-durable/storage/jsonl/node';
+export {
+  /** @internal */ openNodeJsonlStorage,
+} from '@earendil-works/pi-durable/storage/jsonl/node';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#TaskId, #CompactionResult (types)
@@ -381,7 +383,9 @@ export { createSession } from '@earendil-works/pi-durable';
 //   why Pi has no alternative: the suite is the storage implementation's own
 //     contract; a Kubic copy would test a different contract than the one
 //     production runs against.
-export { registerStorageConformance } from '@earendil-works/pi-durable/testing';
+export {
+  /** @internal */ registerStorageConformance,
+} from '@earendil-works/pi-durable/testing';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/chord/context#withAbortSignal, #withCancel
@@ -394,7 +398,10 @@ export { registerStorageConformance } from '@earendil-works/pi-durable/testing';
 //     object would not carry the ContextKeys the harness reads and would
 //     bypass chord's listener registration. The parent stays unchanged, so a
 //     per-turn bound never outlives its turn.
-export { withAbortSignal, withCancel } from '@earendil-works/chord/context';
+export {
+  /** @internal */ withAbortSignal,
+  withCancel,
+} from '@earendil-works/chord/context';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#ResetEntry
 //   used by: packages/worker/src/lane/transcript.ts (the shared pi-durable →

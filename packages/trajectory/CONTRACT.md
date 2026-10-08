@@ -68,6 +68,4 @@ list, never a missing key.
 
 ## Changelog
 
-The machine-readable mirror is `TRAJECTORY_CHANGELOG` in `src/schema.ts`.
-
-- 1.0 (2026-10-08): initial export contract.
+- 1.0 (2026-10-08): initial export contract. This is the only contract version.

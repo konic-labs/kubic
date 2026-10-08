@@ -873,7 +873,7 @@ describe('model picker and thinking cycle', () => {
       }),
     ).toBe(true);
     expect(ui.isModelPickerOpen()).toBe(true);
-    // The overlay can no longer be composited: the next key closes the
+    // The overlay cannot be composited: the next key closes the
     // picker (a cancel) and goes to the editor instead of vanishing.
     columns = 50;
     ui.handleInput('x');

@@ -253,7 +253,7 @@ describe('journal durable writes', () => {
   });
 });
 
-// Review finding 2: a refused flush is not a failed write.
+// A refused flush is not a failed write.
 describe('journal durable writes: refused flushes', () => {
   it('records the append when the filesystem refuses a directory flush', () => {
     const dir = tmpRoot();
@@ -293,7 +293,7 @@ describe('journal durable writes: refused flushes', () => {
   });
 });
 
-// Review finding 3: healing crash residue must not cost a full
+// Healing crash residue must not cost a full
 // read + hash of every reused blob.
 describe('journal durable writes: blob reuse', () => {
   it('trusts a blob it wrote itself, with no re-read on reuse', () => {

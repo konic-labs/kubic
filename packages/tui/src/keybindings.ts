@@ -46,7 +46,7 @@ export const KEY_ACTIONS = {
     description:
       'close the open dropdown or overlay; else interrupt the running turn',
   },
-  // Unbound by default (Esc used to quit); still bindable.
+  // Unbound by default; still bindable.
   'app.exit': {
     scope: 'global',
     keys: [],

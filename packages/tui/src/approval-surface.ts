@@ -42,7 +42,7 @@ import {
 import { sanitizeLaneText } from './lane-cells.js';
 import { matchesKey } from './tui-boundary.js';
 
-// The reason recorded when the session can no longer collect a verdict. Named
+// The reason recorded when the session cannot collect a verdict. Named
 // once: the deny that a quit produces must read the same everywhere.
 export const APPROVAL_CANCELLED_REASON = 'the approval was never answered';
 

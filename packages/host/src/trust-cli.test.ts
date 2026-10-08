@@ -179,8 +179,8 @@ describe('kubic trust command', () => {
   });
 
   // The store canonicalises symlinks, so the operand check follows them too: a
-  // symlink to a project directory is a project directory. It used to be
-  // refused as "not a directory" (lstat).
+  // symlink to a project directory is a project directory: it is not refused as
+  // "not a directory" (lstat).
   describe('a symlink operand', () => {
     it('to a directory is granted, under the canonical (resolved) path', () => {
       const home = tmpDir('kubic-trust-home-');

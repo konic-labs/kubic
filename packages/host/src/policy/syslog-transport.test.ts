@@ -35,7 +35,7 @@ describe('syslog transports', () => {
     expect(close).toHaveBeenCalled();
   });
 
-  // Review finding: a target that vanishes after the doctor
+  // A target that vanishes after the doctor
   // probe raises an async socket error — best-effort delivery must swallow
   // it, never throw it out of the synchronous sink.
   it.each([

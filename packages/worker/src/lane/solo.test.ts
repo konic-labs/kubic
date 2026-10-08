@@ -302,7 +302,7 @@ describe('solo boot on the durable harness', () => {
     expect(`${agent.model?.provider}/${agent.model?.modelId}`).toBe('faux/big');
   });
 
-  it('assembles exactly the pre-1.0 prompt bytes in one untagged section', async () => {
+  it('assembles exactly the prompt bytes in one untagged section', async () => {
     const solo = await boot();
     await driveOneTurn(solo);
     const expected = assembleSoloPrompt({

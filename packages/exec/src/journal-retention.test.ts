@@ -461,13 +461,11 @@ describe('prune stats bound', () => {
   });
 });
 
-// Review finding 1: `append` with the reconcile shape (before: null plus a
-// hash-only beforeHash) never accounted that hash's bytes, so an existing
-// but unaccounted blob (crash-residue orphan from a putBlob-then-failed
-// appendFile, or a sweep's best-effort remove leak) made trackedBytes
-// under-count — and the fast path then skipped pruning passes while the
-// journal grew past its bound. The pre-change code stayed bounded after
-// every append; this must too.
+// `append` with the reconcile shape (before: null plus a hash-only beforeHash)
+// must account that hash's bytes. An existing but unaccounted blob (crash-residue
+// orphan from a putBlob-then-failed appendFile, or a sweep's best-effort remove
+// leak) must not make trackedBytes under-count: the fast path would skip pruning
+// passes while the journal grew past its bound. Every append keeps it bounded.
 describe('hash-only before refs are tracked', () => {
   it('reconcile-shaped appends over unaccounted orphan blobs stay within maxBytes after every append', () => {
     const dir = tmpRoot();
@@ -505,7 +503,7 @@ describe('hash-only before refs are tracked', () => {
   });
 });
 
-// Review finding 2: the blob size cache is write-once per hash and never
+// The blob size cache is write-once per hash and never
 // revalidated, so external mutation of a blob file (replacement with
 // different-length content, or deletion) leaves stale/phantom sizes that
 // corrupt the drop set — a phantom size drops entries the old live-stat

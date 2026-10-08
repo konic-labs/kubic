@@ -613,7 +613,7 @@ describe('doctor probes run once and --skip clears aggregates', () => {
       'skip',
     );
     // The aggregate derives from the post-skip items: the skipped refusal
-    // no longer fails it.
+    // does not fail it.
     expect(
       checks.find((check) => check.id === 'limit:deps-present')?.status,
     ).not.toBe('fail');
@@ -709,7 +709,7 @@ describe('full-access sessions', () => {
     ).toEqual([]);
   });
 
-  it('adds no checks without the probe (legacy matrices unchanged)', async () => {
+  it('adds no checks without the probe (matrix unchanged)', async () => {
     const { checks } = await matrix({});
     expect(
       checks.filter((entry) => entry.id.startsWith('session:full-access:')),

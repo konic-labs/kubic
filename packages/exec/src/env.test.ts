@@ -519,7 +519,7 @@ describe('a settled process handle', () => {
       const { env } = makeNodeEnv();
       // The leader exits at once but leaves a background member holding the
       // inherited pipes, so the handle stays unsettled through its drain
-      // window (EXIT_DRAIN_MS) — the exact window in which a kill() used to
+      // window (EXIT_DRAIN_MS), the exact window in which a kill() must not
       // schedule a group SIGKILL for a leader that no longer owns a group.
       const leader = [
         "require('node:child_process')",
@@ -829,7 +829,7 @@ describe('child output caps count bytes', () => {
     expect(whole.tail).toBe('😀');
     expect(whole.kept).toBe(4);
     // A cap of three cannot hold an emoji: the tail is empty, never a
-    // dangling low surrogate (which slice(-3) used to produce).
+    // dangling low surrogate, as slice(-3) would produce.
     const three = env.shell.spawn(
       process.execPath,
       ['-e', `process.stdout.write('😀'.repeat(100))`],

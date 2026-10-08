@@ -158,10 +158,10 @@ describe('an absent roles directory is not an error', () => {
     );
   });
 
-  // Review finding: the repo text used to be re-read from
+  // The repo text must not be re-read from
   // `.kubic/roles/<parsed role name>.md`, so a document whose file stem
   // differs from its `role:` line (a rename, a copy whose frontmatter was not
-  // updated) threw a raw ENOENT for EVERY consumer — doctor red, every
+  // updated) would throw a raw ENOENT for EVERY consumer — doctor red, every
   // `--role` boot dead. The text must come from the path that
   // was listed, and the role registers under its DECLARED name.
   it('reads a document whose file stem differs from its declared role', () => {

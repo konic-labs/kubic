@@ -463,8 +463,8 @@ function loadSkillDir(
 // rooting turned './my-skill' into '/my-skill/SKILL.md') and never at the
 // bridge's own root (which is the sessions root on `kubic run`). A bare
 // name resolves against the discovery roots first (first hit wins — the
-// shipped precedence), then against the cwd as a last resort; the old
-// absolute '/<name>' probe is gone (a stray filesystem-root hit must never
+// shipped precedence), then against the cwd as a last resort. No absolute
+// '/<name>' probe is made (a stray filesystem-root hit must never
 // win over the roots).
 function loadExplicitSkill(
   bridge: FileBridge,

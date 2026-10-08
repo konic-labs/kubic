@@ -24,14 +24,13 @@
 //     once, from the same value as the document, and re-synced from the
 //     document on attach.
 //
-// fsync: OFF (pi-durable's default). 0.87's JSONL session storage never
-// fsynced, so this is parity, not a downgrade: a process crash loses nothing
+// fsync: OFF (pi-durable's default). A process crash loses nothing
 // (the page cache outlives it) and a power loss costs at most the newest
 // commit, which recovery drops whole. The change journal is Kubic's fsync'd
 // store — that is where "this change can be undone" is guaranteed.
 //
-// Legacy sessions (Pi 0.87): a transcript written by the removed
-// JsonlSessionRepo lives at <root>/--<cwd>--/<ts>_<id>.jsonl. It is listed as
+// Legacy sessions: a transcript in the JSONL layout lives at
+// <root>/--<cwd>--/<ts>_<id>.jsonl. It is listed as
 // `format: 'legacy'` and refused on attach with SessionFormatError — no
 // converter, the repo is unreleased.
 
@@ -72,11 +71,11 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 // pi's transcript directories: `--<cwd with /, \ and : mapped to -->--`. Their
 // name passes the id class, but they hold the transcripts of EVERY session
-// recorded against that cwd (0.87 layout), never one session's state dir.
+// recorded against that cwd (legacy layout), never one session's state dir.
 const LEGACY_DIR_PATTERN = /^--.*--$/;
 
 // A usable session id is a plain path segment that is NOT shaped like a pi
-// transcript directory: `listSessions` classifies `--…--` as the 0.87 layout,
+// transcript directory: `listSessions` classifies `--…--` as the legacy layout,
 // so a session with such an id would be invisible to `sessions list`, the
 // overlap probe and `kubic doctor` — attachable, but unlistable. Refusing the
 // shape on both paths is the containment rule the id class already carries.
@@ -85,7 +84,7 @@ function isSessionId(id: string): boolean {
 }
 
 // A JSONL header is one short line (`{kind:"kubic.session",…}` for Kubic's,
-// `{v:4,kind:"header",…}` for a 0.87 transcript); this bounds the read so
+// `{v:4,kind:"header",…}` for a legacy transcript); this bounds the read so
 // listing never pulls a whole transcript into memory.
 const HEADER_WINDOW_BYTES = 64 * 1024;
 
@@ -102,7 +101,7 @@ export function openSessionStore(
 }
 
 // Session metadata: what the store records about a session
-// at creation — the fields 0.87's `session.metadata` carried. `cwd` is the
+// at creation. `cwd` is the
 // directory the session was created against; `workspace` is the workspace it
 // belongs to when the caller declares one (the journal/overlap association),
 // absent when it does not. Extra keys are allowed so a later Kubic version can
@@ -142,7 +141,7 @@ export const KubicSessionDoc = defineDoc<{
 });
 
 // One attached session: the open storage, the session's metadata, and the
-// release that gives both back. Replaces Pi 0.87's `Session`.
+// release that gives both back.
 export interface SessionHandle {
   readonly id: string;
   /** `<sessions-root>/<id>`: the storage directory and the session's state dir. */
@@ -174,7 +173,8 @@ export interface SessionHandle {
   release(context: Context): Promise<void>;
 }
 
-// One listed session. `format` is 'legacy' for a Pi 0.87 transcript: it is
+// One listed session. `format` is 'legacy' for a transcript in the legacy
+// layout: it is
 // listed so the operator can see it, and it can never be attached. `meta` is
 // absent when nothing readable recorded it (a hand-made or half-written
 // session directory) — listing never guesses.
@@ -498,7 +498,7 @@ function parseJsonObject(
   }
 }
 
-// An ISO-8601 timestamp from a stored value: Kubic writes ISO strings, a 0.87
+// An ISO-8601 timestamp from a stored value: Kubic writes ISO strings, a legacy
 // header carries milliseconds. Anything else is "unrecorded" — the listing
 // omits the metadata rather than inventing a time.
 function isoFrom(value: unknown): string | undefined {
@@ -842,8 +842,8 @@ export async function createSession(
   if (!isSessionId(sessionId)) throw new SessionIdError(sessionId);
   const sessionDir = sessionDirOf(store, sessionId);
   // Refusals before the lock: a session that already exists is never
-  // re-created over (0.87's `Session already exists: <id>`, same message),
-  // and an id that belongs to a Pi 0.87 session is refused by name — reusing
+  // re-created over, and an id that belongs to a legacy session is refused by
+  // name — reusing
   // it would mix a new durable session into the old session's journal, spans
   // and approval posture.
   if (store.bridge.exists(storagePathOf(sessionDir)))
@@ -917,8 +917,8 @@ export class SessionAttachError extends Error {
   }
 }
 
-// A session directory written by Kubic on Pi 0.87. The repo is
-// unreleased, so there is no converter: the refusal is the whole behaviour.
+// A session directory in the legacy layout. There is no converter: the
+// refusal is the whole behaviour.
 export class SessionFormatError extends Error {
   constructor(sessionId: string) {
     super(
@@ -928,11 +928,11 @@ export class SessionFormatError extends Error {
   }
 }
 
-// The 0.87 transcript of `id`, if the sessions root holds one: the
-// JsonlSessionRepo layout, `<root>/--<cwd>--/<ts>_<id>.jsonl`, whose first
+// The legacy transcript of `id`, if the sessions root holds one: the
+// JSONL layout, `<root>/--<cwd>--/<ts>_<id>.jsonl`, whose first
 // line is the format-4 header. Matching is by that header, so a transcript
 // whose file name was changed is still recognised. A torn or foreign `.jsonl`
-// is not a 0.87 session and never claims the id.
+// is not a legacy session and never claims the id.
 function findLegacyTranscript(
   store: SessionStore,
   id: string,
@@ -958,7 +958,7 @@ export async function attachSession(
   // Containment before any path join: the id becomes a directory name.
   if (!isSessionId(sessionId)) throw new SessionAttachError(sessionId);
   const sessionDir = sessionDirOf(store, sessionId);
-  // Nothing to open: either a 0.87 transcript holds this id (refused by name)
+  // Nothing to open: either a legacy transcript holds this id (refused by name)
   // or the store has never seen it. Checked before the lock so an unknown id
   // never creates a session directory.
   if (!store.bridge.exists(storagePathOf(sessionDir))) {
@@ -1037,7 +1037,7 @@ export function listSessions(
       format: 'durable',
     });
   }
-  // 0.87's order: newest first, then by id, then by workspace. ISO-8601 UTC
+  // Order: newest first, then by id, then by workspace. ISO-8601 UTC
   // timestamps sort lexicographically, so the stored string is the key.
   return Promise.resolve(
     [...entries.values()].sort(
@@ -1061,7 +1061,7 @@ export function listSessions(
 // declared one, its cwd otherwise. Local-store view only: no cross-host
 // truth is claimed.
 //
-// Legacy 0.87 transcripts are excluded: they cannot be attached, so they can
+// Legacy transcripts are excluded: they cannot be attached, so they can
 // never be the live sibling this probe warns about.
 export function sessionsTouchingWorkspace(
   store: SessionStore,

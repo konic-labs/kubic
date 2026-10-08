@@ -1,7 +1,6 @@
 // Kubic's pi-durable transcript adapter.
 //
-// Pi 0.87 stored a tree of `{ id, parentId, type: 'message', message }`
-// entries; pi-durable stores typed `EntryRecord`s (`pi.user`, `pi.assistant`
+// pi-durable stores typed `EntryRecord`s (`pi.user`, `pi.assistant`
 // with `model: [AssistantMessage]`, `pi.tool-result`, `pi.system`,
 // `pi.compaction`, `pi.reset`). Every Kubic reader — `kubic sessions attach`,
 // `kubic cost`'s run usage, the trajectory, replay/export/eval — reads a

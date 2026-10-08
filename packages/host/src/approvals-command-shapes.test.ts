@@ -1,9 +1,8 @@
 // Real-world command shapes -> the exact capability set the shipped
-// trigger context raises. The audit found `git push` anchored
-// to the command start (so `ls; git push`, `cd x && git push` and
-// `git -C . push` ran unasked), INSTALL limited to six package managers,
-// and no destructive-shell arm for force pushes, `find -delete` or the
-// working-tree-discarding git forms. The table uses the PRODUCTION context
+// trigger context raises. `git push` is matched at any position (`ls; git push`,
+// `cd x && git push`, `git -C . push`); INSTALL covers the package managers the
+// policy lists; and the destructive-shell arms cover force pushes, `find -delete`
+// and the working-tree-discarding git forms. The table uses the PRODUCTION context
 // (triggerContextFor), so a green run proves what `kubic run` classifies.
 import { describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../agents/src/policy.js';

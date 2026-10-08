@@ -2,8 +2,7 @@
 // disk, in the same display form as the edit tool's own result
 // (packages/worker/src/ops/display-diff.ts), so the TUI's approval card shows
 // the diff instead of a path. Best effort: a file that cannot be read, is too
-// big or no longer matches gives no preview — the card then shows what it
-// always did.
+// big or does not match gives no preview — the card then shows a path.
 
 import type { FileBridge } from '../../exec/src/file-bridge.js';
 import {

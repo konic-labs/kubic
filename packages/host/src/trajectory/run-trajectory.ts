@@ -111,7 +111,7 @@ function num(value: unknown): number {
 }
 
 // A durable entry as far as this module needs to identify one: the entry
-// record shape `Storage.scanEntries` returns. Anything else (a 0.87 entry, a
+// record shape `Storage.scanEntries` returns. Anything else (a legacy entry, a
 // foreign object) is skipped, never guessed at.
 function isEntryRecord(value: unknown): value is EntryRecord {
   return (
@@ -139,7 +139,7 @@ function entryTimestamp(entry: EntryRecord): number | undefined {
 }
 
 // This run's durable entries, in transcript order. The run-start boundary is
-// inclusive, exactly as the 0.87 reader had it.
+// inclusive.
 function runEntries(
   entries: readonly unknown[],
   startedAt: number,

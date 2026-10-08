@@ -835,7 +835,7 @@ class NodeShell implements Shell {
         if (pid === undefined) return;
         // A settled handle is finished: its pid (and group) may already be
         // recycled, and a background job it deliberately left running
-        // (KUBIC_BASH_KEEP_BACKGROUND=1) is no longer this handle's to kill.
+        // (KUBIC_BASH_KEEP_BACKGROUND=1) is not this handle's to kill.
         if (settled) return;
         const signal = (sig: NodeJS.Signals): void => {
           try {

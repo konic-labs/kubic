@@ -237,7 +237,7 @@ describe('approval hooks on a real harness', () => {
       const text = await toolResultText(booted.root);
       expect(text).toContain('not approved');
       expect(text).toContain(TIMEOUT_REASON_MARKER);
-      // The wait ended: the ask is no longer pending, so the service is not
+      // The wait ended: the ask is not pending, so the service is not
       // still awaiting any seat promise.
       expect(booted.service.pendingRequests()).toEqual([]);
     } finally {

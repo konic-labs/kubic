@@ -237,8 +237,8 @@ describe('git effects', () => {
 
 describe('git kill registry', () => {
   // The op hands its kill to the lane registry under the invocation's
-  // operation id and unregisters on settle — before this change runGit
-  // never called trackHandle, so the registry stayed empty mid-flight.
+  // operation id and unregisters on settle. runGit must call trackHandle, or the
+  // registry stays empty mid-flight.
   it('git_commit registers its kill under the operation id, then untracks', async () => {
     const registry = new OperationKillRegistry();
     const seen: string[] = [];

@@ -186,7 +186,7 @@ describe('reconcile expected state', () => {
     expect(run.sweep()).toBe(0);
   });
   it('keys absolute and ./-prefixed tool paths by their root-relative path', () => {
-    // Review finding: write/edit journal args.path verbatim, so an absolute
+    // write/edit journal args.path verbatim, so an absolute
     // in-workspace path or a './' prefix must not become a phantom delete
     // candidate nor miss the expected state for its relative path.
     const root = tmpRoot('ws-341h-');
@@ -258,7 +258,7 @@ describe('reconcile expected state', () => {
     toolWrite(store, 'dist/out.js', null, 'built\n');
     rmSync(join(root, 'dist'), { recursive: true });
     writeFileSync(join(root, 'dist'), 'now a file\n');
-    // `dist/` (a directory rule) no longer ignores the new FILE `dist`, so the
+    // `dist/` (a directory rule) does not ignore the new FILE `dist`, so the
     // walk journals its create next to the proven delete.
     expect(run.sweep()).toBe(2);
     expect(
@@ -272,7 +272,7 @@ describe('reconcile expected state', () => {
 
   it('keeps the old rule for baseline paths: a regular file replaced by a link the walk skips is a delete', () => {
     // The still-exists guard is for paths ONLY a tool journaled; a boot
-    // baseline key that the sweep walk no longer sees is journaled as before.
+    // baseline key that the sweep walk does not see is journaled.
     const root = tmpRoot('ws-341l-');
     const store = new FileJournalStore(tmpRoot('j-341l-'));
     writeFileSync(join(root, 'a.txt'), 'v1\n');

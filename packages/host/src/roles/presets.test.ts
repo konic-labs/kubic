@@ -4,10 +4,10 @@
 // loads the REAL documents through the REAL resolver and compares each one's
 // resolved tool set and permission classes to the table below — a literal
 // fixture, so a preset drifting from the design fails here instead of in a
-// lane at runtime. Deviations from are deliberate (the git levels are
+// lane at runtime. Deviations are deliberate (the git levels are
 // `false`, `workspace`, `full`; the read-only shell level is the shipped
-// spelling of reviewer/planner `shell: true` — the issue that moved
-// them there is, and the level itself is the closed allowlist).
+// spelling of reviewer/planner `shell: true`; the level itself is the closed
+// allowlist).
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

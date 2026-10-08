@@ -576,7 +576,7 @@ const DEPLOY =
 // `echo x > /etc/cron.d/x` must raise outside-write like the write tool.
 // EVERY redirect operator in the command is scanned, within a
 // segment and across `;`/`&&`/`||`/`|`/newline segments, so an inside
-// redirect first can no longer hide `> /etc/cron.d/x` after it. Operators:
+// redirect first cannot hide `> /etc/cron.d/x` after it. Operators:
 // `>`, `>>`, fd-prefixed `2>`/`1>>` (the digit is just text before the
 // operator), `&>`, `&>>`, clobber `>|`, and `>&` — whose target is an fd
 // duplication (`2>&1`, `>&-`) and skipped when it is a digit run or `-`,
@@ -793,7 +793,7 @@ function segmentsBelow(root: string, target: string): string[] | undefined {
 // above it) and `~/.kubic` (global config.toml, the session root). An
 // overridden session root is refused wholesale. A leading `~/`, `$HOME/` or
 // `${HOME}/` is the home directory, as the shell expands it (the
-// variable forms used to slip through as plain outside-writes, which full
+// variable forms are home paths, not plain outside-writes, which full
 // access auto-approves). Case-folded, because the default
 // macOS/Windows filesystems are case-insensitive (`.KUBIC/Config.toml` IS the
 // config file there). Symlinks are not followed — lexical, like every shell
@@ -2435,7 +2435,7 @@ export function installSoloPolicy(input: SoloPolicyInput): InstalledSoloPolicy {
       }
       // route=deny refuses everything challenged — autoApprove entries never
       // apply under it, which is exactly what `kubic doctor` says (`route=deny
-      // ignores autoApprove`); the lane used to approve them.
+      // ignores autoApprove`); the lane never approves them.
       if (posture.route === 'deny') {
         // Configured refusal: named as the route, never as a timeout.
         const reason = `denied by policy route (capability: ${capability})`;

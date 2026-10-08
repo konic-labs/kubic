@@ -2,7 +2,7 @@
 // newest first, each with its title (the first prompt), turns, cost and age.
 // Read the way `kubic cost` reads (session-read.ts): a session another live
 // process holds is never opened (pi-durable: one process per storage) and a
-// legacy (Pi 0.87) one cannot be — both are listed so the picker can say why
+// legacy one cannot be — both are listed so the picker can say why
 // they are greyed.
 
 import { join } from 'node:path';
@@ -36,7 +36,7 @@ export interface SessionSummary {
   /** Prompts in its active transcript. */
   readonly turns?: number;
   readonly costUsd?: number;
-  /** `legacy`: a Pi 0.87 transcript; `live`: another process holds it. */
+  /** `legacy`: a transcript in the legacy layout; `live`: another process holds it. */
   readonly state: 'ready' | 'legacy' | 'live';
 }
 

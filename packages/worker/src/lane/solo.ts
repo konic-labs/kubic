@@ -99,7 +99,7 @@ export interface SoloPromptInput {
 // The one section's text. pi-durable renders `content` and each section
 // joined by "\n\n" (pi-ai `getSystemMessageText`), so per-line sections
 // would change the model-visible bytes; a single untagged section carries
-// exactly the pre-1.0 prompt, and the harness still diffs it as one
+// exactly the prompt the model sees, and the harness still diffs it as one
 // positional `pi.system` entry.
 export function assembleSoloPrompt(input: SoloPromptInput): string {
   const full: SystemPromptInput = {
@@ -245,7 +245,7 @@ export interface SoloBootOptions {
   // conversation to `model` — configure, reserve re-clamp, notice — and
   // 'stored' (the default: the selection was only a default pick) keeps the
   // session's own model, which then drives the prompt metadata, the reserve
-  // clamp and every report. A stored model that is no longer registered
+  // clamp and every report. A stored model that is not registered
   // fails the boot closed with a named ModelSelectError.
   modelPolicy?: 'selected' | 'stored';
   // The one-line notice for either reconciliation (stderr on `run`, the
@@ -492,7 +492,7 @@ export async function bootSoloLane(
   };
   const settings: HarnessSettings = {
     ...options.settings,
-    // Kubic executes one tool at a time (the pre-1.0 lane was single-flight):
+    // Kubic executes one tool at a time:
     // parallel rounds would race the destructive/effect operations.
     toolExecution: options.settings?.toolExecution ?? 'sequential',
     compaction: soloCompactionSettings({

@@ -313,7 +313,7 @@ describe('doctor judges roles under the same config layers as the run', () => {
 });
 
 describe('the prompt comes from the file that declared the role', () => {
-  // roleDocPath is gone: selectRole carries the listed file's own text as
+  // selectRole carries the listed file's own text as
   // `markdown`, so the prompt can never be re-read from `<name>.md`.
   const reviewMd = `---\nrole: reviewer\ntools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n---\n\n## Prompt\n\nReview from review.md.\n`;
   const input = {

@@ -1007,7 +1007,7 @@ describe('run -p argument handling (mutation hardening)', () => {
     expect(envelope.failure?.strategy).toBe('abandon');
   });
 
-  it('classifies the pre-run probe envelope as provider_auth/abandon (review finding)', async () => {
+  it('classifies the pre-run probe envelope as provider_auth/abandon', async () => {
     const o = out();
     const message =
       "session model 'faux/small' is unavailable: provider 'faux' is not registered (pin a model to switch this session)";

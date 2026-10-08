@@ -1,12 +1,12 @@
-// Lane text must not carry terminal control sequences into the frame
-// (reviewer finding 1). The loop is what FEEDS lane content
+// Lane text must not carry terminal control sequences into the frame.
+// The loop is what FEEDS lane content
 // (assistant text, tool results) into the transcript for the first time, so
 // a model or a tool can otherwise drive the terminal directly: clearing the
 // screen ('\x1b[2J'), repainting colour, ringing the bell, or — on a
 // terminal that honours them — moving the cursor over the status bar.
 //
-// Before the fix, entriesToCells passed text through verbatim and the
-// assertion below failed with `has raw ESC: true` (verified by dumping the
+// entriesToCells must not pass text through verbatim: the assertion below
+// fails with `has raw ESC: true` if it does (verified by dumping the
 // rendered frame: 'HI\u001b[2J\u001b[31mRED\u001b[0m\u0007END').
 import { describe, expect, it } from 'vitest';
 import type {
@@ -122,7 +122,7 @@ describe('terminal control sequences from lane content', () => {
     expect(plain).not.toContain('[0m');
   });
 
-  it('does not let a tool NAME emit raw escapes (second-pass finding)', () => {
+  it('does not let a tool NAME emit raw escapes', () => {
     // The first pass sanitized text content but not the tool-call name, so a
     // model emitting a call named `evil\x1b[2Jname` still rendered the
     // clear-screen sequence. Names are model-supplied, so they are the same
@@ -148,7 +148,7 @@ describe('terminal control sequences from lane content', () => {
     expect(frame).not.toContain(`${ESC}[2J`);
   });
 
-  it('does not let a TREE toolName emit raw escapes (third-pass finding)', () => {
+  it('does not let a TREE toolName emit raw escapes', () => {
     // The second pass sanitized the transcript's toolCall cell, but the TREE
     // path takes the lane event's `toolName` verbatim into TreeState
     // (tree.ts). Both come from the same model-supplied name, so the tree is

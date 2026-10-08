@@ -1,6 +1,6 @@
 // The inline approval card.
 //
-// An approval no longer opens a centered modal over the transcript: it takes
+// An approval does not open a centered modal over the transcript: it takes
 // the editor's slot as a blocking card, so the conversation above stays
 // readable (PgUp scrolls it). Heavy warn frame with the APPROVAL badge, the
 // tool and `i of n`; on warnBg behind a warn `┃` edge: what will run (the

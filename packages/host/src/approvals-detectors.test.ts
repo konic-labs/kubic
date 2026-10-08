@@ -754,7 +754,7 @@ describe('credential-access detector', () => {
   it('flags ~/.ssh children except the known-public files', () => {
     const ctx = triggerContext();
     // A widened arm: `~/.ssh/github` is a common key
-    // name and `~/.ssh/*` a common glob — both used to be silent misses.
+    // name and `~/.ssh/*` a common glob — both are matched.
     for (const command of [
       'cat ~/.ssh/github',
       'cat ~/.ssh/*',

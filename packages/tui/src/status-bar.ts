@@ -9,7 +9,7 @@
 // the Component seam stays in ./tui-boundary.js. No node:fs (I/O
 // confinement). Faux-only tests: fixtures, zero network.
 //
-// The TTFT/tool-ms segments were deleted, not repaired. Pi 1.0
+// There are no TTFT/tool-ms segments: Pi 1.0
 // routes no streaming/timing field Kubic could read (message deltas stay
 // inside the harness; the lane watch commits whole entries), so the two
 // segments could never render — dead code, which was the bug.

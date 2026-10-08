@@ -145,7 +145,7 @@ export function mapLaneOutcomeToTerminus(
 // Failure classification of a terminus whose code is implied: the
 // guard and gate termini each have exactly one failure code, and the boot probe
 // is the provider setup failure. The classification never reads the
-// summary — a failure's wording must not flip a fixed code (review finding).
+// summary — a failure's wording must not flip a fixed code.
 // `failed` reads its code from the result's own `failure`;
 // `timeout`/`cancelled` have no failure code.
 export function failureForTerminus(

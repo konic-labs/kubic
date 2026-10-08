@@ -2,8 +2,8 @@
 // reversibility promise, so its own writes are the least forgiving place to
 // cut corners.
 //
-//   - Index appends fsync before `append()` returns: a crash/power loss can
-//     no longer truncate the last index line in the window the journal
+//   - Index appends fsync before `append()` returns: a crash/power loss cannot
+//     truncate the last index line in the window the journal
 //     itself declared safe. The bridge grows an opt-in `appendDurably`;
 //     production takes it, test doubles without it keep the old seam.
 //   - Blob writes are tmp+rename: content-addressed blobs are never exposed

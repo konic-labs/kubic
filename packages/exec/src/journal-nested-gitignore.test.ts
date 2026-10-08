@@ -16,7 +16,7 @@
 // With the root-only walk the fixture's `packages/foo/build/out.js`
 // IS in the baseline, the nested `!keep.log` has no effect, the walk probes
 // `.gitignore` once (root only), and the sweep records the nested-ignored
-// write. Each test below states the failure it expects before the fix.
+// write. Each test below states the failure it guards against.
 
 import {
   chmodSync,

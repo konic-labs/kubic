@@ -275,7 +275,7 @@ describe('the arming window restarts on every swallowed key', () => {
     const pending = surface.ask(REQUEST);
     time.advance(300);
     expect(surface.decide('a')).toBe(false);
-    // The short arming delay no longer unlocks it...
+    // The short arming delay does not unlock it...
     time.advance(APPROVAL_ARMING_MS);
     expect(surface.isArmed()).toBe(false);
     time.advance(APPROVAL_QUIET_MS - APPROVAL_ARMING_MS - 1);
@@ -585,7 +585,7 @@ describe('arming after typing and against auto-repeat', () => {
   });
 
   describe('through the app', () => {
-    it('the reviewer scenarios: legacy held a and a prose pause both stay pending', async () => {
+    it('legacy held a and a prose pause both stay pending', async () => {
       const time = clock(0);
       const surface = createApprovalSurface({
         now: time.now,

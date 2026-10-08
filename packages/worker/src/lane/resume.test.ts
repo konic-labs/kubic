@@ -1,8 +1,7 @@
 // Crash recovery through the durable session store. A process that dies
 // mid-turn leaves its placed input durably recorded; the next attach reopens
 // the same JSONL session and `settlePending`'s `resume` drives that work to
-// completion. Pi 0.87's per-operation drive is gone — the durable submission IS
-// the pending work.
+// completion. The durable submission IS the pending work.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

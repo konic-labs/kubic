@@ -426,7 +426,7 @@ describe('configured sink fan-out', () => {
       'tool:bash',
       'run:start',
       'posture:full-access',
-      // Review finding: the revoke half of a privileged
+      // The revoke half of a privileged
       // posture change reaches privileged sinks too.
       'posture:approvals',
       'undo-restore',

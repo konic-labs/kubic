@@ -8,8 +8,7 @@
 // generation task (`HarnessSettings.retry`), provider-deferred responses are
 // polled inside generation, and the caller's guards (wall clock, turn count,
 // SIGINT) are one cancellable Chord Context plus `conversation.abort()`
-// (lane/abort.ts) on expiry. This replaces the 0.87 accept → driveToSettled →
-// DriveOutcome loop (deleted from lane/solo.ts).
+// (lane/abort.ts) on expiry.
 //
 // Idempotency: `requestId` is a stable per-invocation value, so re-submitting
 // after a crash returns the SAME submission instead of prompting twice.

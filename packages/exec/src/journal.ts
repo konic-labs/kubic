@@ -1401,7 +1401,7 @@ export interface BaselineOptions {
   bridge?: FileBridge;
   /**
    * Report a walk condition the operator should know about. Used for the one
-   * case that used to be silent: a bridge without `readFileRange` reverts to
+   * case that is reported: a bridge without `readFileRange` reverts to
    * whole-file reads, so a file larger than `HASH_CHUNK_BYTES` costs its size
    * at boot. Production bridges always implement it; the hook exists so the
    * fallback can never be invisible.
@@ -1911,7 +1911,7 @@ export function restoreEntry(
 // included; the walk hash must also stay digest-identical for files already
 // journaled, so it cannot be redefined to hash bytes). The raw bytes are
 // what diverge: a binary file's decode collapses invalid sequences to
-// U+FFFD, its re-encoding no longer matches the file, and the caller records
+// U+FFFD, its re-encoding does not match the file, and the caller records
 // hash-only instead of a mangled blob. Returns null when the decode was
 // lossy.
 function decodeLossless(bytes: Uint8Array): string | null {
@@ -2001,10 +2001,9 @@ export function reconcile(
   ctx: ReconcileContext,
   options: BaselineOptions = {},
 ): number {
-  // Same read seam as captureBaseline (review finding): the hash honoured
-  // `options.bridge` but this after-content read used the module-level node
-  // bridge, so an injected double observed only half the walk — and a test
-  // proved a bound production did not fully have. One bridge for the whole
+  // Same read seam as captureBaseline: the hash honours `options.bridge`, and so
+  // must this after-content read, or an injected double observes only half the
+  // walk. One bridge for the whole
   // reconcile now.
   const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = options.outOfScope ?? [];

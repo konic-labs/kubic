@@ -834,34 +834,3 @@ export function expandSkillInvocation(
   const extra = instructions?.trim() ?? '';
   return extra === '' ? content : `${content}\n\n${extra}`;
 }
-
-// Task resource resolution: withheld or unknown skill refs are reported,
-// never thrown — a withheld skill must not fail a task mid-run.
-export interface ResolvedTaskSkills {
-  granted: LoadedSkill[];
-  withheld: WithheldSkill[];
-}
-
-export function resolveTaskSkillRefs(
-  names: string[],
-  gated: GatedSkills,
-): ResolvedTaskSkills {
-  const byName = new Map(gated.visible.map((skill) => [skill.name, skill]));
-  const withheldByName = new Map(
-    gated.withheld.map((entry) => [entry.name, entry.reason]),
-  );
-  const granted: LoadedSkill[] = [];
-  const withheld: WithheldSkill[] = [];
-  for (const name of names) {
-    const skill = byName.get(name);
-    if (skill !== undefined) {
-      granted.push(skill);
-      continue;
-    }
-    withheld.push({
-      name,
-      reason: withheldByName.get(name) ?? `unknown skill '${name}'`,
-    });
-  }
-  return { granted, withheld };
-}

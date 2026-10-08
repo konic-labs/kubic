@@ -13,8 +13,6 @@ import type { DoctorCheck } from '../doctor.js';
 import { runDoctorCommand } from '../doctor.js';
 import { mapTerminusToExitCode } from '../run-cli.js';
 import {
-  buildLimitsJsonReport,
-  collectLimitChecks,
   depsLimitCheck,
   limitsDoctorExit,
   policyEnforceabilityCheck,
@@ -215,20 +213,8 @@ describe('exit mapping', () => {
   });
 });
 
-describe('limits --json shape /78', () => {
-  it('builds the {ok, exitCode, checks} envelope the doctor --json uses', async () => {
-    const checks: DoctorCheck[] = [
-      ...staticLimitChecks(),
-      providerAvailabilityCheck([{ id: 'local', reachable: true }]),
-    ];
-    const report = buildLimitsJsonReport(checks);
-    expect(report.ok).toBe(true);
-    expect(report.exitCode).toBe(0);
-    expect(report.checks).toBe(checks);
-    expect(Object.keys(report).sort()).toEqual(['checks', 'exitCode', 'ok']);
-  });
-
-  it('matches the doctor --json key shape check-for-check', async () => {
+describe('limits --json shape', () => {
+  it('the doctor --json envelope has the ok, exitCode and checks keys', async () => {
     const jsonLines: string[] = [];
     await runDoctorCommand(
       { json: true },
@@ -244,25 +230,11 @@ describe('limits --json shape /78', () => {
       exitCode: number;
       checks: DoctorCheck[];
     };
-    const limitsReport = buildLimitsJsonReport(doctorReport.checks);
-    expect(Object.keys(limitsReport).sort()).toEqual(
-      Object.keys(doctorReport).sort(),
-    );
-    expect(limitsReport.ok).toBe(doctorReport.ok);
-  });
-});
-
-describe('collectLimitChecks', () => {
-  it('aggregates static, provider, dep, and policy checks', () => {
-    const checks = collectLimitChecks({
-      providers: [{ id: 'local', reachable: true }],
-      deps: [{ id: 'node', ok: true }],
-      policy: { route: 'ask-user', autoApprove: [] },
-    });
-    const ids = checks.map((check) => check.id);
-    expect(ids).toContain('limit:solo-no-isolation');
-    expect(ids).toContain('limit:provider-availability');
-    expect(ids).toContain('limit:deps-present');
-    expect(ids).toContain('policy:enforceability');
+    expect(Object.keys(doctorReport).sort()).toEqual([
+      'checks',
+      'exitCode',
+      'ok',
+    ]);
+    expect(typeof doctorReport.ok).toBe('boolean');
   });
 });

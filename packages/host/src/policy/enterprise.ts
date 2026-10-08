@@ -914,19 +914,6 @@ export function assertToolGrantable(
   );
 }
 
-// Deny-by-default for network: unset mode denies; allowlist names exact
-// hosts; none denies everything.
-export function isNetworkAllowed(
-  policy: EffectivePolicy,
-  host: string,
-): boolean {
-  if (policy.network.mode === undefined || policy.network.mode === 'none') {
-    return false;
-  }
-  if (policy.network.mode === 'full') return true;
-  return policy.network.domains?.includes(host) ?? false;
-}
-
 // `allowed_models` matching: `*` globs inside an id segment
 // (or a whole segment), `provider/id`, or a bare id that matches across
 // providers. A pattern with a provider segment only matches that provider —

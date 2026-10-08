@@ -2,11 +2,10 @@
 // every documented environment branch, the elapsed-time formatter at its
 // boundaries, and the spinner's wrap. Pure: no env is read or changed.
 import { describe, expect, it } from 'vitest';
+import { formatTurnClock } from './editor-frame.js';
 import {
   createTuiTheme,
   detectColorLevel,
-  formatElapsed,
-  SPINNER_FRAMES,
   setTuiTheme,
   spinnerFrame,
   tuiTheme,
@@ -65,22 +64,22 @@ describe('detectColorLevel', () => {
   });
 });
 
-describe('formatElapsed and spinnerFrame', () => {
-  it('formats seconds below a minute and minutes from 60 s', () => {
-    expect(formatElapsed(0)).toBe('0s');
-    expect(formatElapsed(59_999)).toBe('59s');
-    expect(formatElapsed(60_000)).toBe('1m 0s');
-    expect(formatElapsed(61_500)).toBe('1m 1s');
-    expect(formatElapsed(-5)).toBe('0s');
+describe('the turn clock and spinnerFrame', () => {
+  it('formats the turn clock as m:ss and clamps negative time', () => {
+    expect(formatTurnClock(0)).toBe('0:00');
+    expect(formatTurnClock(59_999)).toBe('0:59');
+    expect(formatTurnClock(60_000)).toBe('1:00');
+    expect(formatTurnClock(61_500)).toBe('1:01');
+    expect(formatTurnClock(-5)).toBe('0:00');
   });
 
   it('advances every 80 ms and wraps after the last frame', () => {
-    expect(spinnerFrame(0)).toBe(SPINNER_FRAMES[0]);
-    expect(spinnerFrame(79)).toBe(SPINNER_FRAMES[0]);
-    expect(spinnerFrame(80)).toBe(SPINNER_FRAMES[1]);
-    expect(SPINNER_FRAMES.length * 80).toBe(800);
+    const frames = Array.from({ length: 20 }, (_, i) => spinnerFrame(i * 80));
+    expect(frames.indexOf(frames[0], 1)).toBe(10);
+    expect(spinnerFrame(0)).not.toBe(spinnerFrame(80));
+    expect(spinnerFrame(79)).toBe(spinnerFrame(0));
     expect(spinnerFrame(800)).toBe(spinnerFrame(0));
-    expect(spinnerFrame(-1)).toBe(SPINNER_FRAMES[0]);
+    expect(spinnerFrame(-1)).toBe(spinnerFrame(0));
   });
 });
 

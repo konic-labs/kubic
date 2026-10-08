@@ -19,14 +19,12 @@ import {
 import { runExportCommand } from '../../../../packages/eval/src/export-cli.js';
 import { makeExport } from '../../../../packages/eval/src/test-support/fixtures.js';
 import { runCostCommand } from '../../../../packages/host/src/ops/cost/cost-cli.js';
-import {
-  AUDIT_FIELDS,
-  EXAMPLE_AUDIT_RECORD,
-} from '../../../../packages/host/src/policy/audit.js';
+import { AUDIT_FIELDS } from '../../../../packages/host/src/policy/audit.js';
 import { runAuditCommand } from '../../../../packages/host/src/policy/audit-cli.js';
 import { resolveEffectivePolicy } from '../../../../packages/host/src/policy/enterprise.js';
 import { runPolicyCommand } from '../../../../packages/host/src/policy/policy-cli.js';
 import { runReplayCommand } from '../../../../packages/host/src/replay/replay.js';
+import { EXAMPLE_AUDIT_RECORD } from '../../../../packages/host/src/test-support/audit-fixtures.js';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
 import type { CliConfigResult } from '../config-runtime.js';

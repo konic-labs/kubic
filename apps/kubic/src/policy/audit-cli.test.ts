@@ -9,7 +9,6 @@ import {
 } from '../../../../packages/core/src/secret-shapes.js';
 import {
   AUDIT_FIELDS,
-  EXAMPLE_AUDIT_RECORD,
   type OrgAuditRecord,
 } from '../../../../packages/host/src/policy/audit.js';
 import { runAuditCommand } from '../../../../packages/host/src/policy/audit-cli.js';
@@ -17,6 +16,7 @@ import {
   fullAccessEnabledAudit,
   undoRestoreAudit,
 } from '../../../../packages/host/src/policy/audit-ledger.js';
+import { EXAMPLE_AUDIT_RECORD } from '../../../../packages/host/src/test-support/audit-fixtures.js';
 
 // Shape-matching but inert (FAUX marker, never a live key): exercises the
 // redaction path the way secret-shapes.test.ts does.

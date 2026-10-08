@@ -27,39 +27,6 @@ export function formatHeadMove(from: HeadState, to: HeadState): string {
   return `${formatHeadState(from)} -> ${formatHeadState(to)}`;
 }
 
-export function renderLog(store: FileJournalStore): string[] {
-  return store.entries().map((e) => {
-    // Markers are not file rows — one greppable line naming
-    // the move, in the same column shape as every other line.
-    if (
-      e.op === 'marker' &&
-      e.headFrom !== undefined &&
-      e.headTo !== undefined
-    ) {
-      return [
-        new Date(e.timestamp).toISOString(),
-        e.source,
-        e.toolCallId ?? 'none',
-        e.op,
-        '(HEAD)',
-        '+0B',
-        'reconciled',
-        `head-moved ${formatHeadMove(e.headFrom, e.headTo)}`,
-      ].join(' ');
-    }
-    const parts = [
-      new Date(e.timestamp).toISOString(),
-      e.source,
-      e.toolCallId ?? 'none',
-      e.op,
-      e.path,
-      `${e.bytesDelta >= 0 ? '+' : ''}${e.bytesDelta}B`,
-    ];
-    if (e.unattributed === true) parts.push('reconciled');
-    return parts.join(' ');
-  });
-}
-
 interface RepoState {
   branch: string;
   // null when git is unavailable or the query fails: reported as unknown,

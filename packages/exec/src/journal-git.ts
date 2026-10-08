@@ -241,25 +241,6 @@ export function saveGitBaseline(
   );
 }
 
-export function loadGitBaseline(
-  dir: string,
-  runId: string,
-): GitBaseline | null {
-  const bridge = createNodeFileBridge('/');
-  let path: string;
-  try {
-    path = gitBaselinePath(dir, runId);
-  } catch {
-    return null;
-  }
-  if (!bridge.exists(path)) return null;
-  try {
-    return JSON.parse(bridge.readTextFile(path)) as GitBaseline;
-  } catch {
-    return null;
-  }
-}
-
 function headStatePath(dir: string, runId: string): string {
   if (!RUN_ID_PATTERN.test(runId)) {
     throw new Error(
@@ -282,28 +263,4 @@ export function saveHeadState(
     headStatePath(dir, runId),
     JSON.stringify(head),
   );
-}
-
-export function loadHeadState(dir: string, runId: string): HeadState | null {
-  const bridge = createNodeFileBridge('/');
-  let path: string;
-  try {
-    path = headStatePath(dir, runId);
-  } catch {
-    return null;
-  }
-  if (!bridge.exists(path)) return null;
-  try {
-    const parsed = JSON.parse(bridge.readTextFile(path)) as Partial<HeadState>;
-    if (
-      typeof parsed.head !== 'string' ||
-      typeof parsed.branch !== 'string' ||
-      typeof parsed.stash !== 'number'
-    ) {
-      return null;
-    }
-    return { head: parsed.head, branch: parsed.branch, stash: parsed.stash };
-  } catch {
-    return null;
-  }
 }

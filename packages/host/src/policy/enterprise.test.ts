@@ -3,7 +3,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertToolGrantable,
-  isNetworkAllowed,
   isToolAllowed,
   isToolAllowedByEnterprise,
   POLICY_LAYERS,
@@ -228,13 +227,12 @@ describe('enterprise precedence', () => {
     ).toThrow(PolicyDeniedError);
   });
 
-  it('deny-by-default: unlisted tools and hosts are denied', () => {
+  it('deny-by-default: unlisted tools are denied', () => {
     const { policy } = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { tools: { allow: ['read'] } } },
     ]);
     expect(isToolAllowed(policy, 'read')).toBe(true);
     expect(isToolAllowed(policy, 'write')).toBe(false);
-    expect(isNetworkAllowed(policy, 'example.com')).toBe(false);
   });
 
   it('tool matching is case- and whitespace-insensitive', () => {

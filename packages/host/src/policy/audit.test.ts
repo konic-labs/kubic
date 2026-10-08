@@ -2,6 +2,7 @@
 // Faux-only, zero network. Secret-shaped fixtures below are faux (contain
 // 'faux'), never real.
 import { describe, expect, it } from 'vitest';
+import { EXAMPLE_AUDIT_RECORD } from '../test-support/audit-fixtures.js';
 import {
   AUDIT_FIELDS,
   AUDIT_RECORD_VERSION,
@@ -11,13 +12,11 @@ import {
   createMemorySink,
   createSyslogSink,
   defaultSyslogSocketPath,
-  EXAMPLE_AUDIT_RECORD,
   emitAudit,
   type OrgAuditRecord,
   parseSyslogTarget,
   queryAudits,
   type SyslogTransport,
-  sortAuditSinksSyslogFirst,
   toCredentialSentinel,
 } from './audit.js';
 
@@ -189,19 +188,6 @@ describe('sink failure', () => {
       AuditSinkError,
     );
     expect(() => appendAudit([], EXAMPLE_AUDIT_RECORD)).toThrow(AuditSinkError);
-  });
-
-  it('syslog sinks order first', () => {
-    const ordered = sortAuditSinksSyslogFirst([
-      { name: 'f', kind: 'file' as const, write: (): void => {} },
-      { name: 's', kind: 'syslog' as const, write: (): void => {} },
-      { name: 'm', kind: 'memory' as const, write: (): void => {} },
-    ]);
-    expect(ordered.map((sink) => sink.kind)).toEqual([
-      'syslog',
-      'file',
-      'memory',
-    ]);
   });
 
   it('refuses async sinks that return a thenable', () => {

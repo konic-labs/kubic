@@ -248,16 +248,6 @@ export function createSyslogSink(options: SyslogSinkOptions): AuditSink {
   };
 }
 
-// [[audit]] order is syslog-first: syslog sinks always lead, stably.
-export function sortAuditSinksSyslogFirst(sinks: AuditSink[]): AuditSink[] {
-  const rank = (sink: AuditSink): number =>
-    sink.kind === 'syslog' ? 0 : sink.kind === 'file' ? 1 : 2;
-  return [...sinks]
-    .map((sink, index) => ({ sink, index }))
-    .sort((a, b) => rank(a.sink) - rank(b.sink) || a.index - b.index)
-    .map((entry) => entry.sink);
-}
-
 // A sentinel names the credential ref without carrying material:
 // `sentinel:$API_KEY`, never the value behind it.
 export function toCredentialSentinel(ref: string): string {
@@ -508,21 +498,3 @@ export function queryAudits(
       (query.session === undefined || record.agent.session === query.session),
   );
 }
-
-// An example record: a fixture for tests and the shape `kubic audit` prints.
-export const EXAMPLE_AUDIT_RECORD: OrgAuditRecord = {
-  version: AUDIT_RECORD_VERSION,
-  who: 'ege@example.com',
-  what: 'tool.call',
-  when: '2023-11-14T22:13:20.000Z',
-  agent: { session: 'sess-1', role: 'implementer' },
-  model: { provider: 'local', id: 'llama3', thinking: 'medium' },
-  process: { pid: 1234 },
-  workspace: { path: '/repo', base: 'a1b2c3d' },
-  permission: { permission: 'write', approval: 'approved:tester' },
-  credential: { sentinel: 'sentinel:$API_KEY' },
-  network: { host: 'example.com', port: 443, decision: 'allow', bytes: 512 },
-  posture: 'restricted',
-  result: 'ok',
-  reason: 'policy allow',
-};

@@ -248,96 +248,6 @@ const KNOWN_SECTIONS = new Set([
   'audit',
 ]);
 
-// Canonical example — kept in sync with example.toml (pinned by
-// test). Committed shape only: sessions/journal/artifacts/audit are runtime
-// state, never config.
-export const EXAMPLE_TOML = `# Kubic canonical config example.
-# Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
-# Never committed: sessions/ journal/ artifacts/ audit/
-
-# Settings skills: files or directories, resolved
-# against this file's directory — "./skills" names "<root>/.kubic/skills"
-# ("../skills" would name "<root>/skills").
-skills = ["./skills"]
-
-[agent]
-name = "kubic"
-# Prompt augmentation: the sibling SYSTEM.md
-# is read at load and appended to the assembled lane prompt (ahead of the
-# skills block) for run, tui and replay. Relative to this
-# file's directory; a leading ~/ expands to home. A project-layer path
-# additionally requires trust and containment in the project root; a missing
-# or unreadable file is a named ConfigError, never a silent skip.
-systemPromptFile = "SYSTEM.md"
-
-[model]
-provider = "local"
-id = "llama3"
-thinking = "medium"
-
-[approvals]
-route = "ask-user"
-maxPendingMs = 30000
-autoApprove = []
-sessionScoped = true
-requireJustification = false
-
-[permissions]
-filesystem = "workspace-write"
-shell = true
-network = "none"
-git = "workspace"
-credentials = "none"
-
-[journal]
-retentionDays = 30
-
-[roles.reviewer]
-model = "local/llama3"
-tools = ["read", "grep", "diff"]
-models = ["local/*", { id = "acme/big", thinking = "high" }]
-
-[roles.implementer]
-model = "local/llama3"
-tools = ["read", "write", "edit", "bash"]
-
-[ui]
-theme = "dark"
-statusBar = true
-
-[session]
-store = "jsonl"
-dir = ".kubic/sessions"
-retentionDays = 30
-# Compaction policy: automatic threshold compaction, a 4000-token
-# reserved room and a 5000-token verbatim recent window on the run and tui
-# lanes. All three are optional — unset means the lane defaults
-# (automatic, 16384 reserved, 20000 kept recent).
-autoCompact = true
-reserveTokens = 4000
-keepRecentTokens = 5000
-
-[verify]
-tests = "npm test"
-typecheck = "npm run typecheck"
-timeoutMs = 600000
-
-[policy]
-allowed_models = ["local/*"]
-allowed_providers = ["local"]
-allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
-denied_tools = []
-network_policy = "proxy"
-allowed_domains = ["registry.npmjs.org", "github.com"]
-filesystem_policy = "workspace-only"
-data_policy = "no-external-training"
-logging_policy = "full-audit"
-
-[[audit]]
-sink = "syslog"
-level = "privileged"
-`;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1465,129 +1375,6 @@ export function parseTomlConfig(text: string): KubicConfig {
   return toKubicConfig(parseTomlDocument(text));
 }
 
-function formatValue(value: unknown, inlineTables = false): string {
-  if (typeof value === 'string') {
-    return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t')}"`;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => formatValue(item, true)).join(', ')}]`;
-  }
-  // Inline tables: the role `models` set carries `{ id,
-  // thinking? }` entries, and the canonical example pins them — they
-  // emit back in the same inline form so the example round-trips. Only
-  // array items take this branch: a bare nested table as a direct value
-  // stays refused, exactly as before.
-  if (isRecord(value)) {
-    if (!inlineTables) {
-      throw new ConfigError('cannot serialize nested tables as values');
-    }
-    const pairs = Object.entries(value).map(
-      ([key, child]) => `${key} = ${formatValue(child, true)}`,
-    );
-    return `{ ${pairs.join(', ')} }`;
-  }
-  throw new ConfigError('cannot serialize nested tables as values');
-}
-
-function emitTable(
-  lines: string[],
-  header: string,
-  record: Record<string, unknown>,
-): void {
-  lines.push(`[${header}]`);
-  for (const key of Object.keys(record).sort()) {
-    lines.push(`${key} = ${formatValue(record[key])}`);
-  }
-  lines.push('');
-}
-
-// The `[policy]` TOML spelling of each PolicyConfig field: the
-// serializer must emit what the parser accepts, and the surface is
-// snake_case while the TS shape is camelCase.
-const POLICY_TOML_KEYS: ReadonlyArray<[keyof PolicyConfig, string]> = [
-  ['allowedModels', 'allowed_models'],
-  ['allowedProviders', 'allowed_providers'],
-  ['allowedTools', 'allowed_tools'],
-  ['deniedTools', 'denied_tools'],
-  ['networkPolicy', 'network_policy'],
-  ['allowedDomains', 'allowed_domains'],
-  ['filesystemPolicy', 'filesystem_policy'],
-  ['dataPolicy', 'data_policy'],
-  ['loggingPolicy', 'logging_policy'],
-];
-
-export function serializeTomlConfig(config: KubicConfig): string {
-  const lines: string[] = [];
-  // The top-level `skills` array serializes before the first
-  // table (TOML keys precede tables).
-  if (config.skills !== undefined) {
-    lines.push(
-      `skills = [${config.skills.map((entry) => JSON.stringify(entry)).join(', ')}]`,
-      '',
-    );
-  }
-  if (config.agent !== undefined) {
-    emitTable(lines, 'agent', config.agent as Record<string, unknown>);
-  }
-  if (config.model !== undefined) {
-    emitTable(lines, 'model', config.model as Record<string, unknown>);
-  }
-  if (config.approvals !== undefined) {
-    emitTable(lines, 'approvals', config.approvals as Record<string, unknown>);
-  }
-  if (config.permissions !== undefined) {
-    emitTable(
-      lines,
-      'permissions',
-      config.permissions as Record<string, unknown>,
-    );
-  }
-  if (config.journal !== undefined) {
-    emitTable(lines, 'journal', config.journal as Record<string, unknown>);
-  }
-  if (config.roles !== undefined) {
-    for (const name of Object.keys(config.roles).sort()) {
-      emitTable(
-        lines,
-        `roles.${name}`,
-        (config.roles[name] ?? {}) as Record<string, unknown>,
-      );
-    }
-  }
-  if (config.ui !== undefined) {
-    emitTable(lines, 'ui', config.ui as Record<string, unknown>);
-  }
-  if (config.session !== undefined) {
-    emitTable(lines, 'session', config.session as Record<string, unknown>);
-  }
-  if (config.verify !== undefined) {
-    emitTable(lines, 'verify', config.verify as Record<string, unknown>);
-  }
-  if (config.policy !== undefined) {
-    const policy = config.policy;
-    const record: Record<string, unknown> = {};
-    for (const [field, tomlKey] of POLICY_TOML_KEYS) {
-      const value = policy[field];
-      if (value !== undefined) record[tomlKey] = value;
-    }
-    if (Object.keys(record).length > 0) emitTable(lines, 'policy', record);
-  }
-  if (config.audit !== undefined) {
-    for (const entry of config.audit) {
-      lines.push('[[audit]]');
-      const record = entry as unknown as Record<string, unknown>;
-      for (const key of Object.keys(record).sort()) {
-        lines.push(`${key} = ${formatValue(record[key])}`);
-      }
-      lines.push('');
-    }
-  }
-  return lines.join('\n');
-}
-
 export interface LayerInput {
   layer: ConfigLayer;
   config: KubicConfig;
@@ -1695,24 +1482,12 @@ export function defaultLayerPaths(args: {
   };
 }
 
-// Committed vs gitignored split: config.toml + roles/*.md are committed;
-// sessions/journal/artifacts/audit state are runtime — gitignored and never
-// committed.
-export const COMMITTED_CONFIG_FILES = ['config.toml', 'roles/'] as const;
-
 // The rule set is owned by the module that writes it:
 // @kubic/exec `runtime-exclude.ts` is what `kubic run` ships into a user
 // repo, so this list is a projection of
 // that module — never a second hand-maintained copy. `config.test.ts`
 // pins the two together, so a rule added there cannot go unchecked here.
 export const GITIGNORE_REQUIRED_ENTRIES = [...RUNTIME_EXCLUDE_ENTRIES] as const;
-
-export function isCommittedConfigPath(path: string): boolean {
-  const normalized = path.startsWith('.kubic/')
-    ? path.slice('.kubic/'.length)
-    : path;
-  return normalized === 'config.toml' || normalized.startsWith('roles/');
-}
 
 export function checkGitignoreSplit(gitignoreText: string): {
   missing: string[];

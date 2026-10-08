@@ -4,22 +4,19 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import { EXAMPLE_TOML } from '../test-support/config-fixtures.js';
 import {
-  COMMITTED_CONFIG_FILES,
   CONFIG_LAYERS,
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
   checkRoleModelRef,
   defaultLayerPaths,
-  EXAMPLE_TOML,
   GITIGNORE_REQUIRED_ENTRIES,
-  isCommittedConfigPath,
   loadLayered,
   mergeLayered,
   ProjectUntrustedError,
   parseTomlConfig,
-  serializeTomlConfig,
 } from './config.js';
 import { McpUnsupportedError } from './stances.js';
 
@@ -142,12 +139,6 @@ describe('canonical TOML example', () => {
     expect(parsed.roles?.implementer?.model).toBe('local/llama3');
     expect(parsed.ui?.theme).toBe('dark');
     expect(parsed.session?.store).toBe('jsonl');
-  });
-
-  it('round-trips the example semantically', () => {
-    const once = parseTomlConfig(EXAMPLE_TOML);
-    const twice = parseTomlConfig(serializeTomlConfig(once));
-    expect(twice).toEqual(once);
   });
 
   it('keeps example.toml in sync with EXAMPLE_TOML', () => {
@@ -351,12 +342,6 @@ describe('[policy] + [[audit]]', () => {
       { sink: 'file', level: 'all', target: '/var/log/kubic.jsonl' },
     ]);
   });
-
-  it('round-trips [policy] and [[audit]] through the serializer', () => {
-    const once = parseTomlConfig(POLICY_EXAMPLE);
-    const twice = parseTomlConfig(serializeTomlConfig(once));
-    expect(twice).toEqual(once);
-  });
 });
 
 describe('session.retentionDays', () => {
@@ -516,15 +501,6 @@ describe('trust-gated project-local config', () => {
 });
 
 describe('committed vs gitignored split', () => {
-  it('commits config + roles, never sessions/journal/artifacts/audit', () => {
-    expect(isCommittedConfigPath('config.toml')).toBe(true);
-    expect(isCommittedConfigPath('roles/reviewer.md')).toBe(true);
-    expect(isCommittedConfigPath('sessions/s1.jsonl')).toBe(false);
-    expect(isCommittedConfigPath('journal/2026-01-01.jsonl')).toBe(false);
-    expect(isCommittedConfigPath('artifacts/out.txt')).toBe(false);
-    expect(isCommittedConfigPath('audit/audit.jsonl')).toBe(false);
-  });
-
   it('requires every ignored prefix in .gitignore', () => {
     expect(GITIGNORE_REQUIRED_ENTRIES.length).toBeGreaterThan(0);
     const good = GITIGNORE_REQUIRED_ENTRIES.map((entry) => `${entry}*`).join(
@@ -986,31 +962,6 @@ describe('layered load hardening', () => {
 });
 
 describe('config serialization hardening', () => {
-  it('emits role tables sorted by name', () => {
-    const text = serializeTomlConfig({
-      roles: {
-        zebra: { model: 'm' },
-        alpha: { model: 'm' },
-      },
-    });
-    expect(text.indexOf('[roles.alpha]')).toBeLessThan(
-      text.indexOf('[roles.zebra]'),
-    );
-  });
-
-  it('refuses to serialize nested tables as values', () => {
-    expect(() =>
-      serializeTomlConfig({ agent: { name: { nested: true } as never } }),
-    ).toThrow(/cannot serialize nested tables/);
-  });
-
-  it('classifies committed vs runtime paths exactly', () => {
-    expect(isCommittedConfigPath('.kubic/config.toml')).toBe(true);
-    expect(isCommittedConfigPath('.kubic/roles/a.md')).toBe(true);
-    expect(isCommittedConfigPath('other/config.toml')).toBe(false);
-    expect(isCommittedConfigPath('.kubic/sessions/x')).toBe(false);
-  });
-
   it('reports only the missing gitignore entries', () => {
     const partial = `.kubic/sessions/\n.kubic/journal/\n`;
     expect(checkGitignoreSplit(partial).missing).toEqual([
@@ -1034,20 +985,6 @@ describe('config serialization hardening', () => {
       checkGitignoreSplit(shipped.applyRuntimeExcludeBlock('').text).missing,
     ).toEqual([]);
   });
-
-  // The committed half must stay trackable, proven
-  // against the rules that are actually shipped (not a hand-written list).
-  it('keeps every shipped runtime rule off the committed half', async () => {
-    const shipped = await import('../../../exec/src/runtime-exclude.js');
-    expect([...COMMITTED_CONFIG_FILES]).toEqual(['config.toml', 'roles/']);
-    for (const entry of shipped.RUNTIME_EXCLUDE_ENTRIES) {
-      const normalized = entry.replace(/^\.kubic\//, '').replace(/\/$/, '');
-      expect(isCommittedConfigPath(normalized)).toBe(false);
-      expect(isCommittedConfigPath(`.kubic/${normalized}/x`)).toBe(false);
-    }
-    expect(isCommittedConfigPath('.kubic/config.toml')).toBe(true);
-    expect(isCommittedConfigPath('.kubic/roles/reviewer.md')).toBe(true);
-  });
 });
 
 describe('[verify] section', () => {
@@ -1062,9 +999,6 @@ describe('[verify] section', () => {
       typecheck: 'npm run typecheck',
       timeoutMs: 60000,
     });
-    expect(parseTomlConfig(serializeTomlConfig(parsed)).verify).toEqual(
-      parsed.verify,
-    );
   });
 
   it('refuses an unknown key, a non-string or blank command and a bad timeout by name', () => {

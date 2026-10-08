@@ -1886,32 +1886,6 @@ export function enableSessionFullAccess(
   };
 }
 
-// The symmetric revocation path: `kubic tui`'s in-session
-// toggle off writes posture.json (so a later resume boots enforced) and one
-// `posture:approvals` row, exactly as the enable path writes its own.
-export function disableSessionFullAccess(
-  options: SessionFullAccessOptions,
-): SessionFullAccessGrant {
-  const commandLine = `kubic ${options.command}`;
-  const posture = recordFullAccessChange({
-    enabled: false,
-    by: commandLine,
-    sessionId: options.sessionId,
-    workspace: options.workspace,
-    ...(options.sessionDir === undefined
-      ? {}
-      : { sessionDir: options.sessionDir }),
-    ...(options.clock === undefined ? {} : { clock: options.clock }),
-    ...(options.onAuditError === undefined
-      ? {}
-      : { onAuditError: options.onAuditError }),
-  });
-  return {
-    posture,
-    warning: `full-access revoked for session ${options.sessionId} — every challenged call asks again`,
-  };
-}
-
 // The warning a headless run prints when the session it runs in already has
 // full access: a scripted caller must never be surprised.
 export function fullAccessInForceWarning(sessionId: string): string {

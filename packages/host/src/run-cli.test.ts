@@ -25,7 +25,6 @@ import {
   type HeadlessRunResult,
   mapCaughtErrorToTerminus,
   mapLaneOutcomeToFailure,
-  mapLaneOutcomeToTerminus,
   mapTerminusToExitCode,
   runRunCommand,
 } from './run-cli.js';
@@ -223,42 +222,48 @@ describe('run -p --session validation', () => {
   });
 });
 
-describe('mapLaneOutcomeToTerminus', () => {
+// The terminus the failure classification names for a lane outcome.
+const terminusOf = (
+  status: Parameters<typeof mapLaneOutcomeToFailure>[0],
+  error?: Parameters<typeof mapLaneOutcomeToFailure>[1],
+) => mapLaneOutcomeToFailure(status, error).terminus;
+
+describe('lane outcome terminus', () => {
   it('maps a completed lane to completed', () => {
-    expect(mapLaneOutcomeToTerminus('completed')).toBe('completed');
+    expect(terminusOf('completed')).toBe('completed');
   });
 
   it('maps lane failure to failed', () => {
     expect(
-      mapLaneOutcomeToTerminus('failed', {
+      terminusOf('failed', {
         code: 'tool_failed',
         message: 'exit 1',
       }),
     ).toBe('failed');
-    expect(mapLaneOutcomeToTerminus('aborted')).toBe('failed');
+    expect(terminusOf('aborted')).toBe('failed');
   });
 
   it('keeps classified approval/workspace/provider errors as 4/5/6-bound termini', () => {
     expect(
-      mapLaneOutcomeToTerminus('failed', {
+      terminusOf('failed', {
         code: 'approval_denied',
         message: 'denied by user',
       }),
     ).toBe('approval_denied');
     expect(
-      mapLaneOutcomeToTerminus('failed', {
+      terminusOf('failed', {
         code: 'workspace_failed',
         message: 'worktree missing',
       }),
     ).toBe('workspace_unavailable');
     expect(
-      mapLaneOutcomeToTerminus('failed', {
+      terminusOf('failed', {
         code: 'provider_transient',
         message: 'api unavailable',
       }),
     ).toBe('provider_transient');
     expect(
-      mapLaneOutcomeToTerminus('failed', {
+      terminusOf('failed', {
         code: 'provider_auth',
         message: 'invalid api key',
       }),

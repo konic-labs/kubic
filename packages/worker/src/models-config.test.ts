@@ -5,12 +5,12 @@ import {
   effectiveReserveTokens,
 } from './compaction.js';
 import {
-  LOCAL_MODELS_EXAMPLE,
   ModelsJsonError,
   parseModelsJson,
   registerCustomProviders,
 } from './models-config.js';
 import { createModels } from './pi-boundary.js';
+import { LOCAL_MODELS_EXAMPLE } from './test-support/models-fixtures.js';
 
 describe('models.json apiKeyEnv allowlist', () => {
   const withKeyEnv = (apiKeyEnv: string) => ({

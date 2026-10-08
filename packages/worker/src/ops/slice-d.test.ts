@@ -3,11 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ProcessSnapshot } from '../../../exec/src/env.js';
-import {
-  FakeExecutionEnv,
-  MemoryCheckpointStore,
-  NodeExecutionEnv,
-} from '../../../exec/src/env.js';
+import { FakeExecutionEnv, NodeExecutionEnv } from '../../../exec/src/env.js';
+import { MemoryCheckpointStore } from '../../../exec/src/test-support/env-fakes.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { JsonValue, OpContext, ToolInvocation } from './types.js';

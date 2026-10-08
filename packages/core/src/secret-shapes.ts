@@ -52,19 +52,6 @@ export function containsSecretShape(text: string): boolean {
   return SHAPE_PATTERN.test(text);
 }
 
-// The secret-shaped substrings found in the text (each at most once,
-// in encounter order). Never returns the full text, only the matches.
-export function findSecretShapes(text: string): string[] {
-  const found: string[] = [];
-  for (const source of SHAPE_SOURCES) {
-    for (const match of text.matchAll(patternFor(source))) {
-      const hit = match[0];
-      if (!found.includes(hit)) found.push(hit);
-    }
-  }
-  return found;
-}
-
 // Replace every secret-shaped substring with a fixed placeholder. Used to
 // keep error messages fail-closed: they name the failure, never the secret.
 export function redactSecretShapes(text: string): string {

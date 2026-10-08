@@ -803,18 +803,6 @@ export function resolveLaneLadder(
   return { steps: [...model.steps], maxEscalations: model.maxEscalations };
 }
 
-// The effective thinking level with its source — the
-// per-run override the run/tui lane boots with, resolved once at load
-// (`--thinking` > `KUBIC_MODEL_THINKING` > file layers, enterprise-frozen).
-// Undefined when nothing set a level: the lane then boots at the session's
-// persisted level, a role default, or Pi's 'off'.
-export function runtimeThinking(
-  result: CliConfigResult,
-): RuntimeThinking | undefined {
-  const thinking = result.runtime?.thinking;
-  return thinking === undefined ? undefined : { ...thinking };
-}
-
 // The config `[roles.<name>]` table as resolver layer inputs:
 // one input per config layer that actually set a leaf, so the resolver's
 // first-layer-wins merge sees exactly the provenance the config load

@@ -124,11 +124,6 @@ export function nearestAnsi16Index(rgb: Rgb): number {
   return best;
 }
 
-/** The nearest ANSI foreground SGR code (30..37 normal, 90..97 bright). */
-export function nearestAnsi16(rgb: Rgb): number {
-  return ansiForeground(nearestAnsi16Index(rgb));
-}
-
 /** SGR foreground code for an ANSI palette index 0..15. */
 export function ansiForeground(index: number): number {
   return index < 8 ? 30 + index : 90 + (index - 8);
@@ -137,26 +132,4 @@ export function ansiForeground(index: number): number {
 /** SGR background code for an ANSI palette index 0..15. */
 export function ansiBackground(index: number): number {
   return ansiForeground(index) + 10;
-}
-
-function channelLuminance(value: number): number {
-  const c = value / 255;
-  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-}
-
-/** WCAG relative luminance of an sRGB colour. */
-function relativeLuminance(rgb: Rgb): number {
-  return (
-    0.2126 * channelLuminance(rgb[0]) +
-    0.7152 * channelLuminance(rgb[1]) +
-    0.0722 * channelLuminance(rgb[2])
-  );
-}
-
-/** WCAG contrast ratio between two `#rrggbb` colours (1..21). */
-export function contrastRatio(a: string, b: string): number {
-  const la = relativeLuminance(parseHex(a));
-  const lb = relativeLuminance(parseHex(b));
-  const [hi, lo] = la >= lb ? [la, lb] : [lb, la];
-  return (hi + 0.05) / (lo + 0.05);
 }

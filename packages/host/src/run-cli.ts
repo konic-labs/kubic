@@ -130,18 +130,6 @@ export function mapLaneOutcomeToFailure(
   }
 }
 
-// Lane outcome → terminus. Read-only consumer of the
-// worker settlement kernel: completed stays 0-bound, and a
-// failed/cancelled run keeps the harness error classification
-// (approval/workspace/provider surface as 4/5/6-bound termini, everything
-// else as failed).
-export function mapLaneOutcomeToTerminus(
-  status: LaneTerminalStatus,
-  error?: OperationErrorLike,
-): RunTerminusKind {
-  return mapLaneOutcomeToFailure(status, error).terminus;
-}
-
 // Failure classification of a terminus whose code is implied: the
 // guard and gate termini each have exactly one failure code, and the boot probe
 // is the provider setup failure. The classification never reads the

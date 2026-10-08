@@ -39,32 +39,3 @@ export const MCP_ARRIVAL_REQUIREMENTS = [
 export function mcpRefusalMessage(): string {
   return `config key [mcp] is unsupported (MCP support requires: ${MCP_ARRIVAL_REQUIREMENTS.join('; ')})`;
 }
-
-// ACP edge-only vocabulary: internal chord + pi-protocol stay inside
-// the worker; the only ACP-shaped data that crosses to the host edge is a
-// UI LaneSnapshot plus chord envelopes. Standalone structural types — this
-// module never imports worker implementation.
-export interface AcpLaneSnapshot {
-  sessionId: string;
-  status: string;
-  updatedAt: string;
-}
-
-export interface AcpChordMessage {
-  kind: string;
-  payload: Record<string, string>;
-}
-
-export interface AcpEdgeEnvelope {
-  snapshot: AcpLaneSnapshot;
-  messages: AcpChordMessage[];
-}
-
-export const ACP_EDGE_OWNER = '@kubic/host/src/config/acp-edge' as const;
-
-export function createAcpEdgeEnvelope(
-  snapshot: AcpLaneSnapshot,
-  messages: AcpChordMessage[],
-): AcpEdgeEnvelope {
-  return { snapshot, messages: [...messages] };
-}

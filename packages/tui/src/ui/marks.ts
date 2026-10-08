@@ -64,13 +64,3 @@ export function gauge(
 export function sectionLabel(ui: UiTheme, text: string): string {
   return ui.style({ fg: 'fg2', bold: true })(text.toUpperCase());
 }
-
-/** A faint horizontal rule of `width` cells. */
-export function rule(
-  ui: UiTheme,
-  width: number,
-  role: TokenRole = 'fg3',
-  char = '─',
-): string {
-  return ui.fg(role)(char.repeat(Math.max(0, width)));
-}

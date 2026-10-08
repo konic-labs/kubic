@@ -4,19 +4,16 @@
 import { describe, expect, it } from 'vitest';
 import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import {
-  applyRoleToLane,
-  createRoleToolGuard,
   effectiveRoleClasses,
-  loadRoleDocuments,
   mergeRoleLayers,
   parseRoleDocument,
   RoleRefusedError,
   resolveRole,
-  roleDebugLine,
   roleDoctorChecks,
   roleModelAllowed,
   validateResolvedRole,
 } from './resolver.js';
+import { loadRoles } from './roles-boot.js';
 
 const PLANNER_MD = `---
 role: planner
@@ -427,78 +424,25 @@ Reads only.
   });
 });
 
-function fakeLane(): {
-  calls: string[][];
-  setActiveTools: (tools: string[], context: unknown) => Promise<void>;
-} {
-  const calls: string[][] = [];
-  return {
-    calls,
-    setActiveTools: (tools: string[]) => {
-      calls.push([...tools]);
-      return Promise.resolve();
-    },
-  };
-}
-
-describe('applyRoleToLane', () => {
-  it('allow-lists the lane to the resolved role tools', async () => {
+describe('the role tool allow-list', () => {
+  it('resolves the planner document to its read-only tools', () => {
     const resolved = resolveRole(parseRoleDocument(PLANNER_MD), []);
-    const lane = fakeLane();
-    const applied = await applyRoleToLane(lane, resolved, undefined);
-    expect(applied).toEqual(resolved.tools);
-    expect(lane.calls).toEqual([resolved.tools]);
+    expect(resolved.tools).toEqual(['find', 'grep', 'ls', 'read']);
   });
 
-  it('refuses a contradictory role before touching the lane', async () => {
+  it('refuses a contradictory role when it is resolved with validation', () => {
     const doc = parseRoleDocument(PLANNER_MD);
-    const resolved = resolveRole({ ...doc, tools: ['read', 'write'] }, [], {
-      validate: false,
-    });
-    const lane = fakeLane();
-    await expect(applyRoleToLane(lane, resolved, undefined)).rejects.toThrow(
-      RoleRefusedError,
-    );
-    expect(lane.calls).toEqual([]);
+    expect(() =>
+      resolveRole({ ...doc, tools: ['read', 'write'] }, [], { validate: true }),
+    ).toThrow(RoleRefusedError);
   });
 
-  it('an empty tool set allow-lists no tools (noTools)', async () => {
+  it('an empty tool set resolves to no tools (noTools)', () => {
     const doc = parseRoleDocument(PLANNER_MD);
     const resolved = resolveRole({ ...doc, tools: [] }, [], {
       validate: false,
     });
-    const lane = fakeLane();
-    await applyRoleToLane(lane, resolved, undefined);
-    expect(lane.calls).toEqual([[]]);
-  });
-});
-
-describe('createRoleToolGuard', () => {
-  it('unregistered calls fail tool-absent, not approval-gated', () => {
-    const resolved = resolveRole(parseRoleDocument(PLANNER_MD), []);
-    const guard = createRoleToolGuard(resolved.name, resolved.tools);
-    const verdict = guard({
-      toolCallId: 'call-1',
-      toolName: 'write',
-      args: { path: 'notes.txt' },
-    });
-    expect(verdict).toEqual({
-      block: {
-        reason: expect.stringContaining('tool-absent'),
-        terminate: false,
-      },
-    });
-    expect((verdict as { block: { reason: string } }).block.reason).not.toMatch(
-      /approval/i,
-    );
-  });
-
-  it('registered calls pass through', () => {
-    const resolved = resolveRole(parseRoleDocument(PLANNER_MD), []);
-    const guard = createRoleToolGuard(resolved.name, resolved.tools);
-    expect(
-      guard({ toolCallId: 'call-2', toolName: 'read', args: { path: 'a' } }),
-    ).toBeUndefined();
+    expect(resolved.tools).toEqual([]);
   });
 });
 
@@ -638,15 +582,6 @@ describe('deterministic ordering', () => {
   });
 });
 
-describe('roleDebugLine', () => {
-  it('emits a [policy] line naming the role and its tools', () => {
-    const resolved = resolveRole(parseRoleDocument(PLANNER_MD), []);
-    expect(roleDebugLine(resolved)).toBe(
-      `[policy] role=planner tools=${resolved.tools.join(',')}`,
-    );
-  });
-});
-
 describe('roleDoctorChecks', () => {
   it('passes valid roles and fails contradictory ones with the reason', () => {
     const good = resolveRole(parseRoleDocument(PLANNER_MD), []);
@@ -679,42 +614,34 @@ describe('roleDoctorChecks', () => {
   });
 });
 
-describe('loadRoleDocuments', () => {
-  it('reads *.md role files through the FileBridge in sorted order', () => {
+describe('repo role files', () => {
+  it('reads the repo role documents through the bridge and ignores other files', () => {
+    const repoRoles = '/repo/.kubic/roles';
     const files: Record<string, string> = {
-      '/roles/b.md': REVIEWER_MD,
-      '/roles/a.md': PLANNER_MD,
+      [`${repoRoles}/reviewer.md`]: REVIEWER_MD,
+      [`${repoRoles}/planner.md`]: PLANNER_MD,
     };
+    const entry = (dir: string, name: string) => ({
+      name,
+      path: `${dir}/${name}`,
+      isDirectory: false,
+      isSymbolicLink: false,
+      size: 1,
+      mtimeMs: 0,
+    });
     const bridge = {
-      listDir: (dir: string) => [
-        {
-          name: 'b.md',
-          path: `${dir}/b.md`,
-          isDirectory: false,
-          isSymbolicLink: false,
-          size: 1,
-          mtimeMs: 0,
-        },
-        {
-          name: 'notes.txt',
-          path: `${dir}/notes.txt`,
-          isDirectory: false,
-          isSymbolicLink: false,
-          size: 1,
-          mtimeMs: 0,
-        },
-        {
-          name: 'a.md',
-          path: `${dir}/a.md`,
-          isDirectory: false,
-          isSymbolicLink: false,
-          size: 1,
-          mtimeMs: 0,
-        },
-      ],
+      listDir: (dir: string) =>
+        dir === repoRoles
+          ? ['reviewer.md', 'notes.txt', 'planner.md'].map((name) =>
+              entry(dir, name),
+            )
+          : [],
       readTextFile: (path: string) => files[path] ?? '',
     };
-    const docs = loadRoleDocuments(bridge, '/roles');
-    expect(docs.map((doc) => doc.name)).toEqual(['planner', 'reviewer']);
+    const loaded = loadRoles({ bridge, cwd: '/repo', trusted: true });
+    expect(loaded.sources.planner).toBe('repo');
+    expect(loaded.sources.reviewer).toBe('repo');
+    expect(loaded.texts.planner).toBe(PLANNER_MD);
+    expect(loaded.texts.notes).toBeUndefined();
   });
 });

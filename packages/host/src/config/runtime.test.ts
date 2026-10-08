@@ -43,7 +43,6 @@ import {
   type RuntimeConfigInputs,
   renderEffectiveConfig,
   runtimeKeyDisposition,
-  runtimeKeyEffectText,
 } from './runtime.js';
 
 type BridgePick = Pick<FileBridge, 'exists' | 'readTextFile'>;
@@ -96,6 +95,13 @@ function load(
     ...overrides,
   });
 }
+
+// The row's own words, whichever disposition the row carries.
+const effectTextOf = (entry: (typeof RUNTIME_KEY_EFFECTS)[string]): string => {
+  if ('effect' in entry) return entry.effect;
+  if ('kept' in entry) return entry.kept;
+  return entry.notYetImplemented;
+};
 
 describe('runtime config load', () => {
   it('reads the project layer and turns approval route into a live policy', () => {
@@ -227,7 +233,7 @@ describe('runtime config load', () => {
 
   it('says the kept window is capped to a quarter of the room below the reserve, in the key table and the summary line', () => {
     const entry = keyEffectFor('session.keepRecentTokens');
-    expect(entry === undefined ? '' : runtimeKeyEffectText(entry)).toContain(
+    expect(entry === undefined ? '' : effectTextOf(entry)).toContain(
       'capped per model to a quarter of the room below its reserve',
     );
     expect(
@@ -709,7 +715,7 @@ describe('thinking level load', () => {
   });
 
   it('names --thinking (not --model) as the per-run override', () => {
-    const text = runtimeKeyEffectText(RUNTIME_KEY_EFFECTS['model.thinking']);
+    const text = effectTextOf(RUNTIME_KEY_EFFECTS['model.thinking']);
     expect(text).toContain('--thinking');
     expect(text).not.toContain('--model');
   });
@@ -1100,7 +1106,7 @@ describe('effective config view', () => {
     // pointer is exactly what this table must never carry again, so the pin
     // is stronger than the gate: no issue number at all.
     for (const [key, entry] of Object.entries(RUNTIME_KEY_EFFECTS)) {
-      expect(runtimeKeyEffectText(entry), key).not.toMatch(/#\d+/);
+      expect(effectTextOf(entry), key).not.toMatch(/#\d+/);
     }
   });
 
@@ -1453,7 +1459,7 @@ retentionDays = 30
       expect(key.length).toBeGreaterThan(0);
       // Every disposition carries words: an effect, a kept decision, or a
       // named pending follow-up.
-      expect(runtimeKeyEffectText(entry).length).toBeGreaterThan(10);
+      expect(effectTextOf(entry).length).toBeGreaterThan(10);
       expect(runtimeKeyDisposition(entry)).not.toBe('unknown');
     }
   });

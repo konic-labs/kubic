@@ -232,12 +232,6 @@ export function parseSlashCommand(
   };
 }
 
-/** Whether a draft is a slash command this TUI knows. */
-export function isKnownSlashCommand(input: string): boolean {
-  const parsed = parseSlashCommand(input);
-  return parsed !== undefined && SLASH_COMMAND_NAMES.has(parsed.name);
-}
-
 // The commands whose name starts with the draft's command prefix (`'he'` →
 // `/help`), for the autocomplete.
 export function matchingSlashCommands(

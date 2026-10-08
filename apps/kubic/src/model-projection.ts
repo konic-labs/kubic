@@ -7,28 +7,9 @@
 // for both.
 
 import {
-  FAUX_MODEL_ID,
-  FAUX_PROVIDER_ID,
-} from '../../../packages/host/src/faux-provider.js';
-import {
-  type AnyModel,
   ModelSelectError,
   type ModelSelection,
-  selectModel,
 } from '../../../packages/worker/src/model-select.js';
-import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
-
-export interface LaneModelInput {
-  models: MutableModels;
-  /** `KUBIC_PROVIDER=faux`: the testing pin is the selection, announced. */
-  fauxPinned: boolean;
-  /** The runtimeModelPin projection (cli > env > [model]), if one is set. */
-  pin: ModelSelection | undefined;
-  /** The resolved role's `[roles.<name>].model` ref, if it declares one. */
-  roleModel: string | undefined;
-  /** Implicit picks never take a keyless built-in. */
-  fallbackProviders: readonly string[] | undefined;
-}
 
 // Where a selection came from, keyed by the selection OBJECT: the
 // named "unknown model/provider" refusal says which input carried the bad pin
@@ -67,17 +48,6 @@ export function roleModelSelection(
   return withSelectionOrigin(
     { provider: ref.slice(0, slash), id: ref.slice(slash + 1) },
     'role model',
-  );
-}
-
-export function selectLaneModel(input: LaneModelInput): AnyModel {
-  return selectModel(
-    input.models,
-    input.fauxPinned
-      ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
-      : input.pin,
-    roleModelSelection(input.roleModel),
-    input.fallbackProviders,
   );
 }
 

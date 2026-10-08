@@ -14,11 +14,9 @@ import {
   TERMINAL_PALETTE,
 } from '../ui/tokens.js';
 import {
-  alignedRows,
   brandHeading,
   errorBlock,
   hintLine,
-  kvLine,
   nextActions,
   receipt,
   sectionLabel,
@@ -46,15 +44,6 @@ const SURFACES: ReadonlyArray<
   [
     'hint',
     (t) => [hintLine(t, 'run `kubic doctor` to see why, or `kubic models`')],
-  ],
-  ['key/value', (t) => [kvLine(t, 'session', '01a1…9229', 10)]],
-  [
-    'aligned rows',
-    (t) =>
-      alignedRows(t, [
-        ['provider', 'faux/echo\ntesting only'],
-        ['journal', 'on'],
-      ]),
   ],
   [
     'status marks',

@@ -1,19 +1,23 @@
-// The shared lane-model projection. Both boots
-// (`kubic run`, `kubic tui`) resolve through these functions, so their
-// precedence and refusals are pinned here directly — the prod-path tests
-// prove the wiring, these prove the order.
+// The lane-model projection: the role default and the explicit selection the
+// boots hand to the policy-gated pick. The prod-path tests prove the wiring;
+// these prove the order.
 import { describe, expect, it } from 'vitest';
+import {
+  FAUX_MODEL_ID,
+  FAUX_PROVIDER_ID,
+} from '../../../packages/host/src/faux-provider.js';
 import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  type MutableModels,
 } from '../../../packages/worker/src/pi-boundary.js';
+import { selectModelUnderPolicy } from './config-runtime.js';
 import {
   hasExplicitModelSelection,
   roleModelSelection,
   selectionOrigin,
-  selectLaneModel,
   withSelectionOrigin,
 } from './model-projection.js';
 
@@ -79,9 +83,28 @@ describe('selection origin labels', () => {
   });
 });
 
-describe('selectLaneModel', () => {
+describe('the boot selection the policy gate receives', () => {
+  // A faux pin is the explicit selection; otherwise the runtime pin is. The
+  // role default is the config default. The boots pass them in this order.
+  const pick = (input: {
+    models: MutableModels;
+    fauxPinned: boolean;
+    pin: { provider: string; id: string } | undefined;
+    roleModel: string | undefined;
+    fallbackProviders: readonly string[] | undefined;
+  }) =>
+    selectModelUnderPolicy(
+      input.models,
+      input.fauxPinned
+        ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+        : input.pin,
+      roleModelSelection(input.roleModel),
+      input.fallbackProviders,
+      undefined,
+    );
+
   it('pins the faux provider over every other selection', () => {
-    const picked = selectLaneModel({
+    const picked = pick({
       models: catalog(),
       fauxPinned: true,
       pin: { provider: 'alt', id: 'm1' },
@@ -92,7 +115,7 @@ describe('selectLaneModel', () => {
   });
 
   it('takes the runtime pin over the role default and the first provider', () => {
-    const picked = selectLaneModel({
+    const picked = pick({
       models: catalog(),
       fauxPinned: false,
       pin: { provider: 'faux', id: 'small' },
@@ -104,7 +127,7 @@ describe('selectLaneModel', () => {
 
   it('falls back to the role default, then the first usable provider', () => {
     const models = catalog();
-    const role = selectLaneModel({
+    const role = pick({
       models,
       fauxPinned: false,
       pin: undefined,
@@ -112,7 +135,7 @@ describe('selectLaneModel', () => {
       fallbackProviders: undefined,
     });
     expect(`${role.provider}/${role.id}`).toBe('alt/m1');
-    const first = selectLaneModel({
+    const first = pick({
       models,
       fauxPinned: false,
       pin: undefined,
@@ -124,7 +147,7 @@ describe('selectLaneModel', () => {
 
   it('refuses an unknown runtime pin by name', () => {
     expect(() =>
-      selectLaneModel({
+      pick({
         models: catalog(),
         fauxPinned: false,
         pin: { provider: 'faux', id: 'nope' },

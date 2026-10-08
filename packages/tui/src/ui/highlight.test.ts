@@ -1,12 +1,11 @@
 // Syntax highlighting: calm roles over lowlight's
 // scopes, plain fallbacks that never throw.
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createUiTheme, stripStyles } from '../../../core/src/ui/style.js';
+import { createUiTheme } from '../../../core/src/ui/style.js';
 import { DARK_PALETTE } from '../../../core/src/ui/tokens.js';
 import {
   HIGHLIGHT_MAX_LINES,
   highlightCode,
-  highlighterReady,
   loadHighlighter,
 } from './highlight.js';
 
@@ -19,7 +18,9 @@ beforeAll(async () => {
 
 describe('code highlighting', () => {
   it('loads the grammars on demand', () => {
-    expect(highlighterReady()).toBe(true);
+    expect(highlightCode(rich, 'const a = 1', 'ts')[0]).toContain(
+      rich.style({ fg: 'fg0', bold: true })('const'),
+    );
   });
 
   it('maps keywords, strings, numbers and comments onto calm roles', () => {
@@ -49,7 +50,14 @@ describe('code highlighting', () => {
     ];
     for (const [language, code] of samples) {
       const lines = highlightCode(rich, code, language);
-      expect(lines.map(stripStyles)).toEqual(code.split('\n'));
+      expect(
+        lines.map((line) =>
+          line.replace(
+            new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g'),
+            '',
+          ),
+        ),
+      ).toEqual(code.split('\n'));
     }
     expect(highlightCode(rich, '-a\n+b', 'diff')[1]).toContain(
       rich.fg('add')('+b'),

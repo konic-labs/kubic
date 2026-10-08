@@ -579,3 +579,13 @@ describe('approval adapter, file store, posture', () => {
     });
   });
 });
+
+describe('approval policy maxPendingMs bound', () => {
+  it('refuses a non-positive or non-numeric maxPendingMs when the policy loads', () => {
+    for (const maxPendingMs of [Number.NaN, 0, -1]) {
+      expect(() => validatePolicy({ maxPendingMs })).toThrow(
+        'maxPendingMs must be a positive number',
+      );
+    }
+  });
+});

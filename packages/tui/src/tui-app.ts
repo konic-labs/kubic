@@ -302,21 +302,6 @@ export interface TuiAppSeed {
   readonly cwdLabel?: string;
 }
 
-// Replication: the TUI holds no authority — it reads the replicated
-// snapshot only. The model id is runtime (not presentation state), so it
-// arrives alongside.
-export function seedFromPresentation(
-  state: KubicPresentationState,
-  model: string,
-  posture: { readonly approvalsSkipped: boolean },
-): TuiAppSeed {
-  return {
-    sessionId: state.session.sessionId,
-    model,
-    approvalsSkipped: posture.approvalsSkipped,
-  };
-}
-
 interface TuiInputResult {
   readonly quit: boolean;
   readonly consumed: boolean;

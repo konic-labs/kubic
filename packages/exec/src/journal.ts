@@ -1605,17 +1605,6 @@ export function saveBaseline(
   );
 }
 
-export function loadBaseline(dir: string, runId: string): Baseline | null {
-  const bridge = createNodeFileBridge('/');
-  const path = join(dir, `baseline-${runId}.json`);
-  if (!bridge.exists(path)) return null;
-  try {
-    return JSON.parse(bridge.readTextFile(path)) as Baseline;
-  } catch {
-    return null;
-  }
-}
-
 export interface ReconcileContext {
   sessionId: string;
   timestamp: number;

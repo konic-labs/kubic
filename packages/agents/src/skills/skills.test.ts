@@ -15,7 +15,6 @@ import {
   gateSkills,
   invokeSkill,
   parseSkillFile,
-  resolveTaskSkillRefs,
 } from './skills.js';
 
 function bridgeFromEnv(
@@ -926,14 +925,12 @@ describe('role scoping and capability gating', () => {
       role: 'implementer',
       classes: { ...SOLO_DEFAULTS, filesystem: 'read' },
     });
-    const resolved = resolveTaskSkillRefs(['ok', 'needy', 'ghost'], gated);
-    expect(resolved.granted.map((skill) => skill.name)).toEqual(['ok']);
-    expect(resolved.withheld).toEqual([
-      {
+    expect(gated.visible.map((skill) => skill.name)).toEqual(['ok']);
+    expect(gated.withheld).toEqual([
+      expect.objectContaining({
         name: 'needy',
         reason: "needs tool 'write' denied by capability grant",
-      },
-      { name: 'ghost', reason: "unknown skill 'ghost'" },
+      }),
     ]);
   });
 });
@@ -1334,15 +1331,10 @@ describe('skill gating and invocation hardening', () => {
     );
   });
 
-  it('reports unknown task refs with the unknown-skill reason', () => {
-    const resolved = resolveTaskSkillRefs(['ghost'], {
-      visible: [],
-      withheld: [],
-    });
-    expect(resolved.granted).toEqual([]);
-    expect(resolved.withheld).toEqual([
-      { name: 'ghost', reason: "unknown skill 'ghost'" },
-    ]);
+  it('refuses an unknown skill name with the unknown-skill reason', () => {
+    expect(() => expandSkillInvocation([], 'ghost')).toThrow(
+      "unknown skill 'ghost'",
+    );
   });
 });
 

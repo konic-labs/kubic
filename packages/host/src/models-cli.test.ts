@@ -7,8 +7,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LOCAL_MODELS_EXAMPLE } from '../../worker/src/models-config.js';
 import { createModels, fauxProvider } from '../../worker/src/pi-boundary.js';
+import { LOCAL_MODELS_EXAMPLE } from '../../worker/src/test-support/models-fixtures.js';
 import {
   assembleModels,
   contextRoomProbeOf,

@@ -70,7 +70,6 @@ import {
   runtimeSkillsDeps,
   runtimeStreamTuning,
   runtimeSystemPromptSection,
-  runtimeThinking,
   selectModelUnderPolicy,
   sessionRetentionDays,
 } from './config-runtime.js';
@@ -1320,7 +1319,7 @@ describe('cli thinking layer', () => {
     const { home, cwd } = homeWithThinking('high');
     const result = loadCliConfig({ cwd, home, env: {} });
     expect(result.error).toBeUndefined();
-    expect(runtimeThinking(result)).toEqual({
+    expect(runtimeLaneDeps(result).thinking).toEqual({
       level: 'high',
       source: 'global',
     });
@@ -1337,14 +1336,17 @@ describe('cli thinking layer', () => {
       home,
       env: { KUBIC_MODEL_THINKING: 'low' },
     });
-    expect(runtimeThinking(env)).toEqual({ level: 'low', source: 'env' });
+    expect(runtimeLaneDeps(env).thinking).toEqual({
+      level: 'low',
+      source: 'env',
+    });
     const cli = loadCliConfig({
       cwd,
       home,
       env: { KUBIC_MODEL_THINKING: 'low' },
       thinking: 'minimal',
     });
-    expect(runtimeThinking(cli)).toEqual({
+    expect(runtimeLaneDeps(cli).thinking).toEqual({
       level: 'minimal',
       source: 'cli',
     });

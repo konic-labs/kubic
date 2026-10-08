@@ -17,7 +17,6 @@ import {
   toolsForClasses,
   validateClasses,
 } from '../../../agents/src/policy.js';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import type { ConfigLayer, RoleModelEntry } from '../config/config.js';
 import { CONFIG_LAYERS } from '../config/config.js';
 import type { DoctorCheck } from '../doctor.js';
@@ -545,59 +544,6 @@ export function validateResolvedRole(resolved: ResolvedRole): void {
   }
 }
 
-// Lane filter: the lane allow-list narrows to exactly the resolved role
-// set via setActiveTools — never-registered tools are uncallable by
-// construction. Validation runs first so a contradictory role is
-// refused before the lane is touched. An empty tool set allow-lists
-// nothing (the noTools case).
-export interface RoleLane {
-  setActiveTools(tools: string[], context: unknown): void | Promise<void>;
-}
-
-export async function applyRoleToLane(
-  lane: RoleLane,
-  resolved: ResolvedRole,
-  context: unknown,
-): Promise<string[]> {
-  validateResolvedRole(resolved);
-  await lane.setActiveTools(resolved.tools, context);
-  return resolved.tools;
-}
-
-export interface BeforeToolEvent {
-  toolCallId: string;
-  toolName: string;
-  args: Record<string, unknown>;
-}
-
-export type BeforeToolVerdict =
-  | { block: { reason: string; terminate: false } }
-  | undefined;
-
-// Absence guard: calls to tools the role never registered
-// fail tool-absent. This is not approval-gated — the reason names the
-// absence, never an approval capability, so no decider is consulted.
-export function createRoleToolGuard(
-  role: string,
-  allowed: readonly string[],
-): (event: BeforeToolEvent) => BeforeToolVerdict {
-  return (event) => {
-    if (allowed.includes(event.toolName)) return undefined;
-    return {
-      block: {
-        reason: `tool-absent: tool '${event.toolName}' is not registered for role '${role}'`,
-        terminate: false as const,
-      },
-    };
-  };
-}
-
-// Debug line: the existing [policy] vocabulary names the role and
-// its resolved tool set — no new line class is introduced.
-export function roleDebugLine(resolved: ResolvedRole): string {
-  return `[policy] role=${resolved.name} tools=${resolved.tools.join(',')}`;
-}
-
 // Doctor surfacing: every resolved role becomes a
 // `role:<name>` check. Contradictory roles report fail/policy-mismatch
 // with the refusal reason — the same shape runDoctorCommand renders,
@@ -647,18 +593,4 @@ export function roleDoctorChecks(
           : `${sources[resolved.name] ?? 'builtin'} role${resolved.description === undefined ? '' : ` — ${resolved.description}`} — effective ${formatEffectiveClasses(effectiveRoleClasses(configClasses, resolved.classes))}${resolved.requires.length === 0 ? '' : ` — requires approval: ${resolved.requires.join(', ')}`}`,
     };
   });
-}
-
-// Role document load through the exec FileBridge (sorted by filename so
-// multi-role loads are deterministic). The bridge is injected so tests
-// run on fakes while prod passes the real FileBridge.
-export function loadRoleDocuments(
-  bridge: Pick<FileBridge, 'listDir' | 'readTextFile'>,
-  dir: string,
-): ParsedRoleDoc[] {
-  return bridge
-    .listDir(dir)
-    .filter((entry) => !entry.isDirectory && entry.name.endsWith('.md'))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .map((entry) => parseRoleDocument(bridge.readTextFile(entry.path)));
 }

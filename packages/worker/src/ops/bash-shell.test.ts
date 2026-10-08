@@ -7,7 +7,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ExecutionEnv,
   FakeScript,
@@ -21,9 +21,7 @@ import {
   NodeExecutionEnv,
   ROOT_PROVENANCE,
 } from '../../../exec/src/env.js';
-import { __setResolvedShellForTests } from './bash.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
-import { callOperation } from './registry.js';
 import type {
   JsonValue,
   MemoStore,
@@ -144,7 +142,6 @@ class HangShell implements Shell {
 const scratchDirs: string[] = [];
 
 afterAll(() => {
-  __setResolvedShellForTests(undefined);
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -169,7 +166,8 @@ const HAS_BASH = await bashPresent();
 
 describe('bash shell resolution', () => {
   beforeEach(() => {
-    __setResolvedShellForTests(undefined);
+    // Each case gets a fresh registry, so the per-process shell resolution starts unset.
+    vi.resetModules();
   });
 
   it('falls back to sh and succeeds on the spawn-ENOENT shape', async () => {
@@ -177,7 +175,7 @@ describe('bash shell resolution', () => {
       'bash -c echo hi': BASH_MISSING,
       'sh -c echo hi': OK_HI,
     });
-    const out = await callOperation(
+    const out = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo hi' },
       inv('inv-sh-miss'),
@@ -197,7 +195,7 @@ describe('bash shell resolution', () => {
       'bash -c echo two': { exitCode: 0, stdout: 'two\n', stderr: '' },
     });
     const c = ctxFor(env);
-    const first = await callOperation(
+    const first = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'nonexistentcmd123' },
       inv('inv-typo1'),
@@ -214,7 +212,7 @@ describe('bash shell resolution', () => {
     expect(first.result.shell).toBe('bash');
     // Second invocation still spawns bash — the resolution cache was not
     // poisoned to 'sh' by the typo (asserted via the fake-env call log).
-    const second = await callOperation(
+    const second = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo two' },
       inv('inv-typo2'),
@@ -248,7 +246,7 @@ describe('bash shell resolution', () => {
       'sh -c echo two': { exitCode: 0, stdout: 'FALLBACK-RAN', stderr: '' },
     });
     const c = ctxFor(env);
-    const first = await callOperation(
+    const first = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo-hostile' },
       inv('inv-userout1'),
@@ -262,7 +260,7 @@ describe('bash shell resolution', () => {
     expect(first.result.shell).toBe('bash');
     // No sh retry, and the resolution cache is not written: the second
     // invocation still spawns bash (asserted via the fake-env call log).
-    const second = await callOperation(
+    const second = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo two' },
       inv('inv-userout2'),
@@ -288,7 +286,7 @@ describe('bash shell resolution', () => {
       'bash -c echo two': { exitCode: 0, stdout: 'two\n', stderr: '' },
     });
     const c = ctxFor(env);
-    const first = await callOperation(
+    const first = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo-spoof' },
       inv('inv-spoof1'),
@@ -298,7 +296,7 @@ describe('bash shell resolution', () => {
     if (!first.ok) return;
     expect(first.result.exitCode).toBe(127);
     expect(first.result.shell).toBe('bash');
-    const second = await callOperation(
+    const second = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo two' },
       inv('inv-spoof2'),
@@ -314,7 +312,7 @@ describe('bash shell resolution', () => {
     'runs bashisms under bash and reports shell: bash (real child)',
     async () => {
       const env = new NodeExecutionEnv(scratch('bash-shell-'));
-      const out = await callOperation(
+      const out = await (await import('./registry.js')).callOperation(
         'bash',
         { command: '[[ -n x ]] && echo ok' },
         inv('inv-sh2'),
@@ -334,8 +332,18 @@ describe('bash shell resolution', () => {
       'bash -c echo two': { exitCode: 0, stdout: 'two\n', stderr: '' },
     });
     const c = ctxFor(env);
-    await callOperation('bash', { command: 'echo one' }, inv('inv-sh3a'), c);
-    await callOperation('bash', { command: 'echo two' }, inv('inv-sh3b'), c);
+    await (await import('./registry.js')).callOperation(
+      'bash',
+      { command: 'echo one' },
+      inv('inv-sh3a'),
+      c,
+    );
+    await (await import('./registry.js')).callOperation(
+      'bash',
+      { command: 'echo two' },
+      inv('inv-sh3b'),
+      c,
+    );
     // Exactly one spawn per invocation — no `bash -c true` detection
     // spawn, and nothing re-probed on the second call.
     expect(calls).toEqual(['bash -c echo one', 'bash -c echo two']);
@@ -348,13 +356,13 @@ describe('bash shell resolution', () => {
       'sh -c echo two': { exitCode: 0, stdout: 'two\n', stderr: '' },
     });
     const c = ctxFor(env);
-    const first = await callOperation(
+    const first = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo one' },
       inv('inv-sh4a'),
       c,
     );
-    const second = await callOperation(
+    const second = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo two' },
       inv('inv-sh4b'),
@@ -375,7 +383,7 @@ describe('bash shell resolution', () => {
     'runs `local` in a function when bash is resolved (real child)',
     async () => {
       const env = new NodeExecutionEnv(scratch('bash-local-'));
-      const out = await callOperation(
+      const out = await (await import('./registry.js')).callOperation(
         'bash',
         { command: 'f() { local v=1; echo "local $v"; }; f' },
         inv('inv-sh5'),
@@ -394,7 +402,7 @@ describe('bash shell resolution', () => {
       'bash -c sleep-forever': BASH_MISSING,
       'sh -c sleep-forever': 'hang',
     });
-    const out = await callOperation(
+    const out = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'sleep-forever', timeout: 0.01 },
       inv('inv-sh6'),
@@ -419,7 +427,7 @@ describe('bash shell resolution', () => {
     // The fake shell settles in microtasks, so by the time this macrotask
     // runs the op is parked on the hanging sh retry handle.
     const timer = setTimeout(() => ctl.abort(), 0);
-    const out = await callOperation(
+    const out = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'sleep-forever' },
       inv('inv-sh7'),
@@ -444,7 +452,7 @@ describe('bash shell resolution', () => {
       'bash -c echo hi': BASH_MISSING,
       'sh -c echo hi': OK_HI,
     });
-    const out = await callOperation(
+    const out = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo hi' },
       inv('inv-sh8'),
@@ -479,7 +487,7 @@ describe('bash shell resolution', () => {
       'bash -c echo hi': BASH_MISSING,
       'sh -c echo hi': OK_HI,
     });
-    const out = await callOperation(
+    const out = await (await import('./registry.js')).callOperation(
       'bash',
       { command: 'echo hi' },
       counting,

@@ -250,47 +250,12 @@ export interface SoloCompactionLane {
   readonly manualKeep?: ManualKeepScope;
 }
 
-export interface ManualCompactionAdmission {
+interface ManualCompactionAdmission {
   taskId: TaskId<CompactionResult>;
   // The context estimate at admission (Pi's own estimate over the derived
   // model context), so the caller can report what the cut removed. Read
   // BEFORE the task is admitted: after placement the context is the summary.
   tokensBefore: number;
-}
-
-/**
- * Manual compaction admission: reads the context, then admits Pi's
- * `CompactionTask` and returns its id. Pi summarizes while the conversation
- * keeps working and places the summary at once when idle, otherwise at the
- * next turn boundary; the caller waits on `harness.waitForTask`.
- *
- * Kubic's compact prompt — the caller's focus verbatim — is the
- * task's instructions: the one path where Kubic owns the summarizer's text.
- * Automatic (threshold/overflow) compaction uses Pi's own summarization
- * prompt, because pi-durable only accepts instructions through `compact()`.
- */
-export async function compactSoloLane(
-  solo: SoloCompactionLane,
-  focus: string | undefined,
-  context: Context,
-): Promise<ManualCompactionAdmission> {
-  const view = await solo.conversation.context(context);
-  return admitCompaction(solo, focus, view, context);
-}
-
-// Admission on a context the caller has already read. The estimate is taken
-// from that read, before the task is admitted: after placement the context is
-// the summary.
-async function admitCompaction(
-  solo: SoloCompactionLane,
-  focus: string | undefined,
-  view: ContextView,
-  context: Context,
-): Promise<ManualCompactionAdmission> {
-  const instructions = buildCompactPrompt(focus === undefined ? {} : { focus });
-  const tokensBefore = estimateContextTokens(view.messages).tokens;
-  const taskId = await solo.conversation.compact(instructions, context);
-  return { taskId, tokensBefore };
 }
 
 // How a manual compaction ended. `aborted` is the
@@ -363,6 +328,21 @@ export interface ManualCompactionOptions {
    * the admission commit) replays it here, so a Ctrl-C is never lost.
    */
   onAdmitted?: (taskId: string) => void | Promise<void>;
+}
+
+// Admission on a context the caller has already read. The estimate is taken
+// from that read, before the task is admitted: after placement the context is
+// the summary.
+async function admitCompaction(
+  solo: SoloCompactionLane,
+  focus: string | undefined,
+  view: ContextView,
+  context: Context,
+): Promise<ManualCompactionAdmission> {
+  const instructions = buildCompactPrompt(focus === undefined ? {} : { focus });
+  const tokensBefore = estimateContextTokens(view.messages).tokens;
+  const taskId = await solo.conversation.compact(instructions, context);
+  return { taskId, tokensBefore };
 }
 
 /**

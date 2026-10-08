@@ -30,7 +30,6 @@ import {
   credentialUseAudit,
   fullAccessEnabledAudit,
   isPrivilegedAuditWhat,
-  PRIVILEGED_ACTION_KINDS,
   readAuditLedger,
   resolveRunBaseRevision,
   runStartAudit,
@@ -346,13 +345,6 @@ describe('audit ledger', () => {
   });
 
   describe('privileged-action audit rows', () => {
-    it('defines the closed privileged-action set', () => {
-      expect(PRIVILEGED_ACTION_KINDS).toEqual([
-        'full-access-grant',
-        'undo-restore',
-      ]);
-    });
-
     it('records an undo restore with restored paths and skip count', () => {
       const record = undoRestoreAudit({
         sessionId: 'sess',
@@ -721,7 +713,6 @@ describe('privileged-action kinds map to whats', () => {
     ['full-access-grant', 'posture:full-access'],
     ['undo-restore', 'undo-restore'],
   ] as const)('kind %s writes what %s', (kind, what) => {
-    expect(PRIVILEGED_ACTION_KINDS).toContain(kind);
     switch (kind) {
       case 'full-access-grant':
         expect(
@@ -743,11 +734,5 @@ describe('privileged-action kinds map to whats', () => {
         ).toBe(what);
         break;
     }
-  });
-
-  it('the set is closed: no more and no fewer than the two kinds', () => {
-    expect([...PRIVILEGED_ACTION_KINDS].sort()).toEqual(
-      ['full-access-grant', 'undo-restore'].sort(),
-    );
   });
 });

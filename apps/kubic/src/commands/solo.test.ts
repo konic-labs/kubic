@@ -14,7 +14,7 @@ import type {
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
 import type { CliConfigResult } from '../config-runtime.js';
-import { registerSoloCommands } from './solo.js';
+import { registerSessionCommands } from './solo.js';
 
 const CONFIG = {} as CliConfigResult;
 
@@ -80,7 +80,7 @@ async function kubic(
       finished = true;
     },
   };
-  registerSoloCommands(program, ctx);
+  registerSessionCommands(program, ctx);
   const exit = await runKubicProgram(program, argv, channels, {
     code: () => code,
     finished: () => finished,

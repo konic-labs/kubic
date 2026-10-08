@@ -669,7 +669,7 @@ function registerSessions(program: Command, ctx: CommandContext): void {
     });
 }
 
-export const registerSoloCommands: CommandRegistrar = (program, ctx) => {
+export const registerSessionCommands: CommandRegistrar = (program, ctx) => {
   registerRun(program, ctx);
   registerTui(program, ctx);
   registerReattach(program, ctx);

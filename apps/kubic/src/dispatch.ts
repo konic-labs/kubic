@@ -48,7 +48,7 @@ import { createKubicProgram, runKubicProgram } from './cli/program.js';
 import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './cli/root-help.js';
 import { registerAnalysisCommands } from './commands/analysis.js';
 import { registerJournalCommands } from './commands/journal.js';
-import { registerSoloCommands } from './commands/solo.js';
+import { registerSessionCommands } from './commands/solo.js';
 import { type CliConfigResult, configRefusalExit } from './config-runtime.js';
 
 // The root help: one text, printed by `--help`/`-h`
@@ -208,7 +208,7 @@ export function cliModelFromArgs(
 // Every command module registers its own commander commands, so parallel
 // command migrations never edit the same file.
 const REGISTRARS: readonly CommandRegistrar[] = [
-  registerSoloCommands,
+  registerSessionCommands,
   registerJournalCommands,
   registerAnalysisCommands,
 ];

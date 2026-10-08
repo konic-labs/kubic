@@ -6,7 +6,7 @@ import {
 } from '../../../../packages/core/src/cli/exit-codes.js';
 import { registerAnalysisCommands } from '../commands/analysis.js';
 import { registerJournalCommands } from '../commands/journal.js';
-import { registerSoloCommands } from '../commands/solo.js';
+import { registerSessionCommands } from '../commands/solo.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import { COMMAND_NAMES, ROOT_HELP } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';
@@ -225,7 +225,7 @@ describe('command registry', () => {
     const { channels } = io();
     const p = program(channels);
     const { ctx } = context([]);
-    registerSoloCommands(p, ctx);
+    registerSessionCommands(p, ctx);
     registerJournalCommands(p, ctx);
     registerAnalysisCommands(p, ctx);
     return p;
@@ -246,13 +246,13 @@ describe('command registry', () => {
   });
 
   it('each module owns its documented group', () => {
-    const owned = (register: typeof registerSoloCommands) => {
+    const owned = (register: typeof registerSessionCommands) => {
       const { channels } = io();
       const p = program(channels);
       register(p, context([]).ctx);
       return p.commands.map((command) => command.name()).sort();
     };
-    expect(owned(registerSoloCommands)).toEqual([
+    expect(owned(registerSessionCommands)).toEqual([
       'attach',
       'config',
       'doctor',
@@ -304,7 +304,7 @@ describe('command registry', () => {
         runners,
       };
       for (const register of [
-        registerSoloCommands,
+        registerSessionCommands,
         registerJournalCommands,
         registerAnalysisCommands,
       ]) {

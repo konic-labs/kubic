@@ -34,7 +34,7 @@ import {
   resolveRunBaseRevision,
   runStartAudit,
   setAuditSinks,
-  soloDecisionAudit,
+  decisionAudit,
   undoRestoreAudit,
 } from './audit-ledger.js';
 
@@ -67,7 +67,7 @@ describe('audit ledger', () => {
     const dir = auditLedgerDir(root);
     appendToLedger(
       dir,
-      soloDecisionAudit({
+      decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'destructive-shell',
@@ -88,7 +88,7 @@ describe('audit ledger', () => {
     const errors: string[] = [];
     const record = appendToLedger(
       dir,
-      soloDecisionAudit({
+      decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'credentials',
@@ -148,7 +148,7 @@ describe('audit ledger', () => {
     const root = repo();
     const dir = auditLedgerDir(root);
     const input = (reason: string) =>
-      soloDecisionAudit({
+      decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'credentials',
@@ -187,7 +187,7 @@ describe('audit ledger', () => {
   // for a field the run knows.
   describe('audit provenance fields', () => {
     it('records thinking and base on solo rows', () => {
-      const input = soloDecisionAudit({
+      const input = decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'destructive-shell',
@@ -262,7 +262,7 @@ describe('audit ledger', () => {
     });
 
     it("no live-path record carries 'unknown' for a field whose data exists", () => {
-      const solo = soloDecisionAudit({
+      const solo = decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'destructive-shell',
@@ -382,11 +382,11 @@ describe('audit ledger', () => {
     };
     appendToLedger(
       dir,
-      soloDecisionAudit({ ...decision, posture: 'approvals' }),
+      decisionAudit({ ...decision, posture: 'approvals' }),
     );
     appendToLedger(
       dir,
-      soloDecisionAudit({ ...decision, posture: 'full-access' }),
+      decisionAudit({ ...decision, posture: 'full-access' }),
     );
     const lines: string[] = [];
     const code = (

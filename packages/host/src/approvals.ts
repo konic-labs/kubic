@@ -52,7 +52,7 @@ import {
   fullAccessDisabledAudit,
   fullAccessEnabledAudit,
   postureChangedAudit,
-  soloDecisionAudit,
+  decisionAudit,
 } from './policy/audit-ledger.js';
 // Approval triggers, policy, and durable decider service.
 // The decider is the user — never the model. This module exposes no
@@ -2156,7 +2156,7 @@ export function installPolicy(input: PolicyInput): InstalledPolicy {
           : input.thinking;
       appendToLedger(
         ledgerDir,
-        soloDecisionAudit({
+        decisionAudit({
           sessionId: auditSessionId,
           toolName,
           trigger,

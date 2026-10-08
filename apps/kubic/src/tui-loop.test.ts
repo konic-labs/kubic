@@ -42,7 +42,7 @@ import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   runTuiCommand,
-  soloTuiLoop,
+  tuiLoop,
   TUI_CLOCK_TICK_MS,
   TuiCompactionTurn,
   type TuiLaneLoop,
@@ -152,7 +152,7 @@ function fauxLaneBoot(
       sessionId: id,
       model: `${provider.id}/${model.id}`,
       ...(options.exposeJournal === true ? { journal } : {}),
-      loop: soloTuiLoop(solo),
+      loop: tuiLoop(solo),
       close: async () => {
         await solo.close(context);
         await session.release(context);
@@ -1408,7 +1408,7 @@ describe('kubic tui prompt loop', () => {
       } as unknown as ConstructorParameters<typeof TuiTurnRunner>[0];
       const runner = new TuiTurnRunner(
         app,
-        soloTuiLoop(lane.solo),
+        tuiLoop(lane.solo),
         'faux/faux-1',
       );
       const first = lane.run('first prompt');

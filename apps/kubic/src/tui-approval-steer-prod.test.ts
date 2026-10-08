@@ -34,7 +34,7 @@ import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   runTuiCommand,
-  soloTuiLoop,
+  tuiLoop,
   type TuiApprovalSeat,
   type TuiRunDeps,
 } from './tui-run.js';
@@ -118,7 +118,7 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
-      loop: soloTuiLoop(solo),
+      loop: tuiLoop(solo),
       close: async () => {
         await solo.close(context);
         await session.release(context);

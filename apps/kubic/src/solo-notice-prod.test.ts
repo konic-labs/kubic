@@ -40,7 +40,7 @@ import {
 } from '../../../packages/host/src/limits/solo-warning.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
-import { runTuiCommand, soloTuiLoop, type TuiRunDeps } from './tui-run.js';
+import { runTuiCommand, tuiLoop, type TuiRunDeps } from './tui-run.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..');
@@ -263,7 +263,7 @@ function fauxLaneBoot(
     return {
       sessionId: id,
       model: `${provider.id}/${model.id}`,
-      loop: soloTuiLoop(solo),
+      loop: tuiLoop(solo),
       close: async () => {
         await solo.close(context);
         await session.release(context);

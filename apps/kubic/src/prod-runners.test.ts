@@ -25,7 +25,7 @@ import {
 import {
   appendToLedger,
   auditLedgerDir,
-  soloDecisionAudit,
+  decisionAudit,
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
@@ -131,7 +131,7 @@ describe('kubic audit (prod wiring)', () => {
     roots.push(root);
     appendToLedger(
       auditLedgerDir(root),
-      soloDecisionAudit({
+      decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'destructive-shell',
@@ -161,7 +161,7 @@ describe('kubic audit from a subdirectory', () => {
     mkdirSync(join(root, 'pkg'));
     appendToLedger(
       auditLedgerDir(root),
-      soloDecisionAudit({
+      decisionAudit({
         sessionId: 's',
         toolName: 'bash',
         trigger: 'destructive-shell',

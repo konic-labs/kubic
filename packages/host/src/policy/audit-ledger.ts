@@ -261,7 +261,7 @@ function verdictFields(verdict: Verdict): {
 }
 
 // Audit record for a solo approval decision (the in-process lane's ask).
-export interface SoloDecisionInput {
+export interface DecisionInput {
   sessionId: string;
   toolName: string;
   trigger: string;
@@ -282,7 +282,7 @@ export interface SoloDecisionInput {
   posture: string;
 }
 
-export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
+export function decisionAudit(input: DecisionInput): AuditInput {
   const { approval, result, reason } = verdictFields(
     input.approved
       ? { approved: true, by: input.by ?? 'user' }

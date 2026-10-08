@@ -1092,7 +1092,7 @@ export interface TuiRunOptions {
 // bootTuiLane installs. Exported so the prod boot, embedders and the tests
 // share ONE wiring: a lane member the loop needs cannot be forgotten in a
 // hand-spread fake (the failure mode that hides a dropped dep).
-export function soloTuiLoop(
+export function tuiLoop(
   solo: Lane,
   context: Context = BACKGROUND_CONTEXT,
 ): TuiLaneLoop {
@@ -1902,7 +1902,7 @@ export async function bootTuiLane(
       })(),
       approvalsSkipped: installed.approvalsSkipped,
       loop: {
-        ...soloTuiLoop(booted, context),
+        ...tuiLoop(booted, context),
         // The LIVE model's modalities, resolved against the same
         // catalog `/model` switches through — a switch to a text-only model
         // refuses the next attachment (and clears the pending ones).

@@ -21,7 +21,7 @@ import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import { runTuiCommand, soloTuiLoop, type TuiRunDeps } from './tui-run.js';
+import { runTuiCommand, tuiLoop, type TuiRunDeps } from './tui-run.js';
 
 const made: string[] = [];
 
@@ -70,7 +70,7 @@ function boot(answer: string): TuiRunDeps['bootLane'] {
     return {
       sessionId: session.id,
       model: `${provider.id}/${model.id}`,
-      loop: soloTuiLoop(solo),
+      loop: tuiLoop(solo),
       close: async () => {
         await solo.close(BACKGROUND_CONTEXT);
         await session.release(BACKGROUND_CONTEXT);

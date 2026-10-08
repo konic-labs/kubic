@@ -44,7 +44,6 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
     after: 'hello\n',
     bytesDelta: 6,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 1700000000000,
     ...overrides,
@@ -224,6 +223,7 @@ describe('readAfter delta bases', () => {
     mkdirSync(join(dir, 'blobs'), { recursive: true });
     writeFileSync(join(dir, 'blobs', deltaHash), delta);
     const legacy: JournalEntry = {
+      source: 'tool',
       path: 'legacy.txt',
       op: 'write',
       beforeHash: sha256Hex('gone\n'),
@@ -231,7 +231,6 @@ describe('readAfter delta bases', () => {
       deltaHash,
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 1,
       unattributed: true,
@@ -257,6 +256,7 @@ describe('readAfter delta bases', () => {
     mkdirSync(join(dir, 'blobs'), { recursive: true });
     writeFileSync(join(dir, 'blobs', deltaHash), delta);
     const legacy: JournalEntry = {
+      source: 'tool',
       path: 'legacy.txt',
       op: 'write',
       beforeHash: sha256Hex(shared),
@@ -264,7 +264,6 @@ describe('readAfter delta bases', () => {
       deltaHash,
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 1,
       unattributed: true,
@@ -363,6 +362,7 @@ describe('blob hash verification', () => {
     writeFileSync(join(dir, 'blobs', deltaHash), delta);
     writeFileSync(join(dir, 'blobs', sha256Hex(foreign)), foreign);
     const forged: JournalEntry = {
+      source: 'tool',
       path: 'forged.txt',
       op: 'write',
       beforeHash: sha256Hex(foreign),
@@ -370,7 +370,6 @@ describe('blob hash verification', () => {
       deltaHash,
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 1,
     };
@@ -419,7 +418,6 @@ describe('sweep bytesDelta', () => {
       root,
       {
         sessionId: 's1',
-        agentId: 'root',
         timestamp: 1,
       },
       { gitBaseline: { 'grown.ts': 'a'.repeat(40) }, gitRun },

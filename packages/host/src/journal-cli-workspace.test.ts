@@ -70,7 +70,6 @@ function seedWrite(
     after,
     bytesDelta: 0,
     sessionId: id,
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 1_700_000_000_000,
   });

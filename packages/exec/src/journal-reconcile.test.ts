@@ -92,7 +92,6 @@ describe('journal baseline + reconciliation', () => {
     writeFileSync(join(root, 'dropped.txt'), 'new\n');
     const added = reconcile(journal, baseline, root, {
       sessionId: 's1',
-      agentId: 'root',
       timestamp: 1700000000000,
     });
     expect(added).toBe(2);
@@ -119,7 +118,6 @@ describe('journal baseline + reconciliation', () => {
       after: 'before\n',
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1,
     });
@@ -127,7 +125,6 @@ describe('journal baseline + reconciliation', () => {
     rmSync(join(root, 'keep.txt'));
     const added = reconcile(journal, baseline, root, {
       sessionId: 's1',
-      agentId: 'root',
       timestamp: 2,
     });
     // Only the external delete is new; the intercepted no-op write adds none.
@@ -240,7 +237,6 @@ describe('git pre-images for sweep entries', () => {
       after: 'mid\n',
       bytesDelta: -3,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 't1',
       timestamp: 1,
     });

@@ -379,7 +379,6 @@ describe('journal commands end to end over a temp journal', () => {
       after: 'v2\n',
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1700000000000,
     });

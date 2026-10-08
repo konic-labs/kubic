@@ -6,7 +6,7 @@
 // removes the file (journaled as a `kubic-undo` delete, so --step redoes).
 //
 // A successful restore appends its inverse entry under
-// `agentId: kubic-undo`. Plain plans exclude those records — they are the
+// `source: undo`. Plain plans exclude those records — they are the
 // walk's own bookkeeping, so repeated plain undo stays idempotent (the disk
 // sits at a journaled before-state → already-undone, nothing appended).
 // `--step` targets the newest entry including a bookkeeping record: that is
@@ -56,10 +56,10 @@ export interface UndoScope {
   step?: boolean;
 }
 
-// The agent id the journal's own undo bookkeeping carries:
-// every successful restore appends its inverse entry under this id. Plain
-// undo plans exclude it — see planUndo.
-const UNDO_AGENT_ID = 'kubic-undo';
+// The session id the journal's own undo bookkeeping carries: every successful
+// restore appends its inverse entry under it, with source `undo`. Plain undo
+// plans exclude those entries — see planUndo.
+const UNDO_SESSION_ID = 'kubic-undo';
 
 interface HeadMove {
   from: HeadState;
@@ -263,7 +263,7 @@ export function planUndo(
     // behavior. Mixed logs still unwind in reverse-chronological order:
     // bookkeeping records are skipped over, and an agent step an earlier
     // undo already unwound reads as already-undone.
-    steps = steps.filter((e) => e.agentId !== UNDO_AGENT_ID);
+    steps = steps.filter((e) => e.source !== 'undo');
   }
   let reversible = 0;
   const nonReversible: string[] = [];
@@ -399,8 +399,8 @@ function planInverse(
           removedContent === null
             ? 0
             : -Buffer.byteLength(removedContent, 'utf8'),
-        sessionId: UNDO_AGENT_ID,
-        agentId: UNDO_AGENT_ID,
+        sessionId: UNDO_SESSION_ID,
+        source: 'undo',
         toolCallId: null,
         timestamp,
       },
@@ -454,8 +454,8 @@ function planInverse(
             after: restoredContent,
             bytesDelta:
               Buffer.byteLength(restoredContent, 'utf8') - preUndoBytes,
-            sessionId: UNDO_AGENT_ID,
-            agentId: UNDO_AGENT_ID,
+            sessionId: UNDO_SESSION_ID,
+            source: 'undo',
             toolCallId: null,
             timestamp,
           },

@@ -32,7 +32,6 @@ function seedUnattributed(): { journalDir: string; root: string } {
     after: 'v2\n',
     bytesDelta: 0,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 1700000000000,
   });
@@ -45,7 +44,6 @@ function seedUnattributed(): { journalDir: string; root: string } {
     after: 'v3\n',
     bytesDelta: 3,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: null,
     timestamp: 1700000001000,
     unattributed: true,

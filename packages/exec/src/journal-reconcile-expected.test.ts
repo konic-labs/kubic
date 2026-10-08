@@ -43,7 +43,6 @@ function begin(store: Store, root: string, runId: string) {
     root,
     runId,
     sessionId: 'sess-1',
-    agentId: 'root',
     now: () => NOW,
   });
 }
@@ -62,7 +61,6 @@ function toolWrite(
     after,
     bytesDelta: 0,
     sessionId: 'sess-1',
-    agentId: 'root',
     toolCallId: 'tc-1',
     timestamp,
   });

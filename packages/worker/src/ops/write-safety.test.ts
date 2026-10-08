@@ -278,7 +278,6 @@ describe('write/edit symlink safety', () => {
       expect(out.ok).toBe(true);
       const added = reconcile(journal, baseline, root, {
         sessionId: 's1',
-        agentId: 'root',
         timestamp: Date.now(),
       });
       // Before the journal keyed the resolved path this recorded two
@@ -377,7 +376,6 @@ describe('write/edit symlink safety', () => {
       expect(
         reconcile(journal, baseline, link, {
           sessionId: 's1',
-          agentId: 'root',
           timestamp: Date.now(),
         }),
       ).toBe(0);

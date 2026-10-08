@@ -38,7 +38,7 @@ export function renderLog(store: FileJournalStore): string[] {
     ) {
       return [
         new Date(e.timestamp).toISOString(),
-        e.agentId,
+        e.source,
         e.toolCallId ?? 'none',
         e.op,
         '(HEAD)',
@@ -49,7 +49,7 @@ export function renderLog(store: FileJournalStore): string[] {
     }
     const parts = [
       new Date(e.timestamp).toISOString(),
-      e.agentId,
+      e.source,
       e.toolCallId ?? 'none',
       e.op,
       e.path,

@@ -107,6 +107,32 @@ export interface JournalRetention {
   durable?: boolean;
 }
 
+// Where a journal entry came from: a tool call (the default), the end-of-run
+// reconciliation sweep (`unattributed` entries), or an undo's own bookkeeping
+// (which plain undo plans skip).
+export type JournalSource = 'tool' | 'sweep' | 'undo';
+
+// An index line written before entries carried `source` names its writer by
+// the agent id it was recorded under, and the sweep flags its entries
+// `unattributed`. The undo writer recorded `kubic-undo`; every other line is
+// a tool call. The mapping runs once, on read, so every reader of the index
+// sees a source — and undo never replays its own bookkeeping as work.
+function withSource(parsed: unknown): JournalEntry {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return parsed as JournalEntry;
+  }
+  const line = parsed as Record<string, unknown>;
+  if (line.source !== undefined) return parsed as JournalEntry;
+  const { agentId: legacyAgentId, ...entry } = line;
+  const source: JournalSource =
+    legacyAgentId === 'kubic-undo'
+      ? 'undo'
+      : line.unattributed === true
+        ? 'sweep'
+        : 'tool';
+  return { ...entry, source } as unknown as JournalEntry;
+}
+
 export interface JournalEntryInput {
   path: string;
   op: JournalOp;
@@ -133,7 +159,8 @@ export interface JournalEntryInput {
   afterBytes?: number;
   bytesDelta: number;
   sessionId: string;
-  agentId: string;
+  /** Defaults to `tool` when absent. */
+  source?: JournalSource;
   toolCallId: string | null;
   timestamp: number;
   unattributed?: boolean;
@@ -199,7 +226,7 @@ export interface JournalEntry {
   deltaHash: string | null;
   bytesDelta: number;
   sessionId: string;
-  agentId: string;
+  source: JournalSource;
   toolCallId: string | null;
   timestamp: number;
   unattributed?: boolean;
@@ -648,7 +675,7 @@ export class FileJournalStore {
       deltaHash,
       bytesDelta: input.bytesDelta,
       sessionId: input.sessionId,
-      agentId: input.agentId,
+      source: input.source ?? 'tool',
       toolCallId: input.toolCallId,
       timestamp: input.timestamp,
       ...(input.unattributed === true ? { unattributed: true } : {}),
@@ -711,14 +738,17 @@ export class FileJournalStore {
     let corruptLines = 0;
     for (const line of bridge.readTextFile(this.indexPath).split('\n')) {
       if (line.trim() === '') continue;
+      let parsed: unknown;
       try {
-        out.push(JSON.parse(line) as JournalEntry);
+        parsed = JSON.parse(line);
       } catch {
         // Corrupt lines never poison the journal; they are skipped, counted
         // for `status`, and dropped by the next retention
         // rewrite.
         corruptLines++;
+        continue;
       }
+      out.push(withSource(parsed));
     }
     return { entries: out, corruptLines };
   }
@@ -1588,7 +1618,6 @@ export function loadBaseline(dir: string, runId: string): Baseline | null {
 
 export interface ReconcileContext {
   sessionId: string;
-  agentId: string;
   timestamp: number;
   /**
    * Where this run's part of the journal begins (captured with
@@ -2070,7 +2099,7 @@ export function reconcile(
       bytesDelta:
         beforeLen !== null && afterLen !== null ? afterLen - beforeLen : 0,
       sessionId: ctx.sessionId,
-      agentId: ctx.agentId,
+      source: 'sweep',
       toolCallId: null,
       timestamp: ctx.timestamp,
       unattributed: true,
@@ -2201,7 +2230,7 @@ export function reconcile(
           headFrom: headBaseline,
           headTo: currentHead,
           sessionId: ctx.sessionId,
-          agentId: ctx.agentId,
+          source: 'sweep',
           toolCallId: null,
           timestamp: ctx.timestamp,
           unattributed: true,

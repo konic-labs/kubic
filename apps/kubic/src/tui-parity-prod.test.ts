@@ -355,7 +355,6 @@ describe('journal retention reaches the TUI store', () => {
       after: 'old\n',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: Date.now() - 3_600_000,
     });
@@ -366,7 +365,6 @@ describe('journal retention reaches the TUI store', () => {
       after: 'new\n',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: Date.now(),
     });

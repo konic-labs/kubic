@@ -100,7 +100,6 @@ describe('config feeds the live run path', () => {
       after: 'x',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: Date.now() - 3 * 86_400_000,
     });
@@ -111,7 +110,6 @@ describe('config feeds the live run path', () => {
       after: 'y',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: Date.now(),
     });
@@ -347,14 +345,13 @@ describe('solo-lane projections reach the live path', () => {
         after: 'x'.repeat(2_000_000),
         bytesDelta: 0,
         sessionId: 's1',
-        agentId: 'root',
         toolCallId: 'call-1',
         timestamp: 1_700_000_000_000,
       }),
     ).toThrow(JournalEntryTooLargeError);
   });
 
-  it('names the lane from [agent].name in the journal and the diff filter', async () => {
+  it('names the lane from [agent].name and journals the session change', async () => {
     const sessionsRoot = tmpRoot();
     const workspace = tmpRoot('kubic-run-path-agent-');
     writeFileSync(join(workspace, 'note.txt'), 'v1\n');
@@ -397,9 +394,9 @@ describe('solo-lane projections reach the live path', () => {
     );
     const entries = store.entries();
     expect(entries.length).toBeGreaterThan(0);
-    // Every entry the run wrote is attributed to the configured id.
-    expect([...new Set(entries.map((entry) => entry.agentId))]).toEqual([
-      'kubic-solo',
+    // The bash write is not intercepted, so the end-of-run sweep journals it.
+    expect([...new Set(entries.map((entry) => entry.source))]).toEqual([
+      'sweep',
     ]);
 
     // The session journal names the change, whichever lane wrote it.
@@ -453,8 +450,8 @@ describe('solo-lane projections reach the live path', () => {
     const bareEntries = new FileJournalStore(
       join(sessionsRoot, bareRun.sessionId, 'journal'),
     ).entries();
-    expect([...new Set(bareEntries.map((entry) => entry.agentId))]).toEqual([
-      'root',
+    expect([...new Set(bareEntries.map((entry) => entry.source))]).toEqual([
+      'sweep',
     ]);
   });
 

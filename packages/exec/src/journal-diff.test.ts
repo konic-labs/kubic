@@ -37,7 +37,6 @@ function seed(): FileJournalStore {
     after: 'one\nTWO\nthree\n',
     bytesDelta: 0,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 100,
   });
@@ -48,7 +47,6 @@ function seed(): FileJournalStore {
     after: 'new\n',
     bytesDelta: 4,
     sessionId: 's1',
-    agentId: 'worker-1',
     toolCallId: 'call-2',
     timestamp: 200,
   });
@@ -60,7 +58,6 @@ function seed(): FileJournalStore {
     after: 'mystery\n',
     bytesDelta: 8,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: null,
     timestamp: 300,
     unattributed: true,
@@ -73,7 +70,7 @@ describe('journal diff core', () => {
     const changes = diffEntries(seed(), {});
     expect(changes.map((c) => c.path)).toEqual(['a.txt', 'b.txt', 'c.txt']);
     expect(changes[0]).toMatchObject({
-      agentId: 'root',
+      source: 'tool',
       toolCallId: 'call-1',
       reversible: true,
     });
@@ -84,14 +81,11 @@ describe('journal diff core', () => {
     });
   });
 
-  it('filters by path and agent', () => {
+  it('filters by path', () => {
     const store = seed();
     expect(diffEntries(store, { path: 'b.txt' }).map((c) => c.path)).toEqual([
       'b.txt',
     ]);
-    expect(
-      diffEntries(store, { agent: 'worker-1' }).map((c) => c.path),
-    ).toEqual(['b.txt']);
   });
 
   it('renders attributed hunks, marking unattributed as such', () => {
@@ -218,7 +212,7 @@ describe('diff --json content clipping', () => {
     const change: FileChange = {
       path: 'a.txt',
       op: 'write',
-      agentId: 'root',
+      source: 'tool',
       toolCallId: 'call-1',
       sessionId: 's1',
       timestamp: 100,
@@ -260,7 +254,6 @@ describe('corrupt journal content', () => {
       after,
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 100,
     });
@@ -281,7 +274,7 @@ describe('corrupt journal content', () => {
     const change: FileChange = {
       path: 'big.txt',
       op: 'write',
-      agentId: 'root',
+      source: 'tool',
       toolCallId: 'call-1',
       sessionId: 's1',
       timestamp: 100,
@@ -311,7 +304,6 @@ describe('corrupt journal content', () => {
       after: 'v2\n',
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 100,
     });
@@ -333,7 +325,6 @@ describe('HEAD-move markers', () => {
       headFrom: { head: 'a'.repeat(40), branch: 'main', stash: 0 },
       headTo: { head: 'b'.repeat(40), branch: 'x', stash: 0 },
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 1700000002000,
       unattributed: true,
@@ -355,7 +346,7 @@ describe('diff --stat', () => {
     return {
       path: 'a.txt',
       op: 'write',
-      agentId: 'root',
+      source: 'tool',
       toolCallId: 't',
       sessionId: 's',
       timestamp: 1,

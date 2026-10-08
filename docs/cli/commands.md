@@ -1218,6 +1218,16 @@ workspace the paths resolve against): `diff --json` is `{session, root,
 changes}`, `log --json` is `{session, root, entries}`, and `undo`/`status`
 add both fields to their objects.
 
+Every journal entry, and every change `diff --json` reports, carries
+`source`: `tool` for a tool call, `sweep` for the end-of-run reconciliation
+(the entries flagged `unattributed`), and `undo` for an undo's own record.
+A journal written before entries carried `source` is read with one derived on
+read: a line recorded under the `kubic-undo` agent id is `undo`, a line flagged
+`unattributed` is `sweep`, and every other line is `tool`. Reading derives it
+and writes nothing back. A prune that rewrites the index persists the derived
+`source` on each line it keeps. Undo and `diff` see those sources, so an
+earlier session undoes, previews and prunes exactly as it did before.
+
 `undo` and `status` refuse a session store whose workspace cannot be used —
 exit 2, nothing read or written, a named reason on stderr: `session <id>:
 recorded workspace <root> no longer exists — …` when the recorded directory

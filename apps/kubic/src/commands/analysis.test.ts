@@ -567,7 +567,7 @@ describe('analysis commands: --json prints exactly one JSON document', () => {
         expect(Array.isArray(document)).toBe(true);
         const [record] = document as Record<string, unknown>[];
         expect(Object.keys(record ?? {}).sort()).toEqual(
-          [...AUDIT_FIELDS].sort(),
+          ['version', ...AUDIT_FIELDS].sort(),
         );
         return;
       }

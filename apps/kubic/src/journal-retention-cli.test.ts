@@ -73,7 +73,6 @@ function seedAgedAndFresh(journalDir: string, sessionId: string): void {
     after: 'older\n',
     bytesDelta: 0,
     sessionId,
-    agentId: 'root',
     toolCallId: 'call-aged',
     timestamp: Date.now() - 30 * DAY_MS,
   });
@@ -84,7 +83,6 @@ function seedAgedAndFresh(journalDir: string, sessionId: string): void {
     after: 'newer\n',
     bytesDelta: 0,
     sessionId,
-    agentId: 'root',
     toolCallId: 'call-fresh',
     timestamp: Date.now(),
   });
@@ -177,7 +175,6 @@ describe('read-time journal self-heal', () => {
       after: 'o2\n',
       bytesDelta: 0,
       sessionId: 'sess-old',
-      agentId: 'root',
       toolCallId: 'call-old',
       timestamp: Date.now(),
     });

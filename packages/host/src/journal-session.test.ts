@@ -40,7 +40,6 @@ function seedSessionJournal(
     after: 'v2\n',
     bytesDelta: 0,
     sessionId: id,
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 1700000000000,
   });

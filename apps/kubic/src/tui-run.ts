@@ -1275,7 +1275,6 @@ export async function bootTuiLane(
         root: options.env?.cwd ?? process.cwd(),
         runId: id,
         sessionId: id,
-        agentId: options.agentId ?? 'root',
         ...(options.reconcileOutOfScope === undefined
           ? {}
           : { outOfScope: options.reconcileOutOfScope }),

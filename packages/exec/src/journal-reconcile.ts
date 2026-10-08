@@ -56,7 +56,6 @@ export interface RunReconciliationOptions {
    */
   runId: string;
   sessionId: string;
-  agentId: string;
   /** Caller-declared out-of-scope paths, excluded from both walks. */
   outOfScope?: string[];
   /**
@@ -162,7 +161,6 @@ export function beginReconciliation(
         options.root,
         {
           sessionId: options.sessionId,
-          agentId: options.agentId,
           timestamp: now(),
           runStart,
           ...(turn === undefined ? {} : { turn }),

@@ -2,15 +2,14 @@
 
 Kubic itself is MIT-licensed — see [LICENSE](LICENSE) (Copyright (c) 2026 Konic Labs).
 
-## Pi agent harness (reference + runtime dependency)
+## Pi agent harness (runtime dependency)
 
 Kubic's worker runtime is built on the Pi agent harness by Mario Zechner
 (earendil-works), MIT-licensed:
 
 - `@earendil-works/chord`
-- `@earendil-works/pi-agent-core`
 - `@earendil-works/pi-ai`
-- `@earendil-works/pi-protocol`
+- `@earendil-works/pi-durable`
 - `@earendil-works/pi-telemetry`
 - `@earendil-works/pi-tui`
 
@@ -43,6 +42,6 @@ Fenced code in `kubic tui` answers is highlighted with:
 
 Both ship their licence texts under `node_modules/`.
 
-The `pi/` read-only reference clone used during design (see `README.md`) is
-upstream code, gitignored, and not part of Kubic — it must be absent from any
-published tree (see `docs/publish-checklist.md`).
+The `pi/` read-only reference clone is upstream code, gitignored, and not part
+of Kubic. It must be absent from any published tree (see
+`docs/publish-checklist.md`).

@@ -146,7 +146,7 @@ export function credentialAccessInCommand(command: string): string | undefined {
 }
 
 // The credential path a read-family tool call names, or undefined. The ask
-// runs BEFORE the worker's confine rewrite, so a home path is seen here as
+// runs BEFORE the agent's confine rewrite, so a home path is seen here as
 // typed even though the tool itself could never open it; a workspace `.env`
 // passes confinement unchanged and is the case that actually reaches a file.
 export function credentialAccessInPath(path: string): string | undefined {

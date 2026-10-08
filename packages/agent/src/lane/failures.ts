@@ -27,7 +27,7 @@ const FAILURE_CODES = [
 ] as const;
 
 // Agent-lifecycle codes (agent_looping, agent_crashed,
-// agent_completed_with_failure) belong to the worker lifecycle owner, which is
+// agent_completed_with_failure) belong to the agent lifecycle owner, which is
 // the only layer that can tell a crash from a completed-with-failure. This
 // taxonomy covers lane-execution failures.
 

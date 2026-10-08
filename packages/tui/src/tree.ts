@@ -6,9 +6,9 @@
 // glyph; calls are grouped per turn (run-start closes a group) and truncation
 // is measured in columns.
 //
-// The lane feed accepts the worker's KubicLaneEvent shape structurally
+// The lane feed accepts the agent's KubicLaneEvent shape structurally
 // (packages/agent/src/lane/events.ts) WITHOUT importing it: the tui
-// package must never import host/worker implementation (dep-lint), so
+// package must never import host/agent implementation (dep-lint), so
 // only the fields the tree reads are typed here. `usage` rows sum into the
 // head row; `fault` events are ignored.
 

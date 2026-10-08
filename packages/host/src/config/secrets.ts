@@ -4,7 +4,7 @@
 // audit event per use.
 //
 // Zero network, zero real processes here: command execution is injected by
-// the host composition root (faux in tests). Never imports worker impl.
+// the host composition root (faux in tests). Never imports agent impl.
 
 import {
   type SecretRef as CoreSecretRef,
@@ -25,7 +25,7 @@ class SecretError extends Error {
 
 export type SecretRef = CoreSecretRef;
 
-// The parse table lives in @kubic/core so the worker's
+// The parse table lives in @kubic/core so the agent's
 // models.json parser shares it — same direction as secret-shapes.ts. Kept
 // as a same-path export so the host call sites, the tests and the
 // export-surface gate do not move; core refusals cross the package edge as

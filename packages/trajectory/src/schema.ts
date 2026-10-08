@@ -26,7 +26,7 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 
 // Failure taxonomy — snapshot of FAILURE_CODES owned by
-// packages/agent/src/lane/failures.ts. The worker owns the spelling;
+// packages/agent/src/lane/failures.ts. The agent owns the spelling;
 // this list is pinned equal by test so a drift breaks loudly here.
 export const TRAJECTORY_FAILURE_CODES = [
   'model_failed',

@@ -5,7 +5,7 @@
 //
 // Structural usage mirror: the fields below repeat the shape read in
 // packages/agent/src/usage.ts (KubicUsageRow) WITHOUT importing it —
-// dep-lint forbids tui → worker. Pi is untouched here (pure strings);
+// dep-lint forbids tui → agent. Pi is untouched here (pure strings);
 // the Component seam stays in ./tui-boundary.js. No node:fs (I/O
 // confinement). Faux-only tests: fixtures, zero network.
 //

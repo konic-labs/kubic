@@ -1,6 +1,6 @@
 // Node file bridge: exec-owned durable file access.
 // All node:fs touching stays in this package (I/O confinement); Pi types
-// never cross here. The worker adapts this bridge to Pi's FileSystem for
+// never cross here. The agent adapts this bridge to Pi's FileSystem for
 // JsonlSessionRepo — sync core wrapped async at the seam.
 
 import {

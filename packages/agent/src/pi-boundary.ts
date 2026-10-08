@@ -1,5 +1,5 @@
 // biome-ignore-all assist/source/organizeImports: each re-export keeps its own
-// JUSTIFICATION block packages/agent/src/pi-boundary.ts — the worker Pi seam.
+// JUSTIFICATION block packages/agent/src/pi-boundary.ts — the agent Pi seam.
 // No other Kubic file may import `@earendil-works/*`: `scripts/dep-lint.mjs`
 // allows Pi imports only in this file and in the TUI's
 // `packages/tui/src/tui-boundary.ts`, and CODEOWNERS flags every diff touching

@@ -64,7 +64,7 @@ export interface PolicyInterceptorOptions {
   // through. Only challenged approvals (a real capability was raised and
   // granted) stand down the destructive/network/confine guards for that
   // exact toolCallId — an unchallenged fast-path keeps every guard up.
-  // The type lives here (not in host) because the worker cannot import
+  // The type lives here (not in host) because the agent cannot import
   // host; the host adapts its ApprovalService to it.
   approve?: (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
 }

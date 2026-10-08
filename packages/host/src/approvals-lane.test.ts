@@ -1,5 +1,5 @@
 // End to end: the host approval service gating a real lane
-// through the worker approve hook. The lane boots through
+// through the agent approve hook. The lane boots through
 // the shared faux harness factory; its tool-end events come from the
 // durable watch exactly as `kubic run`/`tui` consume them.
 

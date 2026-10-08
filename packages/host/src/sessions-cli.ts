@@ -1,5 +1,5 @@
 // `kubic sessions` commands: create, list, attach.
-// Thin over the worker session store; presentation only (one line per
+// Thin over the agent session store; presentation only (one line per
 // fact). attach prints metadata plus the transcript tail so a user can
 // confirm what they are resuming before driving it.
 

@@ -1,5 +1,5 @@
 // `kubic git <status|log|stage|commit>` commands.
-// Thin over the worker git ops; presentation only. commander (the
+// Thin over the agent git ops; presentation only. commander (the
 // composition root, apps/kubic/src/commands/journal.ts) owns argv, help and
 // parse errors and hands a typed `GitRequest` here.
 //

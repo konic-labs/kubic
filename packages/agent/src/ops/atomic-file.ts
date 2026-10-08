@@ -56,7 +56,7 @@ export function readPreImage(ctx: OpContext, path: string): PreImage {
     if (size > PREIMAGE_MAX_BYTES) {
       // A whole-file pre-image costs ~3x the file (buffer +
       // decode + re-encode check) and `write` has no size guard, so one
-      // overwrite of a multi-GB file OOMs the worker and journals the
+      // overwrite of a multi-GB file OOMs the agent and journals the
       // content verbatim. Hash it chunk by chunk instead: bounded memory,
       // the same digest, and text: null makes the entry hash-only
       // (write.ts records beforeOmitted; undo reports it non-reversible).

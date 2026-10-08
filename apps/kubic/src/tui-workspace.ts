@@ -1,6 +1,6 @@
 // The TUI header's workspace facts: the project name,
 // the current branch and the changed-file count. Git runs through the exec
-// shell seam with explicit argv and the worker's porcelain v2 parser — the
+// shell seam with explicit argv and the agent's porcelain v2 parser — the
 // one `git_status` uses. `--no-optional-locks` keeps
 // the read from taking the index lock a running tool's own git may need.
 // Never throws: outside a repository (or without git) the header shows the

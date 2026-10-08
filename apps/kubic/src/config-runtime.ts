@@ -903,7 +903,7 @@ export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
 // hand the lane a malformed value. Undefined when nothing is tuned — the
 // run sites then omit `settings.stream` and the provider defaults stand.
 // The run sites resolve the tables against the run's role with
-// `resolveStreamOptions`, so each lane (or worker) carries its own
+// `resolveStreamOptions`, so each lane (or agent) carries its own
 // role's tuning on its own harness.
 export function runtimeStreamTuning(
   result: CliConfigResult,

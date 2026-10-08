@@ -5,7 +5,7 @@
 //
 // Structural DiffFileChange mirrors exec FileChange
 // (packages/exec/src/journal-diff.ts) WITHOUT importing it: the tui
-// package must never import exec/host/worker implementation (dep-lint),
+// package must never import exec/host/agent implementation (dep-lint),
 // so only the fields this view reads are typed here. unifiedHunks is a copy
 // of exec's unifiedHunks (the TUI cannot import it); the per-file block below
 // follows exec's renderDiff: ---/+++, the `# toolCall=` marker, then hunks.

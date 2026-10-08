@@ -1,7 +1,7 @@
 // Shared secret-shape backstop. Lives in @kubic/core so the lane redactor
 // (approval summaries, block reasons) composes the same table the host
 // backstop (audit, policy, ledger) uses — the dependency direction is
-// core ← host/worker, so this is the only place both may share it.
+// core ← host/agent, so this is the only place both may share it.
 // Fail-closed detection for live secret material that was never listed in a
 // caller-supplied secrets inventory: sk-style keys, AWS access keys, GitHub
 // and Slack-shaped tokens, PEM blocks, and bearer tokens. Fixtures in tests

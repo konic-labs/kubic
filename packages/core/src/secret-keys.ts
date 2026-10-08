@@ -10,7 +10,7 @@ const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];
 // names carry none of SECRET_SUFFIXES' endings — the identity token is a
 // FILE path and the ids end in _ID — yet the block IS the credential: the
 // SDK exchanges the file's token for an access token, and the rule and
-// organization ids are half that exchange. A worker's shell that learned the
+// organization ids are half that exchange. An agent's shell that learned the
 // token file path could replay the exchange exactly as the provider does,
 // so all five are secret by name rather than by shape.
 const FEDERATION_SECRET_KEYS: ReadonlySet<string> = new Set([

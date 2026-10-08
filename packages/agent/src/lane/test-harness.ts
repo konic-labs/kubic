@@ -9,7 +9,7 @@
 // - `storage: 'memory'` (default): a `MemoryStorage` behind a synthetic
 //   `SessionHandle`. Fast, and the right choice for a lane contract.
 // - `storage: 'jsonl'`: a REAL session created through `createSession` in a
-//   `root` the CALLER owns (worker may not import `node:fs` — I/O confinement;
+//   `root` the CALLER owns (agent may not import `node:fs` — I/O confinement;
 //   the test's own scratch-dir helper mints and removes it), so
 //   recovery tests exercise the shipped JSONL format and the Kubic session
 //   lock. The returned `root`/`store` let a test reopen the same session
@@ -81,7 +81,7 @@ export interface FauxLaneSessionOptions {
   // creates a real session store, so recovery tests can
   // `attachSession` the same directory afterwards.
   storage?: 'memory' | 'jsonl';
-  // The sessions root for `storage: 'jsonl'`, owned by the caller (worker
+  // The sessions root for `storage: 'jsonl'`, owned by the caller (agent
   // cannot touch node:fs: mint it with the test's scratch-dir helper and
   // remove it in `afterEach`/`afterAll`).
   root?: string;

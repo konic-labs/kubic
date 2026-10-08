@@ -9,7 +9,7 @@
 //
 // Rails (each pinned behaviourally by sessions-prune.test.ts):
 // - a session holding a LIVE lock is never a candidate (read-only view:
-//   worker `sessionLockIsLive`; a dead holder — a stale lock — never
+//   agent `sessionLockIsLive`; a dead holder — a stale lock — never
 //   protects), and the lock is re-checked immediately before each delete —
 //   a lock acquired between the plan and the delete pass still stops it;
 // - `--keep-session` names are never candidates;

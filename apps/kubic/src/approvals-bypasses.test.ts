@@ -724,7 +724,7 @@ describe('route=deny beats autoApprove on the lane', () => {
 describe('git-push detector is linear-time', () => {
   const PUSH_TIMEOUT_MS = 250;
 
-  // The destructive matcher is stubbed out: it belongs to the worker and is
+  // The destructive matcher is stubbed out: it belongs to the agent and is
   // not what this block times — the git scan is.
   function timed(command: string): { found: string[]; ms: number } {
     const started = performance.now();

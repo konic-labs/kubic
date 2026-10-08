@@ -357,7 +357,7 @@ export const gitStatusOperation: Operation<
     }
     // The root and submodule summary ride along: both are cheap, local,
     // read-only queries, and a status without them drops the context a
-    // worker needs to interpret the paths. Either may fail on an exotic
+    // agent needs to interpret the paths. Either may fail on an exotic
     // repo — the status itself still stands.
     let repoRoot = '';
     const root = await runGit(ctx, inv, 'git_status', [

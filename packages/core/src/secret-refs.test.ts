@@ -1,4 +1,4 @@
-// Secret-reference parsing. The WORKER's
+// Secret-reference parsing. The AGENT's
 // models.json parser and the HOST's request-time resolver share this one
 // table through @kubic/core (same direction as secret-shapes.ts) — the
 // parse shapes carry no secrets, only forms.

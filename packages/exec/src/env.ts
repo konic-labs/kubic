@@ -88,7 +88,7 @@ export interface FileSystem {
    * real file instead of replacing the link with a regular file. The
    * lexical path is confined first; the RESULT is not (a link inside the
    * workspace may point out — the caller decides, see `symlink_escape`
-   * in the worker's write path). Throws when the path does not exist.
+   * in the agent's write path). Throws when the path does not exist.
    * Optional so existing seams stay valid; absent = links resolve to
    * themselves (test doubles).
    */
@@ -143,7 +143,7 @@ export interface ProcessSnapshot {
    * How many characters (UTF-16 code units) the capped
    * accumulators have dropped from the head of each stream so far. Past the
    * cap a snapshot keeps its length while its head moves, so a reader that
-   * follows a stream (the worker fact scanner) needs this to find where the
+   * follows a stream (the agent fact scanner) needs this to find where the
    * new output starts. Absent means nothing was dropped.
    */
   dropped?: { stdout: number; stderr: number };

@@ -12,7 +12,7 @@
 // getMemo/setMemo are scoped per invocationId. memoOnce is an atomic
 // read-or-write: single-threaded check-then-set with no await in between, so
 // the same operation/turn/invocation keeps owning the effect — an approval
-// answer or external result survives a worker crash without repeating.
+// answer or external result survives an agent crash without repeating.
 
 import type { JsonValue, MemoStore, ToolInvocation } from './types.js';
 

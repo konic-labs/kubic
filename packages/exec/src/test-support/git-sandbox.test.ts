@@ -1,4 +1,4 @@
-// Shared real-git sandbox: every real-git test in worker and
+// Shared real-git sandbox: every real-git test in agent and
 // exec builds its throwaway repo through `createGitSandbox`, never through
 // a bare `git init` on the inherited environment. The sandbox scrubs the
 // ambient git state (developer `~/.gitconfig`, `GIT_DIR` leaked from a git

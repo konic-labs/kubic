@@ -231,7 +231,7 @@ export class MemoryApprovalStore implements ApprovalStore {
 }
 
 // Trigger detection. Predicates are injected so this module stays
-// free of shell parsing: the worker owns the classifiers and
+// free of shell parsing: the agent owns the classifiers and
 // the host owns the decision. The bash detectors are a literal-pattern
 // heuristic, not a sandbox: redirect/tee/cp-mv-install
 // outside-writes, `sudo` privilege escalation, and destructive/network
@@ -1354,7 +1354,7 @@ function shellTargetOutside(
 }
 
 // The read-family arguments that name what a call opens (the same path/root
-// mapping the worker confines with, CONFINED_TOOLS in interceptors.ts) plus
+// mapping the agent confines with, CONFINED_TOOLS in interceptors.ts) plus
 // the name FILTERS: `grep.include` and `find.nameContains` select files by
 // substring, so `include: '.env'` reaches a committed `.env` without naming
 // a path at all. The ask runs before that rewrite, so an
@@ -1693,17 +1693,17 @@ export class FileApprovalStore implements ApprovalStore {
   }
 }
 
-// Adapter from the service to the worker's approve hook. Non-triggered calls
-// pass immediately WITHOUT challenging — the worker keeps every guard up for
+// Adapter from the service to the agent's approve hook. Non-triggered calls
+// pass immediately WITHOUT challenging — the agent keeps every guard up for
 // them. Triggered calls need every raised capability approved and return
-// challenged=true so the worker stands down the guards for exactly that call.
+// challenged=true so the agent stands down the guards for exactly that call.
 // Full-access approves everything as challenged AND records the posture —
 // indicated, recorded beside the session for audit/doctor readers — never
 // quiet. The ask is awaited inside the pi-durable ToolTask beforeTool hook: the
 // service's own maxPendingMs bound still denies on timeout, and the hook runs
 // before the tool's intent commit, so a crash while a seat is deciding re-asks
 // on resume rather than resuming an unapproved call. Single-sourced with the
-// worker seam: `ApprovalCall`/`ApprovalAskVerdict` are the worker's types, so
+// agent seam: `ApprovalCall`/`ApprovalAskVerdict` are the agent's types, so
 // ask and hook cannot drift apart.
 type ApprovalAsk = (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
 
@@ -2544,7 +2544,7 @@ function boundedNote(text: string): string {
 }
 
 // The trigger context the shipped default evaluates capabilities with: the
-// same classifiers the worker guards use, so the approval
+// same classifiers the agent guards use, so the approval
 // decision and the guard that blocks the call can never disagree.
 export function triggerContextFor(
   classes: PermissionClasses,

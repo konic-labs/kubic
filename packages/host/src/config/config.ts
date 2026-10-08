@@ -8,7 +8,7 @@
 // store + retention. Secrets never appear here (see secrets.ts).
 //
 // File access arrives as a FileBridge (exec-owned I/O confinement) — this
-// module never touches node:fs directly. Never imports worker impl.
+// module never touches node:fs directly. Never imports agent impl.
 
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { RUNTIME_EXCLUDE_ENTRIES } from '../../../exec/src/runtime-exclude.js';

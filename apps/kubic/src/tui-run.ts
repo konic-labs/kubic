@@ -2247,7 +2247,7 @@ async function liveModelOf(
 }
 
 // One durable entry → the coarse transcript cell the TUI app renders. The
-// tui package may not import worker types (dep-lint), so the entry is
+// tui package may not import agent types (dep-lint), so the entry is
 // projected into the structural `LaneEntryLike` by hand. Message-bearing
 // entries render as prompt/assistant/tool cells; a `pi.compaction` summary
 // and a `pi.reset` handoff render as their own cells, while the

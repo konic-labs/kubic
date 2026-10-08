@@ -2,7 +2,7 @@
 // Non-interactive equivalent of the run: no alt-screen, no prompt,
 // consumable output, exact exit codes. Host owns presentation only —
 // the agent run itself is injected by the composition root (faux in tests,
-// the lane in prod). This module imports the worker settlement
+// the lane in prod). This module imports the agent settlement
 // kernel (pure outcome mapping) read-only — never the lane, the session
 // store, or any TUI seam. Persistence (session+journal+usage+trajectory)
 // flows through the injected persist hook identically for text and

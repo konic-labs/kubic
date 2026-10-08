@@ -136,7 +136,7 @@ export function checkTree(root) {
         }
         if (spec.startsWith('@earendil-works/')) {
           // Pi seam rule: only designated boundary files may touch Pi
-          // modules — exact path match, no suffix bypass. Worker owns the
+          // modules — exact path match, no suffix bypass. Agent owns the
           // agent/model seam; TUI owns the presentation seam (it cannot
           // import agent implementation, so it cannot reuse its boundary).
           const rel = relative(root, file);

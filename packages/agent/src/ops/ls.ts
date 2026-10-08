@@ -25,7 +25,7 @@ export interface LsResult {
 }
 
 // Bounded tool output: at most this many entries per
-// listing — a 2000-file directory must not flood the worker's context.
+// listing — a 2000-file directory must not flood the agent's context.
 // The cap applies to the sorted names BEFORE statting, so the entries past
 // it cost no stat calls either.
 const LS_MAX_ENTRIES = 500;

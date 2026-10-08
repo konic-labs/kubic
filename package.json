@@ -23,6 +23,7 @@
     "lint": "biome ci .",
     "lint:deps": "node scripts/dep-lint.mjs",
     "lint:dead": "knip",
+    "lint:dead:prod": "knip --config knip.production.jsonc --production",
     "check:pi": "node scripts/check-pinned-deps.mjs",
     "test:unit": "vitest run",
     "test": "node --test \"scripts/*.test.mjs\"",

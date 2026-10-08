@@ -57,14 +57,24 @@ files, exports, types and dependencies, and unlisted or unresolved imports.
   export that only tests import counts as used.
 - `mkfifo` is in `ignoreBinaries`: one exec journal test calls the POSIX
   utility to make a named pipe. It is a system tool, not a dependency.
-- `ignoreExportsUsedInFile` is on for now: an export that its own module uses
-  is not reported.
+- `ignoreExportsUsedInFile` is off: an export that only its own module uses is
+  reported, so it must be module-private.
 
-The gate does **not** guarantee that every export has a caller in production
-code. It does not report an export that only tests import, nor an export used
-only inside its own module. It also does not report a source file that only
-tests reach. Those checks need a production-only configuration, which the
-repo does not yet have.
+The default gate does **not** report an export that only tests import, and it
+does not report a source file that only tests reach. Those are the production
+gate's job: `npm run lint:dead:prod` runs knip with `knip.production.jsonc` and
+`--production`, which skips the test files, so no test import counts as use.
+Its `ignoreExportsUsedInFile` is on, so an export that production code uses
+inside its own module counts as live; the gate reports exports that no
+production code uses at all. The boundary seams in `knip.production.jsonc` are
+exempt, with the reason beside them.
+
+The production gate is not in CI yet. It reports two exports whose tests still
+call them through a dead path: `createApprovalAsk` (the lane's ask builder, the
+installer builds its own) and `loadLayered` (the path-based layer loader; the
+live loader is `loadRuntimeConfig`). Rewrite those tests through the live path,
+remove the two, and add `npm run lint:dead:prod` to the CI job next to
+`lint:dead`.
 
 ## Tests
 

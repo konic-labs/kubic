@@ -61,7 +61,7 @@ export interface UndoScope {
 // undo plans exclude it — see planUndo.
 const UNDO_AGENT_ID = 'kubic-undo';
 
-export interface HeadMove {
+interface HeadMove {
   from: HeadState;
   to: HeadState;
 }
@@ -322,7 +322,7 @@ export function planUndo(
   };
 }
 
-export interface SkipDetail {
+interface SkipDetail {
   path: string;
   reason: string;
 }

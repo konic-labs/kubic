@@ -46,7 +46,7 @@ class TuiDelegate {
   }
 }
 
-export const EDITOR_FALLBACK_ROWS = 24;
+const EDITOR_FALLBACK_ROWS = 24;
 
 // How many prompts Up can recall — Pi's editor keeps the newest
 // 100 itself, so seeding more would only be dropped; the bound keeps a long

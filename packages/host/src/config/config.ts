@@ -41,7 +41,7 @@ export class ProjectUntrustedError extends ConfigError {
   }
 }
 
-export interface AgentConfig {
+interface AgentConfig {
   name?: string;
   // System prompt augmentation: a
   // path whose contents the runtime appends to the assembled lane prompt.
@@ -80,7 +80,7 @@ export interface ApprovalsConfig {
 // Permission classes as a config section: the values are
 // validated against the agents-owned level vocabulary (validateClasses) when
 // the runtime projection consumes them — never re-listed here.
-export interface PermissionsConfig {
+interface PermissionsConfig {
   filesystem?: string | boolean;
   shell?: string | boolean;
   network?: string | boolean;
@@ -88,7 +88,7 @@ export interface PermissionsConfig {
   credentials?: string | boolean;
 }
 
-export interface JournalConfig {
+interface JournalConfig {
   retentionDays?: number;
   /**
    * The journal's byte bound: the WHOLE store — `index.jsonl`
@@ -108,7 +108,7 @@ export interface JournalConfig {
   outOfScope?: string[];
 }
 
-export interface RoleConfig {
+interface RoleConfig {
   model?: string;
   // Request options: per-key overrides of the `[model]`
   // tuning for lanes booted as this role.
@@ -133,7 +133,7 @@ export interface RoleConfig {
   escalate?: string[];
 }
 
-export interface UiConfig {
+interface UiConfig {
   theme?: string;
   statusBar?: boolean;
 }
@@ -180,7 +180,7 @@ export const VERIFY_COMMAND_KEYS = [
 // keys fail closed and are named; a value the engine has no enforceable leaf
 // for is still parsed and carried (`dataPolicy`, `loggingPolicy`) so doctor
 // can report it rather than silently dropping it.
-export interface PolicyConfig {
+interface PolicyConfig {
   allowedModels?: string[];
   allowedProviders?: string[];
   allowedTools?: string[];
@@ -739,7 +739,7 @@ export function checkOutOfScopeEntries(
 // refused by name — it is not "retention off" (unset is), it is a bound
 // nothing can fit, so every append would be refused and every tool write
 // would fail as journal_failed. Refused here rather than clamped.
-export function checkJournalMaxBytes(value: unknown): number | undefined {
+function checkJournalMaxBytes(value: unknown): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
     throw new ConfigError("'journal': 'maxBytes' must be a positive integer");
@@ -794,7 +794,7 @@ export function checkSessionCompaction(
 // meanings, never "unset"); `cacheRetention` names Pi's retention
 // vocabulary. Refused by name here so a malformed value never reaches the
 // lane; the runtime projection re-checks for the programmatic layers.
-export const STREAM_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
+const STREAM_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
 
 export function checkModelStreamTuning(
   record: Record<string, unknown>,
@@ -881,7 +881,7 @@ export interface RoleModelEntry {
 // `provider/id` rungs — never wildcards (a rung names the exact model the
 // lane switches to, so one-way validation stays decidable) and never
 // empty strings. Refused by name per entry, like the scoped-model set.
-export function checkEscalationLadder(
+function checkEscalationLadder(
   value: unknown,
   keyPath: string,
 ): string[] | undefined {
@@ -908,7 +908,7 @@ export function checkEscalationLadder(
   });
 }
 
-export function checkMaxEscalations(
+function checkMaxEscalations(
   value: unknown,
   keyPath: string,
 ): number | undefined {
@@ -926,7 +926,7 @@ export function checkMaxEscalations(
 // table (`{ id, thinking? }`). An empty array parses (it means all
 // models). Refused by name per entry so a malformed set never reaches
 // selection; the runtime projection re-checks for programmatic layers.
-export function checkRoleModels(
+function checkRoleModels(
   value: unknown,
   roleName: string,
 ): RoleModelEntry[] | undefined {

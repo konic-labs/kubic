@@ -118,10 +118,7 @@ function isInside(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}${sep}`);
 }
 
-export function skillReadRoots(
-  skills: readonly LoadedSkill[],
-  cwd: string,
-): string[] {
+function skillReadRoots(skills: readonly LoadedSkill[], cwd: string): string[] {
   const workspace = resolve(cwd);
   const roots = new Set<string>();
   for (const skill of skills) {
@@ -205,17 +202,14 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
   };
 }
 
-export type {
-  SkillSource,
-  SkippedSkill,
-} from '../../agents/src/skills/skills.js';
+export type { SkippedSkill } from '../../agents/src/skills/skills.js';
+
 // The role/capability gate: applied in `bootSkills`
 // above — discovery stays in the loader (it owns the roots and trust),
 // while the grant (the resolved role, its `skills` list, the installed
 // classes) is a boot input the caller holds. Withheld skills are reported
 // by name on the log sink and in `BootSkills.withheld`, never silently
 // dropped.
-export type { LoadedSkill, WithheldSkill };
 
 // The `kubic skills` listing row: one per skill the boot met,
 // loaded or not. `visible` reached the prompt; `hidden` stays
@@ -224,12 +218,7 @@ export type { LoadedSkill, WithheldSkill };
 // failed to read. Every non-visible row carries the reason — the same
 // discovery plus role gating the lane boots, summarized, never
 // reimplemented.
-export type SkillRowStatus =
-  | 'visible'
-  | 'hidden'
-  | 'withheld'
-  | 'excluded'
-  | 'error';
+type SkillRowStatus = 'visible' | 'hidden' | 'withheld' | 'excluded' | 'error';
 
 export interface SkillRow {
   name: string;

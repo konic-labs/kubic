@@ -22,7 +22,7 @@ export interface LaneImagePart {
   readonly bytes?: number;
 }
 
-export interface SessionSnapshot {
+interface SessionSnapshot {
   sessionId: string;
   // The live session's replicated facts.
   model?: string;
@@ -66,7 +66,7 @@ export interface LaneSnapshot {
   retrying?: { attempt: number; error?: string };
 }
 
-export interface ApprovalRequest {
+interface ApprovalRequest {
   requestId: string;
   toolName?: string;
   capability?: string;
@@ -82,7 +82,7 @@ export interface UsageTotals {
   cacheWriteTokens?: number;
 }
 
-export interface ConnectionState {
+interface ConnectionState {
   status: 'connected' | 'disconnected' | 'reconnecting';
   detail?: string;
 }

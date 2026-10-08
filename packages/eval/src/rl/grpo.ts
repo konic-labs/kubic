@@ -19,9 +19,9 @@ import {
 } from './types.js';
 import { referenceVerifier, type VerifierVerdict } from './verifier.js';
 
-export const GRPO_SCHEMA = 'grpo/1';
+const GRPO_SCHEMA = 'grpo/1';
 
-export interface GrpoCandidate {
+interface GrpoCandidate {
   prompt: string;
   completion: string;
   reward: number;

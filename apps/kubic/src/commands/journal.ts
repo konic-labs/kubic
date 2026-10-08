@@ -19,7 +19,7 @@ import type {
 } from '../cli/context.js';
 
 // `--max-content-bytes <n>`: 0 means unlimited.
-export function parseNonNegativeInt(value: string): number {
+function parseNonNegativeInt(value: string): number {
   if (!/^\d+$/.test(value)) {
     throw new InvalidArgumentError(
       'needs a non-negative integer (0 = unlimited)',
@@ -29,7 +29,7 @@ export function parseNonNegativeInt(value: string): number {
 }
 
 // `git log --max <n>`.
-export function parsePositiveInt(value: string): number {
+function parsePositiveInt(value: string): number {
   if (!/^\d+$/.test(value) || Number(value) < 1) {
     throw new InvalidArgumentError('--max needs a positive integer');
   }

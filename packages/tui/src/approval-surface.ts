@@ -42,8 +42,6 @@ import {
 import { sanitizeLaneText } from './lane-cells.js';
 import { matchesKey } from './tui-boundary.js';
 
-export { APPROVAL_DEFAULT_KEYS };
-
 // The reason recorded when the session can no longer collect a verdict. Named
 // once: the deny that a quit produces must read the same everywhere.
 export const APPROVAL_CANCELLED_REASON = 'the approval was never answered';
@@ -79,18 +77,18 @@ function defaultArmTimer(ms: number, fire: () => void): () => void {
 
 // Structural request: approval-view.ts's own request type plus nothing. The
 // surface does not care which host service asked.
-export type SurfaceRequest = ApprovalViewRequest;
+type SurfaceRequest = ApprovalViewRequest;
 
 /** The card's one-line input — a denial comment or a command. */
-export interface ApprovalInput {
+interface ApprovalInput {
   readonly kind: 'comment' | 'edit';
   readonly text: string;
 }
 
 /** The longest comment the card takes (the host bounds it too). */
-export const APPROVAL_COMMENT_MAX_CHARS = 500;
+const APPROVAL_COMMENT_MAX_CHARS = 500;
 /** And the longest command an edit may grow to. */
-export const APPROVAL_EDIT_MAX_CHARS = 16 * 1024;
+const APPROVAL_EDIT_MAX_CHARS = 16 * 1024;
 
 // Text a key (or a burst of typing) inserts: no control character in it.
 function insertable(data: string): boolean {

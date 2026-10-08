@@ -218,7 +218,7 @@ export function resolveApprovalKey(
 
 // A key ordinary typing can produce — a bare character, space,
 // or a shifted character (an upper-case letter or a symbol).
-export function isProseKey(key: string): boolean {
+function isProseKey(key: string): boolean {
   return key.length === 1 || key === 'space' || /^shift\+.$/.test(key);
 }
 
@@ -313,7 +313,7 @@ export interface ApprovalDecisionStore {
   save(decisions: Record<string, ApprovalDecision>): void;
 }
 
-export class MemoryApprovalDecisionStore implements ApprovalDecisionStore {
+class MemoryApprovalDecisionStore implements ApprovalDecisionStore {
   private decisions: Record<string, ApprovalDecision> = {};
 
   load(): Record<string, ApprovalDecision> {

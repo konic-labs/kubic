@@ -38,7 +38,7 @@ type Env = Readonly<Record<string, string | undefined>>;
 // Where a registered provider came from and whether its auth is configured.
 // `origin` is 'built-in' (Pi's generated catalogue), 'testing' (the faux
 // provider) or the models.json path that declared it.
-export interface ProviderInfo {
+interface ProviderInfo {
   readonly origin: string;
   readonly usable: boolean;
   // The auth source Pi reported for a configured built-in (e.g. the env key).
@@ -48,7 +48,7 @@ export interface ProviderInfo {
 // One models.json location the assembly looked at: the
 // user-global file is always trusted; the project file only after the
 // project-trust decision.
-export interface ModelsSource {
+interface ModelsSource {
   readonly path: string;
   readonly scope: 'global' | 'project';
   readonly trusted: boolean;
@@ -87,7 +87,7 @@ export interface AssembleOptions extends RegisterCustomProvidersOptions {
 }
 
 // The user-global models.json (global tree: ~/.kubic/models/).
-export function globalModelsPath(home: string): string {
+function globalModelsPath(home: string): string {
   return join(home, '.kubic', 'models', 'models.json');
 }
 
@@ -116,7 +116,7 @@ export function findModelsProjectRoot(cwd: string, home: string): string {
 // from `cwd`. One derivation for the assembly AND for any caller that must
 // decide project trust for THAT root: trust is per-root, never a boolean for
 // the launch cwd.
-export function modelsProjectRootFor(cwd: string, home: string): string {
+function modelsProjectRootFor(cwd: string, home: string): string {
   return findModelsProjectRoot(cwd, home);
 }
 

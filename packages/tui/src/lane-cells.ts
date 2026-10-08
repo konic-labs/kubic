@@ -35,7 +35,7 @@ export interface LaneEntryLike {
 // Upper bound on the output a cell carries (the view collapses it further
 // to TOOL_OUTPUT_PREVIEW_LINES unless the operator expands it with Ctrl-X).
 export const TOOL_RESULT_MAX_CHARS = 20_000;
-export const TOOL_RESULT_MAX_LINES = 400;
+const TOOL_RESULT_MAX_LINES = 400;
 export const TOOL_DETAIL_MAX_CHARS = 120;
 
 const ROLE_USER = 'user';
@@ -43,7 +43,7 @@ const ROLE_ASSISTANT = 'assistant';
 const ROLE_TOOL_RESULT = 'toolResult';
 
 export const PROMPT_PREFIX = '› ';
-export const TOOL_CALL_PREFIX = 'tool ';
+const TOOL_CALL_PREFIX = 'tool ';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;

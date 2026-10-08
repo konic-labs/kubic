@@ -39,7 +39,7 @@ export function toolGlyph(state: ToolCallState, error = false): string {
   return error ? '✗' : '✓';
 }
 
-export interface TreeToolCall {
+interface TreeToolCall {
   id: string;
   name: string;
   done: boolean;
@@ -55,7 +55,7 @@ export interface TreeToolCall {
 // The conversation's own spend, summed from usage events: the
 // root row shows `$cost in/out`. `seen` keeps the segment off a fresh tree
 // that has not heard a usage row yet.
-export interface TreeUsage {
+interface TreeUsage {
   seen: boolean;
   costTotal: number;
   inputTokens: number;
@@ -65,7 +65,7 @@ export interface TreeUsage {
 // One completed turn, rolled up: the tree only ever folds past turns
 // into a count line, so it keeps the counts — not the calls — and its state
 // stays bounded by the number of turns, never by the session's tool calls.
-export interface TreeTurnSummary {
+interface TreeTurnSummary {
   calls: number;
   durationMs: number;
 }
@@ -197,7 +197,7 @@ function toolLine(call: TreeToolCall): string {
 // Tokens read in thousands once the number stops being glanceable; the
 // sub-100 counters stay exact (`42`), everything above scales (`0.3k`,
 // `1.2k`, `182.4k`).
-export function formatTreeTokens(count: number): string {
+function formatTreeTokens(count: number): string {
   const n = Math.max(0, Math.round(count));
   if (n < 100) return String(n);
   return `${(n / 1000).toFixed(1)}k`;
@@ -265,7 +265,7 @@ export function renderTreeLines(
 // root, so root + TREE_MAX_TOOL_LINES fits layout's TREE_MAX_ROWS of 6).
 // A previous-turns fold line takes one of these slots, so the live turn
 // shows one call fewer.
-export const TREE_MAX_TOOL_LINES = 5;
+const TREE_MAX_TOOL_LINES = 5;
 
 // Colour is applied AFTER truncation, over the plain line, so widths are
 // measured on text only. Identity under the default (plain) theme.
@@ -296,13 +296,7 @@ export interface TreeViewOptions {
   onFocusEditor?: () => void;
 }
 
-export const TOGGLE_KEYS: ReadonlySet<string> = new Set([
-  't',
-  'T',
-  '\r',
-  '\n',
-  ' ',
-]);
+const TOGGLE_KEYS: ReadonlySet<string> = new Set(['t', 'T', '\r', '\n', ' ']);
 
 // Inner body: renders exact pre-truncated lines (no padding/wrap) so
 // headless snapshots assert content, not pixels. Pi's Text pads to the

@@ -35,7 +35,7 @@ export class RoleParseError extends Error {
   }
 }
 
-export interface RoleToolPolicy {
+interface RoleToolPolicy {
   filesystem?: unknown;
   shell?: unknown;
   network?: unknown;
@@ -221,8 +221,7 @@ const FULL_CLASSES: PermissionClasses = {
   credentials: 'allowlist',
 };
 
-export const KNOWN_ROLE_TOOLS: readonly string[] =
-  toolsForClasses(FULL_CLASSES);
+const KNOWN_ROLE_TOOLS: readonly string[] = toolsForClasses(FULL_CLASSES);
 
 export interface RoleLayerSpec {
   tools?: string[];

@@ -16,7 +16,7 @@ import type {
   ReplayRuntimeDeps,
 } from './replay.js';
 
-export interface LanePromptOutcome {
+interface LanePromptOutcome {
   terminus: string;
   summary: string;
 }

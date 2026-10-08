@@ -18,7 +18,7 @@ import { formatContext } from './models-render.js';
 /** Exit code of a setup the user cancelled (Ctrl-C / Esc): 128 + SIGINT. */
 export const SETUP_EXIT_CANCELLED = 130;
 
-export interface SetupModelChoice {
+interface SetupModelChoice {
   readonly id: string;
   readonly contextWindow?: number;
   readonly thinking: readonly string[];

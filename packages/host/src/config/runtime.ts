@@ -75,7 +75,7 @@ export const RUNTIME_ENV_OVERRIDES = {
   trustProject: 'KUBIC_TRUST_PROJECT',
 } as const;
 
-export const RUNTIME_DEFAULTS = {
+const RUNTIME_DEFAULTS = {
   approvalsRoute: 'ask-user',
 } as const;
 
@@ -313,7 +313,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   },
 };
 
-export interface RuntimeModelSelection {
+interface RuntimeModelSelection {
   provider: string;
   id: string;
   thinking?: string;
@@ -331,7 +331,7 @@ export interface RuntimeThinking {
 // A cli/env model pin the frozen enterprise `[model]` overrode: reported
 // instead of being dropped silently, so `kubic run --model x` against an
 // enterprise pin says it ran the pin, not `x`.
-export interface ModelPinOverride {
+interface ModelPinOverride {
   // The input that carried the ignored pin: `--model` (cli layer) or
   // `KUBIC_MODEL` (env layer).
   source: 'cli' | 'env';
@@ -341,17 +341,17 @@ export interface ModelPinOverride {
   pinned: string;
 }
 
-export interface RuntimeApprovals {
+interface RuntimeApprovals {
   policy: ReturnType<typeof validatePolicy>;
   source: ConfigValueSource;
 }
 
-export interface RuntimePermissions {
+interface RuntimePermissions {
   classes: PermissionClasses;
   source: ConfigValueSource;
 }
 
-export interface RuntimeJournal {
+interface RuntimeJournal {
   // Undefined means "no age bound configured" — never an invented default.
   retentionDays?: number;
   maxAgeMs?: number;
@@ -369,7 +369,7 @@ export interface RuntimeJournal {
   source: ConfigValueSource;
 }
 
-export interface RuntimeSystemPrompt {
+interface RuntimeSystemPrompt {
   // The resolved path (what `kubic config` reports) and the contents the
   // lane boots append to the assembled system prompt. Read once, at load,
   // through the file bridge — a missing or unreadable file is a named
@@ -382,7 +382,7 @@ export interface RuntimeSystemPrompt {
   source: ConfigValueSource;
 }
 
-export interface RuntimeCompaction {
+interface RuntimeCompaction {
   // Undefined means "not configured" — the lane defaults apply (automatic
   // compaction, the default reserve, the default recent window), never an
   // invented value here.
@@ -401,7 +401,7 @@ export interface RuntimeEscalation {
   maxEscalations: number;
 }
 
-export interface ConfigLayerReport {
+interface ConfigLayerReport {
   layer: ConfigLayer;
   path: string | undefined;
   present: boolean;
@@ -477,7 +477,7 @@ export interface RuntimeConfig {
   sources: Record<string, ConfigValueSource>;
 }
 
-export interface EffectiveConfigValue {
+interface EffectiveConfigValue {
   key: string;
   // Formatted like the TOML value it came from, so the human view and the
   // machine view never disagree about what the value is.
@@ -832,7 +832,7 @@ function programmaticSourceFor(
   return undefined;
 }
 
-export function resolveSystemPromptFile(args: {
+function resolveSystemPromptFile(args: {
   bridge: Pick<FileBridge, 'exists' | 'readTextFile'>;
   home: string;
   projectRoot: string;

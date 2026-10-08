@@ -24,7 +24,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function validateWriteArgs(raw: unknown): WriteArgs {
+function validateWriteArgs(raw: unknown): WriteArgs {
   if (!isRecord(raw))
     throw new OpError('invalid_args', 'write args must be an object');
   for (const key of Object.keys(raw)) {

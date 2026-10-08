@@ -42,10 +42,7 @@ export type GitCommand = (args: string[], root: string) => GitCommandResult;
 
 const GIT_TIMEOUT_MS = 10_000;
 
-export function defaultGitCommand(
-  args: string[],
-  root: string,
-): GitCommandResult {
+function defaultGitCommand(args: string[], root: string): GitCommandResult {
   try {
     const result = spawnSync('git', ['-C', root, ...args], {
       encoding: 'buffer',

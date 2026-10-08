@@ -13,11 +13,11 @@ import type { EvalCategory } from './categories.js';
 // after the run settles (exit 0 = pass). Structurally the host verifier's
 // VerifyCommands; the eval package cannot import host (dep direction), so
 // the shape is restated here.
-export type SuiteVerifyCommands = Partial<
+type SuiteVerifyCommands = Partial<
   Record<'tests' | 'build' | 'lint' | 'typecheck', string>
 >;
 
-export interface EvalSuiteFixture {
+interface EvalSuiteFixture {
   // The prompt handed to the lane.
   prompt: string;
   // The files the fixture workspace starts with (relative path → content).

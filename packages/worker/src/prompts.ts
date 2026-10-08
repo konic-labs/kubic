@@ -28,11 +28,11 @@ export interface SystemPromptInput {
   extraSections?: string[];
 }
 
-export function sortedToolNames(names: string[]): string[] {
+function sortedToolNames(names: string[]): string[] {
   return [...names].sort();
 }
 
-export function serializeMetadata(meta: Record<string, string>): string {
+function serializeMetadata(meta: Record<string, string>): string {
   return Object.keys(meta)
     .sort()
     .map((k) => `${k}=${meta[k]}`)
@@ -55,7 +55,7 @@ export function assembleSystemPrompt(input: SystemPromptInput): string {
 // pi.system entry is committed. The per-task model pin below keeps the model
 // stable across turns.
 
-export interface AffinityEscalation {
+interface AffinityEscalation {
   from: string;
   to: string;
   reason: string;
@@ -162,13 +162,13 @@ export interface SessionCacheCounters {
   cacheWrite: number;
 }
 
-export function emptyCacheCounters(): SessionCacheCounters {
+function emptyCacheCounters(): SessionCacheCounters {
   return { requests: 0, hits: 0, misses: 0, cacheRead: 0, cacheWrite: 0 };
 }
 
 type CacheUsage = Pick<Usage, 'cacheRead' | 'cacheWrite'>;
 
-export function recordCacheUsage(
+function recordCacheUsage(
   counters: SessionCacheCounters,
   usage: CacheUsage,
 ): SessionCacheCounters {
@@ -182,7 +182,7 @@ export function recordCacheUsage(
   };
 }
 
-export function cacheHitRate(counters: SessionCacheCounters): number | null {
+function cacheHitRate(counters: SessionCacheCounters): number | null {
   if (counters.requests === 0) return null;
   return counters.hits / counters.requests;
 }

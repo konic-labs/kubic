@@ -42,7 +42,7 @@ export interface PolicyCommandDeps {
   unsupported?: () => readonly UnsupportedLevelView[];
 }
 
-export interface UnsupportedLevelView {
+interface UnsupportedLevelView {
   readonly class: string;
   readonly level: string;
   readonly enforcedAs: string;

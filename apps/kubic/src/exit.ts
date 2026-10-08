@@ -14,7 +14,7 @@
 //   an unref'd fallback timer exits after FLUSH_FALLBACK_MS. Unref'd, so it
 //   never itself keeps the loop alive.
 
-export const FLUSH_FALLBACK_MS = 1_500;
+const FLUSH_FALLBACK_MS = 1_500;
 
 type StreamError = Error & { code?: string };
 

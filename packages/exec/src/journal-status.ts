@@ -17,7 +17,7 @@ import {
 } from './journal.js';
 
 /** One side of a head-moved marker, human-readable. */
-export function formatHeadState(state: HeadState): string {
+function formatHeadState(state: HeadState): string {
   const stash = state.stash > 0 ? ` (stash ${state.stash})` : '';
   return `${state.branch}@${state.head.slice(0, 12)}${stash}`;
 }
@@ -60,7 +60,7 @@ export function renderLog(store: FileJournalStore): string[] {
   });
 }
 
-export interface RepoState {
+interface RepoState {
   branch: string;
   // null when git is unavailable or the query fails: reported as unknown,
   // never guessed.
@@ -298,7 +298,7 @@ export function reconciliationSummary(store: FileJournalStore): string {
 }
 
 // The same line over an entry list.
-export function reconciliationSummaryFor(
+function reconciliationSummaryFor(
   entries: readonly { unattributed?: boolean }[],
 ): string {
   const unattributed = entries.filter((e) => e.unattributed === true).length;

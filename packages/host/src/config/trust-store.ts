@@ -65,7 +65,7 @@ export interface ProjectTrustReport {
 }
 
 // A broken store file, named by path — never silently replaced.
-export class TrustStoreError extends Error {
+class TrustStoreError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'TrustStoreError';

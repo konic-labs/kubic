@@ -191,7 +191,7 @@ export interface TrajectoryDurableState {
   memos?: string[];
 }
 
-export interface TrajectoryOperation {
+interface TrajectoryOperation {
   id: string;
   kind: string;
 }
@@ -223,7 +223,7 @@ export interface TrajectoryWorktree {
   branch: string | null;
 }
 
-export interface TrajectoryDiffFile {
+interface TrajectoryDiffFile {
   path: string;
   hunks: string[];
 }

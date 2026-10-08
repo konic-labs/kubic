@@ -14,7 +14,7 @@ import { fuzzyPositions, highlightPositions } from './match.js';
 import { fillLine } from './surface.js';
 
 /** A titled group with more rows than this folds until expanded. */
-export const PICKER_FOLD_ROWS = 8;
+const PICKER_FOLD_ROWS = 8;
 
 export interface PickerRow {
   readonly value: string;

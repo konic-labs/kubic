@@ -28,7 +28,7 @@ import {
 
 export type Style = (text: string) => string;
 
-export interface StyleSpec {
+interface StyleSpec {
   readonly fg?: TokenRole;
   readonly bg?: TokenRole;
   readonly bold?: boolean;

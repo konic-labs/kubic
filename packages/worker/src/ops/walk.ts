@@ -29,9 +29,9 @@ export const WALK_MAX_ENTRIES = 10_000;
 // never part of a repo-wide search. Root and nested `.gitignore` files can
 // still negate an entry (last match wins), exactly as git lets a closer file
 // override a broader one.
-export const WALK_DEFAULT_IGNORES = 'node_modules/\n';
+const WALK_DEFAULT_IGNORES = 'node_modules/\n';
 
-export interface WalkEntry {
+interface WalkEntry {
   path: string;
   isDirectory: boolean;
 }

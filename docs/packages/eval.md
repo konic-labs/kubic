@@ -39,7 +39,7 @@ ci` clean, usage reconciliation, RL export fields untouched.
 
 | Module | Exports |
 | --- | --- |
-| `records.ts` | `EvalRecord`, `EvalRecordInput`, `EvalSize`, `EVAL_SIZES`, `isEvalSize`, `EvalDeterminism`, `DETERMINISM_TIERS`, `isEvalDeterminism`, `RecordValidation`, `validateEvalRecord`, `UsageRowLike`, `ReconcileResult`, `reconcileUsage` |
+| `records.ts` | `EvalRecord`, `EvalRecordInput`, `EvalSize`, `isEvalSize`, `EvalDeterminism`, `RecordValidation`, `validateEvalRecord`, `UsageRowLike`, `ReconcileResult`, `reconcileUsage` |
 | `suites.ts` | `EvalSuite`, `EVAL_SUITES`, `findSuite` |
 | `categories.ts` | `EvalCategory`, `EVAL_CATEGORIES`, `isEvalCategory` |
 | `signals.ts` | `EvalSignals`, `GateSignal`, `computeSignals`, `gatesPass`, `patchQuality` |

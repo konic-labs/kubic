@@ -63,7 +63,7 @@ function isAuditResult(value: string): value is AuditResult {
 // listed-secret inventory value become the fixed placeholder. Applied to
 // the wire form so nested fields are covered, then parsed back so --json
 // keeps the record shape.
-export function redactAuditRecord(
+function redactAuditRecord(
   record: OrgAuditRecord,
   secrets: readonly string[] = [],
 ): OrgAuditRecord {

@@ -99,7 +99,7 @@ export function parseCompactCommand(input: string): string {
   throw new CompactionError(`not a /compact command: '${input}'`);
 }
 
-export class CompactionError extends Error {
+class CompactionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CompactionError';
@@ -173,7 +173,7 @@ export async function compactSoloLane(
 // cut selection found no older history to summarize, and NO `pi.compaction`
 // entry was placed (`CompactionResult`'s `entryId`/`submissionId` both
 // absent, pi-durable's types.ts). Reporting that as a cut would be a lie.
-export type ManualCompactionStatus =
+type ManualCompactionStatus =
   | 'completed'
   | 'nothing'
   | 'failed'
@@ -255,7 +255,7 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export type FileOpKind = 'created' | 'modified' | 'deleted' | 'renamed';
+type FileOpKind = 'created' | 'modified' | 'deleted' | 'renamed';
 
 export interface FileOp {
   kind: FileOpKind;

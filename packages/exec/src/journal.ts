@@ -53,7 +53,7 @@ export type JournalOp =
 // line delta instead of a full blob. The before-blob is always kept whole:
 // undo needs the pre-image, and content addressing dedupes it — editing
 // the same large file twice stores the before-content once.
-export const LARGE_FILE_BYTES = 64 * 1024;
+const LARGE_FILE_BYTES = 64 * 1024;
 // Chunk size for streamed hashing: peak memory is one chunk, never
 // the file size. A file at or under this is read in a single call.
 export const HASH_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -77,7 +77,7 @@ export const MAX_SWEEP_CONTENT_BYTES = 4 * 1024 * 1024;
 // Default size bound: the journal can never grow past this without an
 // explicit override. No default age bound — age pruning is opt-in via
 // `journal.retentionDays`.
-export const DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024;
+const DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024;
 // The share of the kept entries a pass that prunes must drop.
 // The index counts against the bound now, so a store sitting at its cap would
 // otherwise rewrite the whole index on every append; dropping a chunk makes
@@ -1620,7 +1620,7 @@ export function journalRunStart(store: FileJournalStore): JournalRunStart {
 // recorded index when the marker is still there; otherwise the marker's
 // last occurrence is searched, and a marker retention already dropped
 // means everything left is newer than it.
-export function entriesSinceRunStart(
+function entriesSinceRunStart(
   all: JournalEntry[],
   start: JournalRunStart | undefined,
 ): JournalEntry[] {

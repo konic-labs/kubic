@@ -226,7 +226,7 @@ export function projectTrustFor(result: CliConfigResult): ProjectTrustCheck {
 // A cancelled prompt is not an answer: nothing is persisted, and the
 // invocation fails closed into the refusal path.
 // The restyled question's answers.
-export type TrustAnswer = 'yes' | 'not-now' | 'view';
+type TrustAnswer = 'yes' | 'not-now' | 'view';
 
 export interface TrustQuestion {
   /** The canonical project root the decision is keyed to. */
@@ -510,7 +510,7 @@ export function roleModelScope(
 // The out-of-set refusal: names the requested model, the
 // role, and the set — the operator pins an allowed model or widens the
 // set, never guesses which boundary fired.
-export function roleModelRefusal(
+function roleModelRefusal(
   role: string,
   provider: string,
   id: string,

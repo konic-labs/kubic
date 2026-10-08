@@ -52,7 +52,7 @@ export interface BridgeFileInfo {
   mtimeMs: number;
 }
 
-export interface BridgeLineReader {
+interface BridgeLineReader {
   readLine(): string | undefined;
   close(): void;
 }

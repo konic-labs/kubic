@@ -357,7 +357,7 @@ export interface HeadlessRunDeps {
   warn?: (line: string) => void;
 }
 
-export interface SignalSource {
+interface SignalSource {
   on(event: InterruptSignal, listener: (signal: string) => void): unknown;
   off(event: InterruptSignal, listener: (signal: string) => void): unknown;
 }
@@ -785,7 +785,7 @@ export function laneActivityDebugLine(
 
 // The run's agent id: the configured `[agent].name`, else 'root'. It tags
 // the run's journal, reconcile and trajectory entries.
-export function resolveRunAgentId(depsAgentId: string | undefined): string {
+function resolveRunAgentId(depsAgentId: string | undefined): string {
   return depsAgentId ?? 'root';
 }
 

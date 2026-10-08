@@ -26,7 +26,7 @@ export interface AttachmentImage extends LaneImagePart {
 
 // The MIME types Kubic accepts (png/jpeg/webp/gif). Anything else is
 // refused before it can reach a provider.
-export const IMAGE_MIME_TYPES = [
+const IMAGE_MIME_TYPES = [
   'image/png',
   'image/jpeg',
   'image/webp',
@@ -136,7 +136,7 @@ export function attachmentPlaceholder(image: {
 // Whether Pi found an image protocol on this terminal. `Image` consults the
 // same probe, but Kubic's placeholder is its own row, so the decision is
 // explicit here.
-export function imageTerminalSupported(): boolean {
+function imageTerminalSupported(): boolean {
   const protocol = getCapabilities().images;
   return protocol === 'kitty' || protocol === 'iterm2';
 }
@@ -237,7 +237,7 @@ export function parseInlineImageSequence(
 }
 
 /** The opening of the iTerm2 inline-image sequence, matched at the tail. */
-export const INLINE_IMAGE_PREFIX = '\u001b]1337;File=';
+const INLINE_IMAGE_PREFIX = '\u001b]1337;File=';
 
 // The most characters a sequence can hold before its payload can no longer
 // fit under IMAGE_MAX_BYTES: base64's 4/3 expansion plus framing slack. A

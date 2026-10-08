@@ -25,18 +25,18 @@ import {
 import { fitLine, leftRight, wrapStyled } from './ui/line.js';
 
 /** Collapsed cards show at most this many body lines. */
-export const CARD_PREVIEW_LINES = 5;
+const CARD_PREVIEW_LINES = 5;
 /** Collapsed edit cards show at most this many diff rows. */
-export const DIFF_PREVIEW_ROWS = 12;
+const DIFF_PREVIEW_ROWS = 12;
 /** Collapsed new-file cards show this many of the first lines. */
-export const WRITE_PREVIEW_ROWS = 8;
+const WRITE_PREVIEW_ROWS = 8;
 
 const INDENT = '  ';
 const COLLAPSED_MARK = '○';
 const WAITING_MARK = '◆';
 
 /** Workspace reads: a successful one folds to a single line. */
-export const READ_TOOLS: ReadonlySet<string> = new Set([
+const READ_TOOLS: ReadonlySet<string> = new Set([
   'read',
   'ls',
   'find',

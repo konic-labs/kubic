@@ -25,7 +25,7 @@ export interface SkillsCommandOptions {
 // What `--role <name>` resolved to for the gate: the lane-visible name,
 // the document's skill allowlist (both sides must admit), and
 // the document's capability grant for the most-restrictive merge.
-export interface SkillsRoleGate {
+interface SkillsRoleGate {
   name: string;
   skills?: string[];
   classes?: PermissionClasses;

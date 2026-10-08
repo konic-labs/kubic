@@ -36,14 +36,14 @@ import {
   staticLimitChecks,
 } from './limits/doctor-limits.js';
 
-export const DOCTOR_EXIT_OK = EXIT_OK;
-export const DOCTOR_EXIT_USAGE = EXIT_USAGE;
+const DOCTOR_EXIT_OK = EXIT_OK;
+const DOCTOR_EXIT_USAGE = EXIT_USAGE;
 
 // warn is informational only: it is
 // rendered, counted, and never exit-flipping — only fail flips the exit.
-export type DoctorStatus = 'pass' | 'warn' | 'fail' | 'skip';
+type DoctorStatus = 'pass' | 'warn' | 'fail' | 'skip';
 
-export type DoctorReason =
+type DoctorReason =
   | 'ok'
   | 'provider-down'
   | 'policy-mismatch'
@@ -135,7 +135,7 @@ export interface DoctorDeps extends CliIo {
 // derivation (it is the module that also owns the approval service); doctor
 // only renders it, which is why this import is type-only plus a structural
 // re-declaration here — the value comes in through `installedPolicy`.
-export interface InstalledPolicyPosture {
+interface InstalledPolicyPosture {
   source: 'config' | 'default';
   route: 'ask-user' | 'deny';
   classes: {
@@ -354,7 +354,7 @@ function sessionOverlapCheck(probe: SessionOverlapProbe): DoctorCheck {
 // A group- or world-accessible state directory. The probe
 // reports it (and the next open tightens it); doctor warns, never fails —
 // a loose directory is a real exposure but not a broken installation.
-export interface StatePermissionProbe {
+interface StatePermissionProbe {
   path: string;
   mode: number;
 }

@@ -15,7 +15,7 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 
 // How a run ended.
-export type ResultStatus =
+type ResultStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'

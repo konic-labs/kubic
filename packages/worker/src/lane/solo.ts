@@ -67,7 +67,7 @@ import {
   withPermissionCheck,
 } from './wrap.js';
 
-export const SOLO_LANE_NAME = 'main';
+const SOLO_LANE_NAME = 'main';
 
 // The stable key of the one prompt section the solo extension installs.
 // pi-durable stores sections as positional `pi.system` entries keyed by
@@ -114,16 +114,13 @@ export function assembleSoloPrompt(input: SoloPromptInput): string {
   return assembleSystemPrompt(full);
 }
 
-export function defaultSoloModelId(model: {
-  provider: string;
-  id: string;
-}): string {
+function defaultSoloModelId(model: { provider: string; id: string }): string {
   return `${model.provider}/${model.id}`;
 }
 
 // NOTE: defaultSoloPrompt lived here — deleted, it had no
 // callers (the run paths always assemble an explicit prompt).
-export interface SoloPolicyOptions {
+interface SoloPolicyOptions {
   classes?: PermissionClasses;
   interceptors?: PolicyInterceptorOptions;
   contributions?: ToolContribution[];

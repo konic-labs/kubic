@@ -6,7 +6,7 @@
 import { renderTable } from '../../core/src/cli/table.js';
 import type { CliTheme } from '../../core/src/cli/theme.js';
 
-export interface CatalogModel {
+interface CatalogModel {
   readonly id: string;
   readonly contextWindow?: number;
   readonly thinking: readonly string[];

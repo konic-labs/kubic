@@ -44,7 +44,7 @@ export type TranscriptEntryKind =
 
 // What block mode walks and copies — one block per prompt,
 // answer, thinking, tool card, compaction and receipt, as last drawn.
-export type TranscriptBlockKind =
+type TranscriptBlockKind =
   | 'prompt'
   | 'prose'
   | 'thinking'
@@ -52,7 +52,7 @@ export type TranscriptBlockKind =
   | 'compaction'
   | 'receipt';
 
-export interface TranscriptBlock {
+interface TranscriptBlock {
   readonly id: string;
   readonly kind: TranscriptBlockKind;
   /** The block's first row in the document, and how many rows it takes. */
@@ -145,7 +145,7 @@ function displayKey(display: CellDisplay | undefined): string {
     : `w\u0000${display.newFile}\u0000${display.lines}\u0000${display.preview}`;
 }
 
-export interface TranscriptDelta {
+interface TranscriptDelta {
   readonly id: string;
   readonly kind: TranscriptEntryKind;
   readonly append: string;
@@ -154,7 +154,7 @@ export interface TranscriptDelta {
 // The transcript only needs the lane's identity: the presentation state shape
 // (presentation.ts) is the projector's business, and requiring all of it here
 // would make every cell-application carry fields it never reads.
-export interface LaneIdentity {
+interface LaneIdentity {
   readonly laneId: string;
 }
 
@@ -165,14 +165,14 @@ const PROMPT_MARK = '›';
 const THINKING_MARK = '⋯';
 
 /** `4.1s`, `1:05`. */
-export function formatThinkingTime(ms: number): string {
+function formatThinkingTime(ms: number): string {
   const value = Math.max(0, ms);
   if (value < 60_000) return `${(value / 1000).toFixed(1)}s`;
   return formatToolDuration(value);
 }
 
 /** The reasoning's first sentence, on one line. */
-export function firstSentence(text: string): string {
+function firstSentence(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   const end = /[.!?](?:\s|$)/u.exec(flat);
   return end === null ? flat : flat.slice(0, end.index + 1);
@@ -293,7 +293,7 @@ function stripPrefix(text: string, prefix: string): string {
 
 // One queued row's text: the label plus the prompt's first line. A multi-line
 // draft is summarised, not dumped — the committed entry shows it in full.
-export function queuedLine(prompt: string): string {
+function queuedLine(prompt: string): string {
   const first = prompt.split('\n', 1)[0] ?? '';
   return `${QUEUED_LABEL} ${first}`;
 }
@@ -917,14 +917,14 @@ class TranscriptDocument implements Component {
   }
 }
 
-export interface TranscriptSnapshotOp {
+interface TranscriptSnapshotOp {
   readonly op: 'snapshot';
   readonly laneId: string;
   readonly cells: ReadonlyArray<TranscriptEntry>;
   readonly revision: number;
 }
 
-export interface TranscriptDeltaOp {
+interface TranscriptDeltaOp {
   readonly op: 'delta';
   readonly delta: TranscriptDelta;
 }

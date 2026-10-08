@@ -154,7 +154,7 @@ export interface CheckpointStore {
   latest(key: string): ProcessSnapshot | undefined;
 }
 
-export type UpdateCallback = (
+type UpdateCallback = (
   snapshot: ProcessSnapshot,
   options?: { checkpoint?: boolean },
 ) => void;
@@ -319,7 +319,7 @@ class NodeFileSystem implements FileSystem {
   }
 }
 
-export const CHECKPOINT_INTERVAL_MS = 2000;
+const CHECKPOINT_INTERVAL_MS = 2000;
 
 function encodeSnapshot(snapshot: ProcessSnapshot): string {
   return `${snapshot.exitCode ?? 'run'}|${snapshot.stdout.length}|${snapshot.stdout}|${snapshot.stderr}`;
@@ -383,7 +383,7 @@ export const MAX_CHILD_OUTPUT_BYTES = 10 * 1024 * 1024;
 // SIGTERM → SIGKILL escalation window for kill(): long enough for a
 // well-behaved child to flush and exit, short enough that an abort never
 // hangs on a child that ignores SIGTERM.
-export const KILL_GRACE_MS = 2000;
+const KILL_GRACE_MS = 2000;
 
 // "never inherit ambient authority": every child the exec seam spawns
 // (the bash tool, host git calls) starts from this allowlist, never from
@@ -391,7 +391,7 @@ export const KILL_GRACE_MS = 2000;
 // one `echo $X` away from the model. It carries the POSIX session basics a
 // shell tool needs. No SSH_AUTH_SOCK / credential helpers: those are
 // authority, not environment.
-export const TOOL_ENV_ALLOWLIST: readonly string[] = [
+const TOOL_ENV_ALLOWLIST: readonly string[] = [
   'PATH',
   'HOME',
   'USER',
@@ -511,13 +511,13 @@ export function toolSpawnEnv(
 // a background job, never the command's own output, so the streams are
 // destroyed instead of waiting for 'close' (which never comes while a
 // backgrounded `sleep` inherits the pipe).
-export const EXIT_DRAIN_MS = 150;
+const EXIT_DRAIN_MS = 150;
 
 const GROUP_POLL_MS = 10;
 
 // 128+signal, the shell convention (`kill -9 $$` → 137), instead of a
 // flattening `code ?? 1` that makes a signal exit look like a plain error.
-export function exitCodeFor(
+function exitCodeFor(
   code: number | null,
   signal: NodeJS.Signals | null,
 ): number {

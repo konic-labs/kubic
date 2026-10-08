@@ -26,7 +26,7 @@ export const PAIR_SCHEMA = 'pair/1';
 // Refs-only side: where the run happened and what it concluded —
 // task/worktree/grant refs plus the bounded completion text, never the
 // transcript and never embedded file contents.
-export interface PreferenceSide {
+interface PreferenceSide {
   completion: string;
   provenance: RlProvenance;
   failureCategory: TrajectoryFailureCode | null;
@@ -36,9 +36,9 @@ export interface PreferenceSide {
   grantRef: string | null;
 }
 
-export type PairBoundary = 'within';
+type PairBoundary = 'within';
 
-export interface PreferencePair {
+interface PreferencePair {
   schema: typeof PAIR_SCHEMA;
   prompt: string;
   chosen: PreferenceSide;
@@ -46,7 +46,7 @@ export interface PreferencePair {
   boundary: PairBoundary;
 }
 
-export type ExclusionTag =
+type ExclusionTag =
   | 'prompt-mismatch-excluded'
   | 'env-failure-excluded'
   | 'cross-boundary-excluded'

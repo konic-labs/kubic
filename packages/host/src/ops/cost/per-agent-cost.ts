@@ -38,7 +38,7 @@ export interface AgentCostInput {
 // The default is per-session: one row per session and model.
 export type CostGroupBy = 'request' | 'session' | 'project';
 
-export const COST_GROUP_BYS: readonly CostGroupBy[] = [
+const COST_GROUP_BYS: readonly CostGroupBy[] = [
   'request',
   'session',
   'project',

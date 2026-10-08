@@ -12,9 +12,9 @@ import { sectionLabel } from './marks.js';
 import { fuzzyPositions, highlightPositions } from './match.js';
 import { fillLine } from './surface.js';
 
-export type PaletteGroupId = 'commands' | 'models' | 'sessions' | 'files';
+type PaletteGroupId = 'commands' | 'models' | 'sessions' | 'files';
 
-export const PALETTE_GROUP_ORDER: readonly PaletteGroupId[] = [
+const PALETTE_GROUP_ORDER: readonly PaletteGroupId[] = [
   'commands',
   'models',
   'sessions',
@@ -34,7 +34,7 @@ const DETAIL_PENALTY = 40;
 const NAME_COLUMN = 18;
 
 /** The MODELS header's right side, aligned over `paletteModelMeta`. */
-export const MODEL_COLUMNS = 'context  thinking';
+const MODEL_COLUMNS = 'context  thinking';
 
 export interface PaletteItem {
   readonly group: PaletteGroupId;

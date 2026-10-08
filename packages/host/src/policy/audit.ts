@@ -32,7 +32,7 @@ export const AUDIT_FIELDS = [
   'reason',
 ] as const;
 
-export type AuditDecision = 'allow' | 'deny';
+type AuditDecision = 'allow' | 'deny';
 
 export type AuditResult = 'ok' | 'deny' | 'error';
 
@@ -146,9 +146,7 @@ const SYSLOG_FACILITIES: Readonly<Record<string, number>> = {
   local7: 23,
 };
 
-export function resolveSyslogFacility(
-  facility: string | number | undefined,
-): number {
+function resolveSyslogFacility(facility: string | number | undefined): number {
   if (facility === undefined) return SYSLOG_FACILITIES.local0 ?? 16;
   if (typeof facility === 'number') {
     if (Number.isInteger(facility) && facility >= 0 && facility <= 23) {

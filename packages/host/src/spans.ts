@@ -2,7 +2,7 @@
 // pi.tool.execute. Host-side recorder only — Pi owns its own telemetry;
 // this module never imports worker implementation or Pi modules.
 
-export const SPAN_NAMES = [
+const SPAN_NAMES = [
   'kubic.agent.run',
   'pi.harness.hook',
   'pi.tool.execute',

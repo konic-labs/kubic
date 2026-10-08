@@ -67,7 +67,7 @@ export interface BashPolicy {
   keepBackground: boolean;
 }
 
-export const BASH_POLICY_ENV = {
+const BASH_POLICY_ENV = {
   defaultTimeoutSec: 'KUBIC_BASH_TIMEOUT',
   maxTimeoutSec: 'KUBIC_BASH_MAX_TIMEOUT',
   keepBackground: 'KUBIC_BASH_KEEP_BACKGROUND',
@@ -143,7 +143,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function validateBashArgs(raw: unknown): BashArgs {
+function validateBashArgs(raw: unknown): BashArgs {
   if (!isRecord(raw))
     throw new OpError('invalid_args', 'bash args must be an object');
   for (const key of Object.keys(raw)) {

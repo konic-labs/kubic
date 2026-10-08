@@ -31,7 +31,7 @@ import { type KubicUsageRow, usageRowFromEntry } from '../usage.js';
 
 // One tool call of a snapshot: the live slot plus, once done, the result
 // entry that carries the transcript cell.
-export interface KubicLaneTool {
+interface KubicLaneTool {
   readonly toolCallId: string;
   readonly toolName: string;
   readonly status: 'pending' | 'running' | 'done';
@@ -40,7 +40,7 @@ export interface KubicLaneTool {
 }
 
 // One live compaction of a snapshot.
-export interface KubicLaneCompaction {
+interface KubicLaneCompaction {
   readonly taskId: TaskId;
   readonly reason: string;
   readonly blocking: boolean;

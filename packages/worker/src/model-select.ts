@@ -115,7 +115,7 @@ export function parseModelFlag(flag: string): ModelSelection {
   return { provider: flag.slice(0, slash), id: flag.slice(slash + 1) };
 }
 
-export interface EscalationRecord {
+interface EscalationRecord {
   from: string;
   to: string;
   reason: string;
@@ -128,7 +128,7 @@ export interface EscalationLadder {
   record: EscalationRecord[];
 }
 
-export class EscalationError extends Error {
+class EscalationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'EscalationError';
@@ -193,7 +193,7 @@ export function clampThinking(
 
 // A requested level with the name of whoever requested it: 'cli'/'env'/
 // 'enterprise' for a per-run override, a config layer name otherwise.
-export interface ThinkingRequest {
+interface ThinkingRequest {
   level: string;
   source: string;
 }

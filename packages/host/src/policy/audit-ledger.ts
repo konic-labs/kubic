@@ -126,7 +126,7 @@ export async function resolveRunBaseRevision(
 
 // A synchronous file sink: one validated record per line. appendAudit
 // refuses async sinks, so the append completes before emitAudit returns.
-export function createLedgerSink(dir: string): AuditSink {
+function createLedgerSink(dir: string): AuditSink {
   const bridge = createNodeFileBridge(dir);
   return {
     name: `file:${join(dir, AUDIT_LEDGER_FILE)}`,
@@ -162,7 +162,7 @@ function isOrgAuditRecord(value: unknown): value is OrgAuditRecord {
 // A ledger that exists but cannot be read (permission denied, a directory in
 // its place, an I/O error) — named, so `kubic audit` never reports it as an
 // empty trail.
-export class AuditLedgerReadError extends Error {
+class AuditLedgerReadError extends Error {
   readonly path: string;
   constructor(path: string, cause: unknown) {
     super(

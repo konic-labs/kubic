@@ -23,7 +23,7 @@ import {
  * one conflict space; `approval` keys act only while an approval shows, and
  * the approval owns the keys first, so they conflict only with each other.
  */
-export type KeyScope = 'global' | 'panel' | 'approval';
+type KeyScope = 'global' | 'panel' | 'approval';
 
 interface ActionSpec {
   readonly scope: KeyScope;

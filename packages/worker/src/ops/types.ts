@@ -105,7 +105,7 @@ export interface InvocationRef {
   turnId: string;
 }
 
-export interface OpErrorDetails {
+interface OpErrorDetails {
   code: string;
   message: string;
 }
@@ -117,7 +117,7 @@ export interface OpErrorDetails {
 // keep read from calling every I/O failure a missing file; `symlink_escape` is
 // a write path that resolves through a symlink to a location outside the
 // workspace, which the write tool refuses instead of following.
-export const OP_FAILURE_CODES = [
+const OP_FAILURE_CODES = [
   'invalid_args',
   'not_found',
   'is_directory',

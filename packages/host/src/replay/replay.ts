@@ -60,9 +60,9 @@ import {
   RUN_EXIT_WORKSPACE_UNAVAILABLE,
 } from '../run-cli.js';
 
-export type ReplayTier = 'recorded' | 'deterministic' | 'live';
+type ReplayTier = 'recorded' | 'deterministic' | 'live';
 
-export type ReplayInvocation =
+type ReplayInvocation =
   | 'exact'
   | 'live-exact'
   | 'different-model'
@@ -158,7 +158,7 @@ export interface ReplayCommandDeps {
   ) => Promise<ReplayRunResult>;
 }
 
-export interface ReplayError {
+interface ReplayError {
   code: string;
   message: string;
 }

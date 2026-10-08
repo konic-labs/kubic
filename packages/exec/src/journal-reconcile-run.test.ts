@@ -1,6 +1,5 @@
-// Slice: run-scoped reconciliation lifecycle. The mechanism
-// (captureBaseline/reconcile) landed but every caller was a test; this module
-// is the wrapper the composition root calls: capture ONCE at lane boot, persist
+// Run-scoped reconciliation lifecycle: the wrapper the composition root
+// calls around captureBaseline/reconcile — capture ONCE at lane boot, persist
 // the hashes beside the session journal, sweep ONCE at run end.
 import { execFileSync } from 'node:child_process';
 import {

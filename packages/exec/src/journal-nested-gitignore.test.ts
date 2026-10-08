@@ -60,7 +60,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-// The issue's fixture: a root ignore file whose rules must keep applying
+// The fixture: a root ignore file whose rules must keep applying
 // inside children (`*.log`, `node_modules/`) plus a nested one whose rules
 // must apply to its own subtree and nowhere else.
 function workspace(): string {

@@ -197,7 +197,7 @@ describe('baseline walk races', () => {
   });
 
   it('leaves the file content alone through every race', () => {
-    // The races are read-side only: nothing in this issue may write, move or
+    // The races are read-side only: nothing on the baseline path may write, move or
     // delete a workspace file.
     const root = tmpRoot('ws-');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');

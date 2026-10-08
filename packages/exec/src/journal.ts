@@ -1658,7 +1658,7 @@ function hasSymlinkParent(target: string, root: string): boolean {
   return false;
 }
 
-// Undo primitive for the next issue's CLI: writes the recorded
+// Undo primitive for the `kubic undo` command: writes the recorded
 // before-content back. Entries without before-content (unattributed
 // reconciliation finds) are reported non-reversible — never guessed.
 // Entry paths are contained to the workspace root: a path escaping via

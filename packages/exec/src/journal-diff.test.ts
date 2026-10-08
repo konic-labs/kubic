@@ -149,7 +149,7 @@ function hunkCountMismatches(
 }
 
 describe('truthful hunk header counts', () => {
-  it('counts the lines emitted, not the pre-loop window (issue example)', () => {
+  it('counts the lines emitted, not the pre-loop window', () => {
     const lines = unifiedHunks('1\n2\n3\n4\n5', '1\n5');
     expect(lines[0]).toBe('@@ -1,5 +1,2 @@');
     expect(hunkCountMismatches(lines)).toEqual([]);

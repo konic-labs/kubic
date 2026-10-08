@@ -1,4 +1,4 @@
-// Journal durability, slice 1: the journal is the product's
+// Journal durability: the journal is the product's
 // reversibility promise, so its own writes are the least forgiving place to
 // cut corners.
 //

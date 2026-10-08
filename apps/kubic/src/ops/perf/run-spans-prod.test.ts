@@ -152,7 +152,7 @@ describe('live run emits lane/tool spans', () => {
     // Vocabulary is closed: no invented debug class on the run path.
     for (const line of lines) {
       expect(line).toMatch(
-        /^\[(policy|worker|session|tool|model|agent|exit|handles)\]/,
+        /^\[(policy|session|tool|model|agent|exit|handles)\]/,
       );
     }
   });

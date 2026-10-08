@@ -384,29 +384,29 @@ describe('status bar regressions', () => {
     expect(formatStatusCost(0.033)).toBe('$0.03');
   });
 
-  it('mirrors worker KubicUsageRow field-for-field (drift guard)', () => {
+  it('mirrors agent KubicUsageRow field-for-field (drift guard)', () => {
     // Structural mirror of packages/agent/src/usage.ts KubicUsageRow,
     // hand-copied because dep-lint forbids tui → agent imports: a shape
     // change on either side fails here loudly instead of drifting.
-    interface ExpectedWorkerCost {
+    interface ExpectedAgentCost {
       readonly input: number;
       readonly output: number;
       readonly cacheRead: number;
       readonly cacheWrite: number;
       readonly total: number;
     }
-    interface ExpectedWorkerUsage {
+    interface ExpectedAgentUsage {
       readonly input: number;
       readonly output: number;
       readonly cacheRead: number;
       readonly cacheWrite: number;
       readonly totalTokens: number;
-      readonly cost: ExpectedWorkerCost;
+      readonly cost: ExpectedAgentCost;
     }
-    interface ExpectedWorkerRow {
+    interface ExpectedAgentRow {
       readonly model: string;
       readonly provider: string;
-      readonly usage: ExpectedWorkerUsage;
+      readonly usage: ExpectedAgentUsage;
       readonly toolCallId?: string;
       readonly entryId?: string;
     }
@@ -415,7 +415,7 @@ describe('status bar regressions', () => {
       toolCallId: 'tool-1',
       entryId: 'entry-1',
     });
-    const asExpected: ExpectedWorkerRow = probe;
+    const asExpected: ExpectedAgentRow = probe;
     const backToStatus: StatusUsageRow = asExpected;
     expect(backToStatus.model).toBe(probe.model);
     // Runtime: exact key sets, required vs optional split.

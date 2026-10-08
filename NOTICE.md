@@ -4,7 +4,7 @@ Kubic itself is MIT-licensed — see [LICENSE](LICENSE) (Copyright (c) 2026 Koni
 
 ## Pi agent harness (runtime dependency)
 
-Kubic's worker runtime is built on the Pi agent harness by Mario Zechner
+Kubic's agent runtime is built on the Pi agent harness by Mario Zechner
 (earendil-works), MIT-licensed:
 
 - `@earendil-works/chord`

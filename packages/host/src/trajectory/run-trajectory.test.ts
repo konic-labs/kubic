@@ -155,7 +155,6 @@ function ledger(overrides: Partial<OrgAuditRecord> = {}): OrgAuditRecord {
     when: new Date(STARTED + 12).toISOString(),
     agent: { session: 'sess-1', role: 'default' },
     model: { provider: 'faux', id: 'echo', thinking: 'off' },
-    worker: { pid: 1, role: 'default' },
     workspace: { path: '/ws', base: 'abc' },
     permission: { permission: 'shell', approval: 'ask' },
     credential: { sentinel: '' },

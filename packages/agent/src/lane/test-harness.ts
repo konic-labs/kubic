@@ -361,7 +361,7 @@ export async function bootFauxLane(
   } else if (storage === 'jsonl') {
     if (root === undefined) {
       throw new Error(
-        "storage: 'jsonl' needs an explicit `root` (worker may not import " +
+        "storage: 'jsonl' needs an explicit `root` (agent may not import " +
           'node:fs — the test owns the sessions root)',
       );
     }

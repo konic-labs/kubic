@@ -313,7 +313,7 @@ describe('mapLaneOutcomeToFailure', () => {
     // one all three readers share.
     const elapsed = mapLaneOutcomeToFailure('failed', {
       code: 'approval_denied',
-      message: "approval denied for worker 'x': timed out after 25ms",
+      message: "approval denied for agent 'x': timed out after 25ms",
     });
     expect(elapsed.terminus).toBe('approval_timed_out');
     expect(elapsed.failure?.code).toBe('approval_timed_out');

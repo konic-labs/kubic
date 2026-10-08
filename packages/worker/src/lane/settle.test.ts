@@ -1,28 +1,12 @@
 // Settlement mapping:
 // submitted settlements → Kubic failure codes and result vocabulary.
 import { describe, expect, it } from 'vitest';
-import type { SettledSubmissionRecord } from '../pi-boundary.js';
 import {
   classifyHarnessError,
   classifySubmissionFailure,
   classifyThrownError,
-  laneErrorOf,
-  laneStatusOf,
   settleTerminalStatus,
 } from './settle.js';
-
-function settled(
-  record:
-    | { status: 'done' }
-    | { status: 'unanswered'; reason: string; detail?: string },
-): SettledSubmissionRecord {
-  return {
-    id: 'sub-1',
-    conversationId: 'conv-1',
-    type: 'input',
-    ...record,
-  } as unknown as SettledSubmissionRecord;
-}
 
 describe('settlement mapping', () => {
   it('maps completed to a completed result without error', () => {

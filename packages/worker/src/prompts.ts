@@ -8,7 +8,6 @@
 // no network, no filesystem.
 
 import { type EscalationLadder, escalateModel } from './model-select.js';
-import type { Usage } from './pi-boundary.js';
 
 export class PromptCacheError extends Error {
   constructor(message: string) {
@@ -126,29 +125,4 @@ export interface SessionCacheCounters {
   misses: number;
   cacheRead: number;
   cacheWrite: number;
-}
-
-function emptyCacheCounters(): SessionCacheCounters {
-  return { requests: 0, hits: 0, misses: 0, cacheRead: 0, cacheWrite: 0 };
-}
-
-type CacheUsage = Pick<Usage, 'cacheRead' | 'cacheWrite'>;
-
-function recordCacheUsage(
-  counters: SessionCacheCounters,
-  usage: CacheUsage,
-): SessionCacheCounters {
-  const hit = usage.cacheRead > 0;
-  return {
-    requests: counters.requests + 1,
-    hits: counters.hits + (hit ? 1 : 0),
-    misses: counters.misses + (hit ? 0 : 1),
-    cacheRead: counters.cacheRead + usage.cacheRead,
-    cacheWrite: counters.cacheWrite + usage.cacheWrite,
-  };
-}
-
-function cacheHitRate(counters: SessionCacheCounters): number | null {
-  if (counters.requests === 0) return null;
-  return counters.hits / counters.requests;
 }

@@ -679,24 +679,16 @@ describe('kubic cost durable usage', () => {
     }
   });
 
-  it('refuses an explicit --session in the legacy layout, instead of an (unreadable) row', async () => {
+  it('refuses an explicit --session that has no session storage as unknown', async () => {
     const root = tmpRoot();
-    // The legacy layout.
     const dir = join(root, '--work--');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
-      join(dir, '2026-01-01T00-00-00-000Z_legacy-1.jsonl'),
-      `${JSON.stringify({
-        v: 4,
-        kind: 'header',
-        id: 'legacy-1',
-        storageVersion: 1,
-        createdAt: 1_700_000_000_000,
-        cwd: '/work',
-      })}\n`,
+      join(dir, '2026-01-01T00-00-00-000Z_stray-1.jsonl'),
+      `${JSON.stringify({ v: 4, kind: 'header', id: 'stray-1', cwd: '/work' })}\n`,
     );
-    await expect(loadSessionCostRows(root, 'legacy-1')).rejects.toMatchObject({
-      name: 'SessionFormatError',
+    await expect(loadSessionCostRows(root, 'stray-1')).rejects.toMatchObject({
+      name: 'SessionAttachError',
     });
   });
 

@@ -23,7 +23,7 @@ every diff touching the boundary for maintainer review.
 | `ops/display-diff.ts` | `displayDiff(before, after)` (Pi's display form: `+n` / `-n` / ` n` rows, 3 lines of context, `...` gaps, bounded LCS, 400 rows) and `writeDisplay(content)`; the ops report them through `OpContext.display` |
 | `lane/interceptors.ts` | `PolicyInterceptorOptions`, `ApprovalCall`, `ApprovalAskVerdict`, `defaultIsDestructive`, `isNetworkCommand`, `confinePath`, `redactReason`, `redactSecrets` (broad redactor for summaries/block reasons: inline credential rules + the shared `@kubic/core` shape table), `policyInterceptorHooks` (ordered pi-durable `ToolTask.beforeTool` registrations; one call per boot — the attempt counter and the exact-call stand-down set (call id + args hash, spent after the call) live in that call, never across boots; first block wins, a throw blocks) |
 | `lane/policy.ts` | `PermissionClasses` (re-export), `PolicyRefusedError` |
-| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `forkSession` / `ForkSessionOptions` / `ForkSessionResult` / `SessionForkError` (a new session forked from an existing one), `laneConversationIdOf` (the conversation a session's lane runs — a fork's recorded `KubicSessionMeta.conversation`, else the reserved root; every transcript reader resolves it), `SessionAttachError`, `SessionFormatError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
+| `lane/session-store.ts` | `SessionStore`, `openSessionStore`, `KubicSessionMeta`, `KubicSessionDoc`, `SessionHandle`, `SessionListEntry`, `createSession`, `attachSession`, `listSessions`, `readSessionMetadata`, `forkSession` / `ForkSessionOptions` / `ForkSessionResult` / `SessionForkError` (a new session forked from an existing one), `laneConversationIdOf` (the conversation a session's lane runs — a fork's recorded `KubicSessionMeta.conversation`, else the reserved root; every transcript reader resolves it), `SessionAttachError`, `SessionIdError`, `SessionLockError`, `acquireSessionLock`, `releaseSessionLock`, `sessionLockIsLive`, `sessionsTouchingWorkspace` — session storage on pi-durable ([session storage](#session-storage-issue-392)) |
 | `lane/session-fs.ts` | `bridgeToPiFileSystem` — the 1.0 `FileSystem` (19 members, `id`/`truncateFile`/`flushFile` included) over the exec file bridge |
 | `lane/turn.ts` | `TurnOutcome`, `RunTurnOptions`, `runTurn`, `awaitTurn`, `turnAbort`, `turnAbortReasonOf`, `TurnAbort`, `turnLaneRecord`, `TURN_BUSY_REASON`, `SoloOverflowRecovery`, `OverflowRecoveryOptions`, `recoverSoloOverflowTurn`, `runTurnWithOverflowRecovery` — one turn is `conversation.submit({ type: 'input', … })` → `submission.wait(context)`; no Kubic-side loop, no sleep. The recovery wrapper retries exactly one failure — context overflow, compacted first and retried once |
 | `lane/settle.ts` | `JsonValue`, `ResultErrorKind`, `ResultError`, `OperationErrorLike`, `SettledResult`, `LaneTerminalStatus`, `SubmissionFailure`, `classifyHarnessError`, `classifySubmissionFailure`, `classifyThrownError`, `settleTerminalStatus` — a settled pi-durable submission → Kubic's `ResultError` and the failure codes |
@@ -399,31 +399,17 @@ creation only — an existing file keeps its own). An existing loose directory i
 tightened when the next session lock is taken, and `kubic doctor`'s
 `state:permissions` check names one that is still loose.
 
-**Legacy sessions.** A transcript in the JSONL layout lives at `<root>/--<cwd>--/<ts>_<id>.jsonl` with a
-format-4 header. There is no converter:
-`listSessions` reports it as `{ format: 'legacy' }` (and
-`sessionsTouchingWorkspace` skips it — a legacy transcript can never be the
-live sibling that probe warns about), and `attachSession` refuses it with
-`SessionFormatError`:
+**Folders without session storage are not sessions.** A folder is a session
+only when it holds the session storage (`main.jsonl`). A folder that holds
+only transcript files is never listed, never attachable (`SessionAttachError`)
+and never a prune candidate (a prune candidate holds one of `main.jsonl`,
+`session.json` or `lock.json`). Nothing is converted or moved.
 
-```
-session <id> was written by Kubic on Pi 0.87; start a new session
-```
-
-A session id must be a plain path segment (`[A-Za-z0-9_-]`) **and** must not
-be shaped like one of pi's transcript directories (`--…--`): `listSessions`
-classifies that shape as the legacy layout, so a session with such an id would
-be attachable but invisible to `sessions list`, the overlap probe and
-`kubic doctor`. Both paths refuse it (`SessionIdError` on create,
-
-`SessionAttachError` on attach) before any path join — containment by
-construction. `createSession` also refuses an id that already has a session
-(`Session already exists: <id>`) and an id that belongs to a
-legacy transcript (`SessionFormatError`): a durable session is never written
-
-over an existing session's journal, spans and posture. A legacy transcript's
-header id is validated against the same rule before it enters a listing: a
-foreign or hand-edited header is skipped, never rendered.
+A session id must be a plain path segment (`[A-Za-z0-9_-]`). `SessionIdError`
+on create and `SessionAttachError` on attach refuse anything else before any
+path join — containment by construction. `createSession` refuses an id that
+already has a session (`Session already exists: <id>`), so a durable session
+is never written over an existing session's journal, spans and posture.
 
 `SessionHandle.release(context)` always releases the lock and closes the
 storage only while no harness adopted it. A caller that boots a harness does
@@ -493,9 +479,7 @@ already held.
   `reconcile: another run may be live in this workspace …` line on its
   debug channel, and `kubic doctor` reports `session:overlap` (warn when
   two or more sessions are recorded). It matches the session's recorded
-  `workspace` when it declared one, its `cwd` otherwise, and it skips
-  `format: 'legacy'` transcripts (a legacy session cannot be attached, so it
-  cannot be a live sibling). The reason it warns: each run's
+  `workspace` when it declared one, its `cwd` otherwise. The reason it warns: each run's
   end-of-run sweep compares against its own boot baseline, so a sibling
   session's in-flight changes land in this run's journal as unattributed,
   non-reversible entries. Never a block.

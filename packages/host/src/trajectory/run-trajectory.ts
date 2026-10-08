@@ -111,8 +111,8 @@ function num(value: unknown): number {
 }
 
 // A durable entry as far as this module needs to identify one: the entry
-// record shape `Storage.scanEntries` returns. Anything else (a legacy entry, a
-// foreign object) is skipped, never guessed at.
+// record shape `Storage.scanEntries` returns. Anything else (a foreign object)
+// is skipped, never guessed at.
 function isEntryRecord(value: unknown): value is EntryRecord {
   return (
     isObject(value) &&

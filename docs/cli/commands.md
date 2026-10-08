@@ -752,7 +752,7 @@ the built-in palette; see `[ui] theme` under
 | `/session` | Report the live session: id, workspace, model, thinking level, tokens (in/out/cached) and cost, from the rows the status line already carries. |
 | `/safety` | Print the honest limits into the transcript, in full and verbatim from the limits module: that the session runs in-process with your authority (files, network, credentials), with no containment and no prompt-injection prevention, and that the controls are approvals plus the change journal. Answered even where the startup notice is suppressed (`KUBIC_NO_NOTICE=1`), because you asked. A local read: nothing reaches the model. |
 | `/new` | Close the current session and boot a fresh one **without leaving the alt-screen**: the transcript, tree, usage rows and panels clear, and the next prompt runs on the new lane. The old session stays on disk (`kubic sessions list`). Refused while a turn runs (`session: finish the current turn before switching`) — the lane swap is the quit path's race, not a mid-turn one. |
-| `/resume` | Pick one of this project's other sessions (newest first, at most 30): each row is its first prompt, with its age, turns and cost (`2m ago · 4 turns · $0.03`), read without a lock the way `kubic cost` reads. A legacy session is greyed `legacy — kubic sessions`, one another `kubic` holds `in use by another kubic`; neither can be chosen. Choosing one attaches to it and loads its transcript, in the same alt-screen. Needs a terminal wide enough for the picker — otherwise the footer says so. Refused while a turn runs, like `/new`. |
+| `/resume` | Pick one of this project's other sessions (newest first, at most 30): each row is its first prompt, with its age, turns and cost (`2m ago · 4 turns · $0.03`), read without a lock the way `kubic cost` reads. A session another `kubic` holds is greyed `in use by another kubic` and cannot be chosen. Choosing one attaches to it and loads its transcript, in the same alt-screen. Needs a terminal wide enough for the picker — otherwise the footer says so. Refused while a turn runs, like `/new`. |
 | `/theme [name]` | **Theme picker**: the built-ins `dark`, `light` and `terminal`, and the configured `[ui] theme` file if there is one. Moving the selection previews each theme live; `Enter` keeps it for this session and prints `to keep it: [ui] theme = "<name>" in ~/.kubic/config.toml` (the config is never written); `Esc` restores the theme from before. `/theme <name>` switches directly; an unknown name is refused with the choices. |
 | `/tree` | Pick an earlier prompt and **retry from there in a fork** (`session.fork`): a picker lists this session's prompts newest first (`#<entry>  <prompt>`); choosing one forks the session into a **new** session just *before* that prompt (the same fork as `kubic sessions fork --at`), switches the TUI to it in the same alt-screen, and puts the prompt back in the editor to edit and resend. The original session is untouched and keeps the abandoned path (`kubic tui --session <old id>` / `/resume` returns to it). Needs a terminal wide enough for the picker; refused while a turn runs. |
 | `/fork <entry>` | Fork this session **at** `<entry>` (inclusive; `kubic sessions attach <id> --ids` prints the ids) into a new session and switch to it, the editor left as it was. `/fork` without an integer entry is refused with the usage line. A fork that fails (an entry the session does not have) re-attaches the session you were in and names the reason on the footer. Refused while a turn runs. |
@@ -1038,10 +1038,10 @@ its own generated help (`kubic sessions prune --help`).
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory): a relative path resolves against the invoking directory (never the sessions root) and must name an existing directory, otherwise create refuses with `kubic sessions create: --cwd <path>: no such directory` (exit 1) and creates nothing. `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
 
-| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, the kit table on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. **`kubic sessions --json` with no subcommand is the same array**; `kubic sessions` without `--json` stays the usage error naming the subcommands. A legacy session is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-sessions)). |
+| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, the kit table on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. **`kubic sessions --json` with no subcommand is the same array**; `kubic sessions` without `--json` stays the usage error naming the subcommands. |
 | `attach [--] <id> [--tail <n>] [--ids] [--json]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), the `pending work: <kind> <id> (<status>)` summary when a crashed run left unfinished durable work (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text and model-authored tool names are untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. `--ids` prefixes each transcript line with its entry id (` user: …`) — the id `kubic sessions fork --at` takes. `--json` prints the raw tail entries instead — one full untruncated entry JSON per line, for scripting. |
 
-| `fork [--] <id> [--at <entry>] [--tree] [--json]` | Fork a session into a **new** one and print the new id — `--json` prints one `{id, source, at}` document (`at` is `null` for `--tree`). The id works at once with `kubic run --session` / `kubic tui --session`. A **branch fork** (the default) cuts *at* an entry, inclusive — `--at <entry>` names it (`kubic sessions attach <id> --ids` prints them), default the source's newest — and the new session's lane is a pi-durable fork of the source's: it sees the history through that entry and the agent (model, thinking level) as of it, and nothing after it. **`--tree`** copies the whole session instead: every conversation and branch tip, the lane unchanged. Either way the new session has its **own** directory, lock and an empty journal, starts with **no usage** (the copied `pi.usage` documents are emptied, so `kubic cost` never counts the source's spend twice), and starts with **approvals enforced** — the source's posture, approvals and journal are not copied. The source is only read, under its own lock: forking a session another process holds live is **refused** (the lock refusal naming the holder, exit 1, nothing written), as is a missing or legacy session (exit 1) and an `--at` entry the source does not have (exit 1). `--at` with `--tree` is a usage error (exit 2). |
+| `fork [--] <id> [--at <entry>] [--tree] [--json]` | Fork a session into a **new** one and print the new id — `--json` prints one `{id, source, at}` document (`at` is `null` for `--tree`). The id works at once with `kubic run --session` / `kubic tui --session`. A **branch fork** (the default) cuts *at* an entry, inclusive — `--at <entry>` names it (`kubic sessions attach <id> --ids` prints them), default the source's newest — and the new session's lane is a pi-durable fork of the source's: it sees the history through that entry and the agent (model, thinking level) as of it, and nothing after it. **`--tree`** copies the whole session instead: every conversation and branch tip, the lane unchanged. Either way the new session has its **own** directory, lock and an empty journal, starts with **no usage** (the copied `pi.usage` documents are emptied, so `kubic cost` never counts the source's spend twice), and starts with **approvals enforced** — the source's posture, approvals and journal are not copied. The source is only read, under its own lock: forking a session another process holds live is **refused** (the lock refusal naming the holder, exit 1, nothing written), as is a missing session (exit 1) and an `--at` entry the source does not have (exit 1). `--at` with `--tree` is a usage error (exit 2). |
 
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
@@ -1053,17 +1053,15 @@ id or with an id outside `[A-Za-z0-9_-]`, a malformed `--tail`,
 unknown subcommand exits 2 (`error: unknown command '<name>'`), like an
 unknown top-level command. Attaching a missing session exits 1; attaching
 a session another process holds live prints the lock refusal (the holder's pid and start time are named) and exits 1 without reading
-the transcript. Attaching a legacy session exits 1
-with `session <id> was written by Kubic on Pi 0.87; start a new session`
-
-([below](#session-storage-and-legacy-sessions)).
+the transcript. An id with no session storage, including a folder that holds
+only a transcript file, is an unknown session and exits 1 the same way.
 
 The transcript `attach` prints is the durable one, read through the shared
 pi-durable adapter (`packages/worker/src/lane/transcript.ts`)
 and never by booting a lane: a reader must be able to inspect a session it
 may not run.
 
-### Session storage and legacy sessions
+### Session storage
 
 A session is one directory, `<sessions-root>/<id>/`, holding the
 pi-durable JSONL storage (`main.jsonl` and its `doc-*.jsonl` sidecars —
@@ -1072,27 +1070,14 @@ listing header, the lock, the journal, spans, approvals posture and
 trajectory. The session's metadata is the session-scoped `kubic.session`
 document, written in the creating commit, so anything holding the session
 open reads it from the same durable state as the transcript. Session JSONL
-is not fsynced; the change journal is the
-fsync'd store.
+is not fsynced; the change journal is the fsync'd store.
 
-Legacy sessions use a different format: one
-transcript file per session at `<sessions-root>/--<cwd>--/<ts>_<id>.jsonl`,
-beside the session's state directory. Kubic does not convert them — the
-project is unreleased, so there is nothing to migrate:
-
-- `kubic sessions list` reports them as `legacy` (the store returns
-  `format: 'legacy'`, rendered `(legacy pi 0.87 — cannot attach)`) and
-  never crashes on one.
-- `kubic sessions attach <id>` refuses by name, exit 1:
-  `session <id> was written by Kubic on Pi 0.87; start a new session`.
-  Nothing is read, moved or rewritten.
-- A legacy transcript is never counted by the session-overlap warning
-  (`kubic doctor`): it cannot be attached, so it cannot be a live sibling.
-- `kubic sessions prune` still never touches `--<cwd>--` transcript
-  directories — only `<root>/<id>/` state dirs ([below](#session-retention-prune)).
-
-Start a new session (`kubic sessions create`, or just `kubic run`) and the
-state directory's own format is the durable one.
+This release starts a clean session format. Session folders written by
+earlier builds are ignored: they are never listed, the overlap warning
+(`kubic doctor`) never counts them, and attaching one exits 1 as an unknown
+session. Nothing is converted, moved or rewritten, and `kubic sessions prune`
+only ever considers `<root>/<id>/` directories that hold a session
+([below](#session-retention-prune)).
 
 ### Session retention (`prune`)
 
@@ -1148,10 +1133,9 @@ journal entries at read time (see the read-time self-heal note under
   recent session is never a candidate anyway, and a live-locked one is
   reported `locked:` instead.
 - **Only session-shaped entries are touched.** Plain files, a stray
-  `lock.json`, names outside `[A-Za-z0-9_-]`, and the `--<cwd>--`
-  transcript directories of legacy sessions (which hold the `.jsonl`
-  transcripts of every session recorded against that cwd) are never
-  touched. A session that
+  `lock.json`, names outside `[A-Za-z0-9_-]`, and any folder that holds no
+  session file (`main.jsonl`, `session.json` or `lock.json`), such as a
+  folder with only transcript files, are never touched. A session that
   cannot be inspected is skipped and reported
   (`unreadable: <id> — skipped`), never guessed at. A missing sessions
   root is a fresh machine: `nothing to prune`, exit 0. A root that exists
@@ -1159,9 +1143,8 @@ journal entries at read time (see the read-time self-heal note under
 - **Scope.** `prune` deletes `<sessions-root>/<id>/` state dirs only —
   never the workspace journal (`.kubic/journal`), never anything outside
   the sessions root. A durable session's transcript lives INSIDE its state dir
-  (`main.jsonl`), so pruning a session deletes its transcript with it. The
-  `--<cwd>--` transcript directories of legacy sessions stay beside the
-  state dirs and are not part of this command today ([legacy sessions](#session-storage-and-legacy-sessions)).
+  (`main.jsonl`), so pruning a session deletes its transcript with it.
+  Folders that hold no session file are not part of this command.
 
 ## `kubic git`
 
@@ -1941,14 +1924,13 @@ report their own spend aggregate at the higher levels); `--by project`
 rolls each workspace to a single row. A session whose storage a live run
 owns is skipped, never opened (pi-durable: one process per storage), and
 reported as a zero row with `MODEL` `(locked)`; a session that cannot be
-read at all (a legacy transcript, a half-written directory) is
-`(unreadable)` the same way. A session that goes live *during* the read —
+read at all (a half-written directory) is `(unreadable)` the same way. A session that goes live *during* the read —
 after the lock probe said it was dead — is read as far as it can be (a
 partial trailing record is the writer's uncommitted tail and is skipped,
 never a parse error) and gets a zero `(live)` row beside its rows: the
 sibling rows may be partial. A session the operator NAMED with `--session`
-is never skipped that way: an unknown id, a live lock and a legacy transcript
-each print their refusal and exit 1. The read path is lock-free: `kubic cost` never
+is never skipped that way: an unknown id and a live lock each print their
+refusal and exit 1. The read path is lock-free: `kubic cost` never
 creates or removes `lock.json`, so session dir mtimes (the prune age
 signal) are untouched and a concurrent attach is never blocked.
 

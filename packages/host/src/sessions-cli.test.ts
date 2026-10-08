@@ -250,22 +250,13 @@ describe('sessions CLI', () => {
     expect(o.lines).toEqual(['[]']);
   });
 
-  it('marks a legacy session in the listing as legacy', async () => {
+  it('does not list a folder that holds a transcript but no session storage', async () => {
     const root = tmpRoot();
-    // The legacy layout: <root>/--<cwd>--/<ts>_<id>.jsonl
-    // whose first line is the format-4 header.
     const dir = join(root, '--work--');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
-      join(dir, '2026-01-01T00-00-00-000Z_legacy-1.jsonl'),
-      `${JSON.stringify({
-        v: 4,
-        kind: 'header',
-        id: 'legacy-1',
-        storageVersion: 1,
-        createdAt: 1_700_000_000_000,
-        cwd: '/work',
-      })}\n`,
+      join(dir, '2026-01-01T00-00-00-000Z_stray-1.jsonl'),
+      `${JSON.stringify({ v: 4, kind: 'header', id: 'stray-1', cwd: '/work' })}\n`,
     );
     const o = out();
     const code = (
@@ -275,8 +266,7 @@ describe('sessions CLI', () => {
       )
     ).exitCode;
     expect(code).toBe(0);
-    expect(o.lines.join('\n')).toContain('legacy-1');
-    expect(o.lines.join('\n')).toContain('(legacy pi 0.87');
+    expect(o.lines.join('\n')).not.toContain('stray-1');
   });
 
   it('list --json emits one {id, cwd} object per session', async () => {

@@ -150,7 +150,7 @@ describe('picker list', () => {
             value: 'b',
             text: 'old session',
             disabled: true,
-            note: 'legacy — kubic sessions',
+            note: 'in use by another kubic',
           },
         ],
       },
@@ -161,14 +161,14 @@ describe('picker list', () => {
     expect(lines).toContain(
       '│▌  fix the cart                                      2m ago · 4 turns │',
     );
-    expect(lines.join('\n')).toContain('old session  legacy — kubic sessions');
+    expect(lines.join('\n')).toContain('old session  in use by another kubic');
     const painted = renderPicker(rich, state, 72, {
       title: 'Session',
       input: '',
       maxRows: 20,
     });
     expect(painted.find((line) => line.includes('old session'))).toContain(
-      rich.fg('fg3')('   old session  legacy — kubic sessions'),
+      rich.fg('fg3')('   old session  in use by another kubic'),
     );
   });
 

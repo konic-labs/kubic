@@ -4877,8 +4877,7 @@ export async function runTuiCommand(
           });
       };
       // One picker row per summarized session — its first
-      // prompt, then age · turns · cost; a legacy or held one greyed with
-      // why.
+      // prompt, then age · turns · cost; a held one greyed with why.
       const sessionPickerRow = (summary: SessionSummary): TuiPickerRow => {
         const created =
           summary.createdAt === undefined
@@ -4899,13 +4898,7 @@ export async function runTuiCommand(
           ...(detail.length === 0 ? {} : { description: detail.join(' · ') }),
           ...(summary.state === 'ready'
             ? {}
-            : {
-                disabled: true,
-                note:
-                  summary.state === 'legacy'
-                    ? 'legacy — kubic sessions'
-                    : 'in use by another kubic',
-              }),
+            : { disabled: true, note: 'in use by another kubic' }),
         };
       };
       const openSessionPicker = (
@@ -5689,7 +5682,7 @@ export async function runTuiCommand(
           ...(boot.summarizeSessions !== undefined
             ? {
                 // The summaries `/resume` lists (titled, this
-                // project only); a legacy or held session cannot resume.
+                // project only); a held session cannot resume.
                 sessions: async () =>
                   ((await boot.summarizeSessions?.(boot.sessionId)) ?? [])
                     .filter((summary) => summary.state === 'ready')

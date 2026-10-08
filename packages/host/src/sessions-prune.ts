@@ -2,10 +2,10 @@
 // the prune of per-session state dirs under the sessions root.
 //
 // Scope: `<root>/<session-id>/` state dirs only — the journal store, spans,
-// approvals posture, and the session lock live there. pi's transcripts live
-// one level over, in `<root>/--<cwd>--/<ts>_<id>.jsonl`, and are NOT this
-// command's scope (documented in docs/cli/commands.md): a prune may only
-// take a directory it can prove belongs to one session alone.
+// approvals posture, and the session lock live there. A folder that holds no
+// session file is not a session and is never this command's scope
+// (documented in docs/cli/commands.md): a prune may only take a directory it
+// can prove belongs to one session alone.
 //
 // Rails (each pinned behaviourally by sessions-prune.test.ts):
 // - a session holding a LIVE lock is never a candidate (read-only view:
@@ -19,7 +19,7 @@
 //   recently attached session can never be aged out by stale inner
 //   contents;
 // - non-session-shaped entries (any non-directory, any name outside
-//   `[A-Za-z0-9_-]`, pi's `--<cwd>--` transcript dirs) are skipped;
+//   `[A-Za-z0-9_-]`, any folder holding no session file) are skipped;
 // - anything that cannot be inspected fails safe: skipped, reported.
 //
 // I/O goes through the exec FileBridge (I/O confinement): this module
@@ -70,12 +70,13 @@ export interface SessionPrunePlan {
   totalBytes: number;
 }
 
-// pi's transcript directories sit one level under the root, named
-// `--<cwd with /, \\ and : mapped to -->--` (`--work--` for `/work`). Their
-// name satisfies the session-id character class, but they carry the `.jsonl`
-// transcripts of EVERY session recorded against that cwd — never one
-// session's state dir, so prune must never take one.
-const TRANSCRIPT_DIR_PATTERN = /^--.*--$/;
+// Kubic's session files, one of which every session state dir holds. A folder
+// with none of them is not a session state dir, so prune never takes it.
+const SESSION_FILES = ['main.jsonl', 'session.json', 'lock.json'] as const;
+
+function holdsSessionFile(bridge: FileBridge, name: string): boolean {
+  return SESSION_FILES.some((file) => bridge.exists(join(name, file)));
+}
 
 export interface SessionPrunePlanArgs {
   root: string;
@@ -156,7 +157,7 @@ export function planSessionPrune(args: SessionPrunePlanArgs): SessionPrunePlan {
   for (const entry of entries) {
     if (!entry.isDirectory || entry.isSymbolicLink) continue;
     if (!SESSION_ID_PATTERN.test(entry.name)) continue;
-    if (TRANSCRIPT_DIR_PATTERN.test(entry.name)) continue;
+    if (!holdsSessionFile(args.bridge, entry.name)) continue;
     const posture = sessionLockIsLive(join(args.root, entry.name));
     if (posture !== undefined) {
       plan.locked.push({ id: entry.name, ...posture });

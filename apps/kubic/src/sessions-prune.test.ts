@@ -52,10 +52,12 @@ function out(): { lines: string[]; write: (line: string) => void } {
 }
 
 // A session state dir holding 15 bytes over three files, with the session
-// dir's mtime aged by `ageMs`.
+// dir's mtime aged by `ageMs`. The empty `main.jsonl` is its session storage:
+// a folder without one is never a prune candidate.
 function sessionDir(root: string, id: string, ageMs: number): string {
   const dir = join(root, id);
   mkdirSync(join(dir, 'journal'), { recursive: true });
+  writeFileSync(join(dir, 'main.jsonl'), '');
   writeFileSync(join(dir, 'journal', 'index.jsonl'), 'index!!');
   writeFileSync(join(dir, 'journal', 'blob'), 'abc');
   writeFileSync(join(dir, 'spans.jsonl'), 'spans');
@@ -415,8 +417,8 @@ describe('sessions prune, protection rails', () => {
     writeFileSync(join(root, 'stray.txt'), 'hello');
     writeFileSync(join(root, 'lock.json'), JSON.stringify({ pid: 1 }));
     mkdirSync(join(root, 'not a session'));
-    // pi's transcript cwd-slug dir (<root>/--<cwd>--/<ts>_<id>.jsonl): it
-    // matches the id character class but is never a session state dir.
+    // A folder that holds only a transcript file matches the id character
+    // class but holds no session file, so it is never a session state dir.
     const slug = join(root, '--work--');
     mkdirSync(slug);
     const transcript = join(slug, '2026-01-01T00-00-00-000Z_abc.jsonl');

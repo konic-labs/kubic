@@ -78,7 +78,7 @@ export const PROMPT_SECTION = 'kubic';
 // sentences match the pre ad-hoc prompt; the wiring delta is that
 // boot now appends the byte-stable `cwd:` / `tools:` / `meta:` lines
 // from prompts.ts instead of the `Working directory:` sentence.
-export const DEFAULT_ROLE = [
+export const DEFAULT_ROLE_PROMPT = [
   'You are a coding agent working in a terminal.',
   'Use the read, write, edit, grep, find, ls, and bash tools to inspect and change files.',
   'Keep answers short and technical.',
@@ -90,7 +90,7 @@ export interface PromptInput {
   metadata: Record<string, string>;
   extraSections?: string[];
   // Role text override: the role document's `## Prompt`
-  // body replaces the DEFAULT_ROLE constant. Absent means the constant, so
+  // body replaces the DEFAULT_ROLE_PROMPT constant. Absent means the constant, so
   // every pre-existing caller assembles identical bytes.
   role?: string;
 }
@@ -102,7 +102,7 @@ export interface PromptInput {
 // positional `pi.system` entry.
 export function assemblePrompt(input: PromptInput): string {
   const full: SystemPromptInput = {
-    role: input.role ?? DEFAULT_ROLE,
+    role: input.role ?? DEFAULT_ROLE_PROMPT,
     cwd: input.cwd,
     toolNames: input.toolNames,
     metadata: input.metadata,
@@ -217,7 +217,7 @@ export interface LaneBootOptions {
   // path inside one — the env serves those reads and the confine guard
   // leaves them un-rerooted; every other tool and path stays confined.
   skillReadRoots?: readonly string[];
-  // Role prompt: replaces the hardcoded DEFAULT_ROLE seed
+  // Role prompt: replaces the hardcoded DEFAULT_ROLE_PROMPT seed
   // with the role document's own `## Prompt` text. The assembled
   // cwd/tools/meta lines are unchanged — the role supplies the instruction
   // half only, so the prompt-cache prefix rules still hold.

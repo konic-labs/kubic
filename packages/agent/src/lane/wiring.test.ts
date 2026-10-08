@@ -231,7 +231,7 @@ describe('lane boot installs the extension stack in hook order', () => {
 });
 
 describe('lane boot prompt sections', () => {
-  it('a role prompt replaces the DEFAULT_ROLE seed, prefix rules intact', async () => {
+  it('a role prompt replaces the DEFAULT_ROLE_PROMPT seed, prefix rules intact', async () => {
     const lane = await boot({ rolePrompt: 'ROLE TEXT' });
     const prompt = await committedPrompt(lane);
     expect(prompt).toBe(

@@ -29,7 +29,7 @@ import { PromptCacheError } from '../prompts.js';
 import {
   assemblePrompt,
   bootLane,
-  DEFAULT_ROLE,
+  DEFAULT_ROLE_PROMPT,
   type Lane,
   PROMPT_SECTION,
   splitModelId,
@@ -306,7 +306,7 @@ describe('lane boot on the durable harness', () => {
     const lane = await boot();
     await driveOneTurn(lane);
     const expected = assemblePrompt({
-      role: DEFAULT_ROLE,
+      role: DEFAULT_ROLE_PROMPT,
       cwd: '/fake',
       toolNames: Object.keys((await import('../ops/registry.js')).OPERATIONS),
       metadata: { agent: 'root', lane: 'main', model: 'faux/big' },

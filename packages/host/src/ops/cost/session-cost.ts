@@ -1,15 +1,12 @@
-// Per-session cost surface (total-cost objective).
-// Every row carries its own cost; the task total is EXACTLY the sum of the
-// rows — Σ(rows) == task cost, never a second accounting. The unit is the
-// session: its usage splits into one row per model it ran (and per tool that
-// reported its own spend). Surfaces: one table row per aggregated row plus a
-// --json shape.
-// Pure: no I/O, no network, faux-only (fixture rows in tests).
+// Session cost rows for `kubic cost`: the rows the readout prints, aggregated
+// to the `--by` level, and the task total. The unit is the session: a session's
+// usage splits into one bucket per model it ran, and one per tool that reported
+// its own spend. The task total is the sum of the rows by construction, never a
+// second accounting. Pure: no I/O, no network; fixture rows in tests.
 //
-// `cacheRead`/`cacheWrite` are OPTIONAL additive row fields: they are the
-// prefix-cache counters read off real usage rows, and a caller that has no
-// usage rows simply omits them. The documented `--json` top-level shape
-// (`rows`, `taskTotal`) is `CostJsonShape`.
+// `cacheRead`/`cacheWrite` are optional row fields carrying the prefix-cache
+// counters read off real usage rows; a caller without usage rows omits them.
+// The `--json` document is `CostJsonShape` (`rows`, `taskTotal`).
 
 import { type PrefixHitRate, prefixHitRate } from './cache.js';
 
@@ -166,11 +163,6 @@ export function summarizeSessionCost(
     units,
     cache: cacheUnits.length === 0 ? null : prefixHitRate(cacheUnits),
   };
-}
-
-export function formatSessionCostRow(entry: SessionCostEntry): string {
-  const tokens = entry.input + entry.output;
-  return `session ${entry.session ?? '-'} | model ${entry.model} | ${tokens} tokens (${formatCostUsd(entry.costUsd)})`;
 }
 
 export function toCostJson(summary: SessionCostSummary): CostJsonShape {

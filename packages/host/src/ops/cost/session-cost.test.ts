@@ -1,8 +1,8 @@
-// Per-session cost surface: table row + --json shape, Σ(rows) == task total.
+// Session cost rows: the --json shape, Σ(rows) == task total, and the units
+// each level counts.
 import { describe, expect, it } from 'vitest';
 import {
   formatCostUsd,
-  formatSessionCostRow,
   groupCostRows,
   isCostGroupBy,
   summarizeSessionCost,
@@ -32,16 +32,6 @@ describe('per-session cost surface', () => {
     expect(summary.taskTotal).toBeCloseTo(0.5);
     const parts = summary.rows.reduce((acc, entry) => acc + entry.costUsd, 0);
     expect(parts).toBeCloseTo(summary.taskTotal);
-  });
-
-  it('formats a TUI row per session', () => {
-    const summary = summarizeSessionCost(ROWS);
-    const first = summary.rows[0];
-    if (first === undefined) throw new Error('missing fixture row');
-    const row = formatSessionCostRow(first);
-    expect(row).toMatch(/sess-1/);
-    // Sub-cent precision — $0.20 prints at 4 decimals.
-    expect(row).toMatch(/0\.2000/);
   });
 
   it('counts a session with several model buckets as one unit', () => {

@@ -78,16 +78,6 @@ export function taskModelForTurn(affinity: TaskAffinity): string {
   return affinity.modelId;
 }
 
-export function assertSingleModelId(ids: string[]): string {
-  const distinct = [...new Set(ids)];
-  if (distinct.length !== 1) {
-    throw new PromptCacheError(
-      `per-action re-select detected: ${distinct.join(', ')}`,
-    );
-  }
-  return distinct[0] as string;
-}
-
 export interface ModelEscalationEvent {
   type: 'model-escalation';
   taskId: string;
@@ -130,30 +120,6 @@ export function escalatePinnedModel(
   };
 }
 
-export interface CompactionRoute {
-  routingId: string;
-  cacheRetention: 'none';
-  cacheWriteEnabled: boolean;
-}
-
-// Compaction/summary must not poison the cache under the live
-// routing id, and must not write cache entries of its own.
-export function buildCompactionRoute(
-  currentSessionId: string,
-  freshRoutingId: string,
-): CompactionRoute {
-  if (freshRoutingId.length === 0 || freshRoutingId === currentSessionId) {
-    throw new PromptCacheError(
-      'compaction requires a fresh routing id distinct from the live session',
-    );
-  }
-  return {
-    routingId: freshRoutingId,
-    cacheRetention: 'none',
-    cacheWriteEnabled: false,
-  };
-}
-
 export interface SessionCacheCounters {
   requests: number;
   hits: number;
@@ -185,33 +151,4 @@ function recordCacheUsage(
 function cacheHitRate(counters: SessionCacheCounters): number | null {
   if (counters.requests === 0) return null;
   return counters.hits / counters.requests;
-}
-
-// Hit/miss observability per session: every record updates the counters,
-// hitRate/format expose them to the status surface.
-export class SessionCacheStats {
-  private sessions = new Map<string, SessionCacheCounters>();
-
-  record(sessionId: string, usage: CacheUsage): void {
-    const prev = this.sessions.get(sessionId) ?? emptyCacheCounters();
-    this.sessions.set(sessionId, recordCacheUsage(prev, usage));
-  }
-
-  counters(sessionId: string): SessionCacheCounters {
-    return this.sessions.get(sessionId) ?? emptyCacheCounters();
-  }
-
-  hitRate(sessionId: string): number | null {
-    return cacheHitRate(this.counters(sessionId));
-  }
-
-  format(sessionId: string): string {
-    const c = this.counters(sessionId);
-    const rate = cacheHitRate(c);
-    const pct = rate === null ? 'n/a' : `${Math.round(rate * 100)}%`;
-    return (
-      `cache session ${sessionId} | hit-rate ${pct} ` +
-      `(${c.hits}/${c.requests}) | read ${c.cacheRead} write ${c.cacheWrite}`
-    );
-  }
 }

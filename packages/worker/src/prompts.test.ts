@@ -36,18 +36,6 @@ describe('prompt assembly byte-stability', () => {
 });
 
 describe('model affinity', () => {
-  it('N turns resolve to 1 pinned model id; mixed ids are rejected', async () => {
-    const { assertSingleModelId, pinModelForTask, taskModelForTurn } =
-      await import('./prompts.js');
-    const affinity = pinModelForTask('task-1', 'faux/a');
-    expect(taskModelForTurn(affinity)).toBe('faux/a');
-    expect(taskModelForTurn(affinity)).toBe('faux/a');
-    expect(assertSingleModelId(['faux/a', 'faux/a', 'faux/a'])).toBe('faux/a');
-    expect(() => assertSingleModelId(['faux/a', 'faux/b'])).toThrow(
-      /re-select/,
-    );
-  });
-
   it('escalation is explicit, recorded, one-way, and emits an event', async () => {
     const { escalatePinnedModel, pinModelForTask } = await import(
       './prompts.js'
@@ -79,31 +67,5 @@ describe('model affinity', () => {
     expect(() =>
       escalatePinnedModel(affinity, ladder, 'faux/a', 'cheaper'),
     ).toThrow(/one-way/);
-  });
-});
-
-describe('compaction routing', () => {
-  it('compaction carries fresh ids with cache writes disabled', async () => {
-    const { buildCompactionRoute } = await import('./prompts.js');
-    const route = buildCompactionRoute('session-1', 'session-9');
-    expect(route.routingId).toBe('session-9');
-    expect(route.cacheRetention).toBe('none');
-    expect(route.cacheWriteEnabled).toBe(false);
-    expect(() => buildCompactionRoute('session-1', 'session-1')).toThrow(
-      /fresh/,
-    );
-  });
-});
-
-describe('cache hit/miss observability', () => {
-  it('hit-rate is visible per session', async () => {
-    const { SessionCacheStats } = await import('./prompts.js');
-    const stats = new SessionCacheStats();
-    expect(stats.hitRate('s1')).toBe(null);
-    stats.record('s1', { cacheRead: 100, cacheWrite: 10 });
-    stats.record('s1', { cacheRead: 50, cacheWrite: 0 });
-    stats.record('s1', { cacheRead: 0, cacheWrite: 40 });
-    expect(stats.hitRate('s1')).toBeCloseTo(2 / 3, 5);
-    expect(stats.format('s1')).toContain('67%');
   });
 });

@@ -206,9 +206,3 @@ export function settleTerminalStatus(
     }
   }
 }
-
-export function settleSubmission(
-  settled: SettledSubmissionRecord,
-): SettledResult {
-  return settleTerminalStatus(laneStatusOf(settled), laneErrorOf(settled));
-}

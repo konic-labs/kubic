@@ -907,6 +907,7 @@ export async function runHeadlessPrompt(
       endedAt: Date.now(),
       base,
       evalLabels,
+      warn,
       outcome: {
         terminus: settled.terminus,
         summary: settled.summary,

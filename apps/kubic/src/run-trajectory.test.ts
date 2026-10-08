@@ -2,12 +2,22 @@
 // and replay read <sessions-root>/<id>/trajectory.json, so the printed ref
 // and the session id are both ways back to the record. Faux provider only;
 // temp sessions root and workspace.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runExportCommand } from '../../../packages/eval/src/export-cli.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import {
+  AUDIT_LEDGER_FILE,
+  auditLedgerDirFor,
+} from '../../../packages/host/src/policy/audit-ledger.js';
 import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
 import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
 import { runHeadlessPrompt } from './headless-run.js';
@@ -123,6 +133,79 @@ describe('persistRunTrajectory', () => {
     const { exported } = persist({}, { prompt: 'composed prompt' });
     expect(exported.task.taskId).toMatch(/^prompt:/);
     expect(exported.task.objective).toBe('composed prompt');
+  });
+
+  it('names an unreadable audit ledger on the warn channel and still writes the trajectory', () => {
+    const root = tmp('traj-persist-root-');
+    const cwd = tmp('traj-persist-cwd-');
+    const ledgerDir = auditLedgerDirFor(cwd);
+    const ledgerPath = join(ledgerDir, AUDIT_LEDGER_FILE);
+    mkdirSync(ledgerDir, { recursive: true });
+    // A record of the older format: complete JSON, but no version marker.
+    writeFileSync(
+      ledgerPath,
+      `${JSON.stringify({ who: 'ege', what: 'shell', when: '2026-10-08T00:00:00.000Z', posture: 'approvals', result: 'ok' })}\n`,
+    );
+    const warnings: string[] = [];
+    const path = persistRunTrajectory({
+      sessionsRoot: root,
+      sessionId: 'sess-1',
+      agentId: 'root',
+      role: 'solo',
+      prompt: 'hello',
+      entries: [],
+      cwd,
+      skills: [],
+      startedAt: 1_000,
+      endedAt: 2_000,
+      outcome: { terminus: 'completed', summary: 'ok' },
+      processEnv: {},
+      pid: 4242,
+      warn: (line) => warnings.push(line),
+    });
+    const exported = parseTrajectoryExportJSON(readFileSync(path, 'utf8'));
+    expect(exported.approvals).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(ledgerPath);
+    expect(warnings[0]).toContain('approvals not recorded');
+    expect(warnings[0]).toContain(`Move ${ledgerPath} aside`);
+  });
+
+  it('names an unreadable journal on the warn channel and still writes the trajectory', () => {
+    const root = tmp('traj-persist-root-');
+    const cwd = tmp('traj-persist-cwd-');
+    const journalDir = join(root, 'sess-1', 'journal');
+    // A directory where the journal's index file belongs: the journal exists
+    // but cannot be read.
+    mkdirSync(join(journalDir, 'index.jsonl'), { recursive: true });
+    const warnings: string[] = [];
+    const path = persistRunTrajectory({
+      sessionsRoot: root,
+      sessionId: 'sess-1',
+      agentId: 'root',
+      role: 'solo',
+      prompt: 'hello',
+      entries: [],
+      cwd,
+      skills: [],
+      startedAt: 1_000,
+      endedAt: 2_000,
+      outcome: { terminus: 'completed', summary: 'ok' },
+      processEnv: {},
+      pid: 4242,
+      warn: (line) => warnings.push(line),
+    });
+    const exported = parseTrajectoryExportJSON(readFileSync(path, 'utf8'));
+    expect(exported.diff.filesChanged).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(journalDir);
+    expect(warnings[0]).toContain('file changes not recorded');
+  });
+
+  it('warns about nothing when the run has neither a journal nor a ledger', () => {
+    const warnings: string[] = [];
+    persist({}, { warn: (line) => warnings.push(line) });
+    expect(warnings).toEqual([]);
   });
 });
 

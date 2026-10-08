@@ -1,6 +1,7 @@
-// Org audit trail (P4 engine, audit record, flow).
-// Every privileged action is auditable at org scope with exactly the 14
-// Fields. Credential material never lands here: the credential leaf
+// Org audit trail (audit record, flow).
+// Every privileged action is auditable at org scope with exactly the 13
+// fields of the record plus its version marker. Credential material never
+// lands here: the credential leaf
 // carries a sentinel naming the ref, and any secret-shaped value in it is
 // refused loudly. Sinks are syslog-first ([[audit]] order); a sink failure
 // — or zero sinks — throws instead of losing records silently.
@@ -16,13 +17,18 @@ import {
 } from '../../../core/src/secret-shapes.js';
 import type { AuditSinkKind } from './enterprise.js';
 
+// The version of the record shape. emitAudit stamps it on every record; a
+// reader refuses a record that carries another value.
+export const AUDIT_RECORD_VERSION = 1;
+
+// The 13 fields a caller supplies. emitAudit adds the version marker.
 export const AUDIT_FIELDS = [
   'who',
   'what',
   'when',
   'agent',
   'model',
-  'worker',
+  'process',
   'workspace',
   'permission',
   'credential',
@@ -36,17 +42,18 @@ type AuditDecision = 'allow' | 'deny';
 
 export type AuditResult = 'ok' | 'deny' | 'error';
 
-// Exactly 13 top-level fields: who/what/when; agent session/role; model
-// provider/id/thinking; worker pid/gen/role; workspace path+base;
-// permission/approval; credential sentinel (never secret); network
+// The version marker, then exactly 13 fields: who/what/when; agent
+// session/role; model provider/id/thinking; process pid; workspace
+// path+base; permission/approval; credential sentinel (never secret); network
 // host/port/decision/bytes; posture; result+reason.
 export interface OrgAuditRecord {
+  version: typeof AUDIT_RECORD_VERSION;
   who: string;
   what: string;
   when: string;
   agent: { session: string; role: string };
   model: { provider: string; id: string; thinking: string };
-  worker: { pid: number; generation: number; role: string };
+  process: { pid: number };
   workspace: { path: string; base: string };
   permission: { permission: string; approval: string };
   credential: { sentinel: string };
@@ -218,7 +225,7 @@ export interface SyslogSinkOptions {
 }
 
 // One record → one RFC 5424 line:
-// `<PRI>1 <record.when> <host> <app> <worker.pid> - - <record JSON>`.
+// `<PRI>1 <record.when> <host> <app> <process.pid> - - <record JSON>`.
 // The acting pid (not the sender's) rides the PID field so the line names
 // who acted; severity is info for `ok`, warning for `deny`/`error`. The
 // record arrives already redacted — redaction is the ledger's job, not the
@@ -235,7 +242,7 @@ export function createSyslogSink(options: SyslogSinkOptions): AuditSink {
       const severity = record.result === 'ok' ? 6 : 4;
       const priority = facility * 8 + severity;
       options.transport.send(
-        `<${priority}>1 ${record.when} ${host} ${appName} ${record.worker.pid} - - ${JSON.stringify(record)}`,
+        `<${priority}>1 ${record.when} ${host} ${appName} ${record.process.pid} - - ${JSON.stringify(record)}`,
       );
     },
   };
@@ -300,20 +307,16 @@ function validateRecord(
   requireText(record.network.host, 'network.host');
   requireText(record.posture, 'posture');
   requireText(record.reason, 'reason');
-  if (!Number.isInteger(record.worker.pid) || record.worker.pid < 0) {
+  if (record.version !== AUDIT_RECORD_VERSION) {
     throw new AuditSinkError(
-      "audit record 'worker.pid' must be a non-negative integer",
+      `audit record 'version' must be ${AUDIT_RECORD_VERSION}`,
     );
   }
-  if (
-    !Number.isInteger(record.worker.generation) ||
-    record.worker.generation < 0
-  ) {
+  if (!Number.isInteger(record.process.pid) || record.process.pid < 0) {
     throw new AuditSinkError(
-      "audit record 'worker.generation' must be a non-negative integer",
+      "audit record 'process.pid' must be a non-negative integer",
     );
   }
-  requireText(record.worker.role, 'worker.role');
   if (!Number.isInteger(record.network.port) || record.network.port < 0) {
     throw new AuditSinkError(
       "audit record 'network.port' must be a non-negative integer",
@@ -417,7 +420,9 @@ export function appendAudit(
   }
 }
 
-export type AuditInput = Omit<OrgAuditRecord, 'when'> & { when?: string };
+export type AuditInput = Omit<OrgAuditRecord, 'when' | 'version'> & {
+  when?: string;
+};
 
 export interface EmitAuditOptions {
   now?: () => number;
@@ -426,8 +431,9 @@ export interface EmitAuditOptions {
 
 // Build, validate, and loudly append one org audit record. Mode and
 // posture are required on every record — there is no default posture. The
-// input spreads onto exactly the 14 fields: any unknown top-level key
-// is rejected fail-closed with AuditShapeError, never kept.
+// input spreads onto exactly the 13 fields, after the version marker: any
+// unknown top-level key is rejected fail-closed with AuditShapeError, never
+// kept.
 const ALLOWED_AUDIT_INPUT_KEYS = new Set<string>([...AUDIT_FIELDS, 'when']);
 
 // The fixed shape holds below the top level too: every nested section
@@ -436,7 +442,7 @@ const ALLOWED_AUDIT_INPUT_KEYS = new Set<string>([...AUDIT_FIELDS, 'when']);
 const ALLOWED_NESTED_AUDIT_KEYS: Record<string, readonly string[]> = {
   agent: ['session', 'role'],
   model: ['provider', 'id', 'thinking'],
-  worker: ['pid', 'generation', 'role'],
+  process: ['pid'],
   workspace: ['path', 'base'],
   permission: ['permission', 'approval'],
   credential: ['sentinel'],
@@ -467,12 +473,13 @@ export function emitAudit(
   for (const key of Object.keys(input)) {
     if (!ALLOWED_AUDIT_INPUT_KEYS.has(key)) {
       throw new AuditShapeError(
-        `audit record has unknown top-level key '${key}': refused (exactly 13 fields)`,
+        `audit record has unknown top-level key '${key}': refused (exact record shape)`,
       );
     }
   }
   rejectUnknownNestedKeys(input);
   const record: OrgAuditRecord = {
+    version: AUDIT_RECORD_VERSION,
     ...input,
     when: input.when ?? new Date(options.now?.() ?? Date.now()).toISOString(),
   };
@@ -504,12 +511,13 @@ export function queryAudits(
 
 // An example record: a fixture for tests and the shape `kubic audit` prints.
 export const EXAMPLE_AUDIT_RECORD: OrgAuditRecord = {
+  version: AUDIT_RECORD_VERSION,
   who: 'ege@example.com',
   what: 'tool.call',
   when: '2023-11-14T22:13:20.000Z',
   agent: { session: 'sess-1', role: 'implementer' },
   model: { provider: 'local', id: 'llama3', thinking: 'medium' },
-  worker: { pid: 1234, generation: 0, role: 'implementer' },
+  process: { pid: 1234 },
   workspace: { path: '/repo', base: 'a1b2c3d' },
   permission: { permission: 'write', approval: 'approved:tester' },
   credential: { sentinel: 'sentinel:$API_KEY' },

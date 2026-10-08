@@ -183,7 +183,7 @@ describe('audit ledger', () => {
     expect(errors).toHaveLength(1);
   });
 
-  // The ledger must answer which worker (pid, generation) on
+  // The ledger must answer which process (pid) on
   // which base ran X, and at which thinking level — no hard-coded 0/unknown
   // for a field the run knows.
   describe('audit provenance fields', () => {
@@ -301,6 +301,25 @@ describe('audit ledger', () => {
       '{"type":"legacy-event","detail":"legacy"}\n{torn\n',
     );
     expect(readAuditLedger(dir)).toEqual([]);
+  });
+
+  it('refuses a ledger line that is an audit record of another version', () => {
+    const dir = auditLedgerDir(repo());
+    mkdirSync(dir, { recursive: true });
+    const unversioned = {
+      who: 'ege@example.com',
+      what: 'tool.call',
+      when: '2023-11-14T22:13:20.000Z',
+      posture: 'restricted',
+      result: 'ok',
+    };
+    writeFileSync(
+      join(dir, AUDIT_LEDGER_FILE),
+      `${JSON.stringify({ version: 1, ...unversioned })}\n${JSON.stringify(unversioned)}\n`,
+    );
+    expect(() => readAuditLedger(dir)).toThrow(
+      /line 2 is not a version 1 audit record/,
+    );
   });
 
   // The run's start names the mode, so the audit

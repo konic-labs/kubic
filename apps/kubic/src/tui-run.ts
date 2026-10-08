@@ -2170,6 +2170,7 @@ export async function bootTuiLane(
                     toTrajectoryEscalation(event, null),
                   ),
                 }),
+            ...(options.warn === undefined ? {} : { warn: options.warn }),
           });
         },
         // The transcript rows for recorded climbs.

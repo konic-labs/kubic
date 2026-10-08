@@ -1981,10 +1981,15 @@ reads one session's rows (`agent.session` is the session).
 **Output.** Text mode prints a table with the columns `WHEN`, `POSTURE`,
 `RESULT`, `WHAT`, `PERMISSION`, `APPROVAL` and `REASON`. With no matching
 records it prints `no audit records` and exits 0. `--json` prints the full
-13-field records. A ledger that exists but cannot be read (permission
-denied, I/O error) is not an empty trail: the command prints `error: cannot
-read the audit ledger <path>: …` on stderr and exits 1. Only a missing
-ledger reads as empty.
+records: the 13 fields plus `version`, which is `1`. A ledger that exists but
+cannot be read (permission denied, I/O error) is not an empty trail: the
+command prints `error: cannot read the audit ledger <path>: …` on stderr and
+exits 1. Only a missing ledger reads as empty. A ledger line that is a record
+of another version, or has no `version`, makes the whole ledger unreadable
+with the same error (`line <n> is not a version 1 audit record`); the ledger
+is not converted or rewritten, so move it aside to start a new trail. A run
+whose ledger is unreadable still writes its `trajectory.json`, with no
+approvals in it, after naming the ledger on its warning channel.
 
 **Redaction.** Every record is redacted before it is printed:
 secret-shaped values and listed-secret inventory values become
@@ -2011,8 +2016,7 @@ this file.
   `model.thinking` is the thinking level the lane runs, read from the
   conversation's agent document (a `/thinking` change mid-session is read
   at record time, so later rows name the new level).
-- `worker.pid` names the process that made the decision and
-  `worker.generation` is always `0`.
+- `process.pid` names the process that made the decision.
 - `workspace.base` is the base revision the run started from: `HEAD` at
   run start, `none` outside git. A row that genuinely knows no better keeps
   the honest `unknown` instead of inventing a value.

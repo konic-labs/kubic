@@ -29,7 +29,7 @@ function seeded(): OrgAuditRecord[] {
       ...EXAMPLE_AUDIT_RECORD,
       agent: { ...EXAMPLE_AUDIT_RECORD.agent },
       model: { ...EXAMPLE_AUDIT_RECORD.model },
-      worker: { ...EXAMPLE_AUDIT_RECORD.worker },
+      process: { ...EXAMPLE_AUDIT_RECORD.process },
       workspace: { ...EXAMPLE_AUDIT_RECORD.workspace },
       permission: { ...EXAMPLE_AUDIT_RECORD.permission },
       credential: { ...EXAMPLE_AUDIT_RECORD.credential },
@@ -99,7 +99,9 @@ describe('kubic audit secret backstop', () => {
     expect(parsed).toHaveLength(1);
     const head = parsed[0];
     if (head === undefined) throw new Error('missing audit record');
-    expect(Object.keys(head).sort()).toEqual([...AUDIT_FIELDS].sort());
+    expect(Object.keys(head).sort()).toEqual(
+      ['version', ...AUDIT_FIELDS].sort(),
+    );
   });
 
   it('keeps sentinel-only credentials (never material)', async () => {
@@ -129,7 +131,7 @@ describe('kubic audit query', () => {
       ...EXAMPLE_AUDIT_RECORD,
       agent: { ...EXAMPLE_AUDIT_RECORD.agent },
       model: { ...EXAMPLE_AUDIT_RECORD.model },
-      worker: { ...EXAMPLE_AUDIT_RECORD.worker },
+      process: { ...EXAMPLE_AUDIT_RECORD.process },
       workspace: { ...EXAMPLE_AUDIT_RECORD.workspace },
       permission: { ...EXAMPLE_AUDIT_RECORD.permission },
       credential: { ...EXAMPLE_AUDIT_RECORD.credential },
@@ -222,6 +224,7 @@ it('returns the privileged-action rows under --json with every field', async () 
   const when = '2023-11-14T22:13:20.000Z';
   const records: OrgAuditRecord[] = [
     {
+      version: 1,
       ...fullAccessEnabledAudit({
         sessionId: 'sess',
         command: 'kubic run --dangerously-skip-approvals',
@@ -230,6 +233,7 @@ it('returns the privileged-action rows under --json with every field', async () 
       when,
     },
     {
+      version: 1,
       ...undoRestoreAudit({
         sessionId: 'sess',
         workspace: '/repo',
@@ -254,7 +258,9 @@ it('returns the privileged-action rows under --json with every field', async () 
     'undo-restore',
   ]);
   for (const row of parsed) {
-    expect(Object.keys(row).sort()).toEqual([...AUDIT_FIELDS].sort());
+    expect(Object.keys(row).sort()).toEqual(
+      ['version', ...AUDIT_FIELDS].sort(),
+    );
   }
 });
 

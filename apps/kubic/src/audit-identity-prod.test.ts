@@ -280,7 +280,7 @@ describe('kubic tui: the audit row names the model the lane runs', () => {
 });
 
 describe('a run records its own identity', () => {
-  it('a locally decided ask is one root row with the process pid and generation 0', async () => {
+  it('a locally decided ask is one root row with the process pid', async () => {
     const root = tmpRoot('audit-id-solo-root-');
     const workspace = tmpRoot('audit-id-solo-ws-');
     await runHeadlessPrompt(
@@ -299,7 +299,7 @@ describe('a run records its own identity', () => {
     expect(records[0]).toMatchObject({
       who: 'agent:root',
       agent: { role: 'root' },
-      worker: { pid: process.pid, generation: 0, role: 'root' },
+      process: { pid: process.pid },
     });
   });
 });

@@ -48,7 +48,7 @@ function out(): Capture {
   };
 }
 
-export function fixtureTrajectory(
+function fixtureTrajectory(
   overrides: Partial<TrajectoryExport> = {},
 ): TrajectoryExport {
   const base = buildTrajectoryExport({

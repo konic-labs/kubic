@@ -90,7 +90,7 @@ function allManifests(root) {
   return manifests;
 }
 
-export async function buildCli({ root = REPO_ROOT } = {}) {
+async function buildCli({ root = REPO_ROOT } = {}) {
   const declared = declaredDependencies(allManifests(root));
   // Start from an empty dist/: a stale tsc tree from an earlier layout must
   // not sit next to the bundle.

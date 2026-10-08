@@ -8,6 +8,10 @@
   // uses at all, which are the exports only tests import.
   "ignoreExportsUsedInFile": true,
 
+  // Exports named by a package's exports map are entry files for knip (see
+  // knip.jsonc). This keeps the production gate reporting them too.
+  "includeEntryExports": true,
+
   // mkfifo is a POSIX utility, not a dependency (see knip.jsonc).
   "ignoreBinaries": ["mkfifo"],
 

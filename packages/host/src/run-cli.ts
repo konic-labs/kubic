@@ -378,7 +378,7 @@ export interface RunCommandOptions {
 
 // A value the command refuses (exit 2). The message is the whole reason;
 // the parser layer adds which flag carried it.
-export class RunArgumentError extends Error {
+class RunArgumentError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'RunArgumentError';

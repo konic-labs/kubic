@@ -12,6 +12,10 @@ import {
   type Command,
   InvalidArgumentError,
 } from '@commander-js/extra-typings';
+import {
+  parseModelFlag,
+  parseThinkingFlag,
+} from '../../../../packages/agent/src/model-select.js';
 import { CliUsageError } from '../../../../packages/core/src/cli/exit-codes.js';
 import {
   checkPromptValue,
@@ -19,10 +23,6 @@ import {
   parseRunTimeout,
   parseSessionIdArg,
 } from '../../../../packages/host/src/run-cli.js';
-import {
-  parseModelFlag,
-  parseThinkingFlag,
-} from '../../../../packages/worker/src/model-select.js';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
 
 // The `--model` help: one sentence per behaviour the

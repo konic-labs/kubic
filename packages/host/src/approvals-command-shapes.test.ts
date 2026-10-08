@@ -5,7 +5,7 @@
 // and the working-tree-discarding git forms. The table uses the PRODUCTION context
 // (triggerContextFor), so a green run proves what `kubic run` classifies.
 import { describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
+import { SOLO_DEFAULTS } from '../../agent/src/policy.js';
 import {
   type Capability,
   detectTriggers,

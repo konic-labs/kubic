@@ -9,10 +9,24 @@ import {
   resolve,
 } from 'node:path';
 import type {
+  ApprovalAskVerdict,
+  ApprovalCall,
+  PolicyInterceptorOptions,
+} from '../../agent/src/lane/interceptors.js';
+import {
+  confinePath,
+  defaultIsDestructive,
+  isNetworkCommand,
+  redactReason,
+} from '../../agent/src/lane/interceptors.js';
+import type { ToolContribution } from '../../agent/src/lane/wrap.js';
+import { withTelemetry } from '../../agent/src/lane/wrap.js';
+import type { ToolDisplay } from '../../agent/src/ops/display-diff.js';
+import type {
   CredentialLevel,
   PermissionClasses,
   UnsupportedLevel,
-} from '../../agents/src/policy.js';
+} from '../../agent/src/policy.js';
 import {
   checkAgreement,
   checkExpressible,
@@ -20,23 +34,9 @@ import {
   effectiveNetworkLevel,
   toolsForClasses,
   validateClasses,
-} from '../../agents/src/policy.js';
+} from '../../agent/src/policy.js';
 import { redactSecretShapes } from '../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
-import type {
-  ApprovalAskVerdict,
-  ApprovalCall,
-  PolicyInterceptorOptions,
-} from '../../worker/src/lane/interceptors.js';
-import {
-  confinePath,
-  defaultIsDestructive,
-  isNetworkCommand,
-  redactReason,
-} from '../../worker/src/lane/interceptors.js';
-import type { ToolContribution } from '../../worker/src/lane/wrap.js';
-import { withTelemetry } from '../../worker/src/lane/wrap.js';
-import type { ToolDisplay } from '../../worker/src/ops/display-diff.js';
 import { approvalCommandText, summarizeCommand } from './approval-display.js';
 import { approvalPreview } from './approval-preview.js';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';

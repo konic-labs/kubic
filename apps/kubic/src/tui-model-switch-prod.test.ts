@@ -7,19 +7,19 @@ import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import {
-  auditLedgerDir,
-  readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import {
+  auditLedgerDir,
+  readAuditLedger,
+} from '../../../packages/host/src/policy/audit-ledger.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
 

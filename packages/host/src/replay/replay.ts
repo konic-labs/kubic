@@ -34,7 +34,8 @@
 // go through the exec FileBridge (I/O confinement).
 
 import { createHash } from 'node:crypto';
-import type { PermissionClasses } from '../../../agents/src/policy.js';
+import type { SoloCompactionOptions } from '../../../agent/src/lane/solo.js';
+import type { PermissionClasses } from '../../../agent/src/policy.js';
 import {
   type CommandResult,
   EXIT_FAILED,
@@ -57,7 +58,6 @@ import {
   type TrajectoryExport,
   TrajectorySchemaError,
 } from '../../../trajectory/src/schema.js';
-import type { SoloCompactionOptions } from '../../../worker/src/lane/solo.js';
 import type { SoloApprovalConfig } from '../approvals.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from '../roles/resolver.js';

@@ -1,5 +1,5 @@
 // biome-ignore-all assist/source/organizeImports: each re-export keeps its own
-// JUSTIFICATION block packages/worker/src/pi-boundary.ts — the worker Pi seam.
+// JUSTIFICATION block packages/agent/src/pi-boundary.ts — the worker Pi seam.
 // No other Kubic file may import `@earendil-works/*`: `scripts/dep-lint.mjs`
 // allows Pi imports only in this file and in the TUI's
 // `packages/tui/src/tui-boundary.ts`, and CODEOWNERS flags every diff touching
@@ -21,12 +21,12 @@
 //
 //   JUSTIFICATION:
 //     seam: <Pi package + export path, e.g. @earendil-works/pi-durable#Harness>
-//     used by: <Kubic module that needs it, e.g. packages/worker/src/lane/solo.ts>
+//     used by: <Kubic module that needs it, e.g. packages/agent/src/lane/solo.ts>
 //     why Pi has no alternative: <one line — what breaks if we reimplement>
 
 // JUSTIFICATION:
 //   seam: @earendil-works/chord#Context, #JsonValue (types)
-//   used by: packages/worker/src/lane/{solo,session-store,tools-adapter,
+//   used by: packages/agent/src/lane/{solo,session-store,tools-adapter,
 //     pending,abort,events}.ts (Context) and lane/interceptors.ts+tools
 //     (JsonValue for tool details, memos and hook state)
 //   why Pi has no alternative: chord's Context IS the cancellation/telemetry
@@ -37,7 +37,7 @@ export type { Context, JsonValue } from '@earendil-works/chord';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/chord/context#BACKGROUND_CONTEXT
-//   used by: packages/worker/src/lane/* (harness calls), apps/kubic/src/
+//   used by: packages/agent/src/lane/* (harness calls), apps/kubic/src/
 //     {prod-runners,headless-run,tui-run}.ts and
 //     packages/host/src/{sessions-cli,journal-cli,ops/cost/cost-cli}.ts
 //   why Pi has no alternative: Pi 1.0 has no pi-agent-core re-export;
@@ -67,25 +67,25 @@ export type {
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai thinking support (supported levels + clamp)
-//   used by: packages/worker/src/model-select.ts
+//   used by: packages/agent/src/model-select.ts
 //   why Pi has no alternative: per-model thinking support lives in the model
 //     definitions; reimplementing the clamp would desync from models
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai model layer (createModels, faux provider,
 //     Model type, Type for tool schemas)
-//   used by: packages/worker/src/lane/* (model wiring) and faux-driven tests
+//   used by: packages/agent/src/lane/* (model wiring) and faux-driven tests
 //   why Pi has no alternative: providers, auth, and models.json are Pi's
 //     model layer
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai#Type (typebox re-export, v1.3.27)
-//   used by: packages/worker/src/lane/tools-adapter.ts (tool arg schemas)
+//   used by: packages/agent/src/lane/tools-adapter.ts (tool arg schemas)
 //   why Pi has no alternative: AgentTool.parameters requires a TSchema and
 //     Pi pins typebox 1.3.27 — importing Pi's re-export keeps exactly one
 //     schema implementation on the tool path instead of a second typebox copy
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai custom providers (createProvider +
 //     OpenAI-compatible stream factories for models.json endpoints)
-//   used by: packages/worker/src/models-config.ts
+//   used by: packages/agent/src/models-config.ts
 //   why Pi has no alternative: provider streaming, auth resolution, and cost
 //     accounting live in Pi's model layer (registry generated, never
 //     hand-edited); Kubic only parses models.json and calls the factory
@@ -96,7 +96,7 @@ export type {
 //   why Pi has no alternative: auth resolution reads this store
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai#validateToolArguments
-//   used by: packages/worker/src/ops/registry-schema.test.ts (pins that the
+//   used by: packages/agent/src/ops/registry-schema.test.ts (pins that the
 //   registry schemas and the Kubic validators agree)
 //   why Pi has no alternative: it is the exact check the harness runs on
 //     every tool call before execute; a second schema checker would test a
@@ -118,7 +118,7 @@ export {
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai/api/openai-completions.lazy
-//   used by: packages/worker/src/models-config.ts (an OpenAI-compatible
+//   used by: packages/agent/src/models-config.ts (an OpenAI-compatible
 //     models.json endpoint is registered as a custom provider)
 //   why Pi has no alternative: the lazy subpath is an upstream entry point
 //     that loads the completions API without the provider SDKs; importing
@@ -127,7 +127,7 @@ export { openAICompletionsApi as openAICompletionsApiLazy } from '@earendil-work
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai/api/openai-responses.lazy
-//   used by: packages/worker/src/models-config.ts (an OpenAI-compatible
+//   used by: packages/agent/src/models-config.ts (an OpenAI-compatible
 //     models.json endpoint is registered as a custom provider)
 //   why Pi has no alternative: the lazy subpath is an upstream entry point
 //     that loads the responses API without the provider SDKs; importing the
@@ -145,7 +145,7 @@ export { openAIResponsesApi as openAIResponsesApiLazy } from '@earendil-works/pi
 export { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai/utils/uuid#uuidv7
-//   used by: packages/worker/src/lane/session-store.ts (minting a new
+//   used by: packages/agent/src/lane/session-store.ts (minting a new
 //     session id)
 //   why Pi has no alternative: the session id is part of the store's public
 //     contract (`kubic run --session`, `kubic sessions list`, the session
@@ -171,8 +171,8 @@ export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#SnapshotEvent, #UsageState,
 //     #ConversationId, #SubmissionId, #TaskId, #EntryId, #JsonObject
-//   used by: packages/worker/src/lane/events.ts (the KubicLaneEvent union
-//     and the watchEvents snapshot mapping) and packages/worker/src/usage.ts
+//   used by: packages/agent/src/lane/events.ts (the KubicLaneEvent union
+//     and the watchEvents snapshot mapping) and packages/agent/src/usage.ts
 //     (per-response rows built from a committed assistant entry)
 //   why Pi has no alternative: these are the exact types of the events
 //     watchEvents delivers and of the ids Kubic keys its own lane events
@@ -200,14 +200,14 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Harness, createRegistry,
 //     defineExtension
-//   used by: packages/worker/src/lane/solo.ts (the solo lane boots with a
+//   used by: packages/agent/src/lane/solo.ts (the solo lane boots with a
 //     per-process registry holding the Kubic extension)
 //   why Pi has no alternative: the durable harness IS the execution engine
 //     — Harness.open over a Storage owns conversations, durable
 //     tasks, resume and the registry of tools/sections/hooks.
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#defineTool, wrapTool
-//   used by: packages/worker/src/lane/tools-adapter.ts (the seven Kubic ops
+//   used by: packages/agent/src/lane/tools-adapter.ts (the seven Kubic ops
 //     as ToolRegistrations) and lane/wrap.ts (composeTools/wrappers become
 //     wrapTool decorators)
 //   why Pi has no alternative: a ToolRegistration is what the harness
@@ -216,7 +216,7 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#section (prompt sections) and #hook,
 //     #ToolTask, #GenerationTask, #CompactionTask (hook targets)
-//   used by: packages/worker/src/lane/solo.ts (ordered prompt sections) and
+//   used by: packages/agent/src/lane/solo.ts (ordered prompt sections) and
 //     lane/interceptors.ts (beforeTool/afterTool policy and approval);
 //     lane/solo.ts compaction (CompactionTask.beforeCompact)
 //   why Pi has no alternative: these are the built-in tasks whose hooks are
@@ -227,7 +227,7 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#AgentDoc, #LiveDoc, #UsageDoc,
 //     #configure
-//   used by: packages/worker/src/lane/solo.ts (reconciles the stored model
+//   used by: packages/agent/src/lane/solo.ts (reconciles the stored model
 //     through the root conversation's pi.agent document),
 //     lane/events.ts (reads pi.live), the session readers (sum pi.usage),
 //     and any creating commit that sets agent choices
@@ -248,9 +248,9 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#watchEvents, #ConversationBusy,
 //     #MemoryStorage, #defineDoc
-//   used by: packages/worker/src/lane/events.ts (maps the committed event
-//     stream), packages/worker/src/lane/solo.ts (rejects a busy submit with
-//     ConversationBusy), packages/worker/src/lane/session-store.ts
+//   used by: packages/agent/src/lane/events.ts (maps the committed event
+//     stream), packages/agent/src/lane/solo.ts (rejects a busy submit with
+//     ConversationBusy), packages/agent/src/lane/session-store.ts
 //     (defines the kubic.session document), and the Kubic test harness
 //     factory (swaps MemoryStorage for temp-dir JSONL)
 //   why Pi has no alternative: watchEvents is the harness's committed-state
@@ -260,7 +260,7 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#createSession (the plain Session kernel
 //     over one storage: commits and document reads, no harness)
-//   used by: packages/worker/src/lane/session-store.ts (the creating commit
+//   used by: packages/agent/src/lane/session-store.ts (the creating commit
 //     that writes the kubic.session document)
 //   why Pi has no alternative: a document write is a Session commit, and the
 //     kernel is the only sanctioned writer of storage records (it owns the
@@ -294,7 +294,7 @@ export {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/env#FileSystem (with Result,
 //     FileErrorCode types)
-//   used by: packages/worker/src/lane/session-fs.ts (the exec-backed
+//   used by: packages/agent/src/lane/session-fs.ts (the exec-backed
 //     FileSystem the JSONL storage writes through) and lane/* (the `env`
 //     option of Harness.open)
 //   why Pi has no alternative: the portable FileSystem returns Result
@@ -309,7 +309,7 @@ export type {
 } from '@earendil-works/pi-durable/env';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/env#ok, #err, #FileError
-//   used by: packages/worker/src/lane/session-fs.ts (constructing the same
+//   used by: packages/agent/src/lane/session-fs.ts (constructing the same
 //     Result failures FileSystem callers expect)
 //   why Pi has no alternative: these are the constructors of the env
 //     Result/FileError pair above; hand-rolling the result shape would
@@ -318,7 +318,7 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/storage/jsonl#JsonlStorage (the portable
 //     JSONL storage core, opened over a supplied FileSystem)
-//   used by: packages/worker/src/lane/session-store.ts (one storage per
+//   used by: packages/agent/src/lane/session-store.ts (one storage per
 //     <sessions-root>/<id>/) and lane/session-fs.test.ts (the storage
 //     conformance suite runs over the exec bridge)
 //   why Pi has no alternative: JSONL durability, commit markers and crash
@@ -330,7 +330,7 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 export { JsonlStorage } from '@earendil-works/pi-durable/storage/jsonl';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/storage/jsonl/node#openNodeJsonlStorage
-//   used by: packages/worker/src/lane/session-store.ts (one storage per
+//   used by: packages/agent/src/lane/session-store.ts (one storage per
 //     <sessions-root>/<id>/)
 //   why Pi has no alternative: JSONL durability, commit markers and crash
 //     recovery are pi-durable Storage internals, and Kubic owns no storage
@@ -341,7 +341,7 @@ export {
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#TaskId, #CompactionResult (types)
-//   used by: packages/worker/src/compaction.ts (the admitted manual
+//   used by: packages/agent/src/compaction.ts (the admitted manual
 //     compaction's id comes back from Conversation.compact; the admission
 //     waits on it with harness.waitForTask)
 //   why Pi has no alternative: TaskId is the branded id the durable task
@@ -353,7 +353,7 @@ export type { CompactionResult } from '@earendil-works/pi-durable';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Registry
-//   used by: packages/worker/src/lane/solo.ts (SoloLane.registry — the
+//   used by: packages/agent/src/lane/solo.ts (SoloLane.registry — the
 //     per-process registry the boot installs the Kubic extensions into)
 //     and lane/policy.ts (resolving a name-based allowlist back to the
 //     ToolRegistration objects configure({ tools }) takes)
@@ -364,7 +364,7 @@ export type { Registry } from '@earendil-works/pi-durable';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#createSession (the plain Session kernel
 //     over one storage: commits and document reads, no harness)
-//   used by: packages/worker/src/lane/session-store.ts (the creating commit
+//   used by: packages/agent/src/lane/session-store.ts (the creating commit
 //     that writes the kubic.session document)
 //   why Pi has no alternative: a document write is a Session commit, and the
 //     kernel is the only sanctioned writer of storage records (it owns the
@@ -376,7 +376,7 @@ export type { Registry } from '@earendil-works/pi-durable';
 export { createSession } from '@earendil-works/pi-durable';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/testing#registerStorageConformance
-//   used by: packages/worker/src/lane/session-fs.test.ts (the exec-bridge
+//   used by: packages/agent/src/lane/session-fs.test.ts (the exec-bridge
 //   FileSystem is checked against pi-durable's own storage contract, so an
 //   adapter that drifts from the interface the storage relies on fails there
 //   instead of corrupting a session)
@@ -389,7 +389,7 @@ export {
 
 // JUSTIFICATION:
 //   seam: @earendil-works/chord/context#withAbortSignal, #withCancel
-//   used by: packages/worker/src/lane/turn.ts (the caller's guard is a
+//   used by: packages/agent/src/lane/turn.ts (the caller's guard is a
 //     cancellable Context: a derived turn context is cancelled by a wall
 //     clock, a turn count or an interrupt) and apps/kubic/src/
 //     {headless-run,tui-run}.ts (the guard/quit bounds)
@@ -404,7 +404,7 @@ export {
 } from '@earendil-works/chord/context';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#ResetEntry
-//   used by: packages/worker/src/lane/transcript.ts (the shared pi-durable →
+//   used by: packages/agent/src/lane/transcript.ts (the shared pi-durable →
 //     Kubic transcript adapter maps a pi.reset entry: a plain reset, or one
 //     carrying the handoff text as a user message)
 //   why Pi has no alternative: the token carries the stored entry kind
@@ -413,7 +413,7 @@ export {
 //     are already exported above; ResetEntry was missed in that block.
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#ROOT_CONVERSATION_ID
-//   used by: packages/worker/src/lane/transcript.ts (readSessionEntries
+//   used by: packages/agent/src/lane/transcript.ts (readSessionEntries
 //     reads a session's active transcript straight from its Storage — the
 //     CLI readers attach to a session without booting a harness, and the
 //     solo lane's transcript is its reserved root conversation)
@@ -425,7 +425,7 @@ export { ResetEntry, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai/utils/estimate#estimateContextTokens
-//   used by: packages/worker/src/compaction.ts (the manual `/compact` path
+//   used by: packages/agent/src/compaction.ts (the manual `/compact` path
 //     reports the context size before the cut in the TUI footer)
 //   why Pi has no alternative: the number has to be the SAME estimate Pi's
 //     own compaction threshold and cut selection use (the provider's usage
@@ -436,7 +436,7 @@ export { estimateContextTokens } from '@earendil-works/pi-ai/utils/estimate';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai#CacheRetention (type)
-//   used by: packages/worker/src/stream-options.ts (the cacheRetention leaf of
+//   used by: packages/agent/src/stream-options.ts (the cacheRetention leaf of
 //   the tuning)
 //   why Pi has no alternative: it is the exact retention vocabulary
 //     ('none' | 'short' | 'long') the provider stream options accept; a
@@ -444,7 +444,7 @@ export { estimateContextTokens } from '@earendil-works/pi-ai/utils/estimate';
 export type { CacheRetention } from '@earendil-works/pi-ai';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#ConversationStreamOptions (type)
-//   used by: packages/worker/src/stream-options.ts (the per-model/ per-role
+//   used by: packages/agent/src/stream-options.ts (the per-model/ per-role
 //   tuning the solo lane hands to Harness.open as settings.stream)
 //     and packages/host/src/config/config.ts (the parsed [model]/[roles.*]
 //     tables it resolves from)

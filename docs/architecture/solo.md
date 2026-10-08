@@ -89,7 +89,7 @@ after `close()`: the lane closes only its harness.
 A process that dies mid-turn (SIGKILL, OOM, power loss, orphan reaping)
 leaves its durable work unfinished. The next `kubic run --session` or
 `kubic tui --session` on that session reopens the same storage and settles
-it before accepting a prompt (`packages/worker/src/lane/pending.ts`):
+it before accepting a prompt (`packages/agent/src/lane/pending.ts`):
 
 - `kubic run` **resumes** it: `harness.resume()` starts the durable
   scheduler and the run waits for the placed submission under its own

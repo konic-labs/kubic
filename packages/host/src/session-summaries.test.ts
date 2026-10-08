@@ -5,11 +5,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   createSession,
   openSessionStore,
-} from '../../worker/src/lane/session-store.js';
+} from '../../agent/src/lane/session-store.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -18,7 +17,8 @@ import {
   fauxProvider,
   Harness,
   type Storage,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { summarizeProjectSessions } from './session-summaries.js';
 
 const made: string[] = [];

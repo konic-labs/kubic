@@ -16,6 +16,10 @@
 // signal:* labels the score is built from.
 import { dirname, join } from 'node:path';
 import {
+  ModelSelectError,
+  parseModelFlag,
+} from '../../../packages/agent/src/model-select.js';
+import {
   EVAL_DEFAULT_MODEL,
   type EvalOptions,
 } from '../../../packages/eval/src/cli.js';
@@ -40,10 +44,6 @@ import {
 import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
 import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
-import {
-  ModelSelectError,
-  parseModelFlag,
-} from '../../../packages/worker/src/model-select.js';
 import {
   type CliConfigResult,
   projectTrustFor,

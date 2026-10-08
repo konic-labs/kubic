@@ -272,7 +272,7 @@ was running is never executed again: the resumed turn sees it as
 interrupted. `kubic sessions attach X` prints the same `pending work:
 <kind> <id> (<status>)` summary (one line naming every live task and
 unsettled submission) — the storage-level probe in
-`packages/worker/src/lane/pending.ts` owns the format, so both surfaces
+`packages/agent/src/lane/pending.ts` owns the format, so both surfaces
 name the same work.
 
 **Concurrent runs in one workspace**. A run drives one
@@ -1062,7 +1062,7 @@ the transcript. An id with no session storage, including a folder that holds
 only a transcript file, is an unknown session and exits 1 the same way.
 
 The transcript `attach` prints is the durable one, read through the shared
-pi-durable adapter (`packages/worker/src/lane/transcript.ts`)
+pi-durable adapter (`packages/agent/src/lane/transcript.ts`)
 and never by booting a lane: a reader must be able to inspect a session it
 may not run.
 

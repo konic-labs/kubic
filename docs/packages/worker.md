@@ -1,17 +1,17 @@
-# `@kubic/worker`
+# `@kubic/agent`
 
 > The agent lane runtime; Pi boundary (CODEOWNERS-gated
 > `src/pi-boundary.ts`).
-> Source: `packages/worker/src`.
+> Source: `packages/agent/src`.
 
-`@kubic/worker` is the agent runtime: the solo lane, tool adaptation,
+`@kubic/agent` is the agent runtime: the solo lane, tool adaptation,
 Pi harness wiring, sessions, compaction and the failure taxonomy. All Pi imports flow through the worker Pi seam
 `src/pi-boundary.ts` — `scripts/dep-lint.mjs` rejects
 `@earendil-works/*` imports everywhere else in the worker (the TUI owns
 the other seam, `packages/tui/src/tui-boundary.ts`), and CODEOWNERS flags
 every diff touching the boundary for maintainer review.
 
-## Public API (`packages/worker/src`)
+## Public API (`packages/agent/src`)
 
 | Module | Exports |
 | --- | --- |
@@ -115,7 +115,7 @@ until the cap or the depth bound stopped it. The walk now:
   now pinned by test.
 
 The real-filesystem suite for all of this is
-`packages/worker/src/ops/walk-real.test.ts` (mkdtemp trees through
+`packages/agent/src/ops/walk-real.test.ts` (mkdtemp trees through
 `NodeExecutionEnv`, a >10k `node_modules` fixture, a directory cycle, and a
 cleanup `afterEach`).
 
@@ -298,7 +298,7 @@ Beyond that:
   `edit`'s `afterHash` describes the file on disk and `kubic undo` restores
   a CRLF/BOM file exactly.
 
-The regression suite is `packages/worker/src/ops/edit.test.ts` (CRLF
+The regression suite is `packages/agent/src/ops/edit.test.ts` (CRLF
 multi-line replace, CRLF needle and replacement, BOM first line, BOM in the
 needle, no second BOM, empty-after-normalization refusal, `expectCount` on
 normalized text, LF unchanged, undo round-trip).
@@ -576,7 +576,7 @@ Kubic can read.
 ## Dep-direction neighbours
 
 - May import: [@kubic/core](core.md), [@kubic/exec](exec.md),
-  [@kubic/agents](agents-pkg.md) (+ trajectory/eval shapes as
+  [@kubic/agent](agents-pkg.md) (+ trajectory/eval shapes as
   snapshots where pinned) — never host/tui.
 - Imported by: [@kubic/host](host.md) (runtime wiring).
 - Never imported by [@kubic/trajectory](trajectory.md): trajectory imports
@@ -585,7 +585,7 @@ Kubic can read.
 - Pi seam: `pi-boundary.ts` only.
 
 ```text
-core + exec + agents ──→ @kubic/worker ──→ host
+core + exec + agents ──→ @kubic/agent ──→ host
                               ↑
                     pi-boundary.ts (worker Pi seam)
 ```

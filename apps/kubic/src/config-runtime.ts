@@ -16,7 +16,18 @@
 // module never imports node:fs.
 
 import { homedir } from 'node:os';
-import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
+import type { SoloCompactionOptions } from '../../../packages/agent/src/lane/solo.js';
+import {
+  ModelSelectError,
+  type ModelSelection,
+  selectModel,
+} from '../../../packages/agent/src/model-select.js';
+import type { MutableModels } from '../../../packages/agent/src/pi-boundary.js';
+import type { PermissionClasses } from '../../../packages/agent/src/policy.js';
+import type {
+  ModelStreamTuning,
+  StreamTuningTables,
+} from '../../../packages/agent/src/stream-options.js';
 import {
   EXIT_FAILED,
   type ExitCode,
@@ -73,17 +84,6 @@ import {
   roleModelAllowed,
   roleModelEntry,
 } from '../../../packages/host/src/roles/resolver.js';
-import type { SoloCompactionOptions } from '../../../packages/worker/src/lane/solo.js';
-import {
-  ModelSelectError,
-  type ModelSelection,
-  selectModel,
-} from '../../../packages/worker/src/model-select.js';
-import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
-import type {
-  ModelStreamTuning,
-  StreamTuningTables,
-} from '../../../packages/worker/src/stream-options.js';
 import {
   roleModelSelection,
   selectionOrigin,

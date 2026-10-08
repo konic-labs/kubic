@@ -16,16 +16,16 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,

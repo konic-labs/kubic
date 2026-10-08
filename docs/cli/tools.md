@@ -1,7 +1,7 @@
 # Tools the model calls
 
 > Source of truth: `OPERATION_PARAMETERS` in
-> `packages/worker/src/ops/registry.ts` (schemas) and each operation's
+> `packages/agent/src/ops/registry.ts` (schemas) and each operation's
 > `validateArgs` (the authoritative check).
 
 Every lane (`kubic run`, `kubic tui`) registers the same fifteen tools,

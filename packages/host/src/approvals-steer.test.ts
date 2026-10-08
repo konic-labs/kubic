@@ -8,17 +8,17 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../exec/src/env.js';
-import type { KubicLaneEvent } from '../../worker/src/lane/events.js';
+import type { KubicLaneEvent } from '../../agent/src/lane/events.js';
 import {
   bootFauxLane,
   type FauxLane,
   fauxToolUse,
-} from '../../worker/src/lane/test-harness.js';
+} from '../../agent/src/lane/test-harness.js';
 import {
   fauxAssistantMessage,
   fauxToolCall,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   ALLOW_TURN_EDITS,
   type ApprovalRequest,

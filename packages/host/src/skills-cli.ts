@@ -8,8 +8,8 @@
 // 0 even when skills were skipped (a skip is reported, not a failure); a
 // `--role` that refuses to resolve fails closed with its named reason.
 
-import type { PermissionClasses } from '../../agents/src/policy.js';
-import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
+import type { PermissionClasses } from '../../agent/src/policy.js';
+import { SOLO_DEFAULTS } from '../../agent/src/policy.js';
 import {
   type CommandResult,
   EXIT_FAILED,

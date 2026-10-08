@@ -9,7 +9,7 @@
 //
 // The rule this gate enforces:
 //
-//   any *.test.ts under packages/worker/src, packages/exec/src,
+//   any *.test.ts under packages/agent/src, packages/exec/src,
 //   packages/host/src or apps/kubic/src that spawns `git` directly
 //   (execFileSync/spawnSync/execSync/execFile/spawn with a 'git' command,
 //   quoted or backtick) is an offender — importing the sandbox helper does
@@ -37,7 +37,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCOPED_DIRS = [
-  join('packages', 'worker', 'src'),
+  join('packages', 'agent', 'src'),
   join('packages', 'exec', 'src'),
   join('packages', 'host', 'src'),
   join('apps', 'kubic', 'src'),
@@ -93,7 +93,7 @@ function gitOffenders(root = ROOT, files = testFiles(root)) {
 const SCOPED_TESTS = testFiles();
 
 describe('real-git tests use the shared helper', () => {
-  it('no worker, exec, host or apps test spawns git directly', () => {
+  it('no agent, exec, host or apps test spawns git directly', () => {
     // Source-text scan: the Stryker sandbox copy rewrites sources, so the
     // check is meaningless there (mutation work is deferred).
     if (process.env.STRYKER_MUTATOR_WORKER !== undefined) return;
@@ -105,7 +105,7 @@ describe('real-git tests use the shared helper', () => {
     );
   });
 
-  it('the scan covers the worker+exec+host+apps test tree', () => {
+  it('the scan covers the agent+exec+host+apps test tree', () => {
     // The four trees ship 250+ test files; a collapsed walk must fail
     // loudly instead of certifying an empty scan.
     assert.ok(
@@ -126,7 +126,7 @@ describe('real-git tests use the shared helper', () => {
         "import { execFileSync } from 'node:child_process';\nexecFileSync('git', ['init']);\n",
       );
       write(
-        'packages/worker/src/ops/raw.test.ts',
+        'packages/agent/src/ops/raw.test.ts',
         'const r = spawnSync("git", [\'status\']);\n',
       );
       write(
@@ -151,7 +151,7 @@ describe('real-git tests use the shared helper', () => {
       // A matcher vocabulary mentioning git, a fake-env script, and a
       // shell-seam call: not direct spawns, must stay clean.
       write(
-        'packages/worker/src/lane/words.test.ts',
+        'packages/agent/src/lane/words.test.ts',
         "const words = [\n'git',\n'push',\n];\n/\\bgit\\b/.test('x');\n",
       );
       write(
@@ -165,11 +165,11 @@ describe('real-git tests use the shared helper', () => {
       write('packages/exec/src/helper.ts', "execFileSync('git', ['x']);\n");
       assert.deepEqual(gitOffenders(dir), [
         `${join('apps', 'kubic', 'src', 'async.test.ts')}:2: execFile('git', ['status'], () => {});`,
+        `${join('packages', 'agent', 'src', 'ops', 'raw.test.ts')}:1: const r = spawnSync("git", ['status']);`,
         `${join('packages', 'exec', 'src', 'raw.test.ts')}:2: execFileSync('git', ['init']);`,
         `${join('packages', 'host', 'src', 'half.test.ts')}:2: execFileSync('git', ['init']);`,
         `${join('packages', 'host', 'src', 'outside.test.ts')}:1: execFileSync('git', ['init']);`,
         `${join('packages', 'host', 'src', 'tick.test.ts')}:2: execSync(\`git status\`);`,
-        `${join('packages', 'worker', 'src', 'ops', 'raw.test.ts')}:1: const r = spawnSync("git", ['status']);`,
       ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

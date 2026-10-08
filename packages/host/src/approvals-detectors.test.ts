@@ -17,12 +17,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
-} from '../../worker/src/lane/interceptors.js';
+} from '../../agent/src/lane/interceptors.js';
+import { SOLO_DEFAULTS } from '../../agent/src/policy.js';
 import {
   ApprovalService,
   CAPABILITIES,

@@ -8,7 +8,17 @@
 // flows through the injected persist hook identically for text and
 // --json output.
 
-import type { RunMode } from '../../agents/src/policy.js';
+import {
+  type ClassifiedFailure,
+  classifyFailure,
+  type RetryDecision,
+} from '../../agent/src/lane/failures.js';
+import type { OperationErrorLike } from '../../agent/src/lane/settle.js';
+import {
+  type LaneTerminalStatus,
+  settleTerminalStatus,
+} from '../../agent/src/lane/settle.js';
+import type { RunMode } from '../../agent/src/policy.js';
 import {
   type CommandResult,
   EXIT_APPROVAL,
@@ -23,16 +33,6 @@ import {
   INTERRUPT_EXIT_CODES,
   isInterruptSignal,
 } from '../../core/src/cli/exit-codes.js';
-import {
-  type ClassifiedFailure,
-  classifyFailure,
-  type RetryDecision,
-} from '../../worker/src/lane/failures.js';
-import type { OperationErrorLike } from '../../worker/src/lane/settle.js';
-import {
-  type LaneTerminalStatus,
-  settleTerminalStatus,
-} from '../../worker/src/lane/settle.js';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 

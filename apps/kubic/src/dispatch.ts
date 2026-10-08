@@ -12,6 +12,11 @@
 // usage fallthrough → commander (help, version, crash probe, commands).
 
 import {
+  type ModelSelection,
+  parseModelFlag,
+  parseThinkingFlag,
+} from '../../../packages/agent/src/model-select.js';
+import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
@@ -34,11 +39,6 @@ import {
   refusedRunResult,
   shellQuote,
 } from '../../../packages/host/src/run-cli.js';
-import {
-  type ModelSelection,
-  parseModelFlag,
-  parseThinkingFlag,
-} from '../../../packages/worker/src/model-select.js';
 import type {
   CommandContext,
   CommandRegistrar,

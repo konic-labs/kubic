@@ -16,16 +16,16 @@
 
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import {
-  type PermissionClasses,
-  validateClasses,
-} from '../../../agents/src/policy.js';
-import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
   SOLO_KEEP_RECENT_TOKENS,
-} from '../../../worker/src/compaction.js';
+} from '../../../agent/src/compaction.js';
+import {
+  type PermissionClasses,
+  validateClasses,
+} from '../../../agent/src/policy.js';
+import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
+import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import {
   type EffectivePolicy,

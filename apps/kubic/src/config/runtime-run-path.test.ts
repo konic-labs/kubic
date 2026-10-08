@@ -16,7 +16,14 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../../packages/agents/src/policy.js';
+import { fauxToolUse } from '../../../../packages/agent/src/lane/test-harness.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from '../../../../packages/agent/src/pi-boundary.js';
+import { SOLO_DEFAULTS } from '../../../../packages/agent/src/policy.js';
 import { NodeExecutionEnv } from '../../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../../packages/exec/src/file-bridge.js';
 import {
@@ -29,13 +36,6 @@ import {
 } from '../../../../packages/host/src/config/runtime.js';
 import { NO_PROJECT_TRUST } from '../../../../packages/host/src/config/trust-store.js';
 import { runJournalCommand } from '../../../../packages/host/src/journal-cli.js';
-import { fauxToolUse } from '../../../../packages/worker/src/lane/test-harness.js';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from '../../../../packages/worker/src/pi-boundary.js';
 import { runtimeLaneDeps, runtimeRunDeps } from '../config-runtime.js';
 import { runHeadlessPrompt } from '../headless-run.js';
 

@@ -14,7 +14,7 @@ import {
   Harness,
   MemoryStorage,
   Type,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
 import {
   RUN_SPAN_NAMES,
   RunSpans,

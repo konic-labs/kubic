@@ -4,10 +4,7 @@
 // real solo lane stores (assistant toolCall parts, toolResult messages,
 // per-request usage on assistant messages).
 import { describe, expect, it } from 'vitest';
-import { toolSpawnEnv } from '../../../exec/src/env.js';
-import type { FileChange } from '../../../exec/src/journal-diff.js';
-import { parseTrajectoryExport } from '../../../trajectory/src/schema.js';
-import { readConversationEntries } from '../../../worker/src/lane/transcript.js';
+import { readConversationEntries } from '../../../agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -17,7 +14,10 @@ import {
   fauxToolCall,
   Harness,
   MemoryStorage,
-} from '../../../worker/src/pi-boundary.js';
+} from '../../../agent/src/pi-boundary.js';
+import { toolSpawnEnv } from '../../../exec/src/env.js';
+import type { FileChange } from '../../../exec/src/journal-diff.js';
+import { parseTrajectoryExport } from '../../../trajectory/src/schema.js';
 import type { OrgAuditRecord } from '../policy/audit.js';
 import {
   assembleRunTrajectory,

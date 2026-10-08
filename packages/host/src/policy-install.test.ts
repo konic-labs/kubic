@@ -7,17 +7,17 @@
 // the shared faux harness factory.
 
 import { afterAll, describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS, toolsForClasses } from '../../agents/src/policy.js';
-import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   bootFauxLane,
   type FauxLane,
   invokeRegisteredTool,
-} from '../../worker/src/lane/test-harness.js';
+} from '../../agent/src/lane/test-harness.js';
 import {
   PolicyDeniedError,
   type TelemetryRecord,
-} from '../../worker/src/lane/wrap.js';
+} from '../../agent/src/lane/wrap.js';
+import { SOLO_DEFAULTS, toolsForClasses } from '../../agent/src/policy.js';
+import { FakeExecutionEnv } from '../../exec/src/env.js';
 import {
   type InstalledSoloPolicy,
   installedPolicyPosture,

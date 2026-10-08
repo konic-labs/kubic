@@ -24,9 +24,9 @@ Eight packages plus the composition root:
 | --- | --- |
 | `packages/core` | Shared contracts the packages build on |
 | `packages/exec` | Execution environment and change journal; the only package that touches `node:fs` / `node:child_process` |
-| `packages/worker` | The agent lane: one pi-durable `Harness` and its root conversation |
+| `packages/agent` | The agent lane: one pi-durable `Harness` and its root conversation |
 | `packages/host` | Host wiring: config, approvals, models, sessions, audit, the command handlers |
-| `packages/agents` | Permission policy and skills |
+| `packages/agent` | Permission policy and skills |
 | `packages/trajectory` | Versioned run records for replay and eval |
 | `packages/eval` | Benchmark suites and RL dataset export |
 | `packages/tui` | Presentation only; imports contracts from `core`, never `host`/`worker` implementation |

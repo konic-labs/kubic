@@ -5,19 +5,20 @@
 // Pi 1.0: the lane is a root conversation, so the allowlist is
 // a `conversation.configure({ tools: [...] })` — pi-durable stores tool
 // NAMES from the registration objects, and an array offers exactly those.
-import type { PermissionClasses } from '../../../agents/src/policy.js';
-import {
-  checkAgreement,
-  checkGrantable,
-  toolsForClasses,
-  validateClasses,
-} from '../../../agents/src/policy.js';
+
 import type {
   Context,
   Conversation,
   Registry,
   ToolRegistration,
 } from '../pi-boundary.js';
+import type { PermissionClasses } from '../policy.js';
+import {
+  checkAgreement,
+  checkGrantable,
+  toolsForClasses,
+  validateClasses,
+} from '../policy.js';
 
 export type { PermissionClasses };
 

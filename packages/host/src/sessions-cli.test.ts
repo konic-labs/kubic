@@ -8,12 +8,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createLineLogger } from '../../core/src/cli/logger.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   createSession,
   openSessionStore,
-} from '../../worker/src/lane/session-store.js';
+} from '../../agent/src/lane/session-store.js';
 import {
   AssistantEntry,
   BACKGROUND_CONTEXT,
@@ -25,7 +23,9 @@ import {
   GenerationTask,
   Harness,
   ToolResultEntry,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
+import { createLineLogger } from '../../core/src/cli/logger.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 import { runSessionsCommand } from './sessions-cli.js';
 

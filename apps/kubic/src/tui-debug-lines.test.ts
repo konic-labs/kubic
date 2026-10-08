@@ -7,19 +7,19 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import type {
   KubicLaneEvent,
   LaneEventSink,
-} from '../../../packages/worker/src/lane/events.js';
+} from '../../../packages/agent/src/lane/events.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   type EntryRecord,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
 import { bootTuiLane, type TuiLaneLoop, TuiTurnRunner } from './tui-run.js';
 
 const COMMITTED: EntryRecord = {

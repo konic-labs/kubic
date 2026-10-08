@@ -2,7 +2,7 @@
 // validation. Fixture role documents are inline strings — never real
 // filesystem roles (role contents land).
 import { describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
+import { SOLO_DEFAULTS } from '../../../agent/src/policy.js';
 import {
   effectiveRoleClasses,
   mergeRoleLayers,

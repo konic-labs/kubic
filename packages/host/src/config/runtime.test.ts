@@ -6,7 +6,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
+import { applyToolPolicy } from '../../../agent/src/lane/policy.js';
+import {
+  bootFauxLane,
+  promptToolsLine,
+} from '../../../agent/src/lane/test-harness.js';
+import { BACKGROUND_CONTEXT } from '../../../agent/src/pi-boundary.js';
+import { SOLO_DEFAULTS } from '../../../agent/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
@@ -20,12 +26,6 @@ import {
   disposeAllGitSandboxes,
   type GitSandbox,
 } from '../../../exec/src/test-support/git-sandbox.js';
-import { applyToolPolicy } from '../../../worker/src/lane/policy.js';
-import {
-  bootFauxLane,
-  promptToolsLine,
-} from '../../../worker/src/lane/test-harness.js';
-import { BACKGROUND_CONTEXT } from '../../../worker/src/pi-boundary.js';
 import {
   hasToolPolicy,
   isToolAllowed,

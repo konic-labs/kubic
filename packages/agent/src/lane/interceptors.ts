@@ -39,15 +39,15 @@
 // targets stay unenforceable, documented as such in host/approvals.ts.
 import { createHash } from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
-import {
-  effectiveNetworkLevel,
-  type NetworkLevel,
-  type ShellLevel,
-} from '../../../agents/src/policy.js';
 import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import { readRootFor } from '../../../exec/src/read-roots.js';
 import type { HookRegistration, JsonValue } from '../pi-boundary.js';
 import { hook, ToolTask } from '../pi-boundary.js';
+import {
+  effectiveNetworkLevel,
+  type NetworkLevel,
+  type ShellLevel,
+} from '../policy.js';
 
 export interface PolicyInterceptorOptions {
   workspace: string;

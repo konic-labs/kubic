@@ -8,7 +8,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import {
   BACKGROUND_CONTEXT,
@@ -21,6 +20,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
+import { SOLO_DEFAULTS } from '../policy.js';
 import { bootSoloLane, SOLO_PROMPT_SECTION, type SoloLane } from './solo.js';
 
 vi.mock('./interceptors.js', () => ({

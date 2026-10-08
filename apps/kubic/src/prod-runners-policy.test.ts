@@ -18,17 +18,17 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { disposeAllGitSandboxes } from '../../../packages/exec/src/test-support/git-sandbox.js';
-import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
-import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { disposeAllGitSandboxes } from '../../../packages/exec/src/test-support/git-sandbox.js';
+import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
+import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
+import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
 import {
   type CliConfigResult,
   runtimeApprovalDeps,

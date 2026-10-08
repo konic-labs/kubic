@@ -6,20 +6,20 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createLineLogger } from '../../core/src/cli/logger.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   attachSession,
   createSession,
   openSessionStore,
-} from '../../worker/src/lane/session-store.js';
+} from '../../agent/src/lane/session-store.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   createRegistry,
   Harness,
   UserEntry,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
+import { createLineLogger } from '../../core/src/cli/logger.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   failureForTerminus,
   type HeadlessRunResult,

@@ -1,18 +1,18 @@
-# `@kubic/agents`
+# `@kubic/agent`
 
 > Permission classes and skills for the agent lane.
-> Source: `packages/agents/src`.
+> Source: `packages/agent/src`.
 >
 > File name note: this page lives at `agents-pkg.md` (not `agents.md`)
 > because the harness reserves the `agents.md` filename; it is still the
-> canonical page for `packages/agents`.
+> canonical page for `packages/agent`.
 
-`@kubic/agents` owns two things the lane is built from: the five
+`@kubic/agent` owns two things the lane is built from: the five
 permission classes that shape the tool set, and the skill registry that
 discovers, gates and injects skills. Neither is a boundary — solo mode has
 no isolation; the classes decide which tools the model is offered.
 
-## Public API (`packages/agents/src`)
+## Public API (`packages/agent/src`)
 
 | Module | Exports |
 | --- | --- |
@@ -58,7 +58,7 @@ into the prompt. Command behaviour is on the
 
 - May import: [@kubic/core](core.md), [@kubic/exec](exec.md) only — never
   host/worker/tui/trajectory/eval.
-- Imported by: [@kubic/worker](worker.md), [@kubic/host](host.md).
+- Imported by: [@kubic/agent](worker.md), [@kubic/host](host.md).
 
 ```text
 core, exec ──→ agents ──→ worker, host

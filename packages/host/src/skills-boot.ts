@@ -11,20 +11,20 @@
 // loader is told, never asked to guess.
 
 import { basename, dirname, resolve, sep } from 'node:path';
-import type { PermissionClasses } from '../../agents/src/policy.js';
-import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
+import type { PermissionClasses } from '../../agent/src/policy.js';
+import { SOLO_DEFAULTS } from '../../agent/src/policy.js';
 import type {
   DiscoverSkillsOptions,
   LoadedSkill,
   SkillSource,
   SkippedSkill,
   WithheldSkill,
-} from '../../agents/src/skills/skills.js';
+} from '../../agent/src/skills/skills.js';
 import {
   discoverSkills,
   formatSkillsForSystemPrompt,
   gateSkills,
-} from '../../agents/src/skills/skills.js';
+} from '../../agent/src/skills/skills.js';
 import type { FileBridge } from '../../exec/src/file-bridge.js';
 import type { DoctorCheck } from './doctor.js';
 
@@ -202,7 +202,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
   };
 }
 
-export type { SkippedSkill } from '../../agents/src/skills/skills.js';
+export type { SkippedSkill } from '../../agent/src/skills/skills.js';
 
 // The role/capability gate: applied in `bootSkills`
 // above — discovery stays in the loader (it owns the roots and trust),

@@ -4,7 +4,7 @@
 // the header (chrome.ts), which reads it from this bar's state.
 //
 // Structural usage mirror: the fields below repeat the shape read in
-// packages/worker/src/usage.ts (KubicUsageRow) WITHOUT importing it —
+// packages/agent/src/usage.ts (KubicUsageRow) WITHOUT importing it —
 // dep-lint forbids tui → worker. Pi is untouched here (pure strings);
 // the Component seam stays in ./tui-boundary.js. No node:fs (I/O
 // confinement). Faux-only tests: fixtures, zero network.

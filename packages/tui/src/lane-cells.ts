@@ -120,7 +120,7 @@ export function summarizeToolArguments(args: unknown): string {
 // tree.
 export const TOOL_OUTCOME_MAX_CHARS = 60;
 
-// The one shell tool Kubic registers (`packages/worker/src/ops/bash.ts`);
+// The one shell tool Kubic registers (`packages/agent/src/ops/bash.ts`);
 // exit codes and test summaries are its results' vocabulary.
 const SHELL_TOOL_NAME = 'bash';
 

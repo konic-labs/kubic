@@ -11,13 +11,79 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  abortLane,
+  forgetLaneKills,
+} from '../../../packages/agent/src/lane/abort.js';
+import {
+  type KubicLaneEvent,
+  subscribeLaneEvents,
+} from '../../../packages/agent/src/lane/events.js';
+import {
+  type ClassifiedFailure,
+  classifyFailure,
+  type RetryDecision,
+} from '../../../packages/agent/src/lane/failures.js';
+import {
+  describePendingSettlement,
+  inspectPending,
+  pendingInputText,
+  settlePending,
+} from '../../../packages/agent/src/lane/pending.js';
+import {
+  attachSession,
+  createSession,
+  laneConversationIdOf,
+  openSessionStore,
+  type SessionHandle,
+  sessionsTouchingWorkspace,
+} from '../../../packages/agent/src/lane/session-store.js';
+import {
+  bootSoloLane,
+  type SoloCompactionOptions,
+  type SoloLane,
+} from '../../../packages/agent/src/lane/solo.js';
+import {
+  entriesToTranscript,
+  readConversationEntries,
+  readSessionEntries,
+  type TranscriptItem,
+} from '../../../packages/agent/src/lane/transcript.js';
+import {
+  awaitTurn,
+  runTurnWithOverflowRecovery,
+  type TurnOutcome,
+  turnAbort,
+  turnLaneRecord,
+} from '../../../packages/agent/src/lane/turn.js';
+import {
+  ModelSelectError,
+  type ModelSelection,
+  type selectModel,
+} from '../../../packages/agent/src/model-select.js';
+import { OPERATIONS } from '../../../packages/agent/src/ops/registry.js';
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  createModels,
+  createRegistry,
+  type EntryRecord,
+  Harness,
+  type MutableModels,
+  UserEntry,
+  withCancel,
+} from '../../../packages/agent/src/pi-boundary.js';
+import {
   checkAgreement,
   type PermissionClasses,
   type RunMode,
   SOLO_DEFAULTS,
   validateClasses,
-} from '../../../packages/agents/src/policy.js';
-import { expandSkillInvocation } from '../../../packages/agents/src/skills/skills.js';
+} from '../../../packages/agent/src/policy.js';
+import { expandSkillInvocation } from '../../../packages/agent/src/skills/skills.js';
+import {
+  resolveStreamOptions,
+  type StreamTuningTables,
+} from '../../../packages/agent/src/stream-options.js';
 import type { ExecutionEnv } from '../../../packages/exec/src/env.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
@@ -114,72 +180,6 @@ import {
   runVerifier,
   verifierLabels,
 } from '../../../packages/host/src/verify/verifier.js';
-import {
-  abortLane,
-  forgetLaneKills,
-} from '../../../packages/worker/src/lane/abort.js';
-import {
-  type KubicLaneEvent,
-  subscribeLaneEvents,
-} from '../../../packages/worker/src/lane/events.js';
-import {
-  type ClassifiedFailure,
-  classifyFailure,
-  type RetryDecision,
-} from '../../../packages/worker/src/lane/failures.js';
-import {
-  describePendingSettlement,
-  inspectPending,
-  pendingInputText,
-  settlePending,
-} from '../../../packages/worker/src/lane/pending.js';
-import {
-  attachSession,
-  createSession,
-  laneConversationIdOf,
-  openSessionStore,
-  type SessionHandle,
-  sessionsTouchingWorkspace,
-} from '../../../packages/worker/src/lane/session-store.js';
-import {
-  bootSoloLane,
-  type SoloCompactionOptions,
-  type SoloLane,
-} from '../../../packages/worker/src/lane/solo.js';
-import {
-  entriesToTranscript,
-  readConversationEntries,
-  readSessionEntries,
-  type TranscriptItem,
-} from '../../../packages/worker/src/lane/transcript.js';
-import {
-  awaitTurn,
-  runTurnWithOverflowRecovery,
-  type TurnOutcome,
-  turnAbort,
-  turnLaneRecord,
-} from '../../../packages/worker/src/lane/turn.js';
-import {
-  ModelSelectError,
-  type ModelSelection,
-  type selectModel,
-} from '../../../packages/worker/src/model-select.js';
-import { OPERATIONS } from '../../../packages/worker/src/ops/registry.js';
-import {
-  BACKGROUND_CONTEXT,
-  type Context,
-  createModels,
-  createRegistry,
-  type EntryRecord,
-  Harness,
-  type MutableModels,
-  UserEntry,
-  withCancel,
-} from '../../../packages/worker/src/pi-boundary.js';
-import {
-  resolveStreamOptions,
-  type StreamTuningTables,
-} from '../../../packages/worker/src/stream-options.js';
 import {
   resolveRoleThinking,
   roleModelScope,

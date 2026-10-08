@@ -93,9 +93,9 @@ function duplicatePiCopies(lock) {
 }
 
 describe('pi pinning + boundary', () => {
-  it('worker and tui pin their Pi deps exactly and drop the removed three', () => {
+  it('agent and tui pin their Pi deps exactly and drop the removed three', () => {
     const pkg = JSON.parse(
-      readFileSync(join(ROOT, 'packages', 'worker', 'package.json'), 'utf8'),
+      readFileSync(join(ROOT, 'packages', 'agent', 'package.json'), 'utf8'),
     );
     for (const dep of PI_DEPS.filter((d) => !TUI_PI_DEPS.includes(d))) {
       assert.equal(
@@ -107,7 +107,7 @@ describe('pi pinning + boundary', () => {
     assert.equal(
       pkg.dependencies?.['@earendil-works/pi-tui'],
       undefined,
-      'pi-tui must not be declared by the worker manifest',
+      'pi-tui must not be declared by the agent manifest',
     );
     const tui = JSON.parse(
       readFileSync(join(ROOT, 'packages', 'tui', 'package.json'), 'utf8'),
@@ -123,7 +123,7 @@ describe('pi pinning + boundary', () => {
       assert.equal(
         pkg.dependencies?.[dep],
         undefined,
-        `${dep} must be gone from the worker manifest`,
+        `${dep} must be gone from the agent manifest`,
       );
     }
   });
@@ -140,8 +140,8 @@ describe('pi pinning + boundary', () => {
   });
 
   it('pi-boundary.ts exists with seam docs and justification template', () => {
-    const file = join(ROOT, 'packages', 'worker', 'src', 'pi-boundary.ts');
-    assert.ok(existsSync(file), 'missing packages/worker/src/pi-boundary.ts');
+    const file = join(ROOT, 'packages', 'agent', 'src', 'pi-boundary.ts');
+    assert.ok(existsSync(file), 'missing packages/agent/src/pi-boundary.ts');
     const src = readFileSync(file, 'utf8');
     for (const needle of ['FileSystem', 'beforeTool', 'JUSTIFICATION']) {
       assert.ok(src.includes(needle), `pi-boundary.ts must document ${needle}`);
@@ -150,7 +150,7 @@ describe('pi pinning + boundary', () => {
 
   it('both Pi boundary files justify every export', () => {
     for (const rel of [
-      join('packages', 'worker', 'src', 'pi-boundary.ts'),
+      join('packages', 'agent', 'src', 'pi-boundary.ts'),
       join('packages', 'tui', 'src', 'tui-boundary.ts'),
     ]) {
       const src = readFileSync(join(ROOT, rel), 'utf8');
@@ -183,47 +183,47 @@ describe('pi pinning + boundary', () => {
 
   it('pi-boundary.ts itself may import Pi', () => {
     const okDir = scratchDir('piseam-ok-');
-    mkdirSync(join(okDir, 'packages', 'worker', 'src'), { recursive: true });
+    mkdirSync(join(okDir, 'packages', 'agent', 'src'), { recursive: true });
     writeFileSync(
-      join(okDir, 'packages', 'worker', 'src', 'pi-boundary.ts'),
+      join(okDir, 'packages', 'agent', 'src', 'pi-boundary.ts'),
       `import type { Agent } from '@earendil-works/pi-agent-core';\n`,
     );
     assert.deepEqual(checkTree(okDir), []);
   });
 
-  it('worker files outside pi-boundary.ts must not import Pi', () => {
+  it('agent files outside pi-boundary.ts must not import Pi', () => {
     const dir = scratchDir('piseam-bad-');
-    mkdirSync(join(dir, 'packages', 'worker', 'src'), { recursive: true });
+    mkdirSync(join(dir, 'packages', 'agent', 'src'), { recursive: true });
     writeFileSync(
-      join(dir, 'packages', 'worker', 'src', 'tools.ts'),
+      join(dir, 'packages', 'agent', 'src', 'tools.ts'),
       `import { Agent } from '@earendil-works/pi-agent-core';\n`,
     );
     const violations = checkTree(dir);
     assert.ok(
       violations.some(
-        (v) => v.from === 'worker' && v.to.includes('pi-agent-core'),
+        (v) => v.from === 'agent' && v.to.includes('pi-agent-core'),
       ),
-      `expected worker Pi-seam violation, got ${JSON.stringify(violations)}`,
+      `expected agent Pi-seam violation, got ${JSON.stringify(violations)}`,
     );
   });
 
-  it('similarly-suffixed worker files must not import Pi', () => {
+  it('similarly-suffixed agent files must not import Pi', () => {
     const dir = scratchDir('piseam-suffix-');
-    mkdirSync(join(dir, 'packages', 'worker', 'src'), { recursive: true });
+    mkdirSync(join(dir, 'packages', 'agent', 'src'), { recursive: true });
     writeFileSync(
-      join(dir, 'packages', 'worker', 'src', 'fake-pi-boundary.ts'),
+      join(dir, 'packages', 'agent', 'src', 'fake-pi-boundary.ts'),
       `import { Agent } from '@earendil-works/pi-agent-core';\n`,
     );
     const violations = checkTree(dir);
     assert.ok(
       violations.some(
-        (v) => v.from === 'worker' && v.to.includes('pi-agent-core'),
+        (v) => v.from === 'agent' && v.to.includes('pi-agent-core'),
       ),
       `expected suffix-bypass violation, got ${JSON.stringify(violations)}`,
     );
   });
 
-  it('non-worker packages must not import Pi', () => {
+  it('non-agent packages must not import Pi', () => {
     const dir = scratchDir('piseam-host-');
     mkdirSync(join(dir, 'packages', 'host', 'src'), { recursive: true });
     writeFileSync(
@@ -242,7 +242,7 @@ describe('pi pinning + boundary', () => {
     assert.ok(existsSync(file), 'missing CODEOWNERS');
     const src = readFileSync(file, 'utf8');
     assert.ok(
-      src.includes('packages/worker/src/pi-boundary.ts'),
+      src.includes('packages/agent/src/pi-boundary.ts'),
       'CODEOWNERS must own pi-boundary.ts',
     );
   });
@@ -257,7 +257,7 @@ describe('pi pinning + boundary', () => {
 
   // / commit 83ee635: the built binary could not load
   // @earendil-works/chord from dist/ because the lockfile NESTED a
-  // second copy of pi-ai and chord (under packages/worker and under
+  // second copy of pi-ai and chord (under packages/agent and under
   // pi-durable) instead of hoisting them — all at 1.0.2, so the pin check
   // below stayed green, vitest resolved from source so the suite stayed
   // green, and only the binary contract caught it. One hoisted copy of every
@@ -286,8 +286,8 @@ describe('pi pinning + boundary', () => {
         // The 83ee635 shape: pi-durable nests its own pi-ai copy.
         'node_modules/@earendil-works/pi-durable/node_modules/@earendil-works/pi-ai':
           { version: '1.0.2' },
-        // A workspace-level nest counts too (packages/worker held one).
-        'packages/worker/node_modules/@earendil-works/chord': {
+        // A workspace-level nest counts too (packages/agent held one).
+        'packages/agent/node_modules/@earendil-works/chord': {
           version: '1.0.2',
         },
         // Unrelated packages and deeper sub-paths never participate.
@@ -300,7 +300,7 @@ describe('pi pinning + boundary', () => {
         name: '@earendil-works/chord',
         paths: [
           'node_modules/@earendil-works/chord',
-          'packages/worker/node_modules/@earendil-works/chord',
+          'packages/agent/node_modules/@earendil-works/chord',
         ],
       },
       {
@@ -331,7 +331,7 @@ describe('pi pinning + boundary', () => {
     );
     const pkgs = lock.packages ?? {};
     for (const dep of [...PI_DEPS, ...OVERRIDDEN_PI_DEPS]) {
-      // npm may hoist or nest each copy (pi-ai appears both under the worker
+      // npm may hoist or nest each copy (pi-ai appears both under the agent
       // and under pi-durable), so pin every resolved copy, not one path.
       const suffix = `node_modules/${dep}`;
       const copies = Object.entries(pkgs).filter(

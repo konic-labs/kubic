@@ -10,16 +10,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   enableFullAccess,
   FileApprovalStore,
 } from '../../../packages/host/src/approvals.js';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
 

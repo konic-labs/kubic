@@ -24,7 +24,7 @@ escapes, not a sandbox boundary.
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
-| `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts`; path confinement in `env.ts` + `@kubic/worker` `lane/interceptors.ts` |
+| `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts`; path confinement in `env.ts` + `@kubic/agent` `lane/interceptors.ts` |
 | `index.ts` | Pointer | No barrel — import per-module paths |
 
 ## Contracts
@@ -313,14 +313,14 @@ after-side is a designed absence, never `corrupt`.
 There is **no Kubic-side replay kernel**. The tool-call state machine, its
 replay policy and the abort-aware admission gate belong to the execution
 engine. In Pi 1.0 that engine is `@earendil-works/pi-durable`'s `pi.tool`
-task over a `ToolRegistration` (`packages/worker/src/pi-boundary.ts` is the
+task over a `ToolRegistration` (`packages/agent/src/pi-boundary.ts` is the
 only file that may import it), so Kubic keeps no copy of its own.
 
 What actually ships in Kubic:
 
 - **Replay policy declaration.** `Operation.replay` is `'never' | 'safe'`
-  per operation (`packages/worker/src/ops/*`), mapped onto pi-durable's
-  `ToolRegistration.replay` by `@kubic/worker` `lane/tools-adapter.ts`:
+  per operation (`packages/agent/src/ops/*`), mapped onto pi-durable's
+  `ToolRegistration.replay` by `@kubic/agent` `lane/tools-adapter.ts`:
   `never → 'unsafe'`, `safe → 'safe'`. The untranslated name would be a
   crash-safety change — pi-durable runs each call as its own durable task,
   commits its intent before `execute()`, and on recovery **reruns only a
@@ -348,8 +348,8 @@ Only `--tier recorded` is log-only, and it never touches a lane.
 
 - May import: [@kubic/core](core.md) only (no worker/host/agents/
   trajectory/eval/tui — see `scripts/dep-lint.mjs`).
-- Imported by: [@kubic/worker](worker.md) (lane bridges), [@kubic/host](host.md)
-  (journal CLI), [@kubic/agents](agents-pkg.md) (`FileBridge` for
+- Imported by: [@kubic/agent](worker.md) (lane bridges), [@kubic/host](host.md)
+  (journal CLI), [@kubic/agent](agents-pkg.md) (`FileBridge` for
   memory/skills).
 - Sole owner of `node:fs` / `node:child_process`.
 

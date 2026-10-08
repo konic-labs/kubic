@@ -385,7 +385,7 @@ describe('status bar regressions', () => {
   });
 
   it('mirrors worker KubicUsageRow field-for-field (drift guard)', () => {
-    // Structural mirror of packages/worker/src/usage.ts KubicUsageRow,
+    // Structural mirror of packages/agent/src/usage.ts KubicUsageRow,
     // hand-copied because dep-lint forbids tui → worker imports: a shape
     // change on either side fails here loudly instead of drifting.
     interface ExpectedWorkerCost {

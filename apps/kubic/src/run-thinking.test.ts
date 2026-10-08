@@ -12,12 +12,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];

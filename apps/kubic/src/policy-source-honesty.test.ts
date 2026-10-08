@@ -10,7 +10,7 @@
 // Faux provider only: zero network, zero paid tokens.
 
 import { describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../packages/agents/src/policy.js';
+import { SOLO_DEFAULTS } from '../../../packages/agent/src/policy.js';
 import {
   detectTriggers,
   installSoloPolicy,

@@ -19,6 +19,20 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  attachSession,
+  openSessionStore,
+} from '../../../packages/agent/src/lane/session-store.js';
+import { readSessionEntries } from '../../../packages/agent/src/lane/transcript.js';
+import { ModelSelectError } from '../../../packages/agent/src/model-select.js';
+import {
+  BACKGROUND_CONTEXT,
+  CompactionEntry,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
@@ -31,20 +45,6 @@ import {
   ProjectTrustStore,
   projectTrustStorePath,
 } from '../../../packages/host/src/config/trust-store.js';
-import {
-  attachSession,
-  openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { readSessionEntries } from '../../../packages/worker/src/lane/transcript.js';
-import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
-import {
-  BACKGROUND_CONTEXT,
-  CompactionEntry,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import {
   configRefusalExit,
   doctorConfigProbe,

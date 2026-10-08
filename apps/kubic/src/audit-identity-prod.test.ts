@@ -9,6 +9,19 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createSession,
+  openSessionStore,
+} from '../../../packages/agent/src/lane/session-store.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { installSoloPolicy } from '../../../packages/host/src/approvals.js';
@@ -17,19 +30,6 @@ import {
   readAuditLedger,
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
-import {
-  createSession,
-  openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';

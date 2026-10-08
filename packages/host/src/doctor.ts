@@ -7,10 +7,15 @@
 // goes through the exec FileBridge — this module never imports node:fs.
 
 import {
+  DEFAULT_RESERVE_TOKENS,
+  roomAfterCompaction,
+  SOLO_KEEP_RECENT_TOKENS,
+} from '../../agent/src/compaction.js';
+import {
   describeUnsupported,
   effectiveCredentialLevel,
   effectiveNetworkLevel,
-} from '../../agents/src/policy.js';
+} from '../../agent/src/policy.js';
 // License identity: constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
@@ -21,11 +26,6 @@ import {
 } from '../../core/src/cli/exit-codes.js';
 import { formatJson } from '../../core/src/cli/output.js';
 import { formatLicenseDetail } from '../../core/src/license.js';
-import {
-  DEFAULT_RESERVE_TOKENS,
-  roomAfterCompaction,
-  SOLO_KEEP_RECENT_TOKENS,
-} from '../../worker/src/compaction.js';
 import {
   alwaysAskAutoApprove,
   CAPABILITIES,

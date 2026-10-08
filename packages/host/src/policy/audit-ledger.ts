@@ -8,7 +8,7 @@
 // File access goes through the exec FileBridge (I/O confinement).
 
 import { basename, dirname, join, resolve } from 'node:path';
-import type { RunMode } from '../../../agents/src/policy.js';
+import type { RunMode } from '../../../agent/src/policy.js';
 import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
 import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { AuditTableConfig } from '../config/config.js';

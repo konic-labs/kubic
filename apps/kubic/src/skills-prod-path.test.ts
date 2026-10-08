@@ -18,22 +18,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  FakeExecutionEnv,
-  NodeExecutionEnv,
-} from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { runRunCommand } from '../../../packages/host/src/run-cli.js';
-import { bootSkills } from '../../../packages/host/src/skills-boot.js';
-import {
   attachSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { SOLO_PROMPT_SECTION } from '../../../packages/worker/src/lane/solo.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
+} from '../../../packages/agent/src/lane/session-store.js';
+import { SOLO_PROMPT_SECTION } from '../../../packages/agent/src/lane/solo.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../../packages/worker/src/lane/transcript.js';
+} from '../../../packages/agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -42,7 +35,14 @@ import {
   fauxToolCall,
   type MutableModels,
   SystemEntry,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import {
+  FakeExecutionEnv,
+  NodeExecutionEnv,
+} from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
+import { runRunCommand } from '../../../packages/host/src/run-cli.js';
+import { bootSkills } from '../../../packages/host/src/skills-boot.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];

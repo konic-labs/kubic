@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type PermissionClasses,
   SOLO_DEFAULTS,
-} from '../../../packages/agents/src/policy.js';
+} from '../../../packages/agent/src/policy.js';
 import type {
   ReplayRunRequest,
   ReplayRuntimeDeps,

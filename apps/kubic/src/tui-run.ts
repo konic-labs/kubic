@@ -18,16 +18,95 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import type { PermissionClasses } from '../../../packages/agents/src/policy.js';
+import {
+  DEFAULT_RESERVE_TOKENS,
+  effectiveReserveTokens,
+  type ManualCompactionOptions,
+  type ManualCompactionOutcome,
+  parseCompactCommand,
+  runCompactCommand,
+} from '../../../packages/agent/src/compaction.js';
+import {
+  abortLane,
+  forgetLaneKills,
+  type OperationKillRegistry,
+} from '../../../packages/agent/src/lane/abort.js';
+import type {
+  KubicInboxItem,
+  KubicLaneEvent,
+  LaneEventSink,
+} from '../../../packages/agent/src/lane/events.js';
+import { subscribeLaneEvents } from '../../../packages/agent/src/lane/events.js';
+import {
+  describePendingSettlement,
+  inspectPending,
+  pendingInputText,
+  settlePending,
+} from '../../../packages/agent/src/lane/pending.js';
+import {
+  attachSession,
+  createSession,
+  forkSession,
+  listSessions,
+  openSessionStore,
+} from '../../../packages/agent/src/lane/session-store.js';
+import {
+  bootSoloLane,
+  escalateSoloModel,
+  type SoloCompactionOptions,
+  type SoloLane,
+} from '../../../packages/agent/src/lane/solo.js';
+import {
+  entriesToTranscript,
+  readConversationEntries,
+  type TranscriptItem,
+} from '../../../packages/agent/src/lane/transcript.js';
+import {
+  runTurn,
+  TURN_BUSY_REASON,
+  type TurnOutcome,
+  turnLaneRecord,
+} from '../../../packages/agent/src/lane/turn.js';
+import type { EscalationLadder } from '../../../packages/agent/src/model-select.js';
+import {
+  type AnyModel,
+  clampThinking,
+  ModelSelectError,
+  type ModelSelection,
+  NoModelAvailableError,
+  parseModelFlag,
+  supportedThinking,
+} from '../../../packages/agent/src/model-select.js';
+import {
+  isThinkingLevel,
+  THINKING_LEVELS,
+} from '../../../packages/agent/src/models-config.js';
+import { OPERATIONS } from '../../../packages/agent/src/ops/registry.js';
+import { walkFiles } from '../../../packages/agent/src/ops/walk.js';
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+  ConversationBusy,
+  type EntryRecord,
+  type ModelThinkingLevel,
+  type MutableModels,
+  type SubmissionId,
+} from '../../../packages/agent/src/pi-boundary.js';
+import type { PermissionClasses } from '../../../packages/agent/src/policy.js';
 import {
   checkAgreement,
   SOLO_DEFAULTS,
   validateClasses,
-} from '../../../packages/agents/src/policy.js';
+} from '../../../packages/agent/src/policy.js';
+import type { ModelEscalationEvent } from '../../../packages/agent/src/prompts.js';
 import {
   expandSkillInvocation,
   type LoadedSkill,
-} from '../../../packages/agents/src/skills/skills.js';
+} from '../../../packages/agent/src/skills/skills.js';
+import {
+  resolveStreamOptions,
+  type StreamTuningTables,
+} from '../../../packages/agent/src/stream-options.js';
 import {
   type CommandResult,
   EXIT_FAILED,
@@ -201,85 +280,6 @@ import {
 } from '../../../packages/tui/src/ui/clipboard.js';
 import { loadHighlighter } from '../../../packages/tui/src/ui/highlight.js';
 import { formatAge } from '../../../packages/tui/src/ui/palette.js';
-import {
-  DEFAULT_RESERVE_TOKENS,
-  effectiveReserveTokens,
-  type ManualCompactionOptions,
-  type ManualCompactionOutcome,
-  parseCompactCommand,
-  runCompactCommand,
-} from '../../../packages/worker/src/compaction.js';
-import {
-  abortLane,
-  forgetLaneKills,
-  type OperationKillRegistry,
-} from '../../../packages/worker/src/lane/abort.js';
-import type {
-  KubicInboxItem,
-  KubicLaneEvent,
-  LaneEventSink,
-} from '../../../packages/worker/src/lane/events.js';
-import { subscribeLaneEvents } from '../../../packages/worker/src/lane/events.js';
-import {
-  describePendingSettlement,
-  inspectPending,
-  pendingInputText,
-  settlePending,
-} from '../../../packages/worker/src/lane/pending.js';
-import {
-  attachSession,
-  createSession,
-  forkSession,
-  listSessions,
-  openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import {
-  bootSoloLane,
-  escalateSoloModel,
-  type SoloCompactionOptions,
-  type SoloLane,
-} from '../../../packages/worker/src/lane/solo.js';
-import {
-  entriesToTranscript,
-  readConversationEntries,
-  type TranscriptItem,
-} from '../../../packages/worker/src/lane/transcript.js';
-import {
-  runTurn,
-  TURN_BUSY_REASON,
-  type TurnOutcome,
-  turnLaneRecord,
-} from '../../../packages/worker/src/lane/turn.js';
-import type { EscalationLadder } from '../../../packages/worker/src/model-select.js';
-import {
-  type AnyModel,
-  clampThinking,
-  ModelSelectError,
-  type ModelSelection,
-  NoModelAvailableError,
-  parseModelFlag,
-  supportedThinking,
-} from '../../../packages/worker/src/model-select.js';
-import {
-  isThinkingLevel,
-  THINKING_LEVELS,
-} from '../../../packages/worker/src/models-config.js';
-import { OPERATIONS } from '../../../packages/worker/src/ops/registry.js';
-import { walkFiles } from '../../../packages/worker/src/ops/walk.js';
-import {
-  BACKGROUND_CONTEXT,
-  type Context,
-  ConversationBusy,
-  type EntryRecord,
-  type ModelThinkingLevel,
-  type MutableModels,
-  type SubmissionId,
-} from '../../../packages/worker/src/pi-boundary.js';
-import type { ModelEscalationEvent } from '../../../packages/worker/src/prompts.js';
-import {
-  resolveStreamOptions,
-  type StreamTuningTables,
-} from '../../../packages/worker/src/stream-options.js';
 import {
   AUTO_ESCALATION_TOOL_FAILURES,
   createAutoEscalation,

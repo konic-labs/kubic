@@ -33,7 +33,6 @@
 // never attachable.
 
 import { dirname, join } from 'node:path';
-import type { RunMode } from '../../../agents/src/policy.js';
 import type {
   BridgeFileInfo,
   FileBridge,
@@ -59,6 +58,7 @@ import {
   UsageDoc,
   uuidv7,
 } from '../pi-boundary.js';
+import type { RunMode } from '../policy.js';
 import { bridgeToPiFileSystem } from './session-fs.js';
 
 // Session ids are path segments under the sessions root, so the character

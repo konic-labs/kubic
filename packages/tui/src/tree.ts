@@ -7,7 +7,7 @@
 // is measured in columns.
 //
 // The lane feed accepts the worker's KubicLaneEvent shape structurally
-// (packages/worker/src/lane/events.ts) WITHOUT importing it: the tui
+// (packages/agent/src/lane/events.ts) WITHOUT importing it: the tui
 // package must never import host/worker implementation (dep-lint), so
 // only the fields the tree reads are typed here. `usage` rows sum into the
 // head row; `fault` events are ignored.

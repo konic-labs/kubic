@@ -16,7 +16,7 @@ import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
-} from '../../worker/src/lane/interceptors.js';
+} from '../../agent/src/lane/interceptors.js';
 import {
   controlPlaneRefusal,
   detectTriggers,

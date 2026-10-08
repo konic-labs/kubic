@@ -8,11 +8,11 @@ import { describe, expect, it } from 'vitest';
 import {
   bootFauxLane,
   fauxToolUse,
-} from '../../worker/src/lane/test-harness.js';
+} from '../../agent/src/lane/test-harness.js';
 import {
   fauxAssistantMessage,
   fauxToolCall,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
 import {
   type ApprovalVerdict,
   installSoloPolicy,

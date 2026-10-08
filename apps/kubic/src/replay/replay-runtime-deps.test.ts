@@ -14,7 +14,24 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../../packages/agents/src/policy.js';
+import {
+  attachSession,
+  openSessionStore,
+} from '../../../../packages/agent/src/lane/session-store.js';
+import { fauxToolUse } from '../../../../packages/agent/src/lane/test-harness.js';
+import {
+  entriesToTranscript,
+  readSessionEntries,
+} from '../../../../packages/agent/src/lane/transcript.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../../../packages/agent/src/pi-boundary.js';
+import { SOLO_DEFAULTS } from '../../../../packages/agent/src/policy.js';
 import { FakeExecutionEnv } from '../../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../../packages/exec/src/file-bridge.js';
 import { loadRuntimeConfig } from '../../../../packages/host/src/config/runtime.js';
@@ -27,23 +44,6 @@ import {
 import { createProdReplayRun } from '../../../../packages/host/src/replay/run-prod.js';
 import { buildTrajectoryExport } from '../../../../packages/trajectory/src/export.js';
 import { parseTrajectoryExportJSON } from '../../../../packages/trajectory/src/schema.js';
-import {
-  attachSession,
-  openSessionStore,
-} from '../../../../packages/worker/src/lane/session-store.js';
-import { fauxToolUse } from '../../../../packages/worker/src/lane/test-harness.js';
-import {
-  entriesToTranscript,
-  readSessionEntries,
-} from '../../../../packages/worker/src/lane/transcript.js';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  type MutableModels,
-} from '../../../../packages/worker/src/pi-boundary.js';
 import { type CliConfigResult, runtimeRunDeps } from '../config-runtime.js';
 import { runHeadlessPrompt } from '../headless-run.js';
 

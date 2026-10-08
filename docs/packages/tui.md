@@ -6,7 +6,7 @@
 
 `@kubic/tui` is presentation only: layout and views over the
 [@kubic/core](core.md) `KubicPresentationState`. It must import contracts
-from `@kubic/core` and never `@kubic/host` or `@kubic/worker`
+from `@kubic/core` and never `@kubic/host` or `@kubic/agent`
 implementation — enforced by `scripts/dep-lint.mjs`. All Pi
 presentation imports flow through `src/tui-boundary.ts`, the
 TUI-side analogue of the worker Pi boundary.

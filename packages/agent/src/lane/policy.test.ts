@@ -2,7 +2,6 @@
 // harness. The class-derived allowlist is now a
 // `conversation.configure({ tools })` against the registry's registrations.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SOLO_DEFAULTS } from '../../../agents/src/policy.js';
 import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import {
   AgentDoc,
@@ -14,6 +13,7 @@ import {
   MemoryStorage,
   type Storage,
 } from '../pi-boundary.js';
+import { SOLO_DEFAULTS } from '../policy.js';
 import { applyToolPolicy } from './policy.js';
 import { bootSoloLane, type SoloLane } from './solo.js';
 

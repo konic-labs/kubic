@@ -92,7 +92,7 @@ those is test restructuring for a later change; this gate does not report them.
 - **Clean up.** A test removes every temp dir, environment change and child
   process it creates.
 - **Lanes.** Boot a lane with `bootFauxLane`
-  (`packages/worker/src/lane/test-harness.ts`): the real `bootSoloLane`
+  (`packages/agent/src/lane/test-harness.ts`): the real `bootSoloLane`
   over in-memory or temp-dir storage. A faux tool round must end with
   `stopReason: 'toolUse'` (`fauxToolUse(...)`), or the tool never runs.
 - **The TUI.** Render functions are pure and tested as headless snapshots;
@@ -113,7 +113,7 @@ those is test restructuring for a later change; this gate does not report them.
 - **Dependency direction** — packages import "downward" only, and the TUI
   never imports `host` / `worker` implementation; contracts come from
   `core` (`npm run lint:deps`, see the [package map](packages/README.md)).
-- **The Pi boundary** — only `packages/worker/src/pi-boundary.ts` and
+- **The Pi boundary** — only `packages/agent/src/pi-boundary.ts` and
   `packages/tui/src/tui-boundary.ts` import `@earendil-works/*`. Every
   re-export carries a `JUSTIFICATION:` block naming the seam, its users
   and why Kubic cannot do without it (`scripts/pi-boundary.test.mjs`), and

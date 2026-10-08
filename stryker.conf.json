@@ -21,10 +21,8 @@
     "!packages/core/src/**/*.test.ts",
     "packages/exec/src/**/*.ts",
     "!packages/exec/src/**/*.test.ts",
-    "packages/agents/src/**/*.ts",
-    "!packages/agents/src/**/*.test.ts",
-    "packages/worker/src/**/*.ts",
-    "!packages/worker/src/**/*.test.ts",
+    "packages/agent/src/**/*.ts",
+    "!packages/agent/src/**/*.test.ts",
     "packages/host/src/**/*.ts",
     "!packages/host/src/**/*.test.ts",
     "packages/eval/src/**/*.ts",
@@ -35,9 +33,7 @@
     "packages/host/src/run-cli.ts",
     "apps/kubic/src/headless-run.ts",
     "packages/host/src/config/**/*.ts",
-    "!packages/host/src/config/**/*.test.ts",
-    "packages/agents/src/skills/**/*.ts",
-    "!packages/agents/src/skills/**/*.test.ts"
+    "!packages/host/src/config/**/*.test.ts"
   ],
   "ignorePatterns": [
     "pi/**",

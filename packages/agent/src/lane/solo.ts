@@ -5,11 +5,6 @@
 // `conversation.submit(...)` → `submission.wait(...)`, and durable
 // retry/backoff belongs to the harness (lane/turn.ts owns the turn glue).
 
-import type { PermissionClasses } from '../../../agents/src/policy.js';
-import {
-  toolsForClasses,
-  validateClasses,
-} from '../../../agents/src/policy.js';
 import type { ExecutionEnv } from '../../../exec/src/env.js';
 import type { FileJournalStore } from '../../../exec/src/journal.js';
 import { withReadRoots } from '../../../exec/src/read-roots.js';
@@ -40,6 +35,8 @@ import {
   type Registry,
   section,
 } from '../pi-boundary.js';
+import type { PermissionClasses } from '../policy.js';
+import { toolsForClasses, validateClasses } from '../policy.js';
 import {
   assembleSystemPrompt,
   escalatePinnedModel,

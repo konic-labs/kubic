@@ -18,21 +18,21 @@ import { connect, Socket } from 'node:net';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import {
   attachSession,
   openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { SOLO_PROMPT_SECTION } from '../../../packages/worker/src/lane/solo.js';
-import { readSessionEntries } from '../../../packages/worker/src/lane/transcript.js';
+} from '../../../packages/agent/src/lane/session-store.js';
+import { SOLO_PROMPT_SECTION } from '../../../packages/agent/src/lane/solo.js';
+import { readSessionEntries } from '../../../packages/agent/src/lane/transcript.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   SystemEntry,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
 import { runHeadlessPrompt } from './headless-run.js';
 

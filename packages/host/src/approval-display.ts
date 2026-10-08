@@ -14,7 +14,7 @@
 // redacted, never the words around them and never anything the shell would
 // execute (see redactApprovalSecrets).
 
-import { redactSecrets } from '../../worker/src/lane/interceptors.js';
+import { redactSecrets } from '../../agent/src/lane/interceptors.js';
 
 // The summary's command budget: summaries are one-line labels (trajectory,
 // audit detail). The full command

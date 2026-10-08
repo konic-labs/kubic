@@ -27,9 +27,9 @@ rationale, package APIs and CLI behaviour never mix.
 | --- | --- |
 | `packages/core` | [packages/core.md](packages/core.md) |
 | `packages/exec` | [packages/exec.md](packages/exec.md) |
-| `packages/worker` | [packages/worker.md](packages/worker.md) |
+| `packages/agent` | [packages/worker.md](packages/worker.md) |
 | `packages/host` | [packages/host.md](packages/host.md) |
-| `packages/agents` | [packages/agents-pkg.md](packages/agents-pkg.md) |
+| `packages/agent` | [packages/agents-pkg.md](packages/agents-pkg.md) |
 | `packages/trajectory` | [packages/trajectory.md](packages/trajectory.md) |
 | `packages/eval` | [packages/eval.md](packages/eval.md) |
 | `packages/tui` | [packages/tui.md](packages/tui.md) |

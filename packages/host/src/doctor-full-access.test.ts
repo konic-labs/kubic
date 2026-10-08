@@ -8,13 +8,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import {
   createSession,
   openSessionStore,
   type SessionHandle,
-} from '../../worker/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../agent/src/pi-boundary.js';
+import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
 import { FileApprovalStore } from './approvals.js';
 import {
   describeFullAccessSession,

@@ -10,6 +10,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   type ApprovalRequest,
@@ -23,15 +32,6 @@ import {
   readAuditLedger,
 } from '../../../packages/host/src/policy/audit-ledger.js';
 import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import {
   installedPolicyDeps,
   loadCliConfig,

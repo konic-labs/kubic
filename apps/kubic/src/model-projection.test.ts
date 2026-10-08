@@ -2,13 +2,13 @@
 // boots hand to the policy-gated pick. The prod-path tests prove the wiring;
 // these prove the order.
 import { describe, expect, it } from 'vitest';
-import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
+import { ModelSelectError } from '../../../packages/agent/src/model-select.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
 import { selectBootModel } from './config-runtime.js';
 import {
   hasExplicitModelSelection,

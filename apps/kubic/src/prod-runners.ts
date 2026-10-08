@@ -15,6 +15,11 @@ import { createSocket } from 'node:dgram';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
+  openSessionStore,
+  sessionsTouchingWorkspace,
+} from '../../../packages/agent/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../../packages/agent/src/pi-boundary.js';
+import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_USAGE,
@@ -112,11 +117,6 @@ import { runSetupCommand } from '../../../packages/host/src/setup-cli.js';
 import { skillsDoctorProbe } from '../../../packages/host/src/skills-boot.js';
 import { runSkillsCommand } from '../../../packages/host/src/skills-cli.js';
 import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
-import {
-  openSessionStore,
-  sessionsTouchingWorkspace,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 import {
   type CliConfigResult,
   doctorConfigProbe,

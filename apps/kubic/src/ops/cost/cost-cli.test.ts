@@ -13,6 +13,26 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  attachSession,
+  createSession,
+  openSessionStore,
+} from '../../../../../packages/agent/src/lane/session-store.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  createRegistry,
+  defineExtension,
+  defineTool,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  Harness,
+  MemoryStorage,
+  type Storage,
+  Type,
+  UsageDoc,
+} from '../../../../../packages/agent/src/pi-boundary.js';
+import {
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
@@ -31,26 +51,6 @@ import {
   summarizeSessionCost,
   toCostJson,
 } from '../../../../../packages/host/src/ops/cost/session-cost.js';
-import {
-  attachSession,
-  createSession,
-  openSessionStore,
-} from '../../../../../packages/worker/src/lane/session-store.js';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  createRegistry,
-  defineExtension,
-  defineTool,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  Harness,
-  MemoryStorage,
-  type Storage,
-  Type,
-  UsageDoc,
-} from '../../../../../packages/worker/src/pi-boundary.js';
 
 const attached = vi.hoisted(() => ({
   calls: [] as Array<readonly unknown[]>,
@@ -61,11 +61,11 @@ const attached = vi.hoisted(() => ({
 }));
 
 vi.mock(
-  '../../../../../packages/worker/src/lane/session-store.js',
+  '../../../../../packages/agent/src/lane/session-store.js',
   async (importOriginal) => {
     const actual =
       await importOriginal<
-        typeof import('../../../../../packages/worker/src/lane/session-store.js')
+        typeof import('../../../../../packages/agent/src/lane/session-store.js')
       >();
     return {
       ...actual,

@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { policyInterceptorHooks } from '../../worker/src/lane/interceptors.js';
+import { policyInterceptorHooks } from '../../agent/src/lane/interceptors.js';
 import {
   BACKGROUND_CONTEXT,
   type Conversation,
@@ -27,7 +27,7 @@ import {
   openNodeJsonlStorage,
   type Storage,
   Type,
-} from '../../worker/src/pi-boundary.js';
+} from '../../agent/src/pi-boundary.js';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import {
   type ApprovalRequest,

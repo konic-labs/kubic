@@ -13,6 +13,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import {
+  createSession,
+  openSessionStore,
+} from '../../../packages/agent/src/lane/session-store.js';
+import { BACKGROUND_CONTEXT } from '../../../packages/agent/src/pi-boundary.js';
 import { CliUsageError } from '../../../packages/core/src/cli/exit-codes.js';
 import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
@@ -30,11 +35,6 @@ import {
   auditLedgerDirFor,
   readAuditLedger,
 } from '../../../packages/host/src/policy/audit-ledger.js';
-import {
-  createSession,
-  openSessionStore,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../../packages/worker/src/pi-boundary.js';
 
 const made: string[] = [];
 

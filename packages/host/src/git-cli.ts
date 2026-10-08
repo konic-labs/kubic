@@ -9,6 +9,12 @@
 // (thrown as CliUsageError).
 
 import {
+  createInvocation,
+  MemoryMemoStore,
+} from '../../agent/src/ops/memos.js';
+import { callOperation } from '../../agent/src/ops/registry.js';
+import type { OpContext } from '../../agent/src/ops/types.js';
+import {
   CliExitError,
   CliUsageError,
   type CommandResult,
@@ -19,12 +25,6 @@ import { formatJson } from '../../core/src/cli/output.js';
 import { renderTable } from '../../core/src/cli/table.js';
 import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
 import type { ExecutionEnv } from '../../exec/src/env.js';
-import {
-  createInvocation,
-  MemoryMemoStore,
-} from '../../worker/src/ops/memos.js';
-import { callOperation } from '../../worker/src/ops/registry.js';
-import type { OpContext } from '../../worker/src/ops/types.js';
 
 export interface GitCommandDeps {
   env: ExecutionEnv;

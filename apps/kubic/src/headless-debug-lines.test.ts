@@ -7,14 +7,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import type { KubicLaneEvent } from '../../../packages/worker/src/lane/events.js';
-import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
+import type { KubicLaneEvent } from '../../../packages/agent/src/lane/events.js';
+import type { MutableModels } from '../../../packages/agent/src/pi-boundary.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { laneActivityDebugLine, runHeadlessPrompt } from './headless-run.js';
 
 function usageEvent(): KubicLaneEvent {

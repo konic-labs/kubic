@@ -16,6 +16,19 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createSession,
+  openSessionStore,
+  type SessionHandle,
+} from '../../../packages/agent/src/lane/session-store.js';
+import { bootSoloLane } from '../../../packages/agent/src/lane/solo.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
 import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
 import { FileJournalStore } from '../../../packages/exec/src/journal.js';
@@ -25,19 +38,6 @@ import {
   soloTuiLine,
   soloWarningLines,
 } from '../../../packages/host/src/limits/solo-warning.js';
-import {
-  createSession,
-  openSessionStore,
-  type SessionHandle,
-} from '../../../packages/worker/src/lane/session-store.js';
-import { bootSoloLane } from '../../../packages/worker/src/lane/solo.js';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { runTuiCommand, soloTuiLoop, type TuiRunDeps } from './tui-run.js';

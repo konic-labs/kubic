@@ -1,7 +1,7 @@
 # Skills
 
 > Skills discovery, gating and prompt injection.
-> Implementation: `packages/agents/src/skills/skills.ts` (the loader),
+> Implementation: `packages/agent/src/skills/skills.ts` (the loader),
 > `packages/host/src/skills-boot.ts` (lane boot + listing summary),
 > `packages/host/src/skills-cli.ts` (`kubic skills`),
 > `apps/kubic/src/prod-runners.ts` (prod wiring).

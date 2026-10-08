@@ -12,6 +12,19 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  confinePath,
+  defaultIsDestructive,
+  isNetworkCommand,
+} from '../../../packages/agent/src/lane/interceptors.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type MutableModels,
+} from '../../../packages/agent/src/pi-boundary.js';
 import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
 import {
   type ApprovalRequest,
@@ -34,19 +47,6 @@ import {
 import type { DoctorDeps } from '../../../packages/host/src/doctor.js';
 import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
 import { policyEnforceabilityCheck } from '../../../packages/host/src/limits/doctor-limits.js';
-import {
-  confinePath,
-  defaultIsDestructive,
-  isNetworkCommand,
-} from '../../../packages/worker/src/lane/interceptors.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const WS = '/work';

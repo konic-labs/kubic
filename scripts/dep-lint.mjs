@@ -4,30 +4,20 @@
 // Forbidden edges (importer -> forbidden imported packages):
 //
 // Every non-root package forbids the `kubic` composition root: through the
-// app root a package reaches host/worker implementation transitively. The
+// app root a package reaches host/agent implementation transitively. The
 // rule holds in tests too — a package test reaching the app root is a
 // dependency inversion (the composition root's behaviour tests live under
 // apps/kubic). A package missing from this table forbids every listed
 // target (the `??` fallback in checkTree), so a new package is denied by
 // default.
 const FORBIDDEN = {
-  core: [
-    'exec',
-    'worker',
-    'host',
-    'agents',
-    'trajectory',
-    'eval',
-    'tui',
-    'kubic',
-  ],
-  exec: ['worker', 'host', 'agents', 'trajectory', 'eval', 'tui', 'kubic'],
-  worker: ['host', 'tui', 'kubic'],
+  core: ['exec', 'agent', 'host', 'trajectory', 'eval', 'tui', 'kubic'],
+  exec: ['agent', 'host', 'trajectory', 'eval', 'tui', 'kubic'],
+  agent: ['host', 'tui', 'trajectory', 'eval', 'kubic'],
   host: ['tui', 'kubic'],
-  agents: ['host', 'worker', 'tui', 'trajectory', 'eval', 'kubic'],
-  trajectory: ['exec', 'worker', 'host', 'agents', 'eval', 'tui', 'kubic'],
-  eval: ['exec', 'worker', 'host', 'tui', 'kubic'],
-  tui: ['exec', 'worker', 'host', 'agents', 'trajectory', 'eval', 'kubic'],
+  trajectory: ['exec', 'agent', 'host', 'eval', 'tui', 'kubic'],
+  eval: ['exec', 'agent', 'host', 'tui', 'kubic'],
+  tui: ['exec', 'agent', 'host', 'trajectory', 'eval', 'kubic'],
   // apps/kubic is the composition root: may wire host + tui together.
   kubic: [],
 };
@@ -148,11 +138,11 @@ export function checkTree(root) {
           // Pi seam rule: only designated boundary files may touch Pi
           // modules — exact path match, no suffix bypass. Worker owns the
           // agent/model seam; TUI owns the presentation seam (it cannot
-          // import worker implementation, so it cannot reuse its boundary).
+          // import agent implementation, so it cannot reuse its boundary).
           const rel = relative(root, file);
           const isBoundary =
-            (owner === 'worker' &&
-              rel === join('packages', 'worker', 'src', 'pi-boundary.ts')) ||
+            (owner === 'agent' &&
+              rel === join('packages', 'agent', 'src', 'pi-boundary.ts')) ||
             (owner === 'tui' &&
               rel === join('packages', 'tui', 'src', 'tui-boundary.ts'));
           if (!isBoundary) {

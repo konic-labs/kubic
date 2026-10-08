@@ -51,7 +51,7 @@ The pure assembler is `packages/host/src/trajectory/run-trajectory.ts`
 
 `RESULT_STATUSES` is `completed`, `failed`, `cancelled`, `timeout`,
 `turn_limit`. `TRAJECTORY_FAILURE_CODES` snapshots the 16 lane failure
-codes owned by `packages/worker/src/lane/failures.ts` (pinned equal by
+codes owned by `packages/agent/src/lane/failures.ts` (pinned equal by
 test): `model_failed`, `model_refused`, `provider_transient`,
 `provider_auth`, `tool_failed`, `tool_invalid_args`, `tool_timeout`,
 `tool_unavailable`, `process_crashed`, `process_spawn_failed`,

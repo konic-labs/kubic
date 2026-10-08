@@ -13,8 +13,8 @@
 // Never blocks a tool call — the handlers return undefined except for the
 // untouched result, so telemetry can only observe the lane, never fail it.
 
-import type { HookRegistration } from '../../worker/src/pi-boundary.js';
-import { hook, ToolTask } from '../../worker/src/pi-boundary.js';
+import type { HookRegistration } from '../../agent/src/pi-boundary.js';
+import { hook, ToolTask } from '../../agent/src/pi-boundary.js';
 import {
   DebugLog,
   type DebugSink,

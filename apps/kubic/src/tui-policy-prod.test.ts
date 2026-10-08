@@ -12,19 +12,19 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { disposeAllGitSandboxes } from '../../../packages/exec/src/test-support/git-sandbox.js';
-import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
-import { ModelSelectError } from '../../../packages/worker/src/model-select.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import { ModelSelectError } from '../../../packages/agent/src/model-select.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { disposeAllGitSandboxes } from '../../../packages/exec/src/test-support/git-sandbox.js';
+import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
+import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   type CliConfigResult,

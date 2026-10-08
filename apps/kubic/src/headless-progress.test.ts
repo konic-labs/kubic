@@ -6,16 +6,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import type { RunProgressSink } from '../../../packages/host/src/run-cli.js';
-import { fauxToolUse } from '../../../packages/worker/src/lane/test-harness.js';
-import type { MutableModels } from '../../../packages/worker/src/pi-boundary.js';
+import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import type { MutableModels } from '../../../packages/agent/src/pi-boundary.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import type { RunProgressSink } from '../../../packages/host/src/run-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 describe('headless run progress', () => {

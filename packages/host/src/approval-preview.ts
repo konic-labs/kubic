@@ -1,15 +1,15 @@
 // The change an edit or write ask would make: computed against the file on
 // disk, in the same display form as the edit tool's own result
-// (packages/worker/src/ops/display-diff.ts), so the TUI's approval card shows
+// (packages/agent/src/ops/display-diff.ts), so the TUI's approval card shows
 // the diff instead of a path. Best effort: a file that cannot be read, is too
 // big or does not match gives no preview — the card then shows a path.
 
-import type { FileBridge } from '../../exec/src/file-bridge.js';
 import {
   displayDiff,
   type ToolDisplay,
   writeDisplay,
-} from '../../worker/src/ops/display-diff.js';
+} from '../../agent/src/ops/display-diff.js';
+import type { FileBridge } from '../../exec/src/file-bridge.js';
 
 /** Files past this size are not read for a preview. */
 export const APPROVAL_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;

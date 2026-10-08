@@ -6,16 +6,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
-import { abortLane } from '../../../packages/worker/src/lane/abort.js';
-import { createSession } from '../../../packages/worker/src/lane/session-store.js';
+import { abortLane } from '../../../packages/agent/src/lane/abort.js';
+import { createSession } from '../../../packages/agent/src/lane/session-store.js';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/worker/src/pi-boundary.js';
+} from '../../../packages/agent/src/pi-boundary.js';
+import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const mockState = vi.hoisted(() => ({ closeShouldReject: false }));
@@ -42,29 +42,26 @@ vi.mock(
   },
 );
 
-vi.mock(
-  '../../../packages/worker/src/lane/abort.js',
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import('../../../packages/worker/src/lane/abort.js')
-      >();
-    const wrapped = async (
-      ...args: Parameters<typeof actual.abortLane>
-    ): ReturnType<typeof actual.abortLane> => {
-      guardEvents.events.push('abort');
-      return actual.abortLane(...args);
-    };
-    return { ...actual, abortLane: vi.fn(wrapped) };
-  },
-);
+vi.mock('../../../packages/agent/src/lane/abort.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../../../packages/agent/src/lane/abort.js')
+    >();
+  const wrapped = async (
+    ...args: Parameters<typeof actual.abortLane>
+  ): ReturnType<typeof actual.abortLane> => {
+    guardEvents.events.push('abort');
+    return actual.abortLane(...args);
+  };
+  return { ...actual, abortLane: vi.fn(wrapped) };
+});
 
 vi.mock(
-  '../../../packages/worker/src/lane/session-store.js',
+  '../../../packages/agent/src/lane/session-store.js',
   async (importOriginal) => {
     const actual =
       await importOriginal<
-        typeof import('../../../packages/worker/src/lane/session-store.js')
+        typeof import('../../../packages/agent/src/lane/session-store.js')
       >();
     return {
       ...actual,

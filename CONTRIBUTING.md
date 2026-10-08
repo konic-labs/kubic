@@ -17,12 +17,14 @@ npm run build
 
 ## Before you open a pull request
 
-Run the checks that CI runs, in this order:
+Run the checks that CI's test job runs, in this order (the mutation jobs are
+switched off in `.github/workflows/ci.yml`):
 
 ```sh
 npm run typecheck
 npm run lint
 npm run lint:deps
+npm run lint:dead
 npm run check:pi
 npm run docs:check
 npm test

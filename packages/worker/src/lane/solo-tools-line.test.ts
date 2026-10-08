@@ -2,7 +2,7 @@
 // tool set. The prompt's `tools:` line and the conversation's offered set
 // are one intersection — base tools, narrowed by the permission classes when
 // declared and by the role allowlist when declared — in every combination,
-// including the classes-only one the pre-fix code advertised in full.
+// including the classes-only one, which must not be advertised in full.
 // Ported to the durable harness.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

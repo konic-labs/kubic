@@ -199,7 +199,7 @@ describe('restore mode preservation + residue sweep', () => {
 
   it('a recreated target keeps the restrictive default even when a same-pid tmp is stale', () => {
     const { store, root, recorded } = seed();
-    // Pre-fix residue (or pid reuse) sitting at the umask default under this
+    // Stale residue (or pid reuse) sitting at the umask default under this
     // process's exact tmp name: the recreate path has no target mode to copy,
     // so the stale mode must not leak into the recreated file.
     const staleSamePid = join(root, `f.txt.kubic-restore-${process.pid}.tmp`);

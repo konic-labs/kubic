@@ -11,8 +11,7 @@ import { type EvalCategory, isEvalCategory } from './categories.js';
 import type { EvalSignals } from './signals.js';
 
 // The record's size class (how much was run). Deliberately NOT called a
-// tier: tiers are the determinism tiers below, and the two were
-// conflated.
+// tier: tiers are the determinism tiers below, and the two stay distinct.
 const EVAL_SIZES = ['smoke', 'standard', 'extended'] as const;
 
 export type EvalSize = (typeof EVAL_SIZES)[number];

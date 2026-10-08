@@ -585,7 +585,7 @@ describe('arming after typing and against auto-repeat', () => {
   });
 
   describe('through the app', () => {
-    it('legacy held a and a prose pause both stay pending', async () => {
+    it('a held a on a legacy terminal and a prose pause both stay pending', async () => {
       const time = clock(0);
       const surface = createApprovalSurface({
         now: time.now,

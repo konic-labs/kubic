@@ -1,7 +1,7 @@
 // Lane abort with kill tree. `conversation.abort(context)` is the durable stop:
 // it withdraws queued inputs, marks every live task of the conversation's
-// ordinary scope, signals them, and resolves once the scope is idle (README
-// "Abort and Subagents"). Kubic's bash children run in detached process groups,
+// ordinary scope, signals them, and resolves once the scope is idle. Kubic's bash
+// children run in detached process groups,
 // so the harness's own cancellation cannot reach them: every such child is
 // tracked in the lane's OperationKillRegistry under its conversation id and is
 // killed here.

@@ -2,7 +2,7 @@
 //
 // Baseline capture and the end-of-run sweep hash every in-scope regular file.
 // Reading whole files made a 256MB artifact cost a 256MB boot spike, measured
-// (file=256MB → heapDelta=256.1MB) before this issue. The walk now streams in
+// (file=256MB → heapDelta=256.1MB). The walk streams in
 // chunks, and the load-bearing property is that the digest is UNCHANGED: the
 // baseline is compared against digests written by older versions, so a changed
 // digest would read as "every file changed" and rewrite journal history.
@@ -139,9 +139,9 @@ describe('bounded baseline hashing', () => {
   it('keeps the digest byte-identical when the file starts with a UTF-8 BOM', () => {
     // `TextDecoder('utf-8')` STRIPS a leading BOM
     // while `readFileSync(path, 'utf8')` keeps it as U+FEFF, so a BOM-prefixed
-    // file above the chunk size hashed differently from the pre-change code —
-    // the exact "every file changed, journal history rewritten" failure this
-    // issue forbids. A BOM-prefixed CSV/JSON export is all it takes.
+    // file above the chunk size must hash the same as a whole-file read, or every
+    // file reads as changed and the journal history is rewritten. A BOM-prefixed
+    // CSV/JSON export is all it takes.
     const body = 'a'.repeat(HASH_CHUNK_BYTES * 2);
     const root = tmpFile('bom.csv', `\uFEFF${body}`);
     const bridge = createNodeFileBridge('/');
@@ -258,8 +258,8 @@ describe('bounded baseline hashing', () => {
   });
 
   it('reports rather than silently reverting when a bridge cannot read ranges', () => {
-    // The issue ruled silence out. A partial bridge must not quietly restore
-    // whole-file reads: the fallback is announced through the notice hook.
+    // A partial bridge must not quietly restore whole-file reads: the fallback is
+    // announced through the notice hook.
     const root = tmpFile('big.txt', 'a'.repeat(HASH_CHUNK_BYTES * 2));
     const inner = createNodeFileBridge('/');
     const noRange: FileBridge = {

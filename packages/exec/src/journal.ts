@@ -266,7 +266,7 @@ export function sha256HexOfFile(
 ): string {
   const readRange = bridge.readFileRange?.bind(bridge);
   if (readRange === undefined) {
-    // Silence was the option the issue ruled out. Every production bridge
+    // A silent fallback is not allowed. Every production bridge
     // supplies the method, so this is a partial double or a future adapter —
     // but an unlogged revert to whole-file reads cannot be detected in the
     // field, so it is reported through the caller's receipt hook.
@@ -281,9 +281,9 @@ export function sha256HexOfFile(
   // `ignoreBOM: true` is load-bearing, not a stylistic choice. The default
   // decoder STRIPS a leading U+FEFF while `readFileSync(path, 'utf8')` keeps
   // it, so without this flag a BOM-prefixed file above the chunk size hashed
-  // differently from the pre-change code — measured: 8MiB with a BOM diverged
-  // while the no-BOM control matched. The consequence was the exact failure
-  // this bound must not cause: a baseline written by the older build swept by
+  // differently from a whole-file read — measured: 8MiB with a BOM diverged
+  // while the no-BOM control matched. The consequence would be the failure
+  // this bound must not cause: a baseline written by another build, swept by
   // this one appends a spurious unattributed write, and a tool-authored change
   // gets a duplicate entry shadowing it. A BOM-prefixed CSV/JSON export is all
   // it takes, nothing malicious.
@@ -2003,8 +2003,7 @@ export function reconcile(
 ): number {
   // Same read seam as captureBaseline: the hash honours `options.bridge`, and so
   // must this after-content read, or an injected double observes only half the
-  // walk. One bridge for the whole
-  // reconcile now.
+  // walk. One bridge serves the whole reconcile.
   const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = options.outOfScope ?? [];
   const current = captureBaseline(root, { ...options, previous: baseline });

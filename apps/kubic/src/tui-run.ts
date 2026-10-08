@@ -449,6 +449,10 @@ export interface TuiLaneLoop {
   // the last drain. The runner drains this after every settled turn so
   // each climb is reported once; absent means this boot records no climbs.
   drainEscalationRows?: () => string[];
+  // Warnings the boot and the settled turns' trajectory writes raised, as
+  // transcript lines. The screen owns the terminal, so they never reach
+  // stderr: drained once the first read lands and after every settled turn.
+  drainNotices?: () => string[];
 }
 
 // One row of the model picker's catalog (the lane's `listModels`
@@ -743,8 +747,9 @@ export interface TuiLaneBoot {
   // The approval posture the lane was installed with —
   // true seeds the status bar's OFF indicator from the first frame.
   fullAccess?: boolean;
-  // Warnings to print on stderr before the alt-screen opens
-  // (the full-access grant/in-force warning).
+  // Boot warnings (the full-access grant/in-force warning, skipped skills).
+  // Startup prints them on stderr before the alt-screen opens; a lane that
+  // /new or /resume boots shows them as transcript rows instead.
   notices?: string[];
   // The in-session full-access toggle. Writes
   // posture.json and one audit row through the same host helpers the CLI
@@ -1010,10 +1015,6 @@ export interface TuiRunOptions {
   };
   noSkills?: boolean;
   skillsList?: string[];
-  // Where an unresolvable explicit --skill warns. `kubic tui`
-  // projects the err channel here (with the boot's `warning: ` prefix);
-  // tests pass a collector. Absent means silent.
-  warn?: (line: string) => void;
   role?: string;
   roles?: {
     cwd?: string;
@@ -1452,6 +1453,10 @@ export async function bootTuiLane(
     // Transcript rows already reported: the drain
     // below reports each recorded climb once, however many turns settle.
     let reportedEscalations = 0;
+    // Warnings for the transcript, never stderr: the screen owns the terminal.
+    // The skill loader's unresolvable --skill and each settled turn's
+    // trajectory write push here; the loop drains them.
+    const transcriptNotices: string[] = [];
     const env = options.env ?? new NodeExecutionEnv(process.cwd());
     // Audit identity: the base revision this run started
     // from — captured once here, `none` outside git — and the thinking
@@ -1655,10 +1660,12 @@ export async function bootTuiLane(
             ? {}
             : { roleSkills: selectedRole.docSkills }),
           classes: installed.classes,
-          // An unresolvable explicit --skill warns on the
-          // boot's warn channel — never only on this debug sink the TUI
-          // drops — so a typo cannot read as a loaded skill.
-          ...(options.warn === undefined ? {} : { warn: options.warn }),
+          // An unresolvable explicit --skill is a transcript notice, never
+          // only a line on this debug sink the TUI drops — so a typo cannot
+          // read as a loaded skill.
+          warn: (line: string): void => {
+            transcriptNotices.push(`warning: ${line}`);
+          },
           log: () => {
             // TUI: no debug footer on the alt-screen; loader lines are
             // intentionally dropped (the block itself is observable).
@@ -2169,7 +2176,11 @@ export async function bootTuiLane(
                     toTrajectoryEscalation(event, null),
                   ),
                 }),
-            ...(options.warn === undefined ? {} : { warn: options.warn }),
+            // An unreadable ledger or journal is a transcript notice: the
+            // screen is up, so a stderr line would paint over it.
+            warn: (line: string): void => {
+              transcriptNotices.push(`warning: ${line}`);
+            },
           });
         },
         // The transcript rows for recorded climbs.
@@ -2182,6 +2193,9 @@ export async function bootTuiLane(
           reportedEscalations = escalationEvents.length;
           return rows;
         },
+        // The notices recorded since the last drain: the boot's skill
+        // warnings and the settled turn's trajectory warnings.
+        drainNotices: () => transcriptNotices.splice(0),
       },
       close,
     };
@@ -2450,17 +2464,6 @@ export function tuiBootOptions(
   const projection = definedOnly(forwarded);
   return {
     ...projection,
-    // The err channel for unresolvable explicit --skill
-    // values, with the boot's `warning: ` prefix. Outside `forwarded`
-    // (the table): warn is a channel, not a config projection.
-    // Absent err means a silent boot.
-    ...(provided.err === undefined
-      ? {}
-      : {
-          warn: (line: string): void => {
-            provided.err?.(`warning: ${line}`);
-          },
-        }),
     ...(answer === undefined ? {} : { answer }),
     ...(flags?.role === undefined ? {} : { role: flags.role }),
     ...(flags?.noSkills === undefined ? {} : { noSkills: flags.noSkills }),
@@ -3162,6 +3165,11 @@ export class TuiTurnRunner {
       });
     } catch {
       // The trajectory observes the turn; it never changes its outcome.
+    }
+    // The turn's trajectory warnings, as transcript notices (the
+    // screen is up, so stderr would paint over it).
+    for (const line of this.loop.drainNotices?.() ?? []) {
+      this.app.appendNotice([line]);
     }
     // Report recorded climbs — explicit or
     // automatic — as transcript rows, each exactly once. The drain is
@@ -4803,9 +4811,6 @@ export async function runTuiCommand(
           usage: next.usageRows ?? [],
         });
         syncPosture();
-        for (const notice of next.notices ?? []) {
-          (deps.err ?? deps.out)(`warning: ${notice}`);
-        }
         app.setEditorFooter(
           [next.pendingNotice, next.modelNotice]
             .filter((line): line is string => line !== undefined)
@@ -4813,6 +4818,15 @@ export async function runTuiCommand(
         );
         journalFeed?.now();
         await turn?.refreshTranscript();
+        // After the first read: a transcript snapshot replaces the notice
+        // cells, so an earlier append would be wiped. The alt-screen is up, so
+        // the new lane's boot notices (full access, skipped skills) join its
+        // queued warnings here, as transcript rows and never on stderr.
+        const rows = [
+          ...(next.notices ?? []).map((notice) => `warning: ${notice}`),
+          ...(next.loop?.drainNotices?.() ?? []),
+        ];
+        for (const line of rows) app.appendNotice([line]);
         if (!stopped) screen?.render();
       };
 
@@ -6127,6 +6141,12 @@ export async function runTuiCommand(
       // The steer key's own entry point (the key router is defined above).
       submitForLoop = submitPrompt;
       await turn?.refreshTranscript();
+      // The boot's warnings (an unresolvable --skill) land after the first
+      // read: a transcript snapshot replaces the notice cells.
+      for (const line of boot.loop?.drainNotices?.() ?? []) {
+        app.appendNotice([line]);
+      }
+      if (!stopped) screen?.render();
     }
   } catch (error) {
     // Post-start setup (boot/setFocus/render/input routing) can throw

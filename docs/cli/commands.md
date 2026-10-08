@@ -99,7 +99,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--role <name>` | Boot as a role: the `.kubic/roles/<name>.md` document when the workspace has one, else `~/.kubic/roles/<name>.md`, else the preset of that name embedded in the binary. The document's prompt text, tool set and model pin apply either way. A project document loads only for a trusted project root (same gate as project skills): untrusted, `--role` naming it refuses with the trust message and `kubic doctor` warns what trust would unlock. The document may declare a `skills: [...]` list: only the named skills reach the role's prompt — merged with each skill's own `roles:` list, so both must admit. Skills outside the role, or needing tools the lane's classes deny, are withheld with reasons (debug log; `kubic doctor` warns each as `skill:<name>`) — never offered, never silently failing. The role's permission classes merge with the config's, most restrictive wins, and the role document (or a `[roles.<name>]` layer) may declare `requires: [...]` — tools that always require approval under the role. `kubic doctor` prints each role's effective classes under the run's config. Roles match by the declared `role:` name, not the filename: `review.md` declaring `role: reviewer` boots `--role reviewer` with review.md's own `## Prompt` body — the prompt is never re-read from `<name>.md`. Robustness: one malformed document never blocks the other roles — `--role` naming it refuses with that file's parse error, `kubic doctor` fails it as `role:<file-stem>`; two documents declaring the same `role:` name are refused by name everywhere (run refusal + doctor fail), both files listed, and neither copy wins. |
 | `--model <provider/id>` | Session model override: the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`), plus `; did you mean '<id>'?` when a registered provider or model is close; the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
 | `--thinking <level>` | Session thinking-level override: the `cli` config layer — `--thinking` beats `KUBIC_MODEL_THINKING`, which beats `[model].thinking`, and a frozen enterprise `model.thinking` beats the flag (refused by name: `--thinking <level> refused: model.thinking is frozen by the enterprise layer`; the env override is silently not applied). The lane resolves it against the session's stored level and the role default (`--thinking` > env > session > role > config) and clamps it to the effective model — a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite. The applied level is committed to the session (a reattach keeps it) and recorded in `trajectory.json`. An unknown level exits 2 naming the levels that exist. |
-| `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first, then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` — never against the sessions root — and an unresolvable value warns on stderr (`skill skipped (unknown skill '…')`), without needing `--debug`. |
+| `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first, then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` — never against the sessions root — and an unresolvable value warns (`skill skipped (unknown skill '…')`) without needing `--debug`: on stderr for `run`, as a transcript notice for `tui`. |
 | `--invoke-skill <name>` | Invoke one booted skill by name (`run` only): its full content runs as the turn prompt — including skills hidden from the model — followed by `-p`/operand text as further instructions. An unknown name fails the run with `unknown skill '<name>'` (exit 1); a withheld skill (role gate, trust gate) resolves as unknown and fails the same way. |
 | `--no-skills` | Turn layered skill discovery off. |
 | `--autonomous` | Run to completion without stopping for input: the mode is recorded on the run's session (`autonomous`, else `interactive` — off by default, never assumed), a `run:start` row naming the mode lands in the audit ledger, and the result and `--json` envelope carry `mode` (the `status` already names the stop condition that ended the run). Combines freely with `--dangerously-skip-approvals` — the combination is legitimate for a batch run on a throwaway checkout, and the session plus the ledger name it. |
@@ -184,7 +184,9 @@ The file is readable by `kubic replay <file>` (or `--session <id>`),
 session exists (an invalid `--session` id, a missing session) writes none,
 and its ref stays `trajectory:<id>`. A trajectory that cannot be written is
 reported on stderr and never changes the run's exit code.
-`kubic tui` writes the same file after each settled turn.
+`kubic tui` writes the same file after each settled turn. A warning about
+that write (an unreadable audit ledger or journal) is a transcript notice
+there, not a stderr line: the screen owns the terminal.
 
 **Usage errors (exit 2, stderr, no lane).** commander parses the argv
 (`apps/kubic/src/commands/solo.ts`): a missing `-p`, a flag without its
@@ -465,7 +467,9 @@ settles the next ask — never the one nobody is waiting for.
 — and the bare `kubic --dangerously-skip-approvals` on a terminal — enables
 full access for the session it opens or resumes, through the same path as
 `kubic run`: `posture.json`, one `posture:full-access` audit row, and a
-`warning:` line on stderr before the screen opens. In the session itself the
+`warning:` line on stderr before the screen opens. A lane that `/new` or
+`/resume` boots in full access names its notice as a transcript row, since the
+screen is already up. In the session itself the
 same posture can be toggled with `Alt+A` or `/approvals on|off`:
 `Alt+A` flips whichever way the session is currently in, while `on`/`off`
 name a direction and only report when it is already in force; enabling asks
@@ -496,7 +500,8 @@ same context the headless one does:
   (repeatable), `--no-skills` turns layered discovery off — and explicit
   `--skill` paths still apply under `--no-skills`, exactly as `run`.
   Relative paths resolve against the invoking cwd, and an
-  unresolvable value warns on stderr — same as `run`.
+  unresolvable value is a `warning:` line in the transcript: the screen owns
+  stderr.
 - **Roles:** `--role <name>` loads `.kubic/roles/<name>.md` — else `~/.kubic/roles/<name>.md` — or the
   matching preset embedded in the binary when neither has such a
   document (the five presets ship with `kubic`, and a repo document of the same name replaces its preset) — the document's prompt text replaces the solo

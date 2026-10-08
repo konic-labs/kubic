@@ -19,13 +19,12 @@ function envelope(status, summary, extra = {}) {
 
 function trajectory(overrides = {}) {
   return {
-    schema_version: '1.1',
-    identity: { sessionId: 'tool-1', agentId: 'root', workerId: null },
+    schema_version: '1.0',
+    identity: { sessionId: 'tool-1', agentId: 'root' },
     provenance: {
       sessionId: 'tool-1',
       agentId: 'root',
       pid: 10,
-      generation: 0,
       worktree: CWD,
       model: 'faux/echo',
     },
@@ -264,32 +263,30 @@ describe('faux smoke checker: run-produced trajectories', () => {
       { ...healthyFiles(), [TOOL_TRAJECTORY]: JSON.stringify({ x: 1 }) },
     );
     assert.ok(
-      foreign.problems.some((p) => p.includes('is not a trajectory export')),
+      foreign.problems.some((p) =>
+        p.includes('is not a 1.0 trajectory export'),
+      ),
     );
   });
 
-  it('accepts a legacy 1.0 trajectory record and the current 1.1 one', () => {
-    // 1.1 additions are optional on read: both majors pass.
-    const legacy = smoke(
+  it('pins the 1.0 export the binary writes and names any other version', () => {
+    const ok = smoke(
+      {},
+      { ...healthyFiles(), [TOOL_TRAJECTORY]: JSON.stringify(trajectory()) },
+    );
+    assert.deepEqual(ok.problems, []);
+    const other = smoke(
       {},
       {
         ...healthyFiles(),
         [TOOL_TRAJECTORY]: JSON.stringify(
-          trajectory({ schema_version: '1.0' }),
+          trajectory({ schema_version: '1.4' }),
         ),
       },
     );
-    assert.deepEqual(legacy.problems, []);
-    const current = smoke(
-      {},
-      {
-        ...healthyFiles(),
-        [TOOL_TRAJECTORY]: JSON.stringify(
-          trajectory({ schema_version: '1.1' }),
-        ),
-      },
+    assert.ok(
+      other.problems.some((p) => p.includes('is not a 1.0 trajectory export')),
     );
-    assert.deepEqual(current.problems, []);
   });
 
   it('names a trajectory for another session or without the tool call', () => {

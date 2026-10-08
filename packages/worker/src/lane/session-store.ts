@@ -24,15 +24,13 @@
 //     once, from the same value as the document, and re-synced from the
 //     document on attach.
 //
-// fsync: OFF (pi-durable's default). A process crash loses nothing
-// (the page cache outlives it) and a power loss costs at most the newest
-// commit, which recovery drops whole. The change journal is Kubic's fsync'd
-// store — that is where "this change can be undone" is guaranteed.
+// fsync: OFF (pi-durable's default). A process crash loses nothing (the page
+// cache outlives it) and a power loss costs at most the newest commit, which
+// recovery drops whole. The change journal is Kubic's fsync'd store — that is
+// where "this change can be undone" is guaranteed.
 //
-// Legacy sessions: a transcript in the JSONL layout lives at
-// <root>/--<cwd>--/<ts>_<id>.jsonl. It is listed as
-// `format: 'legacy'` and refused on attach with SessionFormatError — no
-// converter, the repo is unreleased.
+// A folder without a storage file is not a session: it is never listed and
+// never attachable.
 
 import { dirname, join } from 'node:path';
 import type { RunMode } from '../../../agents/src/policy.js';
@@ -69,23 +67,12 @@ import { bridgeToPiFileSystem } from './session-fs.js';
 // packages/host/src/run-cli.ts) and `sessions prune` uses.
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-// pi's transcript directories: `--<cwd with /, \ and : mapped to -->--`. Their
-// name passes the id class, but they hold the transcripts of EVERY session
-// recorded against that cwd (legacy layout), never one session's state dir.
-const LEGACY_DIR_PATTERN = /^--.*--$/;
-
-// A usable session id is a plain path segment that is NOT shaped like a pi
-// transcript directory: `listSessions` classifies `--…--` as the legacy layout,
-// so a session with such an id would be invisible to `sessions list`, the
-// overlap probe and `kubic doctor` — attachable, but unlistable. Refusing the
-// shape on both paths is the containment rule the id class already carries.
 function isSessionId(id: string): boolean {
-  return SESSION_ID_PATTERN.test(id) && !LEGACY_DIR_PATTERN.test(id);
+  return SESSION_ID_PATTERN.test(id);
 }
 
-// A JSONL header is one short line (`{kind:"kubic.session",…}` for Kubic's,
-// `{v:4,kind:"header",…}` for a legacy transcript); this bounds the read so
-// listing never pulls a whole transcript into memory.
+// A JSONL header is one short line (`{kind:"kubic.session",…}`); this bounds
+// the read so listing never pulls a whole transcript into memory.
 const HEADER_WINDOW_BYTES = 64 * 1024;
 
 export interface SessionStore {
@@ -173,15 +160,11 @@ export interface SessionHandle {
   release(context: Context): Promise<void>;
 }
 
-// One listed session. `format` is 'legacy' for a transcript in the legacy
-// layout: it is
-// listed so the operator can see it, and it can never be attached. `meta` is
-// absent when nothing readable recorded it (a hand-made or half-written
-// session directory) — listing never guesses.
+// One listed session. `meta` is absent when nothing readable recorded it (a
+// hand-made or half-written session directory) — listing never guesses.
 export type SessionListEntry = {
   id: string;
   meta?: KubicSessionMeta;
-  format: 'durable' | 'legacy';
 };
 
 export class SessionIdError extends Error {
@@ -460,8 +443,7 @@ function isSessionShaped(entry: BridgeFileInfo): boolean {
   return (
     entry.isDirectory &&
     !entry.isSymbolicLink &&
-    SESSION_ID_PATTERN.test(entry.name) &&
-    !LEGACY_DIR_PATTERN.test(entry.name)
+    SESSION_ID_PATTERN.test(entry.name)
   );
 }
 
@@ -498,18 +480,13 @@ function parseJsonObject(
   }
 }
 
-// An ISO-8601 timestamp from a stored value: Kubic writes ISO strings, a legacy
-// header carries milliseconds. Anything else is "unrecorded" — the listing
-// omits the metadata rather than inventing a time.
+// An ISO-8601 timestamp from a stored value: Kubic writes ISO strings.
+// Anything else is "unrecorded" — the listing omits the metadata rather than
+// inventing a time.
 function isoFrom(value: unknown): string | undefined {
-  if (typeof value === 'string') {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Date(value).toISOString();
-  }
-  return undefined;
+  if (typeof value !== 'string') return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
 }
 
 // The metadata a stored record actually holds. `cwd` and `createdAt` are both
@@ -601,11 +578,8 @@ export async function forkSession(
 ): Promise<ForkSessionResult> {
   if (!isSessionId(sourceId)) throw new SessionIdError(sourceId);
   const sourceDir = sessionDirOf(store, sourceId);
-  if (!store.bridge.exists(storagePathOf(sourceDir))) {
-    if (findLegacyTranscript(store, sourceId) !== undefined)
-      throw new SessionFormatError(sourceId);
+  if (!store.bridge.exists(storagePathOf(sourceDir)))
     throw new SessionAttachError(sourceId);
-  }
   const id = options.id ?? uuidv7();
   if (!isSessionId(id)) throw new SessionIdError(id);
   const targetDir = sessionDirOf(store, id);
@@ -842,14 +816,9 @@ export async function createSession(
   if (!isSessionId(sessionId)) throw new SessionIdError(sessionId);
   const sessionDir = sessionDirOf(store, sessionId);
   // Refusals before the lock: a session that already exists is never
-  // re-created over, and an id that belongs to a legacy session is refused by
-  // name — reusing
-  // it would mix a new durable session into the old session's journal, spans
-  // and approval posture.
+  // re-created over.
   if (store.bridge.exists(storagePathOf(sessionDir)))
     throw new Error(`Session already exists: ${sessionId}`);
-  if (findLegacyTranscript(store, sessionId) !== undefined)
-    throw new SessionFormatError(sessionId);
   // The lock is acquired FIRST: it is the only guard around a
   // storage open, so it must be held before the storage exists, not after.
   // The lock primitive creates the session dir eagerly, which is also the
@@ -917,39 +886,6 @@ export class SessionAttachError extends Error {
   }
 }
 
-// A session directory in the legacy layout. There is no converter: the
-// refusal is the whole behaviour.
-export class SessionFormatError extends Error {
-  constructor(sessionId: string) {
-    super(
-      `session ${sessionId} was written by Kubic on Pi 0.87; start a new session`,
-    );
-    this.name = 'SessionFormatError';
-  }
-}
-
-// The legacy transcript of `id`, if the sessions root holds one: the
-// JSONL layout, `<root>/--<cwd>--/<ts>_<id>.jsonl`, whose first
-// line is the format-4 header. Matching is by that header, so a transcript
-// whose file name was changed is still recognised. A torn or foreign `.jsonl`
-// is not a legacy session and never claims the id.
-function findLegacyTranscript(
-  store: SessionStore,
-  id: string,
-): string | undefined {
-  for (const dir of listDirOrNothing(store.bridge, store.root)) {
-    if (!dir.isDirectory || !LEGACY_DIR_PATTERN.test(dir.name)) continue;
-    for (const file of listDirOrNothing(store.bridge, dir.path)) {
-      if (file.isFile === false || !file.name.endsWith('.jsonl')) continue;
-      const header = parseJsonObject(readFirstLine(store.bridge, file.path));
-      if (header === undefined) continue;
-      if (header.kind !== 'header' || header.v !== 4) continue;
-      if (header.id === id) return file.path;
-    }
-  }
-  return undefined;
-}
-
 export async function attachSession(
   store: SessionStore,
   sessionId: string,
@@ -958,14 +894,10 @@ export async function attachSession(
   // Containment before any path join: the id becomes a directory name.
   if (!isSessionId(sessionId)) throw new SessionAttachError(sessionId);
   const sessionDir = sessionDirOf(store, sessionId);
-  // Nothing to open: either a legacy transcript holds this id (refused by name)
-  // or the store has never seen it. Checked before the lock so an unknown id
-  // never creates a session directory.
-  if (!store.bridge.exists(storagePathOf(sessionDir))) {
-    if (findLegacyTranscript(store, sessionId) !== undefined)
-      throw new SessionFormatError(sessionId);
+  // Nothing to open: the store has never seen this id. Checked before the
+  // lock so an unknown id never creates a session directory.
+  if (!store.bridge.exists(storagePathOf(sessionDir)))
     throw new SessionAttachError(sessionId);
-  }
   // The lock is held before the storage is opened: no
   // reader ever observes a session another live attachment is writing, and no
   // second process ever opens the same pi-durable storage.
@@ -1003,44 +935,19 @@ export function listSessions(
   store: SessionStore,
   _context: Context,
 ): Promise<SessionListEntry[]> {
-  const entries = new Map<string, SessionListEntry>();
-  // Legacy transcripts first, so a current-format session with the same id
-  // wins the map.
-  for (const dir of listDirOrNothing(store.bridge, store.root)) {
-    if (!dir.isDirectory || !LEGACY_DIR_PATTERN.test(dir.name)) continue;
-    for (const file of listDirOrNothing(store.bridge, dir.path)) {
-      if (file.isFile === false || !file.name.endsWith('.jsonl')) continue;
-      const header = parseJsonObject(readFirstLine(store.bridge, file.path));
-      if (header === undefined) continue;
-      if (header.kind !== 'header' || header.v !== 4) continue;
-      // The id is rendered by `kubic sessions list`: a foreign or
-      // hand-edited header whose id is not a session id is skipped, never
-      // listed.
-      if (typeof header.id !== 'string' || !isSessionId(header.id)) continue;
-      const meta = metaFrom(header);
-      entries.set(header.id, {
-        id: header.id,
-        ...(meta === undefined ? {} : { meta }),
-        format: 'legacy',
-      });
-    }
-  }
+  const entries: SessionListEntry[] = [];
   for (const dir of listDirOrNothing(store.bridge, store.root)) {
     if (!isSessionShaped(dir)) continue;
     // A directory without a storage is not a session: an interrupted create
     // leaves a lock (or a journal) behind, and listing it would invent one.
     if (!store.bridge.exists(storagePathOf(dir.path))) continue;
     const meta = readSessionHeader(store, dir.path);
-    entries.set(dir.name, {
-      id: dir.name,
-      ...(meta === undefined ? {} : { meta }),
-      format: 'durable',
-    });
+    entries.push({ id: dir.name, ...(meta === undefined ? {} : { meta }) });
   }
   // Order: newest first, then by id, then by workspace. ISO-8601 UTC
   // timestamps sort lexicographically, so the stored string is the key.
   return Promise.resolve(
-    [...entries.values()].sort(
+    entries.sort(
       (left, right) =>
         (right.meta?.createdAt ?? '').localeCompare(
           left.meta?.createdAt ?? '',
@@ -1060,9 +967,6 @@ export function listSessions(
 // note). The recorded workspace is `meta.workspace` when the session
 // declared one, its cwd otherwise. Local-store view only: no cross-host
 // truth is claimed.
-//
-// Legacy transcripts are excluded: they cannot be attached, so they can
-// never be the live sibling this probe warns about.
 export function sessionsTouchingWorkspace(
   store: SessionStore,
   workspace: string,
@@ -1071,9 +975,7 @@ export function sessionsTouchingWorkspace(
   return listSessions(store, context).then((entries) =>
     entries
       .filter(
-        (entry) =>
-          entry.format === 'durable' &&
-          (entry.meta?.workspace ?? entry.meta?.cwd) === workspace,
+        (entry) => (entry.meta?.workspace ?? entry.meta?.cwd) === workspace,
       )
       .map((entry) => entry.id),
   );

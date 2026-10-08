@@ -44,7 +44,6 @@ function seed(): FileJournalStore {
     after: 'y\n',
     bytesDelta: 0,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 1700000000000,
   });
@@ -56,7 +55,6 @@ function seed(): FileJournalStore {
     after: 'm\n',
     bytesDelta: 2,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: null,
     timestamp: 1700000001000,
     unattributed: true,
@@ -65,12 +63,12 @@ function seed(): FileJournalStore {
 }
 
 describe('journal log + status', () => {
-  it('renders the timeline with timestamp/agent/toolCall/op/path/bytes', () => {
+  it('renders the timeline with timestamp/source/toolCall/op/path/bytes', () => {
     const lines = renderLog(seed());
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('edit');
     expect(lines[0]).toContain('a.txt');
-    expect(lines[0]).toContain('root');
+    expect(lines[0]).toContain('tool');
     expect(lines[0]).toContain('call-1');
     expect(lines[0]).toContain('2023-11-14T22:13:20.000Z');
     expect(lines[1]).toContain('reconciled');
@@ -205,7 +203,6 @@ describe('corrupt index lines', () => {
       after: 'x\n',
       bytesDelta: 2,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1700000000000,
     });
@@ -237,7 +234,6 @@ describe('corrupt count', () => {
       after: 'v2\n',
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1700000000000,
     });
@@ -269,7 +265,6 @@ describe('HEAD-move markers in log + status', () => {
       headFrom: MOVE_A,
       headTo: MOVE_B,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 1700000002000,
       unattributed: true,

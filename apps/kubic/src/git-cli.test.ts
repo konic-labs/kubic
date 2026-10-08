@@ -175,7 +175,6 @@ describe('git guard + CLI + reconciliation', () => {
     writeFileSync(join(root, 'tracked.txt'), 'v2-external\n');
     const added = reconcile(store, baseline, root, {
       sessionId: 's1',
-      agentId: 'root',
       timestamp: 1,
     });
     expect(added).toBe(1);
@@ -208,7 +207,6 @@ describe('git guard + CLI + reconciliation', () => {
     expect(out.ok).toBe(true);
     const added = reconcile(store, baseline, root, {
       sessionId: 's1',
-      agentId: 'root',
       timestamp: 2,
     });
     expect(added).toBe(1);

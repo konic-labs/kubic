@@ -123,7 +123,6 @@ describe('durable next-day undo', () => {
       after: 'changed\n',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1700000000000,
     });
@@ -149,7 +148,6 @@ describe('durable next-day undo', () => {
       after: 'mystery\n',
       bytesDelta: 8,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 1,
       unattributed: true,
@@ -172,7 +170,6 @@ describe('durable next-day undo', () => {
       after: 'changed\n',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1,
     });
@@ -199,7 +196,6 @@ describe('durable next-day undo', () => {
       after: 'after\n',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1,
     });
@@ -212,7 +208,6 @@ describe('durable next-day undo', () => {
       after: 'after\n',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 2,
     });

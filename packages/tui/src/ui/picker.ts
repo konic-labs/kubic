@@ -25,7 +25,7 @@ export interface PickerRow {
   readonly right?: string;
   /** The one in use: `●` and `current`. */
   readonly current?: boolean;
-  /** Shown greyed and never selected (a legacy session). */
+  /** Shown greyed and never selected (for example, a session another kubic holds). */
   readonly disabled?: boolean;
   /** After the text, greyed: why it cannot be chosen. */
   readonly note?: string;

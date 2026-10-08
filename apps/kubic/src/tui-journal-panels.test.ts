@@ -456,7 +456,6 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
       after: 'from before\n',
       bytesDelta: 12,
       sessionId: first.sessionId,
-      agentId: 'root',
       toolCallId: 'call-earlier',
       timestamp: Date.now(),
     });
@@ -487,7 +486,6 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
       after: 'x\n',
       bytesDelta: 2,
       sessionId: first.sessionId,
-      agentId: 'root',
       toolCallId: 'call-evil',
       timestamp: Date.now(),
     });

@@ -13,25 +13,22 @@ import {
   TrajectorySchemaError,
 } from './schema.js';
 
-// A full, valid record through the real builder: the
-// minor-tolerance and structural tests below mutate one field of it, so
-// they exercise the parser, not a hand-drawn shape.
+// A full, valid record through the real builder: the structural tests below
+// mutate one field of it, so they exercise the parser, not a hand-drawn shape.
 function validInput(): BuildTrajectoryInput {
   return {
     task: { taskId: 'task-1', objective: 'Fix the widget', role: 'writer' },
-    identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
+    identity: { sessionId: 'sess-1', agentId: 'agent-1' },
     model: { provider: 'acme', model: 'm1', thinking: null, escalations: [] },
-    prompt: { text: 'Fix the widget', constraints: [] },
-    resources: { skills: [], promptTemplates: [] },
-    transfer: null,
+    prompt: { text: 'Fix the widget' },
+    resources: { skills: [] },
     actions: [],
     observations: [],
-    state: { phase: 'done', snapshot: null },
+    state: { phase: 'done' },
     provenance: {
       sessionId: 'sess-1',
       agentId: 'agent-1',
       pid: null,
-      generation: 3,
       worktree: '/repo',
       model: 'acme/m1',
     },
@@ -84,8 +81,8 @@ function parseError(input: unknown): TrajectorySchemaError {
 }
 
 describe('trajectory schema version', () => {
-  it('publishes schema_version 1.3', () => {
-    expect(SCHEMA_VERSION).toBe('1.3');
+  it('publishes schema_version 1.0', () => {
+    expect(SCHEMA_VERSION).toBe('1.0');
     expect(SCHEMA_MAJOR).toBe(1);
   });
 
@@ -97,22 +94,9 @@ describe('trajectory schema version', () => {
     expect(err.message).toMatch(/2.*major 1|major 1.*2/i);
   });
 
-  it('publishes stability and a changelog headed by the current version', () => {
+  it('publishes stability and a changelog with the single 1.0 entry', () => {
     expect(TRAJECTORY_STABILITY).toBe('stable');
-    expect(TRAJECTORY_CHANGELOG.length).toBeGreaterThan(0);
-    expect(TRAJECTORY_CHANGELOG[0]?.version).toBe(SCHEMA_VERSION);
-  });
-
-  // Run budgets were retired in 1.3: an older record that still carries the
-  // budget block parses, and the block is ignored (unknown keys survive).
-  it('parses an older record that carries the retired budget block', () => {
-    const record = {
-      ...validExport(),
-      budget: { limits: { maxToolCalls: 1 }, usage: { toolCalls: 2 } },
-    };
-    expect(() =>
-      parseTrajectoryExport(JSON.parse(JSON.stringify(record))),
-    ).not.toThrow();
+    expect(TRAJECTORY_CHANGELOG.map((entry) => entry.version)).toEqual(['1.0']);
   });
 
   it('accepts a newer minor of the same major (tolerant, no shim)', () => {
@@ -171,10 +155,6 @@ describe('trajectory structural validation', () => {
       [{ result: null }, /trajectory\.result must be an object \(got null\)/],
       [{ task: null }, /trajectory\.task must be an object \(got null\)/],
       [{ usage: null }, /trajectory\.usage must be an object \(got null\)/],
-      [
-        { transfer: 'x' },
-        /trajectory\.transfer must be an object or null \(got string\)/,
-      ],
       [{ eval: null }, /trajectory\.eval must be an object \(got null\)/],
     ];
     for (const [override, message] of cases) {
@@ -197,11 +177,15 @@ describe('trajectory structural validation', () => {
       ],
       [{ model: { provider: 'acme' } }, /trajectory\.model\.model is required/],
       [
+        { identity: { sessionId: 'sess-1' } },
+        /trajectory\.identity\.agentId is required/,
+      ],
+      [
         { usage: { ...(record.usage as object), inputTokens: '10' } },
         /trajectory\.usage\.inputTokens must be a number \(got string\)/,
       ],
       [
-        { prompt: { text: 1, constraints: [] } },
+        { prompt: { text: 1 } },
         /trajectory\.prompt\.text must be a string \(got number\)/,
       ],
       [
@@ -218,6 +202,21 @@ describe('trajectory structural validation', () => {
       expect(err.code, JSON.stringify(override)).toBe('malformed');
       expect(err.message, JSON.stringify(override)).toMatch(message);
     }
+  });
+
+  it('refuses an environment that was not the used snapshot', () => {
+    const record = validExport();
+    const err = parseError({
+      ...record,
+      environment: {
+        ...(record.environment as object),
+        capturedFrom: 'intended',
+      },
+    });
+    expect(err.code).toBe('malformed');
+    expect(err.message).toMatch(
+      /trajectory\.environment\.capturedFrom must be 'used' \(got "intended"\)/,
+    );
   });
 
   it('accepts every published result status', () => {
@@ -262,98 +261,78 @@ describe('trajectory structural validation', () => {
   it('recognizes the failure codes and nothing else', () => {
     expect(isTrajectoryFailureCode('tool_timeout')).toBe(true);
     expect(isTrajectoryFailureCode('run_limit')).toBe(true);
-    expect(isTrajectoryFailureCode('budget_exhausted')).toBe(false);
+    expect(isTrajectoryFailureCode('made_up_code')).toBe(false);
     expect(isTrajectoryFailureCode('completed')).toBe(false);
     expect(isTrajectoryFailureCode('')).toBe(false);
   });
 });
 
-describe('trajectory schema 1.1', () => {
-  it('parses a 1.0 record without any 1.1 field (compat)', () => {
+describe('trajectory 1.0 sections', () => {
+  it('exports only the 1.0 keys of each section', () => {
     const record = validExport();
-    const identity = { ...(record.identity as Record<string, unknown>) };
-    delete identity.parentSessionId;
-    delete identity.role;
-    const state = { ...(record.state as Record<string, unknown>) };
-    delete state.operations;
-    delete state.memos;
-    const result = { ...(record.result as Record<string, unknown>) };
-    delete result.tests;
-    delete result.artifacts;
-    const parsed = parseTrajectoryExport({
-      ...record,
-      schema_version: '1.0',
-      identity,
-      state,
-      result,
-    });
-    expect(parsed.schema_version).toBe('1.0');
-    expect(parsed.identity.parentSessionId).toBeUndefined();
-    expect(parsed.identity.role).toBeUndefined();
-    expect(parsed.state.operations).toBeUndefined();
-    expect(parsed.state.memos).toBeUndefined();
-    expect(parsed.result.tests).toBeUndefined();
-    expect(parsed.result.artifacts).toBeUndefined();
+    const keysOf = (section: string): string[] =>
+      Object.keys(record[section] as Record<string, unknown>).sort();
+    expect(keysOf('identity')).toEqual(['agentId', 'sessionId']);
+    expect(keysOf('prompt')).toEqual(['text']);
+    expect(keysOf('resources')).toEqual(['skills']);
+    expect(keysOf('state')).toEqual(['phase']);
+    expect(keysOf('provenance')).toEqual([
+      'agentId',
+      'model',
+      'pid',
+      'sessionId',
+      'worktree',
+    ]);
+    expect(keysOf('result')).toEqual([
+      'error',
+      'failureCategory',
+      'status',
+      'summary',
+    ]);
+    expect(keysOf('eval')).toEqual(['labels']);
+    expect(record).not.toHaveProperty('transfer');
   });
 
-  it('type-checks every 1.1 field when present, naming the JSON path', () => {
+  it('type-checks every escalation and approval entry, naming the JSON path', () => {
     const record = validExport();
-    const identity = record.identity as Record<string, unknown>;
     const model = record.model as Record<string, unknown>;
-    const state = record.state as Record<string, unknown>;
-    const result = record.result as Record<string, unknown>;
-    const escalation = { reason: 'r', at: 't', toModel: 'acme/m2' };
+    const escalation = {
+      reason: 'r',
+      at: '2026-09-23T10:00:30.000Z',
+      fromModel: 'acme/m1',
+      toModel: 'acme/m2',
+      thinking: null,
+    };
     const approval = {
       approvalId: 'a',
       capability: 'c',
       verdict: 'approved',
       by: null,
     };
-    // One wrong-type case per entry of the optional-field tables (identity,
-    // state, result, escalation, approval, operation): dropping an entry
-    // from a table would let its case pass, so every entry stays pinned.
+    // One wrong-type case per required key of an escalation and an approval:
+    // dropping an entry from the required tables would let its case pass.
     const cases: Array<[string, Record<string, unknown>, RegExp]> = [
       [
-        'identity.parentSessionId',
-        { identity: { ...identity, parentSessionId: 5 } },
-        /trajectory\.identity\.parentSessionId must be a string or null \(got number\)/,
+        'model.escalations[0].reason',
+        { model: { ...model, escalations: [{ ...escalation, reason: 1 }] } },
+        /trajectory\.model\.escalations\[0\]\.reason must be a string \(got number\)/,
       ],
       [
-        'identity.role',
-        { identity: { ...identity, role: null } },
-        /trajectory\.identity\.role must be a string \(got null\)/,
-      ],
-      [
-        'state.operations',
-        { state: { ...state, operations: {} } },
-        /trajectory\.state\.operations must be an array \(got object\)/,
-      ],
-      [
-        'state.memos',
-        { state: { ...state, memos: ['a', 2] } },
-        /trajectory\.state\.memos must be an array of strings \(got array\)/,
-      ],
-      [
-        'result.tests',
-        { result: { ...result, tests: 'x' } },
-        /trajectory\.result\.tests must be an array of strings \(got string\)/,
-      ],
-      [
-        'result.artifacts',
-        { result: { ...result, artifacts: [1] } },
-        /trajectory\.result\.artifacts must be an array of strings \(got array\)/,
+        'model.escalations[0].at',
+        { model: { ...model, escalations: [{ ...escalation, at: null }] } },
+        /trajectory\.model\.escalations\[0\]\.at must be a string \(got null\)/,
       ],
       [
         'model.escalations[0].fromModel',
         {
           model: { ...model, escalations: [{ ...escalation, fromModel: 1 }] },
         },
-        /trajectory\.model\.escalations\[0\]\.fromModel must be a string \(got number\)/,
+        /trajectory\.model\.escalations\[0\]\.fromModel must be a string or null \(got number\)/,
       ],
       [
         'model.escalations[0].toModel',
         { model: { ...model, escalations: [{ ...escalation, toModel: 1 }] } },
-        /trajectory\.model\.escalations\[0\]\.toModel must be a string \(got number\)/,
+        /trajectory\.model\.escalations\[0\]\.toModel must be a string or null \(got number\)/,
       ],
       [
         'model.escalations[0].thinking',
@@ -366,34 +345,19 @@ describe('trajectory schema 1.1', () => {
         /trajectory\.model\.escalations\[0\] must be an object \(got number\)/,
       ],
       [
-        'approvals[0].requested',
-        { approvals: [{ ...approval, requested: 5 }] },
-        /trajectory\.approvals\[0\]\.requested must be a string or null \(got number\)/,
+        'approvals[0].approvalId',
+        { approvals: [{ ...approval, approvalId: 2 }] },
+        /trajectory\.approvals\[0\]\.approvalId must be a string \(got number\)/,
       ],
       [
-        'approvals[0].justification',
-        { approvals: [{ ...approval, justification: 5 }] },
-        /trajectory\.approvals\[0\]\.justification must be a string or null \(got number\)/,
+        'approvals[0].by',
+        { approvals: [{ ...approval, by: 5 }] },
+        /trajectory\.approvals\[0\]\.by must be a string or null \(got number\)/,
       ],
       [
         'approvals[0] (non-object)',
         { approvals: [5] },
         /trajectory\.approvals\[0\] must be an object \(got number\)/,
-      ],
-      [
-        'state.operations[0].id',
-        { state: { ...state, operations: [{ kind: 'read' }] } },
-        /trajectory\.state\.operations\[0\]\.id is required/,
-      ],
-      [
-        'state.operations[0].kind',
-        { state: { ...state, operations: [{ id: 'op-1' }] } },
-        /trajectory\.state\.operations\[0\]\.kind is required/,
-      ],
-      [
-        'state.operations[0] (non-object)',
-        { state: { ...state, operations: [5] } },
-        /trajectory\.state\.operations\[0\] must be an object \(got number\)/,
       ],
     ];
     for (const [label, override, message] of cases) {
@@ -401,5 +365,71 @@ describe('trajectory schema 1.1', () => {
       expect(err.code, label).toBe('malformed');
       expect(err.message, label).toMatch(message);
     }
+  });
+
+  it('reads an escalation an earlier build recorded with only its reason and time', () => {
+    const record = validExport();
+    const parsed = parseTrajectoryExport({
+      ...record,
+      model: {
+        ...(record.model as object),
+        escalations: [
+          {
+            reason: 'context overflow',
+            at: '2026-10-04T10:00:30.000Z',
+            future_key: 'kept',
+          },
+        ],
+      },
+    });
+    expect(parsed.model.escalations).toEqual([
+      {
+        reason: 'context overflow',
+        at: '2026-10-04T10:00:30.000Z',
+        fromModel: null,
+        toModel: null,
+        thinking: null,
+        future_key: 'kept',
+      },
+    ]);
+  });
+
+  // Eval parses an export that the CLI has already parsed. The first read fills
+  // an absent endpoint with null, so the second read must accept that shape.
+  it('parses a parsed export again, unchanged', () => {
+    const record = validExport();
+    const model = record.model as Record<string, unknown>;
+    const once = parseTrajectoryExport({
+      ...record,
+      model: {
+        ...model,
+        escalations: [
+          { reason: 'context overflow', at: '2026-10-04T10:00:30.000Z' },
+        ],
+      },
+    });
+    expect(parseTrajectoryExport(once)).toEqual(once);
+    expect(parseTrajectoryExportJSON(JSON.stringify(once))).toEqual(once);
+  });
+
+  it('reads an export an earlier build wrote at schema 1.3, keeping the keys 1.0 no longer defines', () => {
+    const record = validExport();
+    const parsed = parseTrajectoryExport({
+      ...record,
+      schema_version: '1.3',
+      identity: {
+        ...(record.identity as object),
+        workerId: null,
+        role: 'writer',
+      },
+      prompt: { ...(record.prompt as object), constraints: [] },
+      state: { phase: 'done', snapshot: {}, operations: [], memos: [] },
+      provenance: { ...(record.provenance as object), generation: 0 },
+      result: { ...(record.result as object), tests: [], artifacts: [] },
+      eval: { suite: null, caseId: null, labels: {} },
+    });
+    expect(parsed.schema_version).toBe('1.3');
+    expect(parsed.provenance).toMatchObject({ generation: 0 });
+    expect(parsed.eval).toEqual({ suite: null, caseId: null, labels: {} });
   });
 });

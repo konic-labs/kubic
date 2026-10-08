@@ -414,7 +414,7 @@ export interface TuiPickerRow {
   readonly description?: string;
   /** Start the list on this row (the live model, the current session). */
   readonly current?: boolean;
-  /** Shown greyed and never chosen (a legacy session), with why. */
+  /** Shown greyed and never chosen, with why (for example, a session another kubic holds). */
   readonly disabled?: boolean;
   readonly note?: string;
 }

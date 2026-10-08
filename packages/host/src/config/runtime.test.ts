@@ -139,7 +139,6 @@ describe('runtime config load', () => {
       after: 'x',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: Date.now() - 30 * dayMs,
     });
@@ -150,7 +149,6 @@ describe('runtime config load', () => {
       after: 'y',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: Date.now() - dayMs,
     });
@@ -179,7 +177,6 @@ describe('runtime config load', () => {
       after: 'x',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: Date.now() - 30 * dayMs,
     });

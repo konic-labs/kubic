@@ -75,20 +75,13 @@ export function validateSftRecord(input: unknown): SftValidation {
 
 export function checkProvenance(value: unknown): string[] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return ['provenance is required: proc/gen/worktree/model/base'];
+    return ['provenance is required: proc/worktree/model/base'];
   }
   const candidate = value as Record<string, unknown>;
   const errors: string[] = [];
   const proc = candidate.proc;
   if (proc !== null && (typeof proc !== 'number' || !Number.isInteger(proc))) {
     errors.push('provenance.proc must be an integer or null');
-  }
-  if (
-    typeof candidate.gen !== 'number' ||
-    !Number.isInteger(candidate.gen) ||
-    !(candidate.gen >= 0)
-  ) {
-    errors.push('provenance.gen is required');
   }
   if (!nonEmpty(candidate.worktree))
     errors.push('provenance.worktree is required');

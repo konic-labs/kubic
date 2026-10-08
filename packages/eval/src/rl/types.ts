@@ -1,13 +1,10 @@
 // Shared RL dataset shapes.
-// Every exported record embeds provenance (proc/gen/worktree/model/base)
-// plus the failure category. Validation is fail-closed: stripped
-// provenance or labels are errors, never warnings. Env-vs-capability
-// policy: runs carrying an env failure code must never train capability
-// preference — pair builders exclude (and tag) them.
-// Read-only reuse: the trajectory shape is consumed structurally via the
-// stable TrajectoryExport contract (major 1); the transfer snapshot
-// {taskId, worktree, grantRef} mirrors the agents TransferLogRecord
-// without importing it; pair records carry refs only.
+// Every exported record embeds provenance (proc/worktree/model/base) plus the
+// failure category. Validation is fail-closed: stripped provenance or labels
+// are errors, never warnings. Env-vs-capability policy: runs carrying an env
+// failure code must never train capability preference — pair builders exclude
+// (and tag) them. The trajectory shape is consumed structurally via the stable
+// TrajectoryExport contract (major 1); pair records carry refs only.
 import {
   isTrajectoryFailureCode,
   type TrajectoryExport,
@@ -19,11 +16,10 @@ export type { TrajectoryFailureCode };
 export { isTrajectoryFailureCode };
 
 // Provenance embedded in every RL record: the OS process (explicit null
-// for faux runs — never silently dropped), worker generation, worktree,
-// model, and base revision the run executed against.
+// for faux runs — never silently dropped), worktree, model, and base revision
+// the run executed against.
 export interface RlProvenance {
   proc: number | null;
-  gen: number;
   worktree: string;
   model: string;
   base: string;
@@ -40,23 +36,14 @@ function nonEmpty(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-// Fail-closed: a record that cannot be attributed to a process +
-// generation + worktree + model + base cannot be reproduced, so it is
-// refused rather than emitted labelless.
+// Fail-closed: a record that cannot be attributed to a process + worktree +
+// model + base cannot be reproduced, so it is refused rather than emitted
+// labelless.
 export function extractProvenance(exported: TrajectoryExport): RlProvenance {
   const provenance = exported.provenance;
   const pid = provenance?.pid ?? null;
   if (pid !== null && (typeof pid !== 'number' || !Number.isInteger(pid))) {
     throw new RlProvenanceError('provenance.proc must be an integer or null');
-  }
-  if (
-    typeof provenance?.generation !== 'number' ||
-    !Number.isInteger(provenance.generation) ||
-    !(provenance.generation >= 0)
-  ) {
-    throw new RlProvenanceError(
-      'provenance.gen is required: record which worker generation ran',
-    );
   }
   if (!nonEmpty(provenance?.worktree)) {
     throw new RlProvenanceError(
@@ -73,7 +60,6 @@ export function extractProvenance(exported: TrajectoryExport): RlProvenance {
   }
   return {
     proc: pid,
-    gen: provenance.generation,
     worktree: provenance.worktree,
     model: provenance.model,
     base: exported.worktree.baseRevision,

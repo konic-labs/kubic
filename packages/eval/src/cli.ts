@@ -93,11 +93,7 @@ interface TaskProvenance {
   model: string;
   thinking: string | null;
   worktree: string;
-  generation: number;
 }
-
-// One run is one generation: the record's provenance field is pinned to 0.
-const RUN_GENERATION = 0;
 
 // The --task / benchmark provenance: the flags are the only source for the
 // worktree; the model defaults (documented default).
@@ -106,7 +102,6 @@ function forTask(parsed: Parsed): TaskProvenance {
     model: parsed.model ?? EVAL_DEFAULT_MODEL,
     thinking: parsed.thinking ?? null,
     worktree: parsed.worktree ?? '',
-    generation: RUN_GENERATION,
   };
 }
 
@@ -366,7 +361,6 @@ export interface BenchmarkResult {
   model?: string;
   thinking?: string | null;
   worktree?: string;
-  generation?: number;
 }
 
 // kubic benchmark [--suite <id>|all]: the reproducible
@@ -452,7 +446,6 @@ export async function runBenchmarkCommand(
         model: record.model,
         thinking: record.thinking,
         worktree: record.worktree,
-        generation: record.generation,
       });
     } catch (error) {
       // A named runner refusal keeps its code: a dirty

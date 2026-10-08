@@ -66,7 +66,6 @@ function setup(): {
     after: 'v2\n',
     bytesDelta: 0,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 1700000000000,
   });
@@ -230,7 +229,6 @@ describe('journal CLI', () => {
       after: 'm\n',
       bytesDelta: 1,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 2,
       unattributed: true,
@@ -263,7 +261,6 @@ describe('journal CLI undo staleness', () => {
       after: 'v2\n',
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1700000000000,
     });
@@ -345,7 +342,6 @@ describe('journal CLI corrupt content', () => {
       after,
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 100,
     });
@@ -403,7 +399,6 @@ describe('journal CLI corrupt index lines', () => {
       after: 'x\n',
       bytesDelta: 2,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 100,
     });
@@ -473,7 +468,6 @@ describe('journal CLI default store fallback', () => {
         after,
         bytesDelta: 0,
         sessionId: id,
-        agentId: 'root',
         toolCallId: 'call-1',
         timestamp: 1700000000000,
       });
@@ -600,7 +594,6 @@ describe('journal CLI default store fallback', () => {
       after: 'w2\n',
       bytesDelta: 0,
       sessionId: 'ws1',
-      agentId: 'root',
       toolCallId: 'call-9',
       timestamp: 1700000000000,
     });
@@ -633,7 +626,6 @@ describe('journal CLI default store fallback', () => {
       after: 'w2\n',
       bytesDelta: 0,
       sessionId: 'ws1',
-      agentId: 'root',
       toolCallId: 'call-9',
       timestamp: 1700000000000,
     });
@@ -1035,7 +1027,6 @@ describe('journal CLI diff --json content bounds', () => {
       after,
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1700000000000,
     });
@@ -1404,7 +1395,6 @@ describe('journal CLI default session workspaces over the durable store', () => 
       after: 'd2\n',
       bytesDelta: 0,
       sessionId: session.id,
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1700000000000,
     });
@@ -1450,7 +1440,6 @@ describe('journal CLI HEAD moves', () => {
       after: 'v2\n',
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 1700000000000,
     });
@@ -1463,7 +1452,6 @@ describe('journal CLI HEAD moves', () => {
       headFrom: MOVE_A,
       headTo: MOVE_B,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 1700000001000,
       unattributed: true,
@@ -1555,7 +1543,6 @@ describe('journal CLI diff path scope', () => {
       after: 'other\n',
       bytesDelta: 6,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-2',
       timestamp: 1700000000001,
     });
@@ -1586,7 +1573,6 @@ describe('journal CLI diff --stat', () => {
       after: 'v2\ntail\n',
       bytesDelta: 5,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       toolName: 'edit',
       turn: 3,

@@ -63,7 +63,6 @@ describe('run-scoped reconciliation lifecycle', () => {
       root,
       runId: 'sess-1',
       sessionId: 'sess-1',
-      agentId: 'root',
       now: () => NOW,
     });
     expect(run.baselinePath).toBe(
@@ -91,7 +90,6 @@ describe('run-scoped reconciliation lifecycle', () => {
       root,
       runId: 'sess-1',
       sessionId: 'sess-1',
-      agentId: 'root',
       now: () => NOW,
     });
     // Whatever bypasses interception: an external writer, not a Kubic op.
@@ -127,7 +125,6 @@ describe('run-scoped reconciliation lifecycle', () => {
       root,
       runId: 'sess-1',
       sessionId: 'sess-1',
-      agentId: 'root',
       now: () => NOW,
     });
     // The capture stored hashes only: no before-blob, no after-blob.
@@ -149,7 +146,6 @@ describe('run-scoped reconciliation lifecycle', () => {
       root,
       runId: 'sess-1',
       sessionId: 'sess-1',
-      agentId: 'root',
       outOfScope: ['vendor'],
       now: () => NOW,
     });
@@ -183,7 +179,6 @@ describe('run-scoped reconciliation lifecycle', () => {
         root,
         runId: '../evil',
         sessionId: 'sess-1',
-        agentId: 'root',
         now: () => NOW,
       }),
     ).toThrow(/invalid run id/);
@@ -199,7 +194,6 @@ describe('run-scoped reconciliation lifecycle', () => {
       root,
       runId: 'sess-1',
       sessionId: 'sess-1',
-      agentId: 'root',
       now: () => NOW,
     });
     writeFileSync(join(root, 'keep.txt'), 'v2\n');
@@ -222,7 +216,6 @@ describe('run-scoped reconciliation lifecycle', () => {
       store,
       runId: 'sess-fifo',
       sessionId: 'sess-fifo',
-      agentId: 'root',
       now: () => NOW,
     });
     // The regular file is journaled; the pipe is skipped, not read.
@@ -243,7 +236,6 @@ describe('run-scoped reconciliation lifecycle', () => {
       store,
       runId: 'sess-pre',
       sessionId: 'sess-pre',
-      agentId: 'root',
       now: () => NOW,
     });
     // The `write` tool rewrites it, storing the v1-boot pre-image.
@@ -254,7 +246,6 @@ describe('run-scoped reconciliation lifecycle', () => {
       after: 'v2-tool\n',
       bytesDelta: 0,
       sessionId: 'sess-pre',
-      agentId: 'root',
       toolCallId: 't1',
       timestamp: NOW,
     });
@@ -283,7 +274,6 @@ describe('per-turn rebaseline', () => {
       root,
       runId: 'sess-reconcile',
       sessionId: 'sess-reconcile',
-      agentId: 'root',
       now: () => NOW,
     });
 
@@ -365,7 +355,6 @@ describe('git pre-images end to end', () => {
       root,
       runId: 'sess-git',
       sessionId: 'sess-git',
-      agentId: 'root',
       now: () => NOW,
     });
   }
@@ -499,7 +488,6 @@ describe('HEAD-move markers end to end', () => {
       root: repo.path,
       runId: 'sess-head',
       sessionId: 'sess-head',
-      agentId: 'root',
       now: () => NOW,
     });
     expect(run.headBaseline?.branch).toBe('main');
@@ -529,7 +517,6 @@ describe('HEAD-move markers end to end', () => {
       root: repo.path,
       runId: 'sess-stash',
       sessionId: 'sess-stash',
-      agentId: 'root',
       now: () => NOW,
     });
     expect(run.headBaseline?.stash).toBe(0);
@@ -550,7 +537,6 @@ describe('HEAD-move markers end to end', () => {
       root,
       runId: 'sess-norepo',
       sessionId: 'sess-norepo',
-      agentId: 'root',
       now: () => NOW,
     });
     expect(run.headBaseline).toBe(null);
@@ -570,14 +556,13 @@ describe('sweep attribution', () => {
       root,
       runId: 'sess-worker-1',
       sessionId: 'sess-worker-1',
-      agentId: 'worker-1',
       now: () => NOW,
     });
     writeFileSync(join(root, 'keep.txt'), 'v2-external\n');
     expect(run.sweep()).toBe(1);
     const entries = store.entries();
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.agentId).toBe('worker-1');
+    expect(entries[0]?.source).toBe('sweep');
     expect(entries[0]?.unattributed).toBe(true);
   });
 });

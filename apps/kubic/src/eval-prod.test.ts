@@ -146,7 +146,7 @@ describe('the live suite runner runs the built-in suites', () => {
         model: string;
         thinking: string | null;
         worktree: string;
-        generation: number;
+        caseId: string;
         signals: { tests: string };
       };
     };
@@ -157,7 +157,7 @@ describe('the live suite runner runs the built-in suites', () => {
     expect(envelope.record.signals.tests).toBe('pass');
     expect(envelope.record.model).toBe('faux/echo');
     expect(envelope.record.worktree).toBe(workspace);
-    expect(envelope.record.generation).toBe(0);
+    expect(envelope.record.caseId).toBe('swe-bench-mini');
     expect(envelope.record.toolCalls).toBeGreaterThan(0);
     // The run wrote its trajectory under the sessions root (the score
     // is derived from it).
@@ -201,7 +201,6 @@ describe('the live suite runner runs the built-in suites', () => {
         determinism: string;
         model?: string;
         worktree?: string;
-        generation?: number;
         toolCalls?: number;
       }>;
     };
@@ -223,7 +222,6 @@ describe('the live suite runner runs the built-in suites', () => {
       // Eval fields on every executed row.
       expect(row.model, row.suite).toBe('faux/echo');
       expect(row.worktree, row.suite).toBe(workspace);
-      expect(row.generation, row.suite).toBe(0);
       expect(row.toolCalls, row.suite).toBeGreaterThan(0);
     }
     expect(
@@ -241,24 +239,22 @@ describe('the live suite runner runs the built-in suites', () => {
       JSON.stringify(
         buildTrajectoryExport({
           task: { taskId: 'task-1', objective: 'fix', role: 'writer' },
-          identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
+          identity: { sessionId: 'sess-1', agentId: 'agent-1' },
           model: {
             provider: 'faux',
             model: 'echo',
             thinking: null,
             escalations: [],
           },
-          prompt: { text: 'fix', constraints: [] },
-          resources: { skills: [], promptTemplates: [] },
-          transfer: null,
+          prompt: { text: 'fix' },
+          resources: { skills: [] },
           actions: [],
           observations: [],
-          state: { phase: 'done', snapshot: null },
+          state: { phase: 'done' },
           provenance: {
             sessionId: 'sess-1',
             agentId: 'agent-1',
             pid: null,
-            generation: 0,
             worktree: workspace,
             model: 'faux/echo',
           },

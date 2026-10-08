@@ -179,8 +179,8 @@ async function defaultSessionWorkspaces(
       // `workspace`, else the recorded `cwd` — the same rule
       // `sessionsTouchingWorkspace` and doctor's overlap probe use, so a
       // session created in a subdirectory associates with its repo. A session
-      // that recorded neither — a legacy transcript, a hand-made dir — stays
-      // unassociated rather than guessing one.
+      // that recorded neither — a hand-made dir — stays unassociated rather
+      // than guessing one.
       const workspace = entry.meta?.workspace ?? entry.meta?.cwd;
       if (workspace !== undefined && workspace !== '') {
         out.set(entry.id, workspace);

@@ -3,7 +3,7 @@
 // delegates eligibility to buildPreferencePair, so env failures and
 // cross-boundary runs can never reach a trainable DPO record —
 // validation re-enforces the same policy on hand-crafted records: the
-// boundary must be within (same worktree + same grant), env failures
+// boundary must be within (same worktree + same task role), env failures
 // never validate, and the verifier must prefer chosen over rejected.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import {
@@ -33,7 +33,7 @@ interface DpoRecord {
     rejected: TrajectoryFailureCode | null;
   };
   verifier: { chosen: VerifierVerdict; rejected: VerifierVerdict };
-  grantRef: { chosen: string | null; rejected: string | null };
+  roleRef: { chosen: string; rejected: string };
   // The task each side answered: validation refuses a record whose
   // sides answer different tasks.
   taskRef: { chosen: string; rejected: string };
@@ -80,9 +80,9 @@ export function buildDpoRecord(
         chosen: pair.chosen.verifier,
         rejected: pair.rejected.verifier,
       },
-      grantRef: {
-        chosen: pair.chosen.grantRef,
-        rejected: pair.rejected.grantRef,
+      roleRef: {
+        chosen: pair.chosen.roleRef,
+        rejected: pair.rejected.roleRef,
       },
       taskRef: {
         chosen: pair.chosen.taskRef,
@@ -94,16 +94,15 @@ export function buildDpoRecord(
   };
 }
 
-function checkGrantRef(value: unknown, prefix: string): string[] {
+function checkRoleRef(value: unknown, prefix: string): string[] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return [`${prefix} is required: carry both grant refs`];
+    return [`${prefix} is required: carry both role refs`];
   }
   const candidate = value as Record<string, unknown>;
   const errors: string[] = [];
   for (const side of ['chosen', 'rejected'] as const) {
-    const ref = candidate[side];
-    if (ref !== null && !nonEmpty(ref)) {
-      errors.push(`${prefix}.${side} must be a grant ref or null`);
+    if (!nonEmpty(candidate[side])) {
+      errors.push(`${prefix}.${side} must be a role ref`);
     }
   }
   return errors;
@@ -131,7 +130,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
     | Record<string, unknown>
     | undefined;
   const verifier = candidate.verifier as Record<string, unknown> | undefined;
-  const grantRef = candidate.grantRef as Record<string, unknown> | undefined;
+  const roleRef = candidate.roleRef as Record<string, unknown> | undefined;
   if (typeof provenance !== 'object' || provenance === null) {
     errors.push('provenance is required: carry both sides');
   } else {
@@ -166,7 +165,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
       errors.push(`verifier.rejected.${message}`);
     }
   }
-  errors.push(...checkGrantRef(grantRef, 'grantRef'));
+  errors.push(...checkRoleRef(roleRef, 'roleRef'));
   const taskRef = candidate.taskRef as Record<string, unknown> | undefined;
   if (typeof taskRef !== 'object' || taskRef === null) {
     errors.push('taskRef is required: carry both task refs');
@@ -200,22 +199,22 @@ export function validateDpoRecord(input: unknown): DpoValidation {
     ?.worktree;
   const rejectedWorktree = (provenance?.rejected as RlProvenance | undefined)
     ?.worktree;
-  const chosenGrant = grantRef?.chosen as string | null | undefined;
-  const rejectedGrant = grantRef?.rejected as string | null | undefined;
+  const chosenRole = roleRef?.chosen as string | undefined;
+  const rejectedRole = roleRef?.rejected as string | undefined;
   if (
     typeof provenance === 'object' &&
     provenance !== null &&
-    typeof grantRef === 'object' &&
-    grantRef !== null &&
+    typeof roleRef === 'object' &&
+    roleRef !== null &&
     (chosenWorktree !== rejectedWorktree ||
-      chosenGrant === null ||
-      rejectedGrant === null ||
-      chosenGrant !== rejectedGrant)
+      !nonEmpty(chosenRole) ||
+      !nonEmpty(rejectedRole) ||
+      chosenRole !== rejectedRole)
   ) {
-    errors.push('chosen and rejected cross a worktree/grant boundary');
+    errors.push('chosen and rejected cross a worktree/role boundary');
   }
   // Reuse the pair-shape checks by projecting back onto a pair record
-  // with the real grant refs, task refs and verifier verdicts — never
+  // with the real role refs, task refs and verifier verdicts — never
   // placeholders (a placeholder task ref let mismatched tasks validate).
   const projected = {
     schema: PAIR_SCHEMA,
@@ -228,7 +227,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
       verifier: verifier?.chosen,
       taskRef: taskRef?.chosen,
       worktreeRef: chosenWorktree ?? '',
-      grantRef: chosenGrant,
+      roleRef: chosenRole,
     },
     rejected: {
       completion: candidate.rejected,
@@ -237,7 +236,7 @@ export function validateDpoRecord(input: unknown): DpoValidation {
       verifier: verifier?.rejected,
       taskRef: taskRef?.rejected,
       worktreeRef: rejectedWorktree ?? '',
-      grantRef: rejectedGrant,
+      roleRef: rejectedRole,
     },
   };
   const pairCheck = validatePreferencePair(projected);

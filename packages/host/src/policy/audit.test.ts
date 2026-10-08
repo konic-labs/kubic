@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AUDIT_FIELDS,
+  AUDIT_RECORD_VERSION,
   AuditShapeError,
   AuditSinkError,
   appendAudit,
@@ -25,13 +26,13 @@ import {
 const FAUX_A = 'sk-faux-test-key-0001';
 const FAUX_B = 'AKIAFAUXTEST00000001';
 
-function baseInput(): Omit<OrgAuditRecord, 'when'> {
+function baseInput(): Omit<OrgAuditRecord, 'when' | 'version'> {
   return {
     who: 'ege@example.com',
     what: 'tool.call',
     agent: { session: 'sess-1', role: 'implementer' },
     model: { provider: 'local', id: 'llama3', thinking: 'medium' },
-    worker: { pid: 1234, generation: 2, role: 'implementer' },
+    process: { pid: 1234 },
     workspace: { path: '/repo/wt/57', base: '/repo' },
     permission: { permission: 'write', approval: 'approved:tester' },
     credential: { sentinel: toCredentialSentinel('$API_KEY') },
@@ -43,13 +44,16 @@ function baseInput(): Omit<OrgAuditRecord, 'when'> {
 }
 
 describe('org audit record', () => {
-  it('carries all 13 fields on every record', () => {
+  it('carries the 13 fields and the version marker on every record', () => {
     const sink = createMemorySink();
     const record = emitAudit([sink], baseInput(), {
       now: () => 1_700_000_000_000,
     });
-    expect(Object.keys(record)).toHaveLength(13);
-    expect([...Object.keys(record)].sort()).toEqual([...AUDIT_FIELDS].sort());
+    expect(record.version).toBe(AUDIT_RECORD_VERSION);
+    expect(Object.keys(record)).toHaveLength(14);
+    expect([...Object.keys(record)].sort()).toEqual(
+      ['version', ...AUDIT_FIELDS].sort(),
+    );
     expect(record.when).toBe('2023-11-14T22:13:20.000Z');
     expect(record.posture).toBe('restricted');
   });
@@ -384,14 +388,24 @@ describe('nested unknown keys', () => {
     expect(sink.records).toHaveLength(0);
   });
 
-  it('rejects worker.extra', () => {
+  it('rejects process.extra', () => {
     const sink = createMemorySink();
     const input = baseInput();
     const smuggled = {
       ...input,
-      worker: { ...input.worker, extra: 'smuggled' },
-    } as unknown as Omit<OrgAuditRecord, 'when'>;
+      process: { ...input.process, extra: 'smuggled' },
+    } as unknown as Omit<OrgAuditRecord, 'when' | 'version'>;
     expect(() => emitAudit([sink], smuggled)).toThrow(AuditShapeError);
+    expect(sink.records).toHaveLength(0);
+  });
+
+  it('refuses a caller-supplied version: the marker is set by emitAudit alone', () => {
+    const sink = createMemorySink();
+    const forged = { ...baseInput(), version: 2 } as unknown as Omit<
+      OrgAuditRecord,
+      'when' | 'version'
+    >;
+    expect(() => emitAudit([sink], forged)).toThrow(AuditShapeError);
     expect(sink.records).toHaveLength(0);
   });
 });
@@ -411,7 +425,11 @@ describe('syslog sink', () => {
   }
 
   function record(): OrgAuditRecord {
-    return { ...baseInput(), when: '2026-10-05T12:00:00.000Z' };
+    return {
+      version: AUDIT_RECORD_VERSION,
+      ...baseInput(),
+      when: '2026-10-05T12:00:00.000Z',
+    };
   }
 
   it('emits one RFC 5424 line whose MSG is the record JSON', () => {

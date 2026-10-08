@@ -172,7 +172,7 @@ describe('the list picker', () => {
           value: 'b',
           label: 'old one',
           disabled: true,
-          note: 'legacy — kubic sessions',
+          note: 'in use by another kubic',
         },
         { value: 'c', label: 'add tests', description: '1h ago · 2 turns' },
       ],
@@ -180,7 +180,7 @@ describe('the list picker', () => {
       onMove: (value) => moved.push(value),
     });
     expect(frame()).toContain('┌─ Session');
-    expect(frame()).toContain('old one  legacy — kubic sessions');
+    expect(frame()).toContain('old one  in use by another kubic');
     app.handleInput('\x1b[B');
     expect(moved).toEqual(['c']);
     app.handleInput('\r');

@@ -1,4 +1,4 @@
-// The durable audit ledger: ONE record format (OrgAuditRecord, 13 fields) in
+// The durable audit ledger: ONE record format (OrgAuditRecord, version 1) in
 // ONE append-only JSONL file per repo, written through emitAudit's
 // validation and read back by `kubic audit`.
 //
@@ -14,6 +14,7 @@ import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import type { AuditTableConfig } from '../config/config.js';
 import { matchableSecrets } from '../config/secrets.js';
 import {
+  AUDIT_RECORD_VERSION,
   type AuditInput,
   type AuditSink,
   createMemorySink,
@@ -176,26 +177,39 @@ class AuditLedgerReadError extends Error {
 // Every audit record in the ledger, oldest first. A missing ledger (ENOENT) is
 // an empty trail; any other read failure throws AuditLedgerReadError. A torn
 // or foreign line (e.g. a pre-unification router event) is skipped, never
-// guessed into a record.
+// guessed into a record. A record of another version (or with no version
+// marker) is refused by name: an audit trail is never read past a record it
+// cannot interpret.
 export function readAuditLedger(dir: string): OrgAuditRecord[] {
+  const path = join(dir, AUDIT_LEDGER_FILE);
   const bridge = createNodeFileBridge(dir);
   let text: string;
   try {
     text = bridge.readTextFile(AUDIT_LEDGER_FILE);
   } catch (error) {
     if ((error as { code?: unknown }).code === 'ENOENT') return [];
-    throw new AuditLedgerReadError(join(dir, AUDIT_LEDGER_FILE), error);
+    throw new AuditLedgerReadError(path, error);
   }
   const records: OrgAuditRecord[] = [];
-  for (const line of text.split('\n')) {
-    if (line.trim() === '') continue;
+  text.split('\n').forEach((line, index) => {
+    if (line.trim() === '') return;
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(line);
-      if (isOrgAuditRecord(parsed)) records.push(parsed);
+      parsed = JSON.parse(line);
     } catch {
-      // Torn line: skipped.
+      return; // Torn line: skipped.
     }
-  }
+    if (!isOrgAuditRecord(parsed)) return;
+    if (parsed.version !== AUDIT_RECORD_VERSION) {
+      throw new AuditLedgerReadError(
+        path,
+        new Error(
+          `line ${index + 1} is not a version ${AUDIT_RECORD_VERSION} audit record`,
+        ),
+      );
+    }
+    records.push(parsed);
+  });
   return records;
 }
 
@@ -283,7 +297,7 @@ export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
     what: `tool:${input.toolName || UNKNOWN}`,
     agent: { session: input.sessionId || UNKNOWN, role: 'root' },
     model: { ...parseModel(input.model), thinking: input.thinking || UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: 'root' },
+    process: { pid: process.pid },
     workspace: {
       path: input.workspace || UNKNOWN,
       base: input.base ?? UNKNOWN,
@@ -643,7 +657,7 @@ export function undoRestoreAudit(input: UndoRestoreInput): AuditInput {
     what: 'undo-restore',
     agent: { session: input.sessionId || UNKNOWN, role: 'user' },
     model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: 'user' },
+    process: { pid: process.pid },
     workspace: { path: input.workspace, base: input.base || UNKNOWN },
     permission: { permission: 'journal:undo', approval: 'user command' },
     credential: { sentinel: 'none' },
@@ -679,7 +693,7 @@ export function credentialUseAudit(input: CredentialUseInput): AuditInput {
       id: UNKNOWN,
       thinking: UNKNOWN,
     },
-    worker: { pid: process.pid, generation: 0, role: input.role || UNKNOWN },
+    process: { pid: process.pid },
     workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
     permission: {
       permission: 'credential:use',
@@ -712,7 +726,7 @@ export function fullAccessEnabledAudit(
     what: 'posture:full-access',
     agent: { session: input.sessionId || UNKNOWN, role: 'user' },
     model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: 'user' },
+    process: { pid: process.pid },
     workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
     permission: {
       permission: 'posture:full-access',
@@ -753,7 +767,7 @@ export function runStartAudit(input: RunStartInput): AuditInput {
     what: 'run:start',
     agent: { session: input.sessionId || UNKNOWN, role },
     model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role },
+    process: { pid: process.pid },
     workspace: {
       path: input.workspace || UNKNOWN,
       base: input.base || UNKNOWN,
@@ -790,7 +804,7 @@ export function fullAccessDisabledAudit(
     what: 'posture:approvals',
     agent: { session: input.sessionId || UNKNOWN, role: 'user' },
     model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: 'user' },
+    process: { pid: process.pid },
     workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
     permission: {
       permission: 'posture:approvals',
@@ -823,7 +837,7 @@ export function postureChangedAudit(input: PostureChangedInput): AuditInput {
     what: 'posture:changed-mid-session',
     agent: { session: input.sessionId || UNKNOWN, role: 'root' },
     model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
-    worker: { pid: process.pid, generation: 0, role: 'root' },
+    process: { pid: process.pid },
     workspace: { path: input.workspace || UNKNOWN, base: UNKNOWN },
     permission: { permission: 'posture:change', approval: 'denied' },
     credential: { sentinel: 'none' },

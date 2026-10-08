@@ -82,11 +82,9 @@ describe('kubic run writes a trajectory', () => {
       sessionId: result.sessionId,
       agentId: 'root',
       pid: process.pid,
-      generation: 0,
       worktree: ws,
       model: `${FAUX_PROVIDER_ID}/${FAUX_MODEL_ID}`,
     });
-    expect(exported.identity.workerId).toBeNull();
     expect(exported.prompt.text).toBe('faux:tool read {"path":"a.txt"}');
     expect(exported.actions.map((action) => action.tool)).toEqual(['read']);
     expect(exported.observations).toHaveLength(1);

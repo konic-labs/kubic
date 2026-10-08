@@ -188,7 +188,7 @@ function toInvocation(api: ToolExecutionApi, context: Context): ToolInvocation {
       await api.memo(name, value, context);
     },
     // First-writer-wins in the durable task record — atomic across a crash
-    // and a recovery rerun, not a check-then-set.
+    // and a recovery rerun.
     memoOnce: (name, candidate) => api.memo(name, candidate, context),
   };
 }

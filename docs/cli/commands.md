@@ -99,7 +99,7 @@ Non-interactive solo run: no alt-screen, no prompt, consumable output.
 | `--role <name>` | Boot as a role: the `.kubic/roles/<name>.md` document when the workspace has one, else `~/.kubic/roles/<name>.md`, else the preset of that name embedded in the binary. The document's prompt text, tool set and model pin apply either way. A project document loads only for a trusted project root (same gate as project skills): untrusted, `--role` naming it refuses with the trust message and `kubic doctor` warns what trust would unlock. The document may declare a `skills: [...]` list: only the named skills reach the role's prompt — merged with each skill's own `roles:` list, so both must admit. Skills outside the role, or needing tools the lane's classes deny, are withheld with reasons (debug log; `kubic doctor` warns each as `skill:<name>`) — never offered, never silently failing. The role's permission classes merge with the config's, most restrictive wins, and the role document (or a `[roles.<name>]` layer) may declare `requires: [...]` — tools that always require approval under the role. `kubic doctor` prints each role's effective classes under the run's config. Roles match by the declared `role:` name, not the filename: `review.md` declaring `role: reviewer` boots `--role reviewer` with review.md's own `## Prompt` body — the prompt is never re-read from `<name>.md`. Robustness: one malformed document never blocks the other roles — `--role` naming it refuses with that file's parse error, `kubic doctor` fails it as `role:<file-stem>`; two documents declaring the same `role:` name are refused by name everywhere (run refusal + doctor fail), both files listed, and neither copy wins. |
 | `--model <provider/id>` | Session model override: the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`), plus `; did you mean '<id>'?` when a registered provider or model is close; the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
 | `--thinking <level>` | Session thinking-level override: the `cli` config layer — `--thinking` beats `KUBIC_MODEL_THINKING`, which beats `[model].thinking`, and a frozen enterprise `model.thinking` beats the flag (refused by name: `--thinking <level> refused: model.thinking is frozen by the enterprise layer`; the env override is silently not applied). The lane resolves it against the session's stored level and the role default (`--thinking` > env > session > role > config) and clamps it to the effective model — a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite. The applied level is committed to the session (a reattach keeps it) and recorded in `trajectory.json`. An unknown level exits 2 naming the levels that exist. |
-| `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first, then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` — never against the sessions root — and an unresolvable value warns on stderr (`skill skipped (unknown skill '…')`), without needing `--debug`. |
+| `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first, then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` — never against the sessions root — and an unresolvable value warns (`skill skipped (unknown skill '…')`) without needing `--debug`: on stderr for `run`, as a transcript notice for `tui`. |
 | `--invoke-skill <name>` | Invoke one booted skill by name (`run` only): its full content runs as the turn prompt — including skills hidden from the model — followed by `-p`/operand text as further instructions. An unknown name fails the run with `unknown skill '<name>'` (exit 1); a withheld skill (role gate, trust gate) resolves as unknown and fails the same way. |
 | `--no-skills` | Turn layered skill discovery off. |
 | `--autonomous` | Run to completion without stopping for input: the mode is recorded on the run's session (`autonomous`, else `interactive` — off by default, never assumed), a `run:start` row naming the mode lands in the audit ledger, and the result and `--json` envelope carry `mode` (the `status` already names the stop condition that ended the run). Combines freely with `--dangerously-skip-approvals` — the combination is legitimate for a batch run on a throwaway checkout, and the session plus the ledger name it. |
@@ -184,7 +184,9 @@ The file is readable by `kubic replay <file>` (or `--session <id>`),
 session exists (an invalid `--session` id, a missing session) writes none,
 and its ref stays `trajectory:<id>`. A trajectory that cannot be written is
 reported on stderr and never changes the run's exit code.
-`kubic tui` writes the same file after each settled turn.
+`kubic tui` writes the same file after each settled turn. A warning about
+that write (an unreadable audit ledger or journal) is a transcript notice
+there, not a stderr line: the screen owns the terminal.
 
 **Usage errors (exit 2, stderr, no lane).** commander parses the argv
 (`apps/kubic/src/commands/solo.ts`): a missing `-p`, a flag without its
@@ -465,7 +467,9 @@ settles the next ask — never the one nobody is waiting for.
 — and the bare `kubic --dangerously-skip-approvals` on a terminal — enables
 full access for the session it opens or resumes, through the same path as
 `kubic run`: `posture.json`, one `posture:full-access` audit row, and a
-`warning:` line on stderr before the screen opens. In the session itself the
+`warning:` line on stderr before the screen opens. A lane that `/new` or
+`/resume` boots in full access names its notice as a transcript row, since the
+screen is already up. In the session itself the
 same posture can be toggled with `Alt+A` or `/approvals on|off`:
 `Alt+A` flips whichever way the session is currently in, while `on`/`off`
 name a direction and only report when it is already in force; enabling asks
@@ -496,7 +500,8 @@ same context the headless one does:
   (repeatable), `--no-skills` turns layered discovery off — and explicit
   `--skill` paths still apply under `--no-skills`, exactly as `run`.
   Relative paths resolve against the invoking cwd, and an
-  unresolvable value warns on stderr — same as `run`.
+  unresolvable value is a `warning:` line in the transcript: the screen owns
+  stderr.
 - **Roles:** `--role <name>` loads `.kubic/roles/<name>.md` — else `~/.kubic/roles/<name>.md` — or the
   matching preset embedded in the binary when neither has such a
   document (the five presets ship with `kubic`, and a repo document of the same name replaces its preset) — the document's prompt text replaces the solo
@@ -752,7 +757,7 @@ the built-in palette; see `[ui] theme` under
 | `/session` | Report the live session: id, workspace, model, thinking level, tokens (in/out/cached) and cost, from the rows the status line already carries. |
 | `/safety` | Print the honest limits into the transcript, in full and verbatim from the limits module: that the session runs in-process with your authority (files, network, credentials), with no containment and no prompt-injection prevention, and that the controls are approvals plus the change journal. Answered even where the startup notice is suppressed (`KUBIC_NO_NOTICE=1`), because you asked. A local read: nothing reaches the model. |
 | `/new` | Close the current session and boot a fresh one **without leaving the alt-screen**: the transcript, tree, usage rows and panels clear, and the next prompt runs on the new lane. The old session stays on disk (`kubic sessions list`). Refused while a turn runs (`session: finish the current turn before switching`) — the lane swap is the quit path's race, not a mid-turn one. |
-| `/resume` | Pick one of this project's other sessions (newest first, at most 30): each row is its first prompt, with its age, turns and cost (`2m ago · 4 turns · $0.03`), read without a lock the way `kubic cost` reads. A legacy session is greyed `legacy — kubic sessions`, one another `kubic` holds `in use by another kubic`; neither can be chosen. Choosing one attaches to it and loads its transcript, in the same alt-screen. Needs a terminal wide enough for the picker — otherwise the footer says so. Refused while a turn runs, like `/new`. |
+| `/resume` | Pick one of this project's other sessions (newest first, at most 30): each row is its first prompt, with its age, turns and cost (`2m ago · 4 turns · $0.03`), read without a lock the way `kubic cost` reads. A session another `kubic` holds is greyed `in use by another kubic` and cannot be chosen. Choosing one attaches to it and loads its transcript, in the same alt-screen. Needs a terminal wide enough for the picker — otherwise the footer says so. Refused while a turn runs, like `/new`. |
 | `/theme [name]` | **Theme picker**: the built-ins `dark`, `light` and `terminal`, and the configured `[ui] theme` file if there is one. Moving the selection previews each theme live; `Enter` keeps it for this session and prints `to keep it: [ui] theme = "<name>" in ~/.kubic/config.toml` (the config is never written); `Esc` restores the theme from before. `/theme <name>` switches directly; an unknown name is refused with the choices. |
 | `/tree` | Pick an earlier prompt and **retry from there in a fork** (`session.fork`): a picker lists this session's prompts newest first (`#<entry>  <prompt>`); choosing one forks the session into a **new** session just *before* that prompt (the same fork as `kubic sessions fork --at`), switches the TUI to it in the same alt-screen, and puts the prompt back in the editor to edit and resend. The original session is untouched and keeps the abandoned path (`kubic tui --session <old id>` / `/resume` returns to it). Needs a terminal wide enough for the picker; refused while a turn runs. |
 | `/fork <entry>` | Fork this session **at** `<entry>` (inclusive; `kubic sessions attach <id> --ids` prints the ids) into a new session and switch to it, the editor left as it was. `/fork` without an integer entry is refused with the usage line. A fork that fails (an entry the session does not have) re-attaches the session you were in and names the reason on the footer. Refused while a turn runs. |
@@ -1038,10 +1043,10 @@ its own generated help (`kubic sessions prune --help`).
 | --- | --- |
 | `create [--cwd <path>] [--dangerously-skip-approvals]` | Create a session, print its id on stdout. `--cwd` sets the session directory (default: current directory): a relative path resolves against the invoking directory (never the sessions root) and must name an existing directory, otherwise create refuses with `kubic sessions create: --cwd <path>: no such directory` (exit 1) and creates nothing. `--dangerously-skip-approvals` records session-scoped full-access in the session dir, appends one `posture:full-access` row to the audit ledger (session id, `kubic sessions create --dangerously-skip-approvals`), and prints a `warn:` line on stderr — fresh sessions start safe, the flag must be passed explicitly every time. |
 
-| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, the kit table on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. **`kubic sessions --json` with no subcommand is the same array**; `kubic sessions` without `--json` stays the usage error naming the subcommands. A legacy session is listed with its recorded cwd and marked `(legacy pi 0.87 — cannot attach)`: it is listed so it can be seen, and it can never be attached ([below](#session-storage-and-legacy-sessions)). |
+| `list [--json]` | A `SESSION  CWD` table (plain aligned columns off a terminal, the kit table on an interactive colour terminal). With no sessions stdout stays empty and an `info:` line on stderr says so. `--json` prints one pretty-printed array of `{id, cwd}` objects — `[]` when there are none. **`kubic sessions --json` with no subcommand is the same array**; `kubic sessions` without `--json` stays the usage error naming the subcommands. |
 | `attach [--] <id> [--tail <n>] [--ids] [--json]` | Print session metadata, the approvals posture (`approvals enforced` or `full-access …`), the `pending work: <kind> <id> (<status>)` summary when a crashed run left unfinished durable work (settled by the next `run`/`tui --session`), then the last `--tail` transcript turns (default 10) — one readable line per turn (`user: …`, `assistant: …`, `tool-result <name>: …`, `system: …`, `[compaction] …`, `[reset] …`), whitespace collapsed and bounded to 300 characters; transcript text and model-authored tool names are untrusted, so terminal control sequences are stripped before a line is printed. `--tail` needs a non-negative integer. `--ids` prefixes each transcript line with its entry id (` user: …`) — the id `kubic sessions fork --at` takes. `--json` prints the raw tail entries instead — one full untruncated entry JSON per line, for scripting. |
 
-| `fork [--] <id> [--at <entry>] [--tree] [--json]` | Fork a session into a **new** one and print the new id — `--json` prints one `{id, source, at}` document (`at` is `null` for `--tree`). The id works at once with `kubic run --session` / `kubic tui --session`. A **branch fork** (the default) cuts *at* an entry, inclusive — `--at <entry>` names it (`kubic sessions attach <id> --ids` prints them), default the source's newest — and the new session's lane is a pi-durable fork of the source's: it sees the history through that entry and the agent (model, thinking level) as of it, and nothing after it. **`--tree`** copies the whole session instead: every conversation and branch tip, the lane unchanged. Either way the new session has its **own** directory, lock and an empty journal, starts with **no usage** (the copied `pi.usage` documents are emptied, so `kubic cost` never counts the source's spend twice), and starts with **approvals enforced** — the source's posture, approvals and journal are not copied. The source is only read, under its own lock: forking a session another process holds live is **refused** (the lock refusal naming the holder, exit 1, nothing written), as is a missing or legacy session (exit 1) and an `--at` entry the source does not have (exit 1). `--at` with `--tree` is a usage error (exit 2). |
+| `fork [--] <id> [--at <entry>] [--tree] [--json]` | Fork a session into a **new** one and print the new id — `--json` prints one `{id, source, at}` document (`at` is `null` for `--tree`). The id works at once with `kubic run --session` / `kubic tui --session`. A **branch fork** (the default) cuts *at* an entry, inclusive — `--at <entry>` names it (`kubic sessions attach <id> --ids` prints them), default the source's newest — and the new session's lane is a pi-durable fork of the source's: it sees the history through that entry and the agent (model, thinking level) as of it, and nothing after it. **`--tree`** copies the whole session instead: every conversation and branch tip, the lane unchanged. Either way the new session has its **own** directory, lock and an empty journal, starts with **no usage** (the copied `pi.usage` documents are emptied, so `kubic cost` never counts the source's spend twice), and starts with **approvals enforced** — the source's posture, approvals and journal are not copied. The source is only read, under its own lock: forking a session another process holds live is **refused** (the lock refusal naming the holder, exit 1, nothing written), as is a missing session (exit 1) and an `--at` entry the source does not have (exit 1). `--at` with `--tree` is a usage error (exit 2). |
 
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
@@ -1053,17 +1058,15 @@ id or with an id outside `[A-Za-z0-9_-]`, a malformed `--tail`,
 unknown subcommand exits 2 (`error: unknown command '<name>'`), like an
 unknown top-level command. Attaching a missing session exits 1; attaching
 a session another process holds live prints the lock refusal (the holder's pid and start time are named) and exits 1 without reading
-the transcript. Attaching a legacy session exits 1
-with `session <id> was written by Kubic on Pi 0.87; start a new session`
-
-([below](#session-storage-and-legacy-sessions)).
+the transcript. An id with no session storage, including a folder that holds
+only a transcript file, is an unknown session and exits 1 the same way.
 
 The transcript `attach` prints is the durable one, read through the shared
 pi-durable adapter (`packages/worker/src/lane/transcript.ts`)
 and never by booting a lane: a reader must be able to inspect a session it
 may not run.
 
-### Session storage and legacy sessions
+### Session storage
 
 A session is one directory, `<sessions-root>/<id>/`, holding the
 pi-durable JSONL storage (`main.jsonl` and its `doc-*.jsonl` sidecars —
@@ -1072,27 +1075,14 @@ listing header, the lock, the journal, spans, approvals posture and
 trajectory. The session's metadata is the session-scoped `kubic.session`
 document, written in the creating commit, so anything holding the session
 open reads it from the same durable state as the transcript. Session JSONL
-is not fsynced; the change journal is the
-fsync'd store.
+is not fsynced; the change journal is the fsync'd store.
 
-Legacy sessions use a different format: one
-transcript file per session at `<sessions-root>/--<cwd>--/<ts>_<id>.jsonl`,
-beside the session's state directory. Kubic does not convert them — the
-project is unreleased, so there is nothing to migrate:
-
-- `kubic sessions list` reports them as `legacy` (the store returns
-  `format: 'legacy'`, rendered `(legacy pi 0.87 — cannot attach)`) and
-  never crashes on one.
-- `kubic sessions attach <id>` refuses by name, exit 1:
-  `session <id> was written by Kubic on Pi 0.87; start a new session`.
-  Nothing is read, moved or rewritten.
-- A legacy transcript is never counted by the session-overlap warning
-  (`kubic doctor`): it cannot be attached, so it cannot be a live sibling.
-- `kubic sessions prune` still never touches `--<cwd>--` transcript
-  directories — only `<root>/<id>/` state dirs ([below](#session-retention-prune)).
-
-Start a new session (`kubic sessions create`, or just `kubic run`) and the
-state directory's own format is the durable one.
+This release starts a clean session format. Session folders written by
+earlier builds are ignored: they are never listed, the overlap warning
+(`kubic doctor`) never counts them, and attaching one exits 1 as an unknown
+session. Nothing is converted, moved or rewritten, and `kubic sessions prune`
+only ever considers `<root>/<id>/` directories that hold a session
+([below](#session-retention-prune)).
 
 ### Session retention (`prune`)
 
@@ -1148,10 +1138,9 @@ journal entries at read time (see the read-time self-heal note under
   recent session is never a candidate anyway, and a live-locked one is
   reported `locked:` instead.
 - **Only session-shaped entries are touched.** Plain files, a stray
-  `lock.json`, names outside `[A-Za-z0-9_-]`, and the `--<cwd>--`
-  transcript directories of legacy sessions (which hold the `.jsonl`
-  transcripts of every session recorded against that cwd) are never
-  touched. A session that
+  `lock.json`, names outside `[A-Za-z0-9_-]`, and any folder that holds no
+  session file (`main.jsonl`, `session.json` or `lock.json`), such as a
+  folder with only transcript files, are never touched. A session that
   cannot be inspected is skipped and reported
   (`unreadable: <id> — skipped`), never guessed at. A missing sessions
   root is a fresh machine: `nothing to prune`, exit 0. A root that exists
@@ -1159,9 +1148,8 @@ journal entries at read time (see the read-time self-heal note under
 - **Scope.** `prune` deletes `<sessions-root>/<id>/` state dirs only —
   never the workspace journal (`.kubic/journal`), never anything outside
   the sessions root. A durable session's transcript lives INSIDE its state dir
-  (`main.jsonl`), so pruning a session deletes its transcript with it. The
-  `--<cwd>--` transcript directories of legacy sessions stay beside the
-  state dirs and are not part of this command today ([legacy sessions](#session-storage-and-legacy-sessions)).
+  (`main.jsonl`), so pruning a session deletes its transcript with it.
+  Folders that hold no session file are not part of this command.
 
 ## `kubic git`
 
@@ -1234,6 +1222,16 @@ extra on stderr; every `--json` document carries the resolved store as
 workspace the paths resolve against): `diff --json` is `{session, root,
 changes}`, `log --json` is `{session, root, entries}`, and `undo`/`status`
 add both fields to their objects.
+
+Every journal entry, and every change `diff --json` reports, carries
+`source`: `tool` for a tool call, `sweep` for the end-of-run reconciliation
+(the entries flagged `unattributed`), and `undo` for an undo's own record.
+A journal written before entries carried `source` is read with one derived on
+read: a line recorded under the `kubic-undo` agent id is `undo`, a line flagged
+`unattributed` is `sweep`, and every other line is `tool`. Reading derives it
+and writes nothing back. A prune that rewrites the index persists the derived
+`source` on each line it keeps. Undo and `diff` see those sources, so an
+earlier session undoes, previews and prunes exactly as it did before.
 
 `undo` and `status` refuse a session store whose workspace cannot be used —
 exit 2, nothing read or written, a named reason on stderr: `session <id>:
@@ -1700,23 +1698,28 @@ parsed by commander
 Scores one suite against a task prompt or an existing trajectory
 export. Every record needs its provenance (`model`, `thinking`,
 `worktree`) and a `--size`; a record missing any of them is refused with
-exit 2 and is never stored. A run is one generation, so a `--task` record's
-`generation` is always `0`.
+exit 2 and is never stored. A suite is one case: a record's `caseId` is the
+suite name.
 
 - With `--task`, the provenance comes from the flags: `--worktree` is
   mandatory and `--model` defaults to `faux/echo`
   (the shipped testing provider's registered model).
 - With `--trajectory`, the provenance comes from the export itself:
   `model` from `provenance.model`, `thinking` from `model.thinking`, and
-  `worktree` and `generation` from `provenance`. These flags become
+  `worktree` from `provenance`. These flags become
   optional cross-checks. A flag that disagrees with the export is
   refused with exit 2 and `[provenance-mismatch]`, and no record is
   printed. The size is not part of an export, so `--size` stays
   mandatory; the determinism tier is derived from the path.
 
-Every record carries `success`, `costUsd`, `tokens`,
-`latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`,
-`generation`, `size` and `determinism`. `determinism` is the tier,
+Exports written by earlier builds (schema 1.0 to 1.3) still parse, for
+`replay`, `eval` and `export` alike. Keys the 1.0 contract no longer defines
+are carried through unread, and an escalation recorded without its model
+endpoints reads them as `null`.
+
+Every record carries `suite`, `caseId`, `success`, `costUsd`, `tokens`,
+`latencyMs`, `toolCalls`, `model`, `thinking`, `worktree`, `size` and
+`determinism`. `determinism` is the tier,
 derived from the path: `--trajectory` scores a recorded export without
 re-executing anything → `recorded`; `--task` executes a model-backed
 suite → `live`. Benchmark rows publish the same field (`live` — including
@@ -1865,11 +1868,11 @@ A pair ranks two answers to one prompt. A pair is excluded when:
 - either side is an env failure (`env-failure-excluded`)
 - the verifier does not prefer chosen over rejected
   (`no-preference-signal-excluded`)
-- the runs cross a worktree or grant boundary (`cross-boundary-excluded`)
+- the runs cross a worktree or task-role boundary (`cross-boundary-excluded`)
 
 An excluded pair prints `excluded: <tag> — <reason>` and exits 0; it
 never produces a training record. A DPO record carries both sides'
-`taskRef`, and a hand-built record whose task refs differ fails
+`taskRef` and `roleRef`, and a hand-built record whose task refs differ fails
 validation. `grpo` refuses with exit 2 when its candidates answer
 different prompts or tasks. Stripped provenance or failure labels also
 refuse with exit 2.
@@ -1910,7 +1913,7 @@ the record count, exclusions **by tag** (`env-failure-excluded`,
 `cross-boundary-excluded`, `no-preference-signal-excluded`,
 `prompt-mismatch-excluded`, `no-counterpart-excluded`,
 `singleton-excluded`) with a file/tag/reason row each, and a provenance
-summary (distinct sessions, agents, worktrees and models). Text mode
+summary (distinct sessions, worktrees and models). Text mode
 prints one `dataset: …` summary line; `--json` wraps the manifest in
 `{ok, exitCode, type, dataset, out, manifest}`.
 
@@ -1941,14 +1944,13 @@ report their own spend aggregate at the higher levels); `--by project`
 rolls each workspace to a single row. A session whose storage a live run
 owns is skipped, never opened (pi-durable: one process per storage), and
 reported as a zero row with `MODEL` `(locked)`; a session that cannot be
-read at all (a legacy transcript, a half-written directory) is
-`(unreadable)` the same way. A session that goes live *during* the read —
+read at all (a half-written directory) is `(unreadable)` the same way. A session that goes live *during* the read —
 after the lock probe said it was dead — is read as far as it can be (a
 partial trailing record is the writer's uncommitted tail and is skipped,
 never a parse error) and gets a zero `(live)` row beside its rows: the
 sibling rows may be partial. A session the operator NAMED with `--session`
-is never skipped that way: an unknown id, a live lock and a legacy transcript
-each print their refusal and exit 1. The read path is lock-free: `kubic cost` never
+is never skipped that way: an unknown id and a live lock each print their
+refusal and exit 1. The read path is lock-free: `kubic cost` never
 creates or removes `lock.json`, so session dir mtimes (the prune age
 signal) are untouched and a concurrent attach is never blocked.
 
@@ -1994,10 +1996,15 @@ reads one session's rows (`agent.session` is the session).
 **Output.** Text mode prints a table with the columns `WHEN`, `POSTURE`,
 `RESULT`, `WHAT`, `PERMISSION`, `APPROVAL` and `REASON`. With no matching
 records it prints `no audit records` and exits 0. `--json` prints the full
-13-field records. A ledger that exists but cannot be read (permission
-denied, I/O error) is not an empty trail: the command prints `error: cannot
-read the audit ledger <path>: …` on stderr and exits 1. Only a missing
-ledger reads as empty.
+records: the 13 fields plus `version`, which is `1`. A ledger that exists but
+cannot be read (permission denied, I/O error) is not an empty trail: the
+command prints `error: cannot read the audit ledger <path>: …` on stderr and
+exits 1. Only a missing ledger reads as empty. A ledger line that is a record
+of another version, or has no `version`, makes the whole ledger unreadable
+with the same error (`line <n> is not a version 1 audit record`); the ledger
+is not converted or rewritten, so move it aside to start a new trail. A run
+whose ledger is unreadable still writes its `trajectory.json`, with no
+approvals in it, after naming the ledger on its warning channel.
 
 **Redaction.** Every record is redacted before it is printed:
 secret-shaped values and listed-secret inventory values become
@@ -2024,8 +2031,7 @@ this file.
   `model.thinking` is the thinking level the lane runs, read from the
   conversation's agent document (a `/thinking` change mid-session is read
   at record time, so later rows name the new level).
-- `worker.pid` names the process that made the decision and
-  `worker.generation` is always `0`.
+- `process.pid` names the process that made the decision.
 - `workspace.base` is the base revision the run started from: `HEAD` at
   run start, `none` outside git. A row that genuinely knows no better keeps
   the honest `unknown` instead of inventing a value.

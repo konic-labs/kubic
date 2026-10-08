@@ -8,6 +8,7 @@ import {
   isUndoableCreate,
   type JournalEntry,
   type JournalOp,
+  type JournalSource,
 } from './journal.js';
 
 /**
@@ -21,7 +22,7 @@ type FileOp = Exclude<JournalOp, 'marker'>;
 export interface FileChange {
   path: string;
   op: FileOp;
-  agentId: string;
+  source: JournalSource;
   toolCallId: string | null;
   sessionId: string;
   timestamp: number;
@@ -57,7 +58,6 @@ export interface FileChange {
 
 export interface DiffFilter {
   path?: string;
-  agent?: string;
 }
 
 export function diffEntries(
@@ -70,7 +70,6 @@ export function diffEntries(
     // never a diff hunk (status/log surface them instead).
     if (e.op === 'marker') continue;
     if (filter.path !== undefined && e.path !== filter.path) continue;
-    if (filter.agent !== undefined && e.agentId !== filter.agent) continue;
     const list = byPath.get(e.path) ?? [];
     list.push(e);
     byPath.set(e.path, list);
@@ -121,7 +120,7 @@ function buildChange(
   return {
     path,
     op: last.op,
-    agentId: last.agentId,
+    source: last.source,
     toolCallId: last.toolCallId,
     sessionId: last.sessionId,
     timestamp: last.timestamp,

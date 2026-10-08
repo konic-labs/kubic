@@ -267,7 +267,6 @@ describe('exportDataset', () => {
     expect(m.manifest()).toEqual(manifest);
     expect(manifest.provenance).toEqual({
       sessions: ['sess-1'],
-      agents: ['agent-1'],
       worktrees: ['/wt/agent-1'],
       models: ['acme/m1'],
     });

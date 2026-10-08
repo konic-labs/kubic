@@ -2,8 +2,7 @@
 //
 // One pi-durable Storage per <sessions-root>/<id>/, one durable Session per
 // storage, one Kubic `kubic.session` document written in the creating commit,
-// and the Kubic lock wrapping every storage open. Legacy transcripts
-// (`<root>/--<cwd>--/<ts>_<id>.jsonl`) are detected and refused, never read.
+// and the Kubic lock wrapping every storage open.
 import {
   chmodSync,
   existsSync,
@@ -41,7 +40,6 @@ import {
   readSessionMetadata,
   releaseSessionLock,
   SessionAttachError,
-  SessionFormatError,
   type SessionHandle,
   SessionIdError,
   SessionLockError,
@@ -107,42 +105,14 @@ function readHeader(root: string, id: string): Record<string, unknown> {
   ) as Record<string, unknown>;
 }
 
-// A legacy session: `<root>/--<cwd with /, \ and : mapped to -->--/` holding
-// `<iso-timestamp>_<encoded id>.jsonl` whose first line is the format-4
-// header. The shape the legacy writer produced.
-function writeLegacySession(
-  root: string,
-  cwd: string,
-  id: string,
-  createdAt: number,
-): string {
-  const dir = join(
-    root,
-    `--${cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`,
-  );
-  mkdirSync(dir, { recursive: true });
-  const path = join(
-    dir,
-    `${new Date(createdAt).toISOString().replace(/[:.]/g, '-')}_${encodeURIComponent(id)}.jsonl`,
-  );
-  writeFileSync(
-    path,
-    `${JSON.stringify({
-      v: 4,
-      kind: 'header',
-      id,
-      storageVersion: 1,
-      createdAt,
-      cwd,
-    })}\n${JSON.stringify({
-      v: 4,
-      kind: 'record',
-      seq: 1,
-      type: 'message',
-      message: { role: 'user', content: 'hello' },
-    })}\n`,
-  );
-  return path;
+// Rewrites a session's header `createdAt`, the value the listing orders by.
+function backdateSession(root: string, id: string, createdAt: string): void {
+  const path = join(root, id, 'session.json');
+  const header = JSON.parse(readFileSync(path, 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  writeFileSync(path, `${JSON.stringify({ ...header, createdAt })}\n`);
 }
 
 // The harness a Kubic caller boots over a session's storage (the real lane
@@ -351,22 +321,6 @@ describe('pi-durable session storage', () => {
     ).rejects.toBeInstanceOf(SessionAttachError);
   });
 
-  it('refuses an id shaped like a pi transcript directory', async () => {
-    const root = tmpRoot();
-    const store = storeFor(root);
-    // `--a--` matches the id class but is the shape of pi's transcript
-    // directories: listing classifies it as the legacy layout, so a session with
-    // that id would be invisible to `sessions list`, the overlap probe and
-    // `kubic doctor`. Refused on both paths, before any directory is made.
-    await expect(
-      createSession(store, { cwd: '/work', id: '--a--' }, BACKGROUND_CONTEXT),
-    ).rejects.toBeInstanceOf(SessionIdError);
-    await expect(
-      attachSession(store, '--a--', BACKGROUND_CONTEXT),
-    ).rejects.toBeInstanceOf(SessionAttachError);
-    expect(existsSync(join(root, '--a--'))).toBe(false);
-  });
-
   it('refuses to create over an existing session and never rewrites its metadata', async () => {
     const root = tmpRoot();
     const store = storeFor(root);
@@ -387,22 +341,6 @@ describe('pi-durable session storage', () => {
     );
     expect(attached.meta).toEqual(first.meta);
     expect(readHeader(root, 'kept').cwd).toBe('/work');
-  });
-
-  it('refuses to create a durable session over a legacy session id', async () => {
-    const root = tmpRoot();
-    const store = storeFor(root);
-    writeLegacySession(root, '/work', 'legacy-3', Date.now() - 60_000);
-    // The id belongs to a legacy session: reusing it would mix a new durable
-    // session into the old session's journal and spans.
-    await expect(
-      createSession(
-        store,
-        { cwd: '/work', id: 'legacy-3' },
-        BACKGROUND_CONTEXT,
-      ),
-    ).rejects.toBeInstanceOf(SessionFormatError);
-    expect(existsSync(join(root, 'legacy-3', 'main.jsonl'))).toBe(false);
   });
 
   it('leaves no half-made session behind when create fails', async () => {
@@ -529,28 +467,26 @@ describe('session listing', () => {
       await createSession(store, { cwd: '/one' }, BACKGROUND_CONTEXT),
     );
     await current.release(BACKGROUND_CONTEXT);
-    // A legacy transcript recorded a minute earlier, so the order assertion
-    // never depends on two sessions landing in the same millisecond.
-    const earlier = Date.parse(current.meta.createdAt) - 60_000;
-    writeLegacySession(root, '/two', 'legacy-older', earlier);
+    const older = track(
+      await createSession(store, { cwd: '/two' }, BACKGROUND_CONTEXT),
+    );
+    await older.release(BACKGROUND_CONTEXT);
+    // The older session is backdated a minute, so the order assertion never
+    // depends on two sessions landing in the same millisecond.
+    const earlier = new Date(
+      Date.parse(current.meta.createdAt) - 60_000,
+    ).toISOString();
+    backdateSession(root, older.id, earlier);
 
     const listed = await listSessions(store, BACKGROUND_CONTEXT);
-    expect(listed.map((entry) => entry.id)).toEqual([
-      current.id,
-      'legacy-older',
-    ]);
+    expect(listed.map((entry) => entry.id)).toEqual([current.id, older.id]);
     expect(listed[0]).toEqual({
       id: current.id,
       meta: { cwd: '/one', createdAt: current.meta.createdAt },
-      format: 'durable',
     });
     expect(listed[1]).toEqual({
-      id: 'legacy-older',
-      meta: {
-        cwd: '/two',
-        createdAt: new Date(earlier).toISOString(),
-      },
-      format: 'legacy',
+      id: older.id,
+      meta: { cwd: '/two', createdAt: earlier },
     });
   });
 
@@ -582,80 +518,22 @@ describe('session listing', () => {
     ).toEqual([mine.id]);
   });
 
-  it('reports a session directory in the legacy layout and refuses to attach it', async () => {
+  it('ignores a folder that holds a transcript but no session storage', async () => {
     const root = tmpRoot();
     const store = storeFor(root);
-    const createdAt = Date.now() - 60_000;
-    const path = writeLegacySession(root, '/work', 'legacy-1', createdAt);
-
-    const listed = await listSessions(store, BACKGROUND_CONTEXT);
-    expect(listed).toEqual([
-      {
-        id: 'legacy-1',
-        meta: { cwd: '/work', createdAt: new Date(createdAt).toISOString() },
-        format: 'legacy',
-      },
-    ]);
-    // A legacy transcript is never a live sibling: it cannot be attached.
-    expect(
-      await sessionsTouchingWorkspace(store, '/work', BACKGROUND_CONTEXT),
-    ).toEqual([]);
-
-    let caught: unknown;
-    try {
-      await attachSession(store, 'legacy-1', BACKGROUND_CONTEXT);
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(SessionFormatError);
-    expect((caught as Error).message).toBe(
-      'session legacy-1 was written by Kubic on Pi 0.87; start a new session',
+    const folder = join(root, '--work--');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(
+      join(folder, 'stray-1.jsonl'),
+      `${JSON.stringify({ v: 4, kind: 'header', id: 'stray-1', cwd: '/work' })}\n`,
     );
-    // Nothing was converted or moved: the transcript is exactly as written.
-    expect(existsSync(path)).toBe(true);
-  });
-
-  it('skips a legacy header whose id is not a session id', async () => {
-    const root = tmpRoot();
-    const store = storeFor(root);
-    // A hand-edited or foreign header: its id never reaches a listing that
-    // 's CLI renders, and it can never be attached.
-    writeLegacySession(root, '/work', '../escape', Date.now() - 60_000);
     expect(await listSessions(store, BACKGROUND_CONTEXT)).toEqual([]);
     await expect(
-      attachSession(store, 'escape', BACKGROUND_CONTEXT),
+      attachSession(store, 'stray-1', BACKGROUND_CONTEXT),
     ).rejects.toBeInstanceOf(SessionAttachError);
   });
 
-  it('lists a 1.0 session beside a legacy one and keeps the 1.0 entry', async () => {
-    const root = tmpRoot();
-    const store = storeFor(root);
-    const current = track(
-      await createSession(
-        store,
-        { cwd: '/work', id: 'legacy-2' },
-        BACKGROUND_CONTEXT,
-      ),
-    );
-    await current.release(BACKGROUND_CONTEXT);
-    // A legacy transcript that claims the same id (a hand-copied leftover):
-    // the current format wins, and attach opens the storage, not the file.
-    writeLegacySession(root, '/work', 'legacy-2', Date.now() - 60_000);
-    const listed = await listSessions(store, BACKGROUND_CONTEXT);
-    expect(listed).toEqual([
-      {
-        id: 'legacy-2',
-        meta: { cwd: '/work', createdAt: current.meta.createdAt },
-        format: 'durable',
-      },
-    ]);
-    const attached = track(
-      await attachSession(store, 'legacy-2', BACKGROUND_CONTEXT),
-    );
-    expect(attached.meta.cwd).toBe('/work');
-  });
-
-  it('skips a session directory with no storage and no legacy transcript', async () => {
+  it('skips a session directory with no storage', async () => {
     const root = tmpRoot();
     mkdirSync(join(root, 'half-created', 'journal'), { recursive: true });
     expect(await listSessions(storeFor(root), BACKGROUND_CONTEXT)).toEqual([]);

@@ -25,7 +25,7 @@ export interface FullAccessSession {
 // The one-session read behind `doctor --session <id>`: the
 // same live + fullAccess rule as the workspace enumeration, without the
 // workspace filter — the operator named the session explicitly. Undefined
-// covers missing, released, enforced and legacy sessions alike.
+// covers missing, released and enforced sessions alike.
 export async function describeFullAccessSession(
   sessionsRoot: string,
   sessionId: string,

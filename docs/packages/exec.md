@@ -82,11 +82,11 @@ guardrail.
 
 | Interface | Fields |
 | --- | --- |
-| `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `afterHash?: string \| null`, `afterOmitted?: boolean`, `afterBytes?: number`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `turn?: number` (the interactive turn a sweep entry belongs to) |
-| `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `agentId`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `turn?: number`, `afterOmitted?: boolean`, `afterBytes?: number` |
+| `JournalEntryInput` | `path`, `op`, `before: string \| null`, `beforeHash?: string \| null`, `after: string \| null`, `afterHash?: string \| null`, `afterOmitted?: boolean`, `afterBytes?: number`, `bytesDelta: number`, `sessionId`, `source: tool \| sweep \| undo`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `turn?: number` (the interactive turn a sweep entry belongs to) |
+| `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `source: tool \| sweep \| undo`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `turn?: number`, `afterOmitted?: boolean`, `afterBytes?: number` |
 | `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) — `maxBytes` is the whole store (index + blobs) and is what `[journal] maxBytes` threads into |
 | `UndoResult` | `restored: string[]`, `skipped: string[]`, `skippedDetails: { path, reason }[]`, `warnings: string[]` — a step whose inverse record cannot fit the store's bound is skipped with `too large to record: …` and a warning naming the bound, before the file is touched |
-| `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `agentId`, `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `corrupt: boolean`, `afterOmitted: boolean`, `afterBytes?: number`, `contentTruncated?: boolean` |
+| `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `source` (`tool` \| `sweep` \| `undo`), `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `corrupt: boolean`, `afterOmitted: boolean`, `afterBytes?: number`, `contentTruncated?: boolean` |
 | `DiffFilter` | `path?: string`, `agent?: string` |
 
 One `FileChange` per path (earliest before, latest after, latest
@@ -198,7 +198,7 @@ The size cap is `[journal] maxBytes` when configured,
 
 Undo records: every successful restore appends its inverse
 entry — pre-undo content as `before`, restored content as `after`,
-`sessionId`/`agentId` `kubic-undo`, `toolCallId` null — so the journal
+`sessionId` `kubic-undo`, `source` `undo`, `toolCallId` null — so the journal
 describes the world after an undo, and a second `undo --step` is the
 redo. It is an attributed entry (no `unattributed` flag, no
 `reconciled` marker); `applyUndo` appends it in the non-dry-run path

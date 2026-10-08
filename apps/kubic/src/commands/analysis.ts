@@ -66,8 +66,8 @@ const SIZE_HELP =
 const WORKSPACE_HELP =
   'inline|worktree (default inline; worktree needs a clean --worktree)';
 const THINKING_HELP = 'thinking level, recorded verbatim';
-// eval --trajectory reads model/thinking/worktree/generation from the
-// export: the flag only cross-checks it.
+// eval --trajectory reads model/thinking/worktree from the export: the flag
+// only cross-checks it.
 const FROM_EXPORT = '; --trajectory reads it from the export';
 
 function examples(lines: readonly string[]): string {

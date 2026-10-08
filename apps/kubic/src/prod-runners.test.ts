@@ -316,6 +316,7 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
   function agedSession(root: string, id: string, ageMs: number): void {
     const dir = join(root, id);
     mkdirSync(join(dir, 'journal'), { recursive: true });
+    writeFileSync(join(dir, 'main.jsonl'), '');
     writeFileSync(join(dir, 'journal', 'index.jsonl'), 'index!!');
     writeFileSync(join(dir, 'spans.jsonl'), 'spans');
     const secs = (Date.now() - ageMs) / 1000;
@@ -348,7 +349,6 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
       after: 'older\n',
       bytesDelta: 0,
       sessionId: 'sess-journal',
-      agentId: 'root',
       toolCallId: 'call-aged',
       timestamp: Date.now() - 30 * DAY_MS,
     });
@@ -359,7 +359,6 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
       after: 'newer\n',
       bytesDelta: 0,
       sessionId: 'sess-journal',
-      agentId: 'root',
       toolCallId: 'call-fresh',
       timestamp: Date.now(),
     });
@@ -387,7 +386,6 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
       after: 'older\n',
       bytesDelta: 0,
       sessionId: 'sess-prune',
-      agentId: 'root',
       toolCallId: 'call-aged',
       timestamp: Date.now() - 30 * DAY_MS,
     });
@@ -398,7 +396,6 @@ describe('kubic sessions/journal retention (prod wiring)', () => {
       after: 'newer\n',
       bytesDelta: 0,
       sessionId: 'sess-prune',
-      agentId: 'root',
       toolCallId: 'call-fresh',
       timestamp: Date.now(),
     });
@@ -511,11 +508,11 @@ describe('kubic run projections (prod wiring)', () => {
 
   function journalEntries(sessionId: string): Array<{
     path?: string;
-    agentId?: string;
+    source?: string;
   }> {
     return new FileJournalStore(
       join(defaultSessionsRoot(), sessionId, 'journal'),
-    ).entries() as Array<{ path?: string; agentId?: string }>;
+    ).entries() as Array<{ path?: string; source?: string }>;
   }
 
   // The `journal:<id>` ref the run envelope prints (no explicit --session
@@ -554,7 +551,7 @@ describe('kubic run projections (prod wiring)', () => {
     ).toEqual(['in-scope.txt']);
   });
 
-  it('attributes the run journal to the configured agent name', async () => {
+  it("journals the run's bash change as a sweep entry", async () => {
     const { config, project } = trustedProjectConfig(
       '[agent]\nname = "alice"\n',
     );
@@ -574,7 +571,7 @@ describe('kubic run projections (prod wiring)', () => {
     expect(code).toBe(0);
     const entries = journalEntries(journalIdOf(lines));
     expect(entries.length).toBeGreaterThan(0);
-    for (const entry of entries) expect(entry.agentId).toBe('alice');
+    for (const entry of entries) expect(entry.source).toBe('sweep');
   });
 });
 
@@ -704,7 +701,7 @@ describe('remaining runners (prod wiring smokes)', () => {
 // config's projections — the journal it writes carries the configured
 // agent id, exactly as `kubic run` attributes its own.
 describe('kubic replay lane projection (prod wiring)', () => {
-  it('attributes the re-executed lane journal to the configured agent', async () => {
+  it("journals the re-executed lane's bash change as a sweep entry", async () => {
     const { config, project } = (() => {
       const home = mkdtempSync(join(tmpdir(), 'prod-replay-home-'));
       roots.push(home);
@@ -744,7 +741,6 @@ describe('kubic replay lane projection (prod wiring)', () => {
           identity: {
             sessionId: 'sess-1',
             agentId: 'agent-1',
-            workerId: null,
           },
           model: {
             provider: 'faux',
@@ -752,17 +748,15 @@ describe('kubic replay lane projection (prod wiring)', () => {
             thinking: null,
             escalations: [],
           },
-          prompt: { text: 'touch the marker', constraints: [] },
-          resources: { skills: [], promptTemplates: [] },
-          transfer: null,
+          prompt: { text: 'touch the marker' },
+          resources: { skills: [] },
           actions: [],
           observations: [],
-          state: { phase: 'done', snapshot: null },
+          state: { phase: 'done' },
           provenance: {
             sessionId: 'sess-1',
             agentId: 'agent-1',
             pid: null,
-            generation: 1,
             worktree: '/repo',
             model: 'faux/echo',
           },
@@ -814,22 +808,22 @@ describe('kubic replay lane projection (prod wiring)', () => {
     ).exitCode;
     expect(code, [...lines, ...errs].join('\n')).toBe(0);
     expect(existsSync(join(project, 'replay-marker'))).toBe(true);
-    // The re-executed lane journaled under the config's agent id — scan
-    // the default sessions root for the marker entry (the replay mints
-    // its own session, so the id is discovered, not assumed).
+    // The marker is a bash write, which the end-of-run sweep journals — scan
+    // the default sessions root for it (the replay mints its own session, so
+    // the id is discovered, not assumed).
     const { readdirSync } = await import('node:fs');
-    const found: Array<{ path?: string; agentId?: string }> = [];
+    const found: Array<{ path?: string; source?: string }> = [];
     for (const id of readdirSync(defaultSessionsRoot())) {
       const journalDir = join(defaultSessionsRoot(), id, 'journal');
       if (!existsSync(join(journalDir, 'index.jsonl'))) continue;
       for (const entry of new FileJournalStore(journalDir).entries() as Array<{
         path?: string;
-        agentId?: string;
+        source?: string;
       }>) {
         if (entry.path === 'replay-marker') found.push(entry);
       }
     }
     expect(found.length).toBeGreaterThan(0);
-    for (const entry of found) expect(entry.agentId).toBe('alice');
+    for (const entry of found) expect(entry.source).toBe('sweep');
   });
 });

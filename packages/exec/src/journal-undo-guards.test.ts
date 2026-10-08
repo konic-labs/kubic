@@ -54,7 +54,6 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
     after: 'made\n',
     bytesDelta: 5,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 1_700_000_000_000,
     ...overrides,

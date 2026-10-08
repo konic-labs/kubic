@@ -16,6 +16,7 @@ import {
 } from '../../../packages/exec/src/journal-diff.js';
 import type { OrgAuditRecord } from '../../../packages/host/src/policy/audit.js';
 import {
+  AUDIT_LEDGER_FILE,
   auditLedgerDirFor,
   readAuditLedger,
 } from '../../../packages/host/src/policy/audit-ledger.js';
@@ -63,6 +64,15 @@ export interface PersistRunTrajectoryInput {
   // The lane's escalation record: every model climb this
   // run recorded, oldest first. Absent means no climb.
   escalations?: TrajectoryEscalation[];
+  // The run's warn channel. Evidence the record cannot read is named here
+  // and left out of the record; the trajectory is still written.
+  warn?: TrajectoryWarn;
+}
+
+export type TrajectoryWarn = (line: string) => void;
+
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function gitBase(
@@ -74,22 +84,37 @@ function gitBase(
   return { baseRevision: head.revision, branch: head.branch };
 }
 
-function journalChanges(sessionsRoot: string, sessionId: string): FileChange[] {
+// A run that never journaled has no index, and the store reads an absent index
+// as empty: that is no change, not a failure. Only a journal that exists and
+// cannot be read is named, because its changes would be missing from the record.
+function journalChanges(
+  sessionsRoot: string,
+  sessionId: string,
+  warn: TrajectoryWarn,
+): FileChange[] {
+  const dir = join(sessionsRoot, sessionId, 'journal');
   try {
-    return diffEntries(
-      new FileJournalStore(join(sessionsRoot, sessionId, 'journal'), {}),
-      {},
+    return diffEntries(new FileJournalStore(dir, {}), {});
+  } catch (error) {
+    warn(
+      `trajectory: file changes not recorded for this run: cannot read the journal ${dir}: ${reasonOf(error)}. Move the journal aside to start a new one.`,
     );
-  } catch {
-    // No journal (the run ended before one existed): no recorded changes.
     return [];
   }
 }
 
-function ledger(cwd: string): OrgAuditRecord[] {
+// An absent ledger is an empty trail. An unreadable one (an older format, or a
+// read failure) leaves this run's approvals out of the record, and the record
+// says so, with the ledger's path and how to start a new trail.
+function ledger(cwd: string, warn: TrajectoryWarn): OrgAuditRecord[] {
+  const dir = auditLedgerDirFor(cwd);
+  const path = join(dir, AUDIT_LEDGER_FILE);
   try {
-    return readAuditLedger(auditLedgerDirFor(cwd));
-  } catch {
+    return readAuditLedger(dir);
+  } catch (error) {
+    warn(
+      `trajectory: approvals not recorded for this run: ${reasonOf(error)}. Move ${path} aside (rename it) to start a new audit trail.`,
+    );
     return [];
   }
 }
@@ -128,6 +153,8 @@ export function resolveSessionTrajectory<
 // or written — the caller reports that without changing the run's result.
 export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
   const processEnv = input.processEnv ?? process.env;
+  const warn: TrajectoryWarn =
+    input.warn ?? ((line) => process.stderr.write(`${line}\n`));
   const exported = assembleRunTrajectory({
     sessionId: input.sessionId,
     agentId: input.agentId,
@@ -139,12 +166,11 @@ export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
       thinking: input.thinking ?? null,
     },
     pid: input.pid ?? process.pid,
-    generation: 0,
     cwd: input.cwd,
     ...gitBase(input.cwd, input.base),
     env: toolSpawnEnv(processEnv),
-    changes: journalChanges(input.sessionsRoot, input.sessionId),
-    approvals: ledger(input.cwd),
+    changes: journalChanges(input.sessionsRoot, input.sessionId, warn),
+    approvals: ledger(input.cwd, warn),
     skills: input.skills,
     startedAt: input.startedAt,
     endedAt: input.endedAt,

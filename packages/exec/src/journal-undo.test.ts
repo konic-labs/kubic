@@ -39,7 +39,6 @@ function seed(): { store: FileJournalStore; root: string } {
     after: 'v2\n',
     bytesDelta: 0,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 100,
   });
@@ -51,7 +50,6 @@ function seed(): { store: FileJournalStore; root: string } {
     after: 'v3\n',
     bytesDelta: 0,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: 'call-2',
     timestamp: 200,
   });
@@ -64,13 +62,160 @@ function seed(): { store: FileJournalStore; root: string } {
     after: 'mystery\n',
     bytesDelta: 8,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: null,
     timestamp: 300,
     unattributed: true,
   });
   return { store, root };
 }
+
+// Rewrites the index in the shape journals had before entries carried a
+// source: an agent id in its place. Undo bookkeeping was recorded as
+// `kubic-undo`; every other entry as the run's agent id. Lines already carrying
+// a source are converted; lines already in the old shape are left alone.
+function asLegacyIndex(dir: string): void {
+  const indexPath = join(dir, 'index.jsonl');
+  const lines = readFileSync(indexPath, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      if (!('source' in entry)) return line;
+      const { source, ...rest } = entry;
+      return JSON.stringify({
+        ...rest,
+        agentId: source === 'undo' ? 'kubic-undo' : 'root',
+      });
+    });
+  writeFileSync(indexPath, `${lines.join('\n')}\n`);
+}
+
+describe('a journal written before entries carried a source', () => {
+  // Two tool writes to two files, the way main recorded them. The disk holds
+  // the after-state, as it does when a run has just finished.
+  function legacyTwoWrites(): { dir: string; root: string } {
+    const dir = tmpRoot('j-');
+    const root = tmpRoot('ws-');
+    const store = new FileJournalStore(dir);
+    writeFileSync(join(root, 'a.txt'), 'a1\n');
+    writeFileSync(join(root, 'b.txt'), 'b1\n');
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'a0\n',
+      after: 'a1\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      toolCallId: 'call-1',
+      timestamp: 100,
+    });
+    store.append({
+      path: 'b.txt',
+      op: 'write',
+      before: 'b0\n',
+      after: 'b1\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      toolCallId: 'call-2',
+      timestamp: 110,
+    });
+    asLegacyIndex(dir);
+    return { dir, root };
+  }
+
+  it('maps each legacy line to its source on read, and drops the agent id', () => {
+    const dir = tmpRoot('j-');
+    const root = tmpRoot('ws-');
+    const store = new FileJournalStore(dir);
+    writeFileSync(join(root, 'a.txt'), 'a1\n');
+    store.append({
+      path: 'a.txt',
+      op: 'write',
+      before: 'a0\n',
+      after: 'a1\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      toolCallId: 'call-1',
+      timestamp: 100,
+    });
+    writeFileSync(join(root, 'c.txt'), 'c1\n');
+    store.append({
+      path: 'c.txt',
+      op: 'write',
+      before: null,
+      after: 'c1\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      toolCallId: null,
+      timestamp: 120,
+      unattributed: true,
+    });
+    asLegacyIndex(dir);
+    const reopened = new FileJournalStore(dir);
+    expect(reopened.entries().map((e) => e.source)).toEqual(['tool', 'sweep']);
+    expect(reopened.entries().some((e) => 'agentId' in e)).toBe(false);
+  });
+
+  it('plans and undoes the tool work as main does', () => {
+    const { dir, root } = legacyTwoWrites();
+    const store = new FileJournalStore(dir);
+    const plan = planUndo(store, {});
+    expect(plan.steps.map((s) => s.path).sort()).toEqual(['a.txt', 'b.txt']);
+    const dry = applyUndo(store, plan, root, { dryRun: true });
+    expect([...dry.restored].sort()).toEqual(['a.txt', 'b.txt']);
+    const real = applyUndo(store, plan, root, {});
+    expect([...real.restored].sort()).toEqual(['a.txt', 'b.txt']);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('a0\n');
+    expect(readFileSync(join(root, 'b.txt'), 'utf8')).toBe('b0\n');
+  });
+
+  it('dry-runs to nothing once an earlier undo restored the work', () => {
+    const { dir, root } = legacyTwoWrites();
+    applyUndo(
+      new FileJournalStore(dir),
+      planUndo(new FileJournalStore(dir), {}),
+      root,
+      {},
+    );
+    // The undo's records reach disk as main wrote them: `kubic-undo`.
+    asLegacyIndex(dir);
+    const store = new FileJournalStore(dir);
+    const dry = applyUndo(store, planUndo(store, {}), root, { dryRun: true });
+    expect(dry.restored).toEqual([]);
+    expect(dry.skippedDetails.map((d) => d.path).sort()).toEqual([
+      'a.txt',
+      'b.txt',
+    ]);
+    for (const detail of dry.skippedDetails) {
+      expect(detail.reason).toMatch(/^already undone/);
+    }
+  });
+
+  it('does not recreate undone work once a prune has kept only the undo records', () => {
+    const { dir, root } = legacyTwoWrites();
+    applyUndo(
+      new FileJournalStore(dir),
+      planUndo(new FileJournalStore(dir), {}),
+      root,
+      {},
+    );
+    asLegacyIndex(dir);
+    // A prune that keeps the newest records drops the old tool entries and
+    // keeps the undo's own: the disk must stay where the user undid it.
+    const indexPath = join(dir, 'index.jsonl');
+    const kept = readFileSync(indexPath, 'utf8')
+      .split('\n')
+      .filter((line) => line.includes('"agentId":"kubic-undo"'));
+    writeFileSync(indexPath, `${kept.join('\n')}\n`);
+    const store = new FileJournalStore(dir);
+    const plan = planUndo(store, {});
+    expect(plan.steps).toEqual([]);
+    const real = applyUndo(store, plan, root, {});
+    expect(real.restored).toEqual([]);
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('a0\n');
+    expect(readFileSync(join(root, 'b.txt'), 'utf8')).toBe('b0\n');
+  });
+});
 
 describe('journal undo core', () => {
   it('plans whole-run undo reverse-chronologically with a summary', () => {
@@ -116,9 +261,9 @@ describe('journal undo core', () => {
     // are the undo records for the two steps the walk restored, attributed
     // to kubic-undo and carrying the pre-undo content as `before`.
     const tail = store.entries().slice(-2);
-    expect(tail.map((e) => [e.sessionId, e.agentId, e.toolCallId])).toEqual([
-      ['kubic-undo', 'kubic-undo', null],
-      ['kubic-undo', 'kubic-undo', null],
+    expect(tail.map((e) => [e.sessionId, e.source, e.toolCallId])).toEqual([
+      ['kubic-undo', 'undo', null],
+      ['kubic-undo', 'undo', null],
     ]);
     expect(tail.map((e) => store.readBefore(e))).toEqual(['v3\n', 'v2\n']);
     expect(tail.map((e) => store.readAfter(e))).toEqual(['v2\n', 'v1\n']);
@@ -201,7 +346,7 @@ describe('undo record + redo', () => {
     expect(record?.path).toBe('a.txt');
     expect(record?.op).toBe('write');
     expect(record?.sessionId).toBe('kubic-undo');
-    expect(record?.agentId).toBe('kubic-undo');
+    expect(record?.source).toBe('undo');
     expect(record?.toolCallId).toBe(null);
     expect(record?.timestamp).toBe(4242);
     // Not an unattributed reconciliation find: it is attributed, to the undo.
@@ -279,7 +424,7 @@ describe('undo record + redo', () => {
         after,
         bytesDelta: 0,
         sessionId: 'kubic-undo',
-        agentId: 'kubic-undo',
+        source: 'undo',
         toolCallId: null,
         timestamp,
       });
@@ -329,8 +474,8 @@ describe('undo record + redo', () => {
     // --step keeps the redo: the newest entry is a kubic-undo record and
     // stays targetable.
     const step = planUndo(store, { step: true });
-    expect(step.steps.map((s) => [s.path, s.agentId, s.timestamp])).toEqual([
-      ['b.txt', 'kubic-undo', 500],
+    expect(step.steps.map((s) => [s.path, s.source, s.timestamp])).toEqual([
+      ['b.txt', 'undo', 500],
     ]);
     const result = applyUndo(store, plain, root, {});
     // The work still un-undone unwinds (a.txt v3→v1); the step an earlier
@@ -343,8 +488,8 @@ describe('undo record + redo', () => {
     // The record the walk just appended is the newest entry now, and --step
     // targets it — undoing it is the redo of the undo that just ran.
     expect(
-      planUndo(store, { step: true }).steps.map((s) => [s.path, s.agentId]),
-    ).toEqual([['a.txt', 'kubic-undo']]);
+      planUndo(store, { step: true }).steps.map((s) => [s.path, s.source]),
+    ).toEqual([['a.txt', 'undo']]);
   });
 
   it('dry-run appends nothing; the real run appends exactly one record per restore', () => {
@@ -365,7 +510,6 @@ describe('undo record + redo', () => {
 const ENTRY_BASE = {
   bytesDelta: 0,
   sessionId: 's1',
-  agentId: 'root',
   toolCallId: 'call-1',
   timestamp: 100,
 } as const;
@@ -534,7 +678,7 @@ describe('undo of an agent-created file', () => {
     // The removal is journaled as a delete whose before is the removed content.
     const last = store.entries().at(-1);
     expect(last?.op).toBe('delete');
-    expect(last?.agentId).toBe('kubic-undo');
+    expect(last?.source).toBe('undo');
     expect(last?.afterHash).toBeNull();
     expect(last === undefined ? null : store.readBefore(last)).toBe('fresh\n');
   });
@@ -695,7 +839,6 @@ describe('undo refuses a step whose inverse record cannot fit', () => {
       afterOmitted: true,
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 100,
     });
@@ -740,7 +883,6 @@ describe('undo refuses a step whose inverse record cannot fit', () => {
       afterOmitted: true,
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 100,
     });
@@ -774,7 +916,6 @@ describe('undo refuses to record a lossy pre-undo copy', () => {
       after: 'v2\n',
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 'call-1',
       timestamp: 100,
     });
@@ -788,7 +929,7 @@ describe('undo refuses to record a lossy pre-undo copy', () => {
     // The inverse record carries no mangled content: the raw hash, marked
     // as a designed omission — never U+FFFD text.
     const record = store.entries().at(-1);
-    expect(record?.agentId).toBe('kubic-undo');
+    expect(record?.source).toBe('undo');
     expect(record?.beforeOmitted).toBe(true);
     expect(record?.beforeHash).toBe(sha256HexOfBytes(binary));
     // `bytesDelta` counts the bytes that were actually there: the 4-byte
@@ -827,7 +968,6 @@ describe('HEAD-move barrier', () => {
       after: 'v2\n',
       bytesDelta: 0,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 't1',
       timestamp: 1,
     });
@@ -840,7 +980,6 @@ describe('HEAD-move barrier', () => {
       headFrom: MOVE_A,
       headTo: MOVE_B,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: null,
       timestamp: 2,
       unattributed: true,
@@ -881,7 +1020,6 @@ describe('HEAD-move barrier', () => {
       after: 'post-move\n',
       bytesDelta: 10,
       sessionId: 's1',
-      agentId: 'root',
       toolCallId: 't2',
       timestamp: 3,
     });

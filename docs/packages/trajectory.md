@@ -7,7 +7,7 @@
 `@kubic/trajectory` publishes the export record: every run may emit one
 JSON record sufficient for replay, benchmarking, SFT/RL datasets and
 debugging — never claiming configuration the run did not use. The schema
-is `stable` at major 1 (currently `1.3`): additive-only within the major,
+is `stable` at major 1 (currently `1.0`): additive-only within the major,
 same-major records parse with no shim, unknown fields are preserved, and
 an unknown major is refused with `unknown-major` (exit 3). The field list,
 the fail-closed rules and the changelog live in `CONTRACT.md`.
@@ -40,11 +40,11 @@ The pure assembler is `packages/host/src/trajectory/run-trajectory.ts`
 | `usage` | The per-request `usage` on this run's assistant messages; `byModel` is keyed `provider/model`. |
 | `diff` | This session's journal changes since the run started. An omitted after-side keeps its path with no hunks. |
 | `approvals` | This session's audit-ledger records since the run started: `ok` becomes approved, a timeout reason becomes timed-out, anything else denied. |
-| `identity` | The session and agent ids; `workerId` and `parentSessionId` are `null`. |
-| `provenance` | Session and agent ids; `pid` = the process; `generation` = `0`; `worktree` = the run's cwd; `model` = `provider/id`, or `none/none` when the run ended before a model was selected. |
+| `identity` | The session and agent ids. |
+| `provenance` | Session and agent ids; `pid` = the process; `worktree` = the run's cwd; `model` = `provider/id`, or `none/none` when the run ended before a model was selected. |
 | `worktree` | `git rev-parse HEAD` and the branch (null when detached); `no-vcs` outside a git checkout. |
 | `environment` | The env the lane spawns tools with, with every secret-classified value redacted. |
-| `task` / `transfer` | `taskId` is `prompt:<sha256 prefix>`, stable per prompt text, so two runs of one prompt can be paired. `grantRef` is `role:<role>` (`role:solo` without `--role`). |
+| `task` | `taskId` is `prompt:<sha256 prefix>`, stable per prompt text, so two runs of one prompt can be paired. `role` is the role the run ran as (`solo` without `--role`). |
 | `result` | The run's terminus mapped to a result status and failure category. Lane failures go through `classifyFailure`; a wall-clock timeout is `timeout` and the `--max-turns` stop is `turn_limit`, both with category `run_limit`; a boot failure or interrupt is `process_crashed` (an interrupt is `cancelled`). |
 
 ## Contracts
@@ -59,7 +59,7 @@ test): `model_failed`, `model_refused`, `provider_transient`,
 `approval_denied`, `approval_timed_out`.
 
 `buildTrajectoryExport` takes `task`, `identity`, `model`, `prompt`,
-`resources`, `transfer?`, `actions`, `observations: RawObservation[]`
+`resources`, `actions`, `observations: RawObservation[]`
 (`{ seq, actionSeq, output }`), `state`, `provenance`, `environment`,
 `worktree`, `diff`, `approvals`, `timestamps: { startedAt, endedAt }`,
 `usage`, `result` and `eval?`. `MAX_OBSERVATION_BYTES` is 8 KiB. Build

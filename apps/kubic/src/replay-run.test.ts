@@ -42,19 +42,17 @@ function tempDir(prefix: string): string {
 function fixtureTrajectory(objective = 'Fix the widget'): TrajectoryExport {
   return buildTrajectoryExport({
     task: { taskId: 'task-1', objective, role: 'writer' },
-    identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
+    identity: { sessionId: 'sess-1', agentId: 'agent-1' },
     model: { provider: 'faux', model: 'echo', thinking: null, escalations: [] },
-    prompt: { text: objective, constraints: [] },
-    resources: { skills: [], promptTemplates: [] },
-    transfer: null,
+    prompt: { text: objective },
+    resources: { skills: [] },
     actions: [],
     observations: [],
-    state: { phase: 'done', snapshot: null },
+    state: { phase: 'done' },
     provenance: {
       sessionId: 'sess-1',
       agentId: 'agent-1',
       pid: null,
-      generation: 1,
       worktree: '/repo',
       model: 'faux/echo',
     },

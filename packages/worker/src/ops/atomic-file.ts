@@ -138,7 +138,7 @@ export function replaceFile(
   pre: PreImage,
   entry: Omit<
     JournalEntryInput,
-    'sessionId' | 'agentId' | 'toolCallId' | 'timestamp' | 'path' | 'turn'
+    'sessionId' | 'toolCallId' | 'timestamp' | 'path' | 'turn'
   >,
 ): void {
   const write = writeTarget(ctx, opName, path);
@@ -148,7 +148,6 @@ export function replaceFile(
         path: write.journalPath,
         ...entry,
         sessionId: ctx.sessionId,
-        agentId: ctx.agentId,
         toolCallId: ctx.toolCallId ?? null,
         // The intercepting tool's name — `opName` is the
         // literal 'write'/'edit' the call site passed, so both tools are

@@ -6,8 +6,8 @@
 //   parseTrajectoryExport, read-only) without re-running anything.
 // Both paths are pure: worktree cleanliness is checked through the
 // injected ensureCleanWorktree hook (this package never touches node:fs,
-// per dep-lint I/O confinement). Missing worktree/generation/size (and,
-// for the trajectory path, an invalid determinism tier) is a fail-closed
+// per dep-lint I/O confinement). Missing worktree/size (and, for the
+// trajectory path, an invalid determinism tier) is a fail-closed
 // EvalRunnerError (exit 2), never a stored record.
 
 import type { TrajectoryExport } from '../../trajectory/src/schema.js';
@@ -30,7 +30,6 @@ export type EvalRunnerErrorCode =
   | 'no-executable-suites'
   | 'ambiguous-suite'
   | 'missing-worktree'
-  | 'missing-generation'
   | 'missing-size'
   | 'invalid-size'
   | 'dirty-worktree'
@@ -77,7 +76,6 @@ export interface EvalTaskOptions {
   model: string;
   thinking: string | null;
   worktree: string;
-  generation: number;
   size: string;
   workspace: EvalWorkspace;
 }
@@ -87,19 +85,18 @@ export interface EvalTaskDeps {
   ensureCleanWorktree?: (worktree: string) => boolean;
 }
 
-// The trajectory path takes model/thinking/worktree/generation from the
-// export itself: the flags are optional cross-checks, and a
-// flag that disagrees with the export is refused (provenance-mismatch)
-// rather than silently stamped over it. The record size is not recorded in
-// an export, so it stays required; the determinism tier is DERIVED from the
-// path (`recorded` here) rather than asked of the caller.
+// The trajectory path takes model/thinking/worktree from the export itself:
+// the flags are optional cross-checks, and a flag that disagrees with the
+// export is refused (provenance-mismatch) rather than silently stamped over
+// it. The record size is not recorded in an export, so it stays required; the
+// determinism tier is DERIVED from the path (`recorded` here) rather than
+// asked of the caller.
 export interface EvalTrajectoryOptions {
   suite: string;
   trajectory: unknown;
   model?: string;
   thinking?: string | null;
   worktree?: string;
-  generation?: number;
   size?: string;
 }
 
@@ -124,23 +121,12 @@ function requireSize(size: string | undefined): EvalSize {
 // never reaches runEvalTask — cannot skip the check and report `ok`.
 export function checkEvalProvenance(options: {
   worktree: string;
-  generation: number;
   size: string;
 }): EvalSize {
   if (typeof options.worktree !== 'string' || options.worktree.trim() === '') {
     throw new EvalRunnerError(
       'missing-worktree',
       'worktree is required: eval records how it ran — refusing to store a worktree-less result',
-    );
-  }
-  if (
-    typeof options.generation !== 'number' ||
-    !Number.isInteger(options.generation) ||
-    !(options.generation >= 0)
-  ) {
-    throw new EvalRunnerError(
-      'missing-generation',
-      'generation is required: eval records which worker generation ran',
     );
   }
   return requireSize(options.size);
@@ -185,7 +171,6 @@ function toRecord(
     model: string;
     thinking: string | null;
     worktree: string;
-    generation: number;
     size: EvalSize;
     determinism: EvalDeterminism;
     success: boolean;
@@ -195,7 +180,8 @@ function toRecord(
 ): EvalRecord {
   const validated = validateEvalRecord({
     suite: options.suite,
-    caseId: `${options.suite}:${options.generation}`,
+    // A suite is one case: its id is the suite's own name.
+    caseId: options.suite,
     category: categoryOf,
     success: options.success,
     costUsd: options.signals.costUsd,
@@ -205,7 +191,6 @@ function toRecord(
     model: options.model,
     thinking: options.thinking,
     worktree: options.worktree,
-    generation: options.generation,
     size: options.size,
     determinism: options.determinism,
     signals: options.signals,
@@ -306,12 +291,10 @@ export async function runEvalTrajectory(
   const model = parsed.provenance.model;
   const thinking = parsed.model.thinking ?? null;
   const worktree = parsed.provenance.worktree;
-  const generation = parsed.provenance.generation;
   crossCheck('model', options.model, model);
   crossCheck('thinking', options.thinking, thinking);
   crossCheck('worktree', options.worktree, worktree);
-  crossCheck('generation', options.generation, generation);
-  checkEvalProvenance({ worktree, generation, size });
+  checkEvalProvenance({ worktree, size });
   const signals = computeSignals(parsed);
   return toRecord(
     {
@@ -319,7 +302,6 @@ export async function runEvalTrajectory(
       model,
       thinking,
       worktree,
-      generation,
       size,
       determinism: 'recorded',
       success: signals.completion && gatesPass(signals),

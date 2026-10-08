@@ -107,7 +107,6 @@ describe('replay re-execution threads compaction and the prompt section', () => 
           identity: {
             sessionId: 'sess-1',
             agentId: 'agent-1',
-            workerId: null,
           },
           model: {
             provider: 'faux',
@@ -115,17 +114,15 @@ describe('replay re-execution threads compaction and the prompt section', () => 
             thinking: null,
             escalations: [],
           },
-          prompt: { text: 'say hi', constraints: [] },
-          resources: { skills: [], promptTemplates: [] },
-          transfer: null,
+          prompt: { text: 'say hi' },
+          resources: { skills: [] },
           actions: [],
           observations: [],
-          state: { phase: 'done', snapshot: null },
+          state: { phase: 'done' },
           provenance: {
             sessionId: 'sess-1',
             agentId: 'agent-1',
             pid: null,
-            generation: 1,
             worktree,
             model: 'faux/echo',
           },

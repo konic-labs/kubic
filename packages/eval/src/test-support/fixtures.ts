@@ -5,14 +5,13 @@ import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 
 export interface FixtureOverrides {
   pid?: number | null;
-  generation?: number;
   worktree?: string;
   model?: string;
   baseRevision?: string;
   status?: TrajectoryExport['result']['status'];
   failureCategory?: TrajectoryExport['result']['failureCategory'];
   evalLabels?: Record<string, string>;
-  transfer?: TrajectoryExport['transfer'];
+  role?: string;
   promptText?: string;
   summary?: string;
   taskId?: string;
@@ -20,36 +19,29 @@ export interface FixtureOverrides {
 
 export function makeExport(overrides: FixtureOverrides = {}): TrajectoryExport {
   const worktree = overrides.worktree ?? '/wt/agent-1';
-  const taskId = overrides.taskId ?? 'task-1';
   return {
     schema_version: '1.0',
     task: {
-      taskId,
+      taskId: overrides.taskId ?? 'task-1',
       objective: 'fix the widget',
-      role: 'implementer',
+      role: overrides.role ?? 'implementer',
     },
-    identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: null },
+    identity: { sessionId: 'sess-1', agentId: 'agent-1' },
     model: {
       provider: 'faux',
       model: overrides.model ?? 'acme/m1',
       thinking: null,
       escalations: [],
     },
-    prompt: { text: overrides.promptText ?? 'fix the widget', constraints: [] },
-    resources: { skills: [], promptTemplates: [] },
-    transfer: overrides.transfer ?? {
-      taskId,
-      worktree,
-      grantRef: 'solo:exec',
-    },
+    prompt: { text: overrides.promptText ?? 'fix the widget' },
+    resources: { skills: [] },
     actions: [],
     observations: [],
-    state: { phase: 'done', snapshot: null },
+    state: { phase: 'done' },
     provenance: {
       sessionId: 'sess-1',
       agentId: 'agent-1',
       pid: overrides.pid ?? null,
-      generation: overrides.generation ?? 3,
       worktree,
       model: overrides.model ?? 'acme/m1',
     },
@@ -80,6 +72,6 @@ export function makeExport(overrides: FixtureOverrides = {}): TrajectoryExport {
       failureCategory: overrides.failureCategory ?? null,
       error: null,
     },
-    eval: { suite: null, caseId: null, labels: overrides.evalLabels ?? {} },
+    eval: { labels: overrides.evalLabels ?? {} },
   };
 }

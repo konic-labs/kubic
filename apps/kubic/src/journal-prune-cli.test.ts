@@ -90,7 +90,6 @@ function seed(journalDir: string, sessionId: string): void {
     after: 'older\n',
     bytesDelta: 0,
     sessionId,
-    agentId: 'root',
     toolCallId: 'call-aged',
     timestamp: Date.now() - 30 * DAY_MS,
   });
@@ -101,7 +100,6 @@ function seed(journalDir: string, sessionId: string): void {
     after: 'newer\n',
     bytesDelta: 0,
     sessionId,
-    agentId: 'root',
     toolCallId: 'call-fresh',
     timestamp: Date.now(),
   });
@@ -553,7 +551,6 @@ describe('journal prune: swept orphan blobs', () => {
       after: 'fresh\n',
       bytesDelta: 6,
       sessionId: 'sess-1',
-      agentId: 'root',
       toolCallId: 'call-fresh',
       timestamp: Date.now(),
     });
@@ -661,7 +658,6 @@ describe('journal prune reports what the pass actually removed', () => {
         after: 'b\n',
         bytesDelta: 0,
         sessionId: 'sess-1',
-        agentId: 'root',
         toolCallId: `call-${path}`,
         timestamp: Date.now() - ageDays * DAY_MS,
       });

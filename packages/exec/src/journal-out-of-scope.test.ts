@@ -142,7 +142,7 @@ describe('out-of-scope matching', () => {
       journal,
       baseline,
       root,
-      { sessionId: 's1', agentId: 'root', timestamp: 1 },
+      { sessionId: 's1', timestamp: 1 },
       { outOfScope: ['dist'], bridge },
     );
     expect(added).toBe(1);
@@ -174,7 +174,7 @@ describe('out-of-scope matching', () => {
       journal,
       baseline,
       root,
-      { sessionId: 's1', agentId: 'root', timestamp: 1 },
+      { sessionId: 's1', timestamp: 1 },
       { outOfScope: ['dist'] },
     );
     expect(added).toBe(0);

@@ -102,7 +102,6 @@ function seed(): {
     after: 'v2\n',
     bytesDelta: 0,
     sessionId: 's1',
-    agentId: 'root',
     toolCallId: 'call-1',
     timestamp: 100,
   });

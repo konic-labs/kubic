@@ -108,12 +108,12 @@ describe('export command', () => {
     const envelope = JSON.parse(o.lines.join('\n')) as {
       ok: boolean;
       exitCode: number;
-      trajectory: { schema: string; provenance: { gen: number } };
+      trajectory: { schema: string; provenance: Record<string, unknown> };
     };
     expect(envelope.ok).toBe(true);
     expect(envelope.exitCode).toBe(0);
     expect(envelope.trajectory.schema).toBe('1.0');
-    expect(envelope.trajectory.provenance.gen).toBe(3);
+    expect(envelope.trajectory.provenance).not.toHaveProperty('gen');
   });
 
   it('exports an SFT record: exit 0, schema sft/1', async () => {

@@ -1,9 +1,8 @@
 // The sessions the TUI's `/resume` picker lists: this project's sessions,
 // newest first, each with its title (the first prompt), turns, cost and age.
 // Read the way `kubic cost` reads (session-read.ts): a session another live
-// process holds is never opened (pi-durable: one process per storage) and a
-// legacy one cannot be — both are listed so the picker can say why
-// they are greyed.
+// process holds is never opened (pi-durable: one process per storage). It is
+// listed, greyed, so the picker can say why it cannot be resumed.
 
 import { join } from 'node:path';
 import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
@@ -36,8 +35,8 @@ export interface SessionSummary {
   /** Prompts in its active transcript. */
   readonly turns?: number;
   readonly costUsd?: number;
-  /** `legacy`: a transcript in the legacy layout; `live`: another process holds it. */
-  readonly state: 'ready' | 'legacy' | 'live';
+  /** `live`: another process holds it. */
+  readonly state: 'ready' | 'live';
 }
 
 export interface SummarizeOptions {
@@ -82,10 +81,6 @@ export async function summarizeProjectSessions(
         ? {}
         : { createdAt: entry.meta.createdAt }),
     };
-    if (entry.format === 'legacy') {
-      summaries.push({ ...base, state: 'legacy' });
-      continue;
-    }
     const dir = join(options.sessionsRoot, entry.id);
     if (sessionLockIsLive(dir) !== undefined) {
       summaries.push({ ...base, state: 'live' });

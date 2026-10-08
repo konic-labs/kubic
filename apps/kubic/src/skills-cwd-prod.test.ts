@@ -152,37 +152,32 @@ describe('explicit --skill paths anchor at the invoking cwd', () => {
     expect(prompt).toContain('<name>reltui</name>');
   });
 
-  it('kubic tui warns an unresolvable --skill through the boot warn channel', async () => {
+  it('kubic tui queues an unresolvable --skill as a transcript notice', async () => {
     const home = tmpRoot('skills-cwd-home-');
     const cwd = tmpRoot('skills-cwd-work-');
-    const warned: string[] = [];
     const boot = await bootTuiLane(undefined, {
       sessionsRoot: tmpRoot('skills-cwd-sessions-'),
       models: fauxModels(['done']),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, cwd, trusted: false },
       skillsList: ['ghost-skill'],
-      warn: (line: string) => warned.push(line),
     });
+    const notices = boot.loop?.drainNotices?.() ?? [];
     await boot.close?.();
-    expect(warned).toEqual(["skill skipped (unknown skill 'ghost-skill')"]);
+    expect(notices).toEqual([
+      "warning: skill skipped (unknown skill 'ghost-skill')",
+    ]);
   });
 
-  it('the tui boot projection carries the err channel as warn', () => {
+  it('the tui boot projection carries no warn channel: warnings stay off stderr', () => {
     const errors: string[] = [];
     const options = tuiBootOptions(
       { out: () => {}, err: (line: string) => errors.push(line) },
       { skillsList: ['ghost-skill'] },
       undefined,
     );
-    expect(typeof options.warn).toBe('function');
-    options.warn?.("skill skipped (unknown skill 'ghost-skill')");
-    expect(errors).toEqual([
-      "warning: skill skipped (unknown skill 'ghost-skill')",
-    ]);
-    // Absent err means a silent boot (values stay in unknownSkills).
-    const silent = tuiBootOptions({ out: () => {} }, undefined, undefined);
-    expect(silent.warn).toBeUndefined();
+    expect(options).not.toHaveProperty('warn');
+    expect(errors).toEqual([]);
   });
 });
 

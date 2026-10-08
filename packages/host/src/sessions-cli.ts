@@ -25,7 +25,6 @@ import {
   openSessionStore,
   SessionAttachError,
   SessionForkError,
-  SessionFormatError,
   SessionLockError,
 } from '../../worker/src/lane/session-store.js';
 import {
@@ -295,12 +294,7 @@ export async function runSessionsCommand(
       renderTable(
         sessions.map((entry) => {
           const cwd = entry.meta?.cwd ?? theme.muted('(no cwd)');
-          return [
-            theme.bold(entry.id),
-            entry.format === 'legacy'
-              ? `${cwd} ${theme.muted('(legacy pi 0.87 — cannot attach)')}`
-              : cwd,
-          ];
+          return [theme.bold(entry.id), cwd];
         }),
         [{ header: 'SESSION' }, { header: 'CWD' }],
         { fancy: deps.fancy === true, theme },
@@ -371,11 +365,9 @@ export async function runSessionsCommand(
     // A live second attachment: the refusal is the answer —
     // printed as-is (it names the holder pid + start time), exit 1, and
     // no transcript was ever read (attach acquires before it opens).
-    // A legacy session directory is refused by name the same way.
     if (
       error instanceof SessionLockError ||
-      error instanceof SessionAttachError ||
-      error instanceof SessionFormatError
+      error instanceof SessionAttachError
     ) {
       log.error(error.message);
       return { exitCode: EXIT_FAILED };
@@ -429,7 +421,7 @@ function renderTranscriptItem(item: TranscriptItem): string {
 // fork at an entry (default: the newest), or the whole tree with --tree. The
 // new id is printed (or `{id, source, at}` with --json) and is usable at once
 // with `kubic run --session` / `kubic tui --session`. The store refuses a
-// live-locked source, a missing one and a legacy one; all exit 1, like attach.
+// live-locked source and a missing one; both exit 1, like attach.
 async function runForkCommand(
   invocation: Extract<SessionsInvocation, { command: 'fork' }>,
   deps: SessionsCommandDeps,
@@ -464,7 +456,6 @@ async function runForkCommand(
     if (
       error instanceof SessionLockError ||
       error instanceof SessionAttachError ||
-      error instanceof SessionFormatError ||
       error instanceof SessionForkError
     ) {
       log.error(error.message);

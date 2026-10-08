@@ -14,7 +14,7 @@
 // runtime implementations) — the structural interfaces below are
 // snapshots of those shapes, pinned by the golden fixture test.
 
-export const SCHEMA_VERSION = '1.3';
+export const SCHEMA_VERSION = '1.0';
 export const SCHEMA_MAJOR = 1;
 
 // Stability promise: `stable` means additive-only within a major —
@@ -29,43 +29,9 @@ export interface TrajectoryChangelogEntry {
 
 export const TRAJECTORY_CHANGELOG: readonly TrajectoryChangelogEntry[] = [
   {
-    version: '1.3',
-    date: '2026-10-07',
-    changes: [
-      'Run budgets were removed: the optional budget block is gone (an older record that carries one still parses; the block is ignored).',
-      'The --max-turns stop reports result.status turn_limit with failure category run_limit; a wall-clock timeout also carries run_limit.',
-      'Records that carry the retired budget_exhausted status or category, or the retired spawn_failed status, no longer parse.',
-    ],
-  },
-  {
-    version: '1.2',
-    date: '2026-10-05',
-    changes: [
-      'Budget observability: optional top-level budget block — limits (the max* dims the run started with), usage (measured tokens/costUsd/toolCalls) and exhausted (the breaching limit with used/max when known).',
-      '1.1 records still parse: the whole budget block is optional on read.',
-    ],
-  },
-  {
-    version: '1.1',
-    date: '2026-10-04',
-    changes: [
-      'Additive identity: identity.parentSessionId + identity.role (task.role stays the task record).',
-      'Escalation attribution: model.escalations[].fromModel/toModel/thinking (toModel required on write).',
-      'Approval audit: approvals[].requested (redacted summary) + justification.',
-      'Durable-state leaves: state.operations[] (id/kind) + state.memos[] refs.',
-      'Result evidence: result.tests + result.artifacts refs.',
-      '1.0 records still parse: every 1.1 field is optional on read.',
-    ],
-  },
-  {
     version: '1.0',
-    date: '2026-09-23',
-    changes: [
-      'Initial stable export: all trajectory fields with mandatory provenance + used-environment snapshot (fail-closed).',
-      'failure categories required on every non-completed result.',
-      'Observations truncated at MAX_OBSERVATION_BYTES with byte counts kept.',
-      'Reserved eval slot; replay pins readable with no shim.',
-    ],
+    date: '2026-10-08',
+    changes: ['Initial export contract.'],
   },
 ] as const;
 
@@ -117,33 +83,29 @@ export const RESULT_STATUSES = [
 
 export type TrajectoryResultStatus = (typeof RESULT_STATUSES)[number];
 
-// Trajectory fields, in issue order.
 export interface TrajectoryTask {
   taskId: string;
   objective: string;
+  // The role the run ran as: 'solo', or the `--role` name.
   role: string;
 }
 
 export interface TrajectoryIdentity {
   sessionId: string;
   agentId: string;
-  workerId: string | null;
-  // 1.1 (additive): the parent session (always null — a run is never a
-  // child of another run) and the agent's own role. `task.role` stays the
-  // task's record; `role` is the agent identity.
-  parentSessionId?: string | null;
-  role?: string;
 }
 
 export interface TrajectoryEscalation {
   reason: string;
   at: string;
-  // 1.1: the escalation's endpoints and the thinking level
-  // it moved to. `toModel` is required on write — the exporter refuses an
-  // escalation that cannot be attributed to a target model.
-  fromModel?: string;
-  toModel?: string;
-  thinking?: string | null;
+  // The model the escalation moved from and to, and the thinking level it
+  // moved to. The writer always records all three, and `toModel` must name the
+  // target: an escalation that cannot be attributed to a model cannot be used
+  // in RL pairing or cost analysis. The reader takes an endpoint that an
+  // earlier build did not record as null.
+  fromModel: string | null;
+  toModel: string | null;
+  thinking: string | null;
 }
 
 export interface TrajectoryModel {
@@ -155,18 +117,10 @@ export interface TrajectoryModel {
 
 export interface TrajectoryPrompt {
   text: string;
-  constraints: string[];
 }
 
 export interface TrajectoryResources {
   skills: string[];
-  promptTemplates: string[];
-}
-
-export interface TrajectoryTransfer {
-  taskId: string;
-  worktree: string;
-  grantRef: string;
 }
 
 export interface TrajectoryAction {
@@ -185,32 +139,22 @@ export interface TrajectoryObservation {
 
 export interface TrajectoryDurableState {
   phase: string;
-  snapshot: JsonValue;
-  // 1.1: the operation leaves traversed and memo refs.
-  operations?: TrajectoryOperation[];
-  memos?: string[];
 }
 
-interface TrajectoryOperation {
-  id: string;
-  kind: string;
-}
-
-// Provenance: pid/generation/worktree/model. pid is an explicit
+// Provenance: pid/worktree/model. pid is an explicit
 // null when no OS process exists (faux runs) — never silently dropped.
 export interface TrajectoryProvenance {
   sessionId: string;
   agentId: string;
   pid: number | null;
-  generation: number;
   worktree: string;
   model: string;
 }
 
 // The ACTUAL ExecutionEnv the run executed with: the
 // post-allowlist spawn env, never the intended/configured env.
-// capturedFrom is a literal discriminator — anything but 'used' is
-// refused at build time (see untrusted-environment).
+// capturedFrom is the record's provenance assertion: the reader refuses any
+// value but 'used' (see malformed), so a record can never claim unrun config.
 export interface TrajectoryEnvironment {
   capturedFrom: 'used';
   cwd: string;
@@ -238,10 +182,6 @@ export interface TrajectoryApproval {
   capability: string;
   verdict: 'approved' | 'denied' | 'timed-out';
   by: string | null;
-  // 1.1: the redacted request summary and the decider's
-  // justification. `null` means not recorded — never an invented value.
-  requested?: string | null;
-  justification?: string | null;
 }
 
 export interface TrajectoryTimestamps {
@@ -276,18 +216,11 @@ export interface TrajectoryResult {
   summary: string;
   failureCategory: TrajectoryFailureCode | null;
   error: TrajectoryResultError | null;
-  // 1.1: refs only — the test and artifact evidence the run
-  // produced, never embedded contents.
-  tests?: string[];
-  artifacts?: string[];
 }
 
-// Eval slot: stable reserved position, filled by the
-// eval harness. Exporters leave it null-labelled; eval reads it with no
-// shim via parseTrajectoryExport.
+// The eval slot: the run verifier's `signal:*` gate labels, read by eval
+// with no shim via parseTrajectoryExport. Empty when no verifier ran.
 export interface TrajectoryEvalSlot {
-  suite: string | null;
-  caseId: string | null;
   labels: Record<string, string>;
 }
 
@@ -298,7 +231,6 @@ export interface TrajectoryExport {
   model: TrajectoryModel;
   prompt: TrajectoryPrompt;
   resources: TrajectoryResources;
-  transfer: TrajectoryTransfer | null;
   actions: TrajectoryAction[];
   observations: TrajectoryObservation[];
   state: TrajectoryDurableState;
@@ -322,7 +254,6 @@ export const TRAJECTORY_FIELDS = {
   model: true,
   prompt: true,
   resources: true,
-  transfer: true,
   actions: true,
   observations: true,
   state: true,
@@ -385,32 +316,29 @@ type FieldType =
   | 'string|null'
   | 'number|null'
   | 'object|null'
-  | 'string[]'
-  // `state.snapshot` is JsonValue: any JSON value, but the key must exist.
-  | 'json';
+  | 'string[]';
 
-// The required nested keys of every object section. `transfer` is
-// object|null and `actions`/`observations`/`approvals` are arrays, so
-// they are listed separately below.
+// The required keys of every object section. `transfer` is gone, and
+// `actions`/`observations`/`approvals` are arrays, so they are listed
+// separately below.
 const SECTION_FIELDS: Readonly<
   Record<string, Readonly<Record<string, FieldType>>>
 > = {
   task: { taskId: 'string', objective: 'string', role: 'string' },
-  identity: { sessionId: 'string', agentId: 'string', workerId: 'string|null' },
+  identity: { sessionId: 'string', agentId: 'string' },
   model: {
     provider: 'string',
     model: 'string',
     thinking: 'string|null',
     escalations: 'array',
   },
-  prompt: { text: 'string', constraints: 'string[]' },
-  resources: { skills: 'string[]', promptTemplates: 'string[]' },
-  state: { phase: 'string', snapshot: 'json' },
+  prompt: { text: 'string' },
+  resources: { skills: 'string[]' },
+  state: { phase: 'string' },
   provenance: {
     sessionId: 'string',
     agentId: 'string',
     pid: 'number|null',
-    generation: 'number',
     worktree: 'string',
     model: 'string',
   },
@@ -432,10 +360,33 @@ const SECTION_FIELDS: Readonly<
     failureCategory: 'string|null',
     error: 'object|null',
   },
-  eval: { suite: 'string|null', caseId: 'string|null', labels: 'object' },
+  eval: { labels: 'object' },
 };
 
 const ARRAY_SECTIONS = ['actions', 'observations', 'approvals'] as const;
+
+// An escalation names when it happened and why. Its endpoints and thinking
+// level are read tolerantly: an earlier build could record an escalation
+// without them, and a record of that shape still parses. When present, each is
+// type-checked. A read fills an absent endpoint with null, so the null is a
+// valid value on the next read too: a consumer may parse a parsed export.
+const ESCALATION_FIELDS: Readonly<Record<string, FieldType>> = {
+  reason: 'string',
+  at: 'string',
+};
+
+const ESCALATION_OPTIONAL_FIELDS: Readonly<Record<string, FieldType>> = {
+  fromModel: 'string|null',
+  toModel: 'string|null',
+  thinking: 'string|null',
+};
+
+const APPROVAL_FIELDS: Readonly<Record<string, FieldType>> = {
+  approvalId: 'string',
+  capability: 'string',
+  verdict: 'string',
+  by: 'string|null',
+};
 
 function describeValue(value: unknown): string {
   if (value === null) return 'null';
@@ -468,8 +419,6 @@ function fieldMatches(type: FieldType, value: unknown): boolean {
         Array.isArray(value) &&
         value.every((entry) => typeof entry === 'string')
       );
-    case 'json':
-      return true;
   }
 }
 
@@ -491,94 +440,17 @@ function expectedOf(type: FieldType): string {
       return 'an object or null';
     case 'string[]':
       return 'an array of strings';
-    case 'json':
-      return 'a JSON value';
   }
 }
 
-function checkTrajectoryShape(input: Record<string, unknown>): void {
-  for (const [section, fields] of Object.entries(SECTION_FIELDS)) {
-    const value = input[section];
-    if (!isRecord(value)) {
-      malformed(section, `must be an object (got ${describeValue(value)})`);
-    }
-    for (const [field, type] of Object.entries(fields)) {
-      if (!(field in value)) {
-        malformed(`${section}.${field}`, 'is required');
-      }
-      const fieldValue = value[field];
-      if (!fieldMatches(type, fieldValue)) {
-        malformed(
-          `${section}.${field}`,
-          `must be ${expectedOf(type)} (got ${describeValue(fieldValue)})`,
-        );
-      }
-    }
-  }
-  for (const section of ARRAY_SECTIONS) {
-    const value = input[section];
-    if (!Array.isArray(value)) {
-      malformed(section, `must be an array (got ${describeValue(value)})`);
-    }
-  }
-  const transfer = input.transfer;
-  if (transfer !== null && !isRecord(transfer)) {
-    malformed(
-      'transfer',
-      `must be an object or null (got ${describeValue(transfer)})`,
-    );
-  }
-  // Guaranteed to be an object by the section loop above.
-  const result = input.result as Record<string, unknown>;
-  const status = result.status;
-  if (
-    typeof status !== 'string' ||
-    !(RESULT_STATUSES as readonly string[]).includes(status)
-  ) {
-    malformed(
-      'result.status',
-      `must be one of ${RESULT_STATUSES.join('|')} (got ${JSON.stringify(status)})`,
-    );
-  }
-}
-
-// 1.1 additions are additive: a 1.0 record omits them and
-// still parses. When present they are type-checked, so the reader never
-// hands a consumer an unvalidated new field.
-const OPTIONAL_SECTION_FIELDS: Readonly<
-  Record<string, Readonly<Record<string, FieldType>>>
-> = {
-  identity: { parentSessionId: 'string|null', role: 'string' },
-  state: { operations: 'array', memos: 'string[]' },
-  result: { tests: 'string[]', artifacts: 'string[]' },
-};
-
-const OPTIONAL_ESCALATION_FIELDS: Readonly<Record<string, FieldType>> = {
-  fromModel: 'string',
-  toModel: 'string',
-  thinking: 'string|null',
-};
-
-const OPTIONAL_APPROVAL_FIELDS: Readonly<Record<string, FieldType>> = {
-  requested: 'string|null',
-  justification: 'string|null',
-};
-
-const OPERATION_FIELDS: Readonly<Record<string, FieldType>> = {
-  id: 'string',
-  kind: 'string',
-};
-
-function checkOptionalFields(
+function checkFields(
   record: Record<string, unknown>,
   path: string,
   fields: Readonly<Record<string, FieldType>>,
-  required: boolean,
 ): void {
   for (const [field, type] of Object.entries(fields)) {
     if (!(field in record)) {
-      if (required) malformed(`${path}.${field}`, 'is required');
-      continue;
+      malformed(`${path}.${field}`, 'is required');
     }
     const value = record[field];
     if (!fieldMatches(type, value)) {
@@ -590,43 +462,73 @@ function checkOptionalFields(
   }
 }
 
-function checkOptionalShape(input: Record<string, unknown>): void {
-  for (const [section, fields] of Object.entries(OPTIONAL_SECTION_FIELDS)) {
+// Each entry of an array section is an object with the required keys. Keys
+// listed as optional are type-checked only when the entry carries them.
+function checkEntries(
+  entries: unknown[],
+  path: string,
+  fields: Readonly<Record<string, FieldType>>,
+  optional: Readonly<Record<string, FieldType>> = {},
+): void {
+  entries.forEach((entry, index) => {
+    const entryPath = `${path}[${index}]`;
+    if (!isRecord(entry)) {
+      malformed(entryPath, `must be an object (got ${describeValue(entry)})`);
+    }
+    checkFields(entry, entryPath, fields);
+    for (const [field, type] of Object.entries(optional)) {
+      if (!(field in entry)) continue;
+      const value = entry[field];
+      if (!fieldMatches(type, value)) {
+        malformed(
+          `${entryPath}.${field}`,
+          `must be ${expectedOf(type)} (got ${describeValue(value)})`,
+        );
+      }
+    }
+  });
+}
+
+function checkTrajectoryShape(input: Record<string, unknown>): void {
+  for (const [section, fields] of Object.entries(SECTION_FIELDS)) {
     const value = input[section];
-    if (!isRecord(value)) continue; // the required pass already refused it
-    checkOptionalFields(value, section, fields, false);
+    if (!isRecord(value)) {
+      malformed(section, `must be an object (got ${describeValue(value)})`);
+    }
+    checkFields(value, section, fields);
+  }
+  for (const section of ARRAY_SECTIONS) {
+    const value = input[section];
+    if (!Array.isArray(value)) {
+      malformed(section, `must be an array (got ${describeValue(value)})`);
+    }
+  }
+  // Guaranteed to be an object by the section loop above.
+  const environment = input.environment as Record<string, unknown>;
+  if (environment.capturedFrom !== 'used') {
+    malformed(
+      'environment.capturedFrom',
+      `must be 'used' (got ${JSON.stringify(environment.capturedFrom)})`,
+    );
   }
   const model = input.model as Record<string, unknown>;
-  const escalations = model.escalations;
-  if (Array.isArray(escalations)) {
-    escalations.forEach((entry, index) => {
-      const path = `model.escalations[${index}]`;
-      if (!isRecord(entry)) {
-        malformed(path, `must be an object (got ${describeValue(entry)})`);
-      }
-      checkOptionalFields(entry, path, OPTIONAL_ESCALATION_FIELDS, false);
-    });
-  }
-  const approvals = input.approvals;
-  if (Array.isArray(approvals)) {
-    approvals.forEach((entry, index) => {
-      const path = `approvals[${index}]`;
-      if (!isRecord(entry)) {
-        malformed(path, `must be an object (got ${describeValue(entry)})`);
-      }
-      checkOptionalFields(entry, path, OPTIONAL_APPROVAL_FIELDS, false);
-    });
-  }
-  const state = input.state as Record<string, unknown>;
-  const operations = state.operations;
-  if (Array.isArray(operations)) {
-    operations.forEach((entry, index) => {
-      const path = `state.operations[${index}]`;
-      if (!isRecord(entry)) {
-        malformed(path, `must be an object (got ${describeValue(entry)})`);
-      }
-      checkOptionalFields(entry, path, OPERATION_FIELDS, true);
-    });
+  checkEntries(
+    model.escalations as unknown[],
+    'model.escalations',
+    ESCALATION_FIELDS,
+    ESCALATION_OPTIONAL_FIELDS,
+  );
+  checkEntries(input.approvals as unknown[], 'approvals', APPROVAL_FIELDS);
+  const result = input.result as Record<string, unknown>;
+  const status = result.status;
+  if (
+    typeof status !== 'string' ||
+    !(RESULT_STATUSES as readonly string[]).includes(status)
+  ) {
+    malformed(
+      'result.status',
+      `must be one of ${RESULT_STATUSES.join('|')} (got ${JSON.stringify(status)})`,
+    );
   }
 }
 
@@ -671,8 +573,27 @@ export function parseTrajectoryExport(input: unknown): TrajectoryExport {
     }
   }
   checkTrajectoryShape(input);
-  checkOptionalShape(input);
-  return input as unknown as TrajectoryExport;
+  return withEscalationEndpoints(input);
+}
+
+// An endpoint an earlier build did not record reads as null, so a consumer sees
+// one escalation shape for every record. Unknown keys inside an entry survive.
+function withEscalationEndpoints(
+  input: Record<string, unknown>,
+): TrajectoryExport {
+  const model = input.model as Record<string, unknown>;
+  const escalations = (model.escalations as Record<string, unknown>[]).map(
+    (entry) => ({
+      ...entry,
+      fromModel: entry.fromModel ?? null,
+      toModel: entry.toModel ?? null,
+      thinking: entry.thinking ?? null,
+    }),
+  );
+  return {
+    ...input,
+    model: { ...model, escalations },
+  } as unknown as TrajectoryExport;
 }
 
 export function parseTrajectoryExportJSON(json: string): TrajectoryExport {

@@ -58,7 +58,7 @@ pi-durable exposes no numeric turn, so their entries carry no `turn`
 field at all — never null, never zero — as do entries written before the
 field existed. Undo is part of the record, not
 an exit from it: every successful `kubic undo` appends its own inverse
-entry (attributed `kubic-undo`, the pre-undo content as its before, the
+entry (source `undo`, the pre-undo content as its before, the
 restored content as its after), so `diff` and `log` describe the world
 after the undo. `kubic undo --step` is the redo of an edit-shaped undo;
 plain `kubic undo` ignores the `kubic-undo` records entirely, so

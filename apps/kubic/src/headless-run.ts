@@ -907,6 +907,7 @@ export async function runHeadlessPrompt(
       endedAt: Date.now(),
       base,
       evalLabels,
+      warn,
       outcome: {
         terminus: settled.terminus,
         summary: settled.summary,
@@ -1599,7 +1600,6 @@ async function runHeadlessPromptImpl(
         root: env.cwd,
         runId: id,
         sessionId: id,
-        agentId: resolveRunAgentId(deps.agentId),
         // Review follow-up: a very large file (or a bridge without ranged
         // reads) is named on the existing debug channel rather than silently
         // costing its size at boot.

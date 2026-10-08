@@ -2,12 +2,9 @@
 // A trainable pair needs three things: a verifier preference signal
 // (chosen passes, rejected fails), no env failure on either side (env
 // breakage is not a capability difference), and one boundary (same
-// worktree + same capability grant). Anything else emits no pair — the
-// refusal is a tagged exclusion record, so audits keep env failures out
-// of capability training without losing the evidence.
-// Read-only reuse: the transfer snapshot {taskId, worktree, grantRef}
-// mirrors the agents TransferLogRecord shape without importing it;
-// pairs carry refs only — never
+// worktree + same task role). Anything else emits no pair — the refusal is a
+// tagged exclusion record, so audits keep env failures out of capability
+// training without losing the evidence. Pairs carry refs only — never
 // transcripts or file contents.
 import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import { checkFailureCategory, checkProvenance, checkVerifier } from './sft.js';
@@ -24,7 +21,7 @@ import { referenceVerifier, type VerifierVerdict } from './verifier.js';
 export const PAIR_SCHEMA = 'pair/1';
 
 // Refs-only side: where the run happened and what it concluded —
-// task/worktree/grant refs plus the bounded completion text, never the
+// task/worktree/role refs plus the bounded completion text, never the
 // transcript and never embedded file contents.
 interface PreferenceSide {
   completion: string;
@@ -33,7 +30,7 @@ interface PreferenceSide {
   verifier: VerifierVerdict;
   taskRef: string;
   worktreeRef: string;
-  grantRef: string | null;
+  roleRef: string;
 }
 
 type PairBoundary = 'within';
@@ -89,7 +86,7 @@ function buildSide(exported: TrajectoryExport): PreferenceSide {
     verifier: referenceVerifier(exported),
     taskRef: exported.task.taskId,
     worktreeRef: provenance.worktree,
-    grantRef: exported.transfer?.grantRef ?? null,
+    roleRef: exported.task.role,
   };
 }
 
@@ -97,12 +94,12 @@ function sameBoundary(
   chosen: PreferenceSide,
   rejected: PreferenceSide,
 ): boolean {
-  // Both refs must agree, and a grant must be present on both: a missing
-  // grant cannot prove the same capability boundary, so it fails closed
-  // to cross-boundary rather than guessing within.
+  // Both refs must agree, and a role must be present on both: a missing role
+  // cannot prove the same capability boundary, so it fails closed to
+  // cross-boundary rather than guessing within.
   if (chosen.worktreeRef !== rejected.worktreeRef) return false;
-  if (chosen.grantRef === null || rejected.grantRef === null) return false;
-  return chosen.grantRef === rejected.grantRef;
+  if (!nonEmpty(chosen.roleRef) || !nonEmpty(rejected.roleRef)) return false;
+  return chosen.roleRef === rejected.roleRef;
 }
 
 export function buildPreferencePair(
@@ -161,11 +158,11 @@ export function buildPreferencePair(
       `no verifier preference signal (chosen ${chosen.verifier.verdict} vs rejected ${rejected.verifier.verdict})`,
     );
   }
-  // One boundary: the same worktree under the same capability grant.
+  // One boundary: the same worktree under the same task role.
   if (!sameBoundary(chosen, rejected)) {
     return exclude(
       'cross-boundary-excluded',
-      `cross-boundary runs (${chosen.worktreeRef}/${chosen.grantRef} vs ${rejected.worktreeRef}/${rejected.grantRef}) never form a trainable pair`,
+      `cross-boundary runs (${chosen.worktreeRef}/${chosen.roleRef} vs ${rejected.worktreeRef}/${rejected.roleRef}) never form a trainable pair`,
     );
   }
   return {
@@ -198,9 +195,8 @@ function checkSide(
     errors.push(`${prefix}.taskRef is required`);
   if (!nonEmpty(candidate.worktreeRef))
     errors.push(`${prefix}.worktreeRef is required`);
-  if (candidate.grantRef !== null && !nonEmpty(candidate.grantRef)) {
-    errors.push(`${prefix}.grantRef must be a grant ref or null`);
-  }
+  if (!nonEmpty(candidate.roleRef))
+    errors.push(`${prefix}.roleRef is required`);
   if (errors.length > 0) return { errors };
   return { errors, side: candidate as unknown as PreferenceSide };
 }
@@ -226,7 +222,7 @@ export function validatePreferencePair(input: unknown): PairValidation {
     rejected.side !== undefined &&
     !sameBoundary(chosen.side, rejected.side)
   ) {
-    errors.push('chosen and rejected cross a worktree/grant boundary');
+    errors.push('chosen and rejected cross a worktree/role boundary');
   }
   // Mirror the build policy: env failures carry no capability signal and
   // the verifier must actually prefer chosen over rejected — hand-crafted

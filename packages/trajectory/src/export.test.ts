@@ -17,24 +17,22 @@ function completeInput(
 ): BuildTrajectoryInput {
   return {
     task: { taskId: 'task-1', objective: 'Fix the widget', role: 'writer' },
-    identity: { sessionId: 'sess-1', agentId: 'agent-1', workerId: 'worker-1' },
+    identity: { sessionId: 'sess-1', agentId: 'agent-1' },
     model: {
       provider: 'acme',
       model: 'm1',
       thinking: null,
       escalations: [],
     },
-    prompt: { text: 'Fix the widget', constraints: [] },
-    resources: { skills: [], promptTemplates: [] },
-    transfer: null,
+    prompt: { text: 'Fix the widget' },
+    resources: { skills: [] },
     actions: [],
     observations: [],
-    state: { phase: 'done', snapshot: null },
+    state: { phase: 'done' },
     provenance: {
       sessionId: 'sess-1',
       agentId: 'agent-1',
       pid: 4242,
-      generation: 3,
       worktree: '/repo',
       model: 'acme/m1',
     },
@@ -133,11 +131,6 @@ describe('trajectory golden fixture', () => {
   it('emits every trajectory field with the recorded values', () => {
     const exported = buildTrajectoryExport(
       completeInput({
-        transfer: {
-          taskId: 'task-1',
-          worktree: '/repo',
-          grantRef: 'worktree:bash,read',
-        },
         actions: [
           { seq: 1, tool: 'read', args: { path: 'src/a.ts' } },
           { seq: 2, tool: 'bash', args: { cmd: 'vitest run' } },
@@ -162,32 +155,21 @@ describe('trajectory golden fixture', () => {
     );
     expect(exported.schema_version).toBe(SCHEMA_VERSION);
     expect(exported.task.taskId).toBe('task-1');
+    expect(exported.task.role).toBe('writer');
     expect(exported.identity).toEqual({
       sessionId: 'sess-1',
       agentId: 'agent-1',
-      workerId: 'worker-1',
-      parentSessionId: null,
-      role: 'writer',
     });
-    // 1.1: every new field is present on a write, with
-    // explicit null/[] meaning "not recorded" — never an invented value.
-    expect(exported.state.operations).toEqual([]);
-    expect(exported.state.memos).toEqual([]);
-    expect(exported.result.tests).toEqual([]);
-    expect(exported.result.artifacts).toEqual([]);
     expect(exported.approvals[0]).toEqual({
       approvalId: 'appr-1',
       capability: 'destructive-shell',
       verdict: 'approved',
       by: 'user',
-      requested: null,
-      justification: null,
     });
     expect(exported.model.provider).toBe('acme');
     expect(exported.model.escalations).toEqual([]);
-    expect(exported.prompt.text).toBe('Fix the widget');
-    expect(exported.resources).toEqual({ skills: [], promptTemplates: [] });
-    expect(exported.transfer?.grantRef).toBe('worktree:bash,read');
+    expect(exported.prompt).toEqual({ text: 'Fix the widget' });
+    expect(exported.resources).toEqual({ skills: [] });
     expect(exported.actions).toHaveLength(2);
     expect(exported.actions[1]).toEqual({
       seq: 2,
@@ -197,7 +179,6 @@ describe('trajectory golden fixture', () => {
     expect(exported.observations[0]?.truncated).toBe(false);
     expect(exported.state.phase).toBe('done');
     expect(exported.provenance.pid).toBe(4242);
-    expect(exported.provenance.generation).toBe(3);
     expect(exported.provenance.model).toBe('acme/m1');
     expect(exported.environment.capturedFrom).toBe('used');
     expect(exported.worktree.baseRevision).toBe('abc123');
@@ -206,7 +187,7 @@ describe('trajectory golden fixture', () => {
     expect(exported.timestamps.durationMs).toBe(60_000);
     expect(exported.usage.costUsd).toBe(0.01);
     expect(exported.result.status).toBe('completed');
-    expect(exported.eval).toEqual({ suite: null, caseId: null, labels: {} });
+    expect(exported.eval).toEqual({ labels: {} });
     // Golden output re-parses with no shim — this is the record
     // replay --diff-against and eval consume directly.
     const revived = parseTrajectoryExport(
@@ -219,16 +200,13 @@ describe('trajectory golden fixture', () => {
   });
 });
 
-describe('trajectory schema 1.1', () => {
-  it('carries the additive trajectory fields and round-trips through the parser', () => {
+describe('trajectory 1.0 records', () => {
+  it('carries the escalation and approval fields and round-trips through the parser', () => {
     const exported = buildTrajectoryExport(
       completeInput({
         identity: {
           sessionId: 'sess-2',
           agentId: 'agent-2',
-          workerId: null,
-          parentSessionId: 'sess-1',
-          role: 'reviewer',
         },
         model: {
           provider: 'acme',
@@ -244,23 +222,13 @@ describe('trajectory schema 1.1', () => {
             },
           ],
         },
-        state: {
-          phase: 'done',
-          snapshot: { step: 2 },
-          operations: [
-            { id: 'op-1', kind: 'read' },
-            { id: 'op-2', kind: 'edit' },
-          ],
-          memos: ['memo://a'],
-        },
+        state: { phase: 'done' },
         approvals: [
           {
             approvalId: 'appr-2',
             capability: 'destructive-shell',
             verdict: 'denied',
             by: 'user',
-            requested: 'rm -rf build (redacted)',
-            justification: 'not needed for this task',
           },
         ],
         result: {
@@ -268,8 +236,6 @@ describe('trajectory schema 1.1', () => {
           summary: 'gave up',
           failureCategory: 'model_refused',
           error: { kind: 'refusal', message: 'no' },
-          tests: ['vitest:packages/trajectory'],
-          artifacts: ['artifact://coverage/lcov.info'],
         },
       }),
     );
@@ -277,8 +243,10 @@ describe('trajectory schema 1.1', () => {
     const revived = parseTrajectoryExport(
       JSON.parse(JSON.stringify(exported)) as unknown,
     );
-    expect(revived.identity.parentSessionId).toBe('sess-1');
-    expect(revived.identity.role).toBe('reviewer');
+    expect(revived.identity).toEqual({
+      sessionId: 'sess-2',
+      agentId: 'agent-2',
+    });
     expect(revived.model.escalations[0]).toEqual({
       reason: 'context overflow',
       at: '2026-10-04T10:00:30.000Z',
@@ -286,17 +254,13 @@ describe('trajectory schema 1.1', () => {
       toModel: 'acme/m2',
       thinking: 'high',
     });
-    expect(revived.state.operations).toEqual([
-      { id: 'op-1', kind: 'read' },
-      { id: 'op-2', kind: 'edit' },
-    ]);
-    expect(revived.state.memos).toEqual(['memo://a']);
-    expect(revived.approvals[0]?.requested).toBe('rm -rf build (redacted)');
-    expect(revived.approvals[0]?.justification).toBe(
-      'not needed for this task',
-    );
-    expect(revived.result.tests).toEqual(['vitest:packages/trajectory']);
-    expect(revived.result.artifacts).toEqual(['artifact://coverage/lcov.info']);
+    expect(revived.approvals[0]).toEqual({
+      approvalId: 'appr-2',
+      capability: 'destructive-shell',
+      verdict: 'denied',
+      by: 'user',
+    });
+    expect(revived.result.failureCategory).toBe('model_refused');
   });
 
   it('refuses an escalation without toModel', () => {
@@ -307,7 +271,14 @@ describe('trajectory schema 1.1', () => {
             provider: 'acme',
             model: 'm1',
             thinking: null,
-            escalations: [{ reason: 'risk', at: '2026-10-04T10:00:30.000Z' }],
+            escalations: [
+              {
+                reason: 'risk',
+                at: '2026-10-04T10:00:30.000Z',
+                fromModel: 'acme/m1',
+                thinking: null,
+              } as unknown as BuildTrajectoryInput['model']['escalations'][number],
+            ],
           },
         }),
       );
@@ -420,17 +391,13 @@ describe('trajectory observations + failures + eval slot', () => {
   it('carries the eval slot through with no shim', () => {
     const exported = buildTrajectoryExport(
       completeInput({
-        eval: { suite: 'bench-1', caseId: 'case-7', labels: { lang: 'ts' } },
+        eval: { labels: { 'signal:tests': 'pass' } },
       }),
     );
     const revived = parseTrajectoryExport(
       JSON.parse(JSON.stringify(exported)) as unknown,
     );
-    expect(revived.eval).toEqual({
-      suite: 'bench-1',
-      caseId: 'case-7',
-      labels: { lang: 'ts' },
-    });
+    expect(revived.eval).toEqual({ labels: { 'signal:tests': 'pass' } });
   });
 });
 

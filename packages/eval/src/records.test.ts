@@ -18,7 +18,6 @@ function input(overrides: Partial<EvalRecordInput> = {}): EvalRecordInput {
     model: 'acme/m1',
     thinking: null,
     worktree: '/wt/agent-1',
-    generation: 3,
     size: 'standard',
     determinism: 'recorded',
     ...overrides,
@@ -41,17 +40,7 @@ describe('validateEvalRecord', () => {
     }
   });
 
-  it('rejects a record missing generation, size or determinism', () => {
-    const noGeneration = validateEvalRecord({
-      ...input(),
-      generation: undefined as unknown as number,
-    });
-    expect(noGeneration.valid).toBe(false);
-    if (!noGeneration.valid) {
-      expect(noGeneration.errors).toEqual([
-        'generation is required: record which worker generation ran',
-      ]);
-    }
+  it('rejects a record missing size or determinism', () => {
     const noSize = validateEvalRecord({
       ...input(),
       size: undefined as unknown as string,
@@ -85,16 +74,6 @@ describe('validateEvalRecord', () => {
     expect(invalid.valid).toBe(false);
     if (!invalid.valid) {
       expect(invalid.errors.join(' ')).toMatch(/category/i);
-    }
-  });
-
-  it('rejects non-integer and infinite generations', () => {
-    for (const generation of [1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
-      const result = validateEvalRecord({ ...input(), generation });
-      expect(result.valid).toBe(false);
-      if (!result.valid) {
-        expect(result.errors.join(' ')).toMatch(/generation/i);
-      }
     }
   });
 });
@@ -169,19 +148,17 @@ describe('validateEvalRecord exact outputs', () => {
     }
   });
 
-  it('accepts generation 0 and success false', () => {
-    expect(validateEvalRecord({ ...input(), generation: 0 }).valid).toBe(true);
+  it('accepts success false', () => {
     const failed = validateEvalRecord({ ...input(), success: false });
     expect(failed.valid).toBe(true);
     if (failed.valid) expect(failed.record.success).toBe(false);
   });
 
-  it('rejects whitespace-only suite/model/worktree and negative generations', () => {
+  it('rejects whitespace-only suite/model/worktree', () => {
     for (const overrides of [
       { suite: '   ' },
       { model: '' },
       { worktree: '  ' },
-      { generation: -1 },
     ]) {
       expect(validateEvalRecord({ ...input(), ...overrides }).valid).toBe(
         false,

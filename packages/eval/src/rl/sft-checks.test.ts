@@ -10,7 +10,6 @@ import { extractProvenance } from './types.js';
 
 const VALID_PROVENANCE = {
   proc: null,
-  gen: 3,
   worktree: 'w',
   model: 'm',
   base: 'b',
@@ -26,7 +25,7 @@ describe('checkProvenance', () => {
   it('requires a provenance object', () => {
     for (const value of [undefined, null, 'x', 7, ['x']]) {
       expect(checkProvenance(value)).toEqual([
-        'provenance is required: proc/gen/worktree/model/base',
+        'provenance is required: proc/worktree/model/base',
       ]);
     }
   });
@@ -35,24 +34,22 @@ describe('checkProvenance', () => {
     expect(
       checkProvenance({
         proc: 1.5,
-        gen: -1,
         worktree: '',
         model: '  ',
         base: '',
       }),
     ).toEqual([
       'provenance.proc must be an integer or null',
-      'provenance.gen is required',
       'provenance.worktree is required',
       'provenance.model is required',
       'provenance.base is required',
     ]);
   });
 
-  it('requires gen to be a non-negative integer', () => {
-    for (const gen of [1.5, '3', undefined]) {
-      expect(checkProvenance({ ...VALID_PROVENANCE, gen })).toEqual([
-        'provenance.gen is required',
+  it('requires proc to be an integer or null', () => {
+    for (const proc of [1.5, '3', undefined]) {
+      expect(checkProvenance({ ...VALID_PROVENANCE, proc })).toEqual([
+        'provenance.proc must be an integer or null',
       ]);
     }
   });

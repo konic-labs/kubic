@@ -194,8 +194,8 @@ describe('tuiDepsWithDefaults forwards the lane projection', () => {
       join(sessionsRoot, boot.sessionId, 'journal'),
     ).entries();
     expect(entries.length).toBeGreaterThan(0);
-    expect([...new Set(entries.map((entry) => entry.agentId))]).toEqual([
-      'foo',
+    expect([...new Set(entries.map((entry) => entry.source))]).toEqual([
+      'sweep',
     ]);
     const named: string[] = [];
     expect(

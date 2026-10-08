@@ -31,7 +31,6 @@ import {
   listSessions,
   openSessionStore,
   SessionAttachError,
-  SessionFormatError,
   SessionLockError,
   sessionLockIsLive,
 } from '../../../../worker/src/lane/session-store.js';
@@ -266,16 +265,13 @@ export async function loadSessionCostRows(
   );
   const all = await listSessions(store, BACKGROUND_CONTEXT);
   // A named session is explicit and ignores the project scope; it keeps
-  // its contract (unknown/locked/legacy escape, never a marker row).
+  // its contract (unknown/locked escape, never a marker row).
   const named =
     sessionId === undefined
       ? undefined
       : all.find((entry) => entry.id === sessionId);
   if (sessionId !== undefined && named === undefined) {
     throw new SessionAttachError(sessionId);
-  }
-  if (named?.format === 'legacy') {
-    throw new SessionFormatError(named.id);
   }
   // The default scope is the invoking project — sessions
   // touching its workspace — with `--all` for the machine-global total the
@@ -302,18 +298,6 @@ export async function loadSessionCostRows(
       session: entry.id,
       ...(project === undefined ? {} : { project }),
     } as const;
-    if (entry.format === 'legacy') {
-      // A named legacy id escaped above; a legacy listing entry reports as
-      // unreadable.
-      rows.push({
-        ...identity,
-        model: '(unreadable)',
-        costUsd: 0,
-        input: 0,
-        output: 0,
-      });
-      continue;
-    }
     const live = sessionLockIsLive(join(sessionsRoot, entry.id));
     if (live !== undefined) {
       // A session the operator NAMED is never silently skipped: a live
@@ -341,10 +325,7 @@ export async function loadSessionCostRows(
       storage = await openReadOnlySessionStorage(sessionsRoot, entry.id);
     } catch (error) {
       if (isNamed) throw error;
-      if (
-        error instanceof SessionAttachError ||
-        error instanceof SessionFormatError
-      ) {
+      if (error instanceof SessionAttachError) {
         rows.push({
           ...identity,
           model: '(unreadable)',
@@ -442,13 +423,12 @@ export async function readSessionRunUsage(
     createNodeFileBridge(sessionsRoot),
   );
   // The same lock-free contract as `loadSessionCostRows` — a
-  // named unknown id, a live lock and a legacy transcript escape exactly as
-  // `attachSession` reported them, but nothing is ever locked.
+  // named unknown id and a live lock escape exactly as `attachSession`
+  // reported them, but nothing is ever locked.
   const found = (await listSessions(store, BACKGROUND_CONTEXT)).find(
     (entry) => entry.id === sessionId,
   );
   if (found === undefined) throw new SessionAttachError(sessionId);
-  if (found.format === 'legacy') throw new SessionFormatError(sessionId);
   const live = sessionLockIsLive(join(sessionsRoot, sessionId));
   if (live !== undefined) {
     throw new SessionLockError(sessionId, {

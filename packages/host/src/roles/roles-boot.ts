@@ -52,8 +52,8 @@ export class RoleBootError extends Error {
 }
 
 export interface RolesDirInput {
-  // The bridge slice the loader actually uses (matches loadRoleDocuments'
-  // own signature). A full FileBridge satisfies it; tests drive
+  // The bridge slice the loader actually uses (listDir and readTextFile). A
+  // full FileBridge satisfies it; tests drive
   // an in-memory fixture with the same two methods.
   bridge: Pick<FileBridge, 'listDir' | 'readTextFile'>;
   cwd: string;

@@ -226,11 +226,6 @@ export function reassertBackground(
   );
 }
 
-/** Remove every SGR (colour/attribute) sequence, keeping the text. */
-export function stripStyles(text: string): string {
-  return text.replace(SGR_SEQUENCE, '');
-}
-
 // What a rendered line leaves set at its end — each SGR
 // attribute still on (`intensity`, `italic`, `underline`, `inverse`,
 // `strike`, `fg`, `bg`) and an OSC 8 hyperlink still open. Empty means the

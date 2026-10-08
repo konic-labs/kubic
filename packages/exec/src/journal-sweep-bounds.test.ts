@@ -23,7 +23,6 @@ import {
 } from './journal.js';
 import { diffEntries, renderDiff } from './journal-diff.js';
 import { captureGitBaseline, type GitCommand } from './journal-git.js';
-import { renderLog } from './journal-status.js';
 
 const CTX = {
   sessionId: 's-sweep-bounds',
@@ -252,8 +251,14 @@ describe('sweep content bound', () => {
     expect(text).toContain('[unattributed, non-reversible]');
     // No hunks: there is no content to show, and nothing is invented.
     expect(text).not.toContain('@@');
-    // `kubic log` keeps today's `+NB` delta shape for the entry.
-    expect(renderLog(store).join('\n')).toContain('big.bin +0B reconciled');
+    // The entry is reconciled at run end: the note `kubic log` shows for it.
+    expect(
+      store
+        .entries()
+        .some(
+          (entry) => entry.path === 'big.bin' && entry.unattributed === true,
+        ),
+    ).toBe(true);
   });
 });
 

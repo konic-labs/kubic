@@ -14,9 +14,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FileJournalStore, loadBaseline, sha256Hex } from './journal.js';
+import { FileJournalStore, sha256Hex } from './journal.js';
 import { diffEntries, renderDiff } from './journal-diff.js';
-import { loadGitBaseline } from './journal-git.js';
 import { beginReconciliation } from './journal-reconcile.js';
 import { applyUndo, planUndo } from './journal-undo.js';
 import {
@@ -76,7 +75,7 @@ describe('run-scoped reconciliation lifecycle', () => {
     ]);
     // The persisted copy is the same map a later reader loads: the boot
     // capture is durable, not just in-memory.
-    expect(loadBaseline(dirname(store.indexPath), 'sess-1')).toEqual(
+    expect(JSON.parse(readFileSync(run.baselinePath, 'utf8'))).toEqual(
       run.baseline,
     );
     expect(run.baseline['keep.txt']).toMatch(/^[0-9a-f]{64}$/);
@@ -296,7 +295,12 @@ describe('per-turn rebaseline', () => {
     ]);
     expect(entries.some((entry) => entry.path === 'keep.txt')).toBe(false);
     expect(
-      loadBaseline(dirname(store.indexPath), 'sess-reconcile')?.['keep.txt'],
+      (
+        JSON.parse(readFileSync(run.baselinePath, 'utf8')) as Record<
+          string,
+          string
+        >
+      )['keep.txt'],
     ).toBe(sha256Hex('operator edit\n'));
   });
 
@@ -376,9 +380,14 @@ describe('git pre-images end to end', () => {
     }
     // The baseline is still a metadata walk: hashes plus OIDs, zero blobs.
     expect(store.blobCount()).toBe(0);
-    expect(loadGitBaseline(dirname(store.indexPath), 'sess-git')).toEqual(
-      run.gitBaseline,
-    );
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(dirname(store.indexPath), 'baseline-sess-git.git.json'),
+          'utf8',
+        ),
+      ),
+    ).toEqual(run.gitBaseline);
     expect(run.sweep()).toBe(0);
   });
 

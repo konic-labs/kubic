@@ -311,16 +311,6 @@ export function soloDecisionAudit(input: SoloDecisionInput): AuditInput {
   };
 }
 
-// The privileged actions: the closed set of user-level
-// operations beyond approval decisions that each emit one OrgAuditRecord
-// with the same provenance block as decisions. full-access-grant writes
-// `posture:full-access` (fullAccessEnabledAudit); undo-restore writes
-// `undo-restore` (undoRestoreAudit).
-export const PRIVILEGED_ACTION_KINDS = [
-  'full-access-grant',
-  'undo-restore',
-] as const;
-
 // The `level = "privileged"` filter: a `[[audit]]` sink
 // at the privileged level keeps approval decisions (`tool:<name>`) and the
 // privileged-action whats, and drops the rest (`credential:<provider>`).
@@ -744,7 +734,7 @@ export function fullAccessEnabledAudit(
 // resolved — explicit `--autonomous` or off by default — so the audit trail
 // names the autonomous combination the session records. A run record, not a
 // privileged action: it is kept at the privileged sink level beside the
-// decisions, while PRIVILEGED_ACTION_KINDS stays the closed action set.
+// decisions, while the privileged action kinds stay a closed set.
 export interface RunStartInput {
   sessionId?: string;
   /** The originating command, e.g. `kubic run`. */

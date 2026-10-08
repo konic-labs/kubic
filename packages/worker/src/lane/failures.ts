@@ -204,7 +204,7 @@ export function classifyFailure(
         };
       }
       // Overflow compacts first, then retries on the fresh
-      // context (executed by the solo recovery, the compactSoloLane).
+      // context (executed by the solo recovery, through runManualCompaction).
       // A polluted context still escalates: only the operator picks the
       // fresh agent after seeing the record.
       return {

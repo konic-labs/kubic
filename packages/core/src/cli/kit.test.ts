@@ -1,7 +1,6 @@
 // The CLI output kit.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  alignedRows,
   brandHeading,
   errorBlock,
   formatCost,
@@ -9,7 +8,6 @@ import {
   formatTokens,
   hintLine,
   isFancy,
-  kvLine,
   nextActions,
   receipt,
   sectionLabel,
@@ -39,19 +37,6 @@ describe('kit helpers at depth none are plain text', () => {
     expect(statusMark(plain, 'working', 2)).toBe('⠹');
   });
 
-  it('aligned rows continue under the content column', () => {
-    expect(
-      alignedRows(plain, [
-        ['runtime', '✓ node'],
-        ['providers', '✓ anthropic\n○ openai — no key'],
-      ]),
-    ).toEqual([
-      'RUNTIME     ✓ node',
-      'PROVIDERS   ✓ anthropic',
-      '            ○ openai — no key',
-    ]);
-  });
-
   it('receipts', () => {
     expect(
       receipt(plain, {
@@ -79,7 +64,7 @@ describe('kit helpers at depth none are plain text', () => {
     );
   });
 
-  it('next actions, hints and key/value lines', () => {
+  it('next actions and hint lines', () => {
     expect(
       nextActions(plain, [
         ['review', 'kubic diff'],
@@ -89,7 +74,6 @@ describe('kit helpers at depth none are plain text', () => {
     expect(hintLine(plain, 'did you mean `openai/gpt-5`?')).toBe(
       '  did you mean openai/gpt-5?',
     );
-    expect(kvLine(plain, 'session', 'abc', 9)).toBe('session   abc');
   });
 
   it('error blocks name the input, the fix and the machine code', () => {

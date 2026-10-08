@@ -52,10 +52,6 @@ export function loadHighlighter(): Promise<void> {
   return loading;
 }
 
-export function highlighterReady(): boolean {
-  return engine !== undefined;
-}
-
 // The innermost scope that names a role wins.
 function scopeStyle(ui: UiTheme, classes: readonly string[]): Style {
   for (let index = classes.length - 1; index >= 0; index -= 1) {

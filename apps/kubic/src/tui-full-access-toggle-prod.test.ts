@@ -284,6 +284,15 @@ describe('the TUI full-access toggle', () => {
       'posture:full-access',
       'posture:approvals',
     ]);
+    // The revoke's transcript notice is the live warning: it names the session
+    // and what the next challenged call does.
+    await waitFor(() =>
+      fake
+        .output()
+        .includes(
+          `full-access revoked for session ${sessionId} — every challenged call asks again`,
+        ),
+    );
     fake.inject('\u0003');
     fake.inject('\u0003');
     expect((await pending).exitCode).toBe(0);

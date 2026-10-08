@@ -26,9 +26,8 @@ import {
 import {
   ApprovalService,
   CAPABILITIES,
-  createApprovalAsk,
   detectTriggers,
-  FileApprovalStore,
+  installSoloPolicy,
   type TriggerContext,
   triggerContextFor,
   validatePolicy,
@@ -407,20 +406,19 @@ describe('privilege escalation + indirection', () => {
 
   it('requires every raised capability: autoApprove covers only what it names', async () => {
     const dir = mkTmp('approvals-detectors-');
-    const store = new FileApprovalStore(dir);
-    const service = new ApprovalService({
-      policy: validatePolicy({
-        autoApprove: ['privilege-escalation'],
-        maxPendingMs: 10,
-      }),
-      store,
+    const installed = installSoloPolicy({
+      workspace: dir,
+      sessionDir: dir,
+      autoApprove: ['privilege-escalation'],
+      maxPendingMs: 10,
+      // A seat that never answers: the service's bound denies the call.
+      answer: async () => undefined,
     });
-    const ask = createApprovalAsk(service, triggerContext(), store);
     // Two capabilities raise and only one is auto-approved: outside-write
     // has no answer here, so the ask denies instead of slipping through on
     // the approved one.
     await expect(
-      ask({
+      installed.ask({
         toolName: 'bash',
         args: { command: 'cat x | sudo tee /etc/x' },
         toolCallId: 'c1',

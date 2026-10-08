@@ -1,6 +1,7 @@
 // Git stage/commit/branch/checkpoint effect ops.
 import { describe, expect, it } from 'vitest';
-import { argvKey, FakeExecutionEnv } from '../../../exec/src/env.js';
+import { FakeExecutionEnv } from '../../../exec/src/env.js';
+import { argvKey } from '../../../exec/src/test-support/env-fakes.js';
 import { OperationKillRegistry } from '../lane/abort.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';

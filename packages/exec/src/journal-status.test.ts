@@ -10,11 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FileJournalStore } from './journal.js';
-import {
-  journalStatus,
-  reconciliationSummary,
-  renderLog,
-} from './journal-status.js';
+import { journalStatus, reconciliationSummary } from './journal-status.js';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
@@ -63,17 +59,6 @@ function seed(): FileJournalStore {
 }
 
 describe('journal log + status', () => {
-  it('renders the timeline with timestamp/source/toolCall/op/path/bytes', () => {
-    const lines = renderLog(seed());
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain('edit');
-    expect(lines[0]).toContain('a.txt');
-    expect(lines[0]).toContain('tool');
-    expect(lines[0]).toContain('call-1');
-    expect(lines[0]).toContain('2023-11-14T22:13:20.000Z');
-    expect(lines[1]).toContain('reconciled');
-  });
-
   it('reports non-repo status outside a repository', () => {
     const root = tmpRoot('ws-');
     const status = journalStatus(seed(), root);
@@ -158,14 +143,6 @@ describe('unattributed count', () => {
     const status = journalStatus(seed(), tmpRoot('ws-'));
     expect(status.entries).toBe(2);
     expect(status.unattributed).toBe(1);
-  });
-
-  it('renders the count as a log summary line, keeping per-entry lines', () => {
-    const lines = renderLog(seed());
-    expect(lines).toHaveLength(2);
-    expect(reconciliationSummary(seed())).toBe(
-      'unattributed: 1 of 2 entr(ies) reconciled at run end',
-    );
   });
 
   it('summarizes an empty journal without inventing entries', () => {
@@ -271,16 +248,6 @@ describe('HEAD-move markers in log + status', () => {
     });
     return store;
   }
-
-  it('renders the marker as one greppable log line, never a diff hunk', () => {
-    const lines = renderLog(withMarker());
-    expect(lines).toHaveLength(3);
-    const marker = lines[2] ?? '';
-    expect(marker).toContain('marker');
-    expect(marker).toContain('head-moved');
-    expect(marker).toContain(`main@${'a'.repeat(12)}`);
-    expect(marker).toContain(`feature@${'b'.repeat(12)}`);
-  });
 
   it('counts the marker as unattributed work and reports the move', () => {
     const root = tmpRoot('ws-head-status-');

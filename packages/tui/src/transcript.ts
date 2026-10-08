@@ -929,7 +929,7 @@ interface TranscriptDeltaOp {
   readonly delta: TranscriptDelta;
 }
 
-export type TranscriptOp = TranscriptSnapshotOp | TranscriptDeltaOp;
+type TranscriptOp = TranscriptSnapshotOp | TranscriptDeltaOp;
 
 export interface TranscriptView {
   readonly component: Component;
@@ -1208,18 +1208,4 @@ export function createTranscriptView(
       }
     },
   };
-}
-
-export function replayTranscript(
-  ops: ReadonlyArray<TranscriptOp>,
-): TranscriptView {
-  const view = createTranscriptView();
-  for (const op of ops) {
-    if (op.op === 'delta') {
-      view.appendDelta(op.delta);
-    } else {
-      view.applyLaneSnapshot({ laneId: op.laneId }, op.cells, op.revision);
-    }
-  }
-  return view;
 }

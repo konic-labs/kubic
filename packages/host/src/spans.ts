@@ -134,28 +134,3 @@ export class DebugLog {
     this.sink(`[exit] code=${code} exited cleanly`);
   }
 }
-
-// Headless debug transcript (no VirtualTerminal in Pi 0.85.1): an
-// array-backed sink the caller renders headlessly.
-export interface TranscriptSink {
-  sink: DebugSink;
-  lines: string[];
-}
-
-export function createTranscriptSink(): TranscriptSink {
-  const lines: string[] = [];
-  return { sink: (line: string) => lines.push(line), lines };
-}
-
-// ANSI path via PI_TUI_WRITE_LOG: when the TUI log path is set,
-// debug lines are appended there (raw, one per line) alongside stderr.
-// Returns null when unset. File access stays behind the injected
-// append callback so host code never touches node:fs directly.
-export function makeWriteLogSink(
-  env: Record<string, string | undefined>,
-  append: (path: string, text: string) => void,
-): DebugSink | null {
-  const path = env.PI_TUI_WRITE_LOG;
-  if (path === undefined || path === '') return null;
-  return (line: string) => append(path, `${line}\n`);
-}

@@ -5,7 +5,7 @@
 // the git object store. This module is the git plumbing: which calls the
 // baseline makes, how their output parses, and how a pre-image blob is read
 // back.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -14,8 +14,6 @@ import {
   captureHeadState,
   type GitCommand,
   type GitCommandResult,
-  loadGitBaseline,
-  loadHeadState,
   readGitBlob,
   saveGitBaseline,
   saveHeadState,
@@ -218,11 +216,14 @@ describe('readGitBlob', () => {
 });
 
 describe('git baseline persistence', () => {
-  it('round-trips beside the baseline file and loads null when absent', () => {
+  it('writes the git baseline beside the baseline file', () => {
     const dir = tmpRoot();
-    expect(loadGitBaseline(dir, 'run-1')).toBe(null);
     saveGitBaseline(dir, 'run-1', { 'a.ts': OID_A });
-    expect(loadGitBaseline(dir, 'run-1')).toEqual({ 'a.ts': OID_A });
+    expect(
+      JSON.parse(readFileSync(join(dir, 'baseline-run-1.git.json'), 'utf8')),
+    ).toEqual({
+      'a.ts': OID_A,
+    });
   });
 
   it('never writes through an unsafe run id', () => {
@@ -291,11 +292,12 @@ describe('captureHeadState', () => {
     expect(captureHeadState(root)).toBe(null);
   });
 
-  it('round-trips the head sidecar and loads null when absent', () => {
+  it('writes the head sidecar beside the baseline file', () => {
     const dir = tmpRoot();
-    expect(loadHeadState(dir, 'run-1')).toBe(null);
     const state = { head: 'd'.repeat(40), branch: 'main', stash: 0 };
     saveHeadState(dir, 'run-1', state);
-    expect(loadHeadState(dir, 'run-1')).toEqual(state);
+    expect(
+      JSON.parse(readFileSync(join(dir, 'baseline-run-1.head.json'), 'utf8')),
+    ).toEqual(state);
   });
 });

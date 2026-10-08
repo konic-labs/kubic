@@ -1,21 +1,16 @@
 // Design tokens and the style engine.
 import { describe, expect, it } from 'vitest';
+import { contrastRatio } from '../test-support/color-oracle.js';
 import {
   ansiBackground,
   ansiForeground,
-  contrastRatio,
   detectColorLevel,
-  nearestAnsi16,
+  nearestAnsi16Index,
   nearestXterm256,
   parseHex,
 } from './color.js';
 import { SPINNER_FRAMES, spinnerFrame } from './glyphs.js';
-import {
-  createUiTheme,
-  reassertBackground,
-  stripStyles,
-  type UiTheme,
-} from './style.js';
+import { createUiTheme, reassertBackground, type UiTheme } from './style.js';
 import {
   ansiSlot,
   builtinPalette,
@@ -63,8 +58,8 @@ describe('colour downgrade maths', () => {
     expect(parseHex('#ff004d')).toEqual([255, 0, 77]);
     expect(nearestXterm256([255, 0, 77])).toBe(197);
     expect(nearestXterm256([128, 128, 128])).toBe(244);
-    expect(nearestAnsi16([255, 0, 77])).toBe(91);
-    expect(nearestAnsi16([0, 0, 0])).toBe(30);
+    expect(ansiForeground(nearestAnsi16Index([255, 0, 77]))).toBe(91);
+    expect(ansiForeground(nearestAnsi16Index([0, 0, 0]))).toBe(30);
   });
   it('maps ANSI slots to SGR codes', () => {
     expect(ansiForeground(1)).toBe(31);
@@ -206,9 +201,6 @@ describe('background reassertion', () => {
   });
   it('is the identity without a background', () => {
     expect(reassertBackground(`${ESC}[0mx`, '')).toBe(`${ESC}[0mx`);
-  });
-  it('strips styles', () => {
-    expect(stripStyles(`${ESC}[1;38;2;1;2;3mx${ESC}[22;39m`)).toBe('x');
   });
 });
 

@@ -55,6 +55,10 @@ import {
 } from '../../../packages/host/src/config/trust-store.js';
 import type { DepProbe } from '../../../packages/host/src/doctor.js';
 import {
+  FAUX_MODEL_ID,
+  FAUX_PROVIDER_ID,
+} from '../../../packages/host/src/faux-provider.js';
+import {
   type EffectivePolicy,
   hasModelPolicy,
   isModelAllowed,
@@ -80,7 +84,11 @@ import type {
   ModelStreamTuning,
   StreamTuningTables,
 } from '../../../packages/worker/src/stream-options.js';
-import { selectionOrigin, withSelectionOrigin } from './model-projection.js';
+import {
+  roleModelSelection,
+  selectionOrigin,
+  withSelectionOrigin,
+} from './model-projection.js';
 
 export interface CliConfigResult {
   // Present only when the load succeeded. A refusal leaves it undefined:
@@ -545,6 +553,30 @@ export function resolveRoleThinking(
   );
 }
 
+// The boot's model pick, one rule for every boot: a faux pin is the explicit
+// selection and otherwise the runtime pin is; the role default and the
+// fallbacks follow, under the same policy gate and role scope.
+export function selectBootModel(input: {
+  models: MutableModels;
+  fauxPinned: boolean;
+  pin: ModelSelection | undefined;
+  roleModel: string | undefined;
+  fallbackProviders: readonly string[] | undefined;
+  policy: EffectivePolicy | undefined;
+  roleScope?: RoleModelScope;
+}): ReturnType<typeof selectModel> {
+  return selectModelUnderPolicy(
+    input.models,
+    input.fauxPinned
+      ? { provider: FAUX_PROVIDER_ID, id: FAUX_MODEL_ID }
+      : input.pin,
+    roleModelSelection(input.roleModel),
+    input.fallbackProviders,
+    input.policy,
+    input.roleScope,
+  );
+}
+
 export function selectModelUnderPolicy(
   models: MutableModels,
   explicit: ModelSelection | undefined,
@@ -801,18 +833,6 @@ export function resolveLaneLadder(
   }
   if (model === undefined) return undefined;
   return { steps: [...model.steps], maxEscalations: model.maxEscalations };
-}
-
-// The effective thinking level with its source — the
-// per-run override the run/tui lane boots with, resolved once at load
-// (`--thinking` > `KUBIC_MODEL_THINKING` > file layers, enterprise-frozen).
-// Undefined when nothing set a level: the lane then boots at the session's
-// persisted level, a role default, or Pi's 'off'.
-export function runtimeThinking(
-  result: CliConfigResult,
-): RuntimeThinking | undefined {
-  const thinking = result.runtime?.thinking;
-  return thinking === undefined ? undefined : { ...thinking };
 }
 
 // The config `[roles.<name>]` table as resolver layer inputs:

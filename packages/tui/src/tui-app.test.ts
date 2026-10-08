@@ -14,7 +14,7 @@ import type {
   ApprovalViewRequest,
 } from './approval-view.js';
 import { createKeyRegistry } from './keybindings.js';
-import { createTuiApp, QUIT_ARM_MS, seedFromPresentation } from './tui-app.js';
+import { createTuiApp, QUIT_ARM_MS } from './tui-app.js';
 
 const SESSION = 'sess-1';
 const MODEL = 'test-model';
@@ -379,30 +379,6 @@ describe('tui app root', () => {
     );
     expect(doc.indexOf('final words')).toBeLessThan(doc.indexOf(' ready '));
     expect(doc).toContain('approvals on');
-  });
-});
-
-describe('presentation seed (contracts only)', () => {
-  it('maps the core presentation snapshot to a tui seed', () => {
-    const seed = seedFromPresentation(
-      {
-        session: {
-          sessionId: 'abc',
-          approvalsSkipped: false,
-        },
-        lane: { status: 'idle', tools: [], queued: [], compacting: false },
-        approvals: [],
-        usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
-        connection: { status: 'connected' },
-      },
-      MODEL,
-      { approvalsSkipped: true },
-    );
-    expect(seed).toEqual({
-      sessionId: 'abc',
-      model: MODEL,
-      approvalsSkipped: true,
-    });
   });
 });
 

@@ -344,7 +344,7 @@ export async function runEvalCommand(
   }
 }
 
-export interface BenchmarkResult {
+interface BenchmarkResult {
   suite: string;
   category: string;
   stub: boolean;

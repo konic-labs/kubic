@@ -36,6 +36,7 @@ I/O confinement (component split; enforced by
 `scripts/dep-lint.mjs`): only `@kubic/exec` touches
 `node:fs`/`node:child_process`, with test scaffolding exempt. Pi seams:
 `@kubic/worker` via `src/pi-boundary.ts` only, `@kubic/tui` via
-`src/tui-boundary.ts` only.
+`src/tui-boundary.ts` only. A `test-support/` module is imported only by test
+files and by other `test-support/` modules.
 
 Back to the [docs index](../README.md).

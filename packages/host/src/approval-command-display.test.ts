@@ -14,13 +14,9 @@ import {
 } from './approval-display.js';
 import {
   type ApprovalRequest,
-  ApprovalService,
   approvalKey,
-  createApprovalAsk,
-  FileApprovalStore,
+  installSoloPolicy,
   summarizeRequest,
-  type TriggerContext,
-  validatePolicy,
 } from './approvals.js';
 
 const made: string[] = [];
@@ -38,16 +34,6 @@ afterEach(() => {
 
 // A harmless prefix padded past every cap, then the destructive tail.
 const PADDED = `echo 'running formatter' ${'x'.repeat(380)}; rm -rf ~/work`;
-
-function triggerContext(): TriggerContext {
-  return {
-    workspace: '/work',
-    network: 'none',
-    isDestructive: (command) => /rm -rf/.test(command),
-    isNetworkCommand: () => false,
-    isOutsideWorkspace: () => false,
-  };
-}
 
 describe('summaries never truncate silently', () => {
   it('marks a truncated command summary with the hidden length', () => {
@@ -85,18 +71,16 @@ describe('summaries never truncate silently', () => {
 describe('the request carries the full command', () => {
   it('the approval key and the displayed command come from the same args', async () => {
     const seen: ApprovalRequest[] = [];
-    const store = new FileApprovalStore(tmp());
-    const service = new ApprovalService({
-      policy: validatePolicy({ maxPendingMs: 1000 }),
-      store,
-      awaitAnswer: async (request) => {
+    const installed = installSoloPolicy({
+      workspace: tmp(),
+      sessionDir: tmp(),
+      answer: async (request) => {
         seen.push(request);
         return { approved: false, reason: 'no' };
       },
     });
-    const ask = createApprovalAsk(service, triggerContext(), store);
     const args = { command: PADDED };
-    await ask({ toolName: 'bash', args, toolCallId: 'c1' });
+    await installed.ask({ toolName: 'bash', args, toolCallId: 'c1' });
     const request = seen[0];
     expect(request?.command).toBe(PADDED);
     expect(request?.command?.endsWith('; rm -rf ~/work')).toBe(true);

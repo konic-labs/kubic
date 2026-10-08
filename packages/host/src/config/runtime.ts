@@ -116,14 +116,6 @@ export function runtimeKeyDisposition(
   return 'pending';
 }
 
-// The row's own words, whichever disposition it carries — one extraction, so
-// the docs test, the acceptance pin, and any reader agree.
-export function runtimeKeyEffectText(entry: RuntimeKeyEffect): string {
-  if ('effect' in entry) return entry.effect;
-  if ('kept' in entry) return entry.kept;
-  return entry.notYetImplemented;
-}
-
 export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
   'agent.systemPromptFile': {
     effect:

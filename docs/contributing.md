@@ -28,6 +28,7 @@ npm run typecheck
 npm run lint                  # biome ci — exact CI parity
 npm run lint:deps             # package dependency direction
 npm run lint:dead             # knip: unused files, exports, dependencies, types
+npm run lint:dead:prod        # knip, production code only: test imports count as no use
 npm run check:pi              # exact pins on every dependency
 npm run docs:check            # no dangling internal doc links
 npm test                      # repo gates: scripts/*.test.mjs via node --test
@@ -57,14 +58,24 @@ files, exports, types and dependencies, and unlisted or unresolved imports.
   export that only tests import counts as used.
 - `mkfifo` is in `ignoreBinaries`: one exec journal test calls the POSIX
   utility to make a named pipe. It is a system tool, not a dependency.
-- `ignoreExportsUsedInFile` is on for now: an export that its own module uses
-  is not reported.
+- `ignoreExportsUsedInFile` is off: an export that only its own module uses is
+  reported, so it must be module-private.
 
-The gate does **not** guarantee that every export has a caller in production
-code. It does not report an export that only tests import, nor an export used
-only inside its own module. It also does not report a source file that only
-tests reach. Those checks need a production-only configuration, which the
-repo does not yet have.
+The default gate does **not** report an export that only tests import, and it
+does not report a source file that only tests reach. The production gate does
+both: `npm run lint:dead:prod` runs knip with `knip.production.jsonc` and
+`--production`, which skips the test files, so no test import counts as use.
+It runs in CI next to `lint:dead`. Apart from `ignoreExportsUsedInFile` (below),
+the only exports it exempts are the nine boundary seams, each tagged `@internal`
+where it is re-exported (`pi-boundary.ts` and `tui-boundary.ts`). knip ignores
+`@internal` only in production mode, so the default gate still checks them.
+
+One gap remains, stated here so a green run is not read as more than it proves.
+`ignoreExportsUsedInFile` is on in `knip.production.jsonc`: an export that
+production code uses inside its own module counts as live. With the option off,
+the gate would also flag 227 exports and 50 types. Production code uses each of
+them only inside its own module, and tests import it from outside. Clearing
+those is test restructuring for a later change; this gate does not report them.
 
 ## Tests
 
@@ -136,7 +147,7 @@ than history, no tracker references) are in
 ## CI
 
 A push runs the `test` job: the static checks first (typecheck, biome,
-`lint:deps`, `lint:dead`, `check:pi`, `docs:check`), then the suites and the built
+`lint:deps`, `lint:dead`, `lint:dead:prod`, `check:pi`, `docs:check`), then the suites and the built
 binary. It runs on Node 22 (the lowest supported) on every ref and on
 Node 22 and 24 on `main`. A newer push cancels the older run of the same
 ref; `main` is keyed by commit and never cancelled. Workflow permissions

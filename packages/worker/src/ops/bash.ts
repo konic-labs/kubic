@@ -266,13 +266,6 @@ function shellFor(): BashResult['shell'] {
   return resolvedShell;
 }
 
-/** Test seam (never re-exported): pin or reset the per-process resolution. */
-export function __setResolvedShellForTests(
-  shell: BashResult['shell'] | undefined,
-): void {
-  resolvedShell = shell;
-}
-
 export const bashOperation: Operation<BashArgs, BashResult> = {
   name: 'bash',
   // The limits the model must plan around: the default and the

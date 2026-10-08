@@ -16,16 +16,16 @@ TUI-side analogue of the worker Pi boundary.
 | Module | Exports |
 | --- | --- |
 | `tui-boundary.ts` | Sole presentation seam: re-exports `Component`, `Focusable`, `MouseRegionHandler`, `Terminal`, `TUI` (types) and `CURSOR_MARKER`, `Editor`, `Markdown`, `MouseRegion`, `matchesKey`, `ScrollView`, `Text`, `TuiAltScreen`, `VStack` (values) from `@earendil-works/pi-tui`, each with a JUSTIFICATION block |
-| `layout.ts` | `LayoutSlots`, `NARROW_COLUMNS`, `buildLayoutRoot`, `renderLayout` |
+| `layout.ts` | `LayoutSlots`, `NARROW_COLUMNS`, `buildLayoutRoot` |
 | `screen.ts` | `Screen`, `bootScreen` (Pi's alt-screen with a `baseFilter` run over the base frame before the overlays are composited — the dimmed background) |
 | `status-bar.ts` | `StatusUsageRow`, `StatusSummary`, `summarizeStatusRows`, `formatStatusCost`, `StatusBarState`, `StatusBarOptions`, `StatusBar` |
-| `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptOp`, `TranscriptView` (block mode: `blocks`, `select`, `toggleBlock`, `blockLines`, `reveal` on the view), `createTranscriptView`, `replayTranscript` |
+| `transcript.ts` | `TranscriptEntryKind`, `TranscriptEntry`, `TranscriptView` (block mode: `blocks`, `select`, `toggleBlock`, `blockLines`, `reveal` on the view), `createTranscriptView` |
 | `tree.ts` | `RunStatus`, `ToolCallState`, `statusGlyph`, `toolGlyph`, `TreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
 | `editor-view.ts` | `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding, `insertText` at the cursor) |
 | `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `TOOL_DETAIL_MAX_CHARS`, `TOOL_OUTCOME_MAX_CHARS`, `sanitizeLaneText`, `summarizeToolArguments`, `summarizeToolOutcome`, `entriesToCells` — committed lane entries → coarse transcript cells; every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal. `sanitizeLaneText` strips complete ECMA-48 sequences (CSI, OSC, C1 CSI, 2-byte ESC forms — not just the ESC byte), collapses carriage-return overwrites to the text after the last `\r`, expands tabs by visible column width, and drops the remaining C0/C1 controls |
-| `tui-app.ts` | `TuiAppSeed`, `TuiApp`, `createTuiApp`, `seedFromPresentation` — the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
+| `tui-app.ts` | `TuiAppSeed`, `TuiApp`, `createTuiApp` — the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
 | `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines` (pure render functions; the panel owns the document and its scrolling) |
-| `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `ApprovalOverlayBounds`, `approvalOverlayBounds`, `APPROVAL_PAGE_KEY`, `APPROVAL_DEFAULT_KEYS`, `APPROVAL_ARMING_MS`, `APPROVAL_QUIET_MS`, `APPROVAL_REPEAT_MS`, `APPROVAL_IMMEDIATE_KEY`, `ApprovalKeyOverrides`, `resolveApprovalAction`, `resolveApprovalKey`, `approvalKeyProblems`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui`, `ApprovalDecisionStore`, `ApprovalMemo`, `createApprovalMemo`, `ApprovalWaitOptions`, `waitForApproval` |
+| `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `APPROVAL_PAGE_KEY`, `APPROVAL_DEFAULT_KEYS`, `APPROVAL_ARMING_MS`, `APPROVAL_QUIET_MS`, `APPROVAL_REPEAT_MS`, `APPROVAL_IMMEDIATE_KEY`, `ApprovalKeyOverrides`, `resolveApprovalKey`, `approvalKeyProblems`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui` |
 | `approval-card.ts` | `APPROVAL_COMMAND_PAGE_LINES`, `wrapByColumns`, `approvalReason`, `ApprovalCardOptions`, `renderApprovalCard` (the inline approval card) |
 | `block-viewer.ts` | `BlockViewerOptions`, `BlockViewer` (one transcript block whole in a framed, scrolling overlay with copy and close) |
 | `preflight.ts` | `PreflightInfo`, `renderPreflight` (the first screen: wordmark, PREFLIGHT rows, START keys, RECENT sessions), `renderNoKeyPreflight` (the no-key block printed before exit 6) |
@@ -47,7 +47,7 @@ depth `none`, so snapshots stay readable.
 | `ui/line.ts` | `fitLine` (cut with `…`, plain text stays escape-free), `padTo`, `exactWidth`, `leftRight` (right part keeps its room) |
 | `ui/surface.ts` | `fillLine`: a background role edge to edge, kept through nested styles |
 | `ui/frame.ts` | `frameLines` (`┌─┐` box, heavy `┏┃┗` card or bare rules; title and right label in the top rule), `frameInnerWidth` |
-| `ui/marks.ts` | `badge` (inverse accent/waiting/ok/error cells, `[TEXT]` without colour; `key` caps), `gauge` (warn at 80%, err at 100%), `sectionLabel`, `rule` |
+| `ui/marks.ts` | `badge` (inverse accent/waiting/ok/error cells, `[TEXT]` without colour; `key` caps), `gauge` (warn at 80%, err at 100%), `sectionLabel` |
 | `ui/key-hints.ts` | `renderKeyHintRow`: keys fg1, labels fg2, whole hints dropped from the end when narrow, a right-aligned hint |
 | `ui/match.ts` | `fuzzyPositions` (contiguous run, else word starts) and `highlightPositions` (matched runs styled, the rest optionally too) |
 | `ui/palette.ts` | the ^P palette: `PaletteItem`/`PaletteState`, grouping and ranking with Pi's `fuzzyMatch` (`paletteGroups`, `paletteRows`, `paletteResultCount`), navigation (`movePalette`, `cyclePaletteGroup`, `togglePaletteDetails`, `setPaletteQuery`, `setPaletteItems`), `renderPalette`, and the row helpers `paletteModelMeta`, `formatContextWindow`, `formatAge` |
@@ -142,7 +142,7 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   above `StatusBarState.compactionThreshold`.
 - **Transcript** (`transcript.ts`): `TranscriptEntryKind` is
   `prompt|text|tool|output|compaction|thinking|receipt` (a `thinking` cell collapses to `⋯ thought for 4.1s — <first sentence>`; a `receipt` cell is the app's per-turn `TurnReceipt`, merged before the next committed prompt and never stored); `TranscriptView` applies snapshot/delta ops
-  (`TranscriptOp`) and replays via `replayTranscript`. The in-flight
+  (the view's write log records each change). The in-flight
   assistant message streams live: `setStream(text)` renders a
   plain draft after the committed cells while `message-delta` events arrive,
   and the committed entry replaces it (clearing the draft — the text is

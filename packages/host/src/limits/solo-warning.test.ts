@@ -4,8 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   emitSoloWarning,
-  formatSoloWarningStderr,
   soloTuiLine,
+  soloWarningLines,
 } from './solo-warning.js';
 
 describe('solo startup warning', () => {
@@ -19,7 +19,7 @@ describe('solo startup warning', () => {
   });
 
   it('stderr block names user authority over files, network, credentials', () => {
-    const text = formatSoloWarningStderr();
+    const text = soloWarningLines().join('\n');
     expect(text).toMatch(/no isolation/);
     expect(text).toContain('in-process');
     expect(text).toContain('files');
@@ -34,7 +34,7 @@ describe('solo startup warning', () => {
   });
 
   it('stderr block points at review/undo controls', () => {
-    const text = formatSoloWarningStderr();
+    const text = soloWarningLines().join('\n');
     expect(text).toContain('kubic diff');
     expect(text).toContain('kubic undo');
   });
@@ -46,6 +46,6 @@ describe('solo startup warning', () => {
     for (const line of lines) {
       expect(line.startsWith('warning:')).toBe(true);
     }
-    expect(lines.join('\n')).toBe(formatSoloWarningStderr());
+    expect(lines).toEqual(soloWarningLines());
   });
 });

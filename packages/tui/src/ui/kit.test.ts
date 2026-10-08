@@ -7,7 +7,7 @@ import { visibleWidth } from '../tui-boundary.js';
 import { frameInnerWidth, frameLines } from './frame.js';
 import { renderKeyHintRow } from './key-hints.js';
 import { exactWidth, fitLine, leftRight, padTo } from './line.js';
-import { badge, gauge, rule, sectionLabel } from './marks.js';
+import { badge, gauge, sectionLabel } from './marks.js';
 import { fuzzyPositions, highlightPositions } from './match.js';
 import { fillLine } from './surface.js';
 
@@ -134,10 +134,8 @@ describe('marks', () => {
     expect(gauge(rich, 1, 4)).toBe(`${rich.fg('err')('━━━━')}`);
   });
 
-  it('section labels and rules', () => {
+  it('section labels', () => {
     expect(sectionLabel(plain, 'commands')).toBe('COMMANDS');
-    expect(rule(plain, 5)).toBe('─────');
-    expect(rule(rich, 2)).toBe(rich.fg('fg3')('──'));
   });
 });
 

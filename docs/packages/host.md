@@ -14,10 +14,10 @@ no isolation — docs and code must never imply otherwise.
 
 | Module | Owns |
 | --- | --- |
-| `approvals.ts` | `CAPABILITIES`, `ApprovalPolicy`, `validatePolicy`, `detectTriggers`, `approvalKey`, `summarizeRequest`, `ApprovalStore` (`MemoryApprovalStore`, `FileApprovalStore`), `ApprovalService`, `createApprovalAsk`, `controlPlaneRefusal`, the full-access posture (`enableFullAccess`, `enableSessionFullAccess`, …) and `installSoloPolicy` |
+| `approvals.ts` | `CAPABILITIES`, `ApprovalPolicy`, `validatePolicy`, `detectTriggers`, `approvalKey`, `summarizeRequest`, `ApprovalStore` (`MemoryApprovalStore`, `FileApprovalStore`), `ApprovalService`, `controlPlaneRefusal`, the full-access posture (`enableFullAccess`, `enableSessionFullAccess`, …) and `installSoloPolicy` |
 | `approvals-credentials.ts` | The credential-path detector behind the `credentials` permission class |
 | `approval-display.ts`, `approval-preview.ts` | What an approval dialog shows: the command display and the change an edit or write would make |
-| `config/config.ts` | `CONFIG_LAYERS`, `KubicConfig` and its section types, `parseTomlConfig`, `serializeTomlConfig`, `mergeLayered`, `loadLayered`, the per-key checks, `COMMITTED_CONFIG_FILES`, `GITIGNORE_REQUIRED_ENTRIES`, `checkGitignoreSplit`, `EXAMPLE_TOML` |
+| `config/config.ts` | `CONFIG_LAYERS`, `KubicConfig` and its section types, `parseTomlConfig`, `mergeLayered`, the per-key checks, `GITIGNORE_REQUIRED_ENTRIES`, `checkGitignoreSplit` |
 | `config/runtime.ts` | `loadRuntimeConfig` — the load the binary actually runs on — plus `effectiveConfigView`, `renderEffectiveConfig`, `RUNTIME_KEY_EFFECTS`, `RUNTIME_ENV_OVERRIDES` |
 | `config/config-cli.ts`, `config/config-doctor.ts` | `kubic config [--json]` and doctor's config check |
 | `config/trust-store.ts` | The per-user project-trust store (`~/.kubic/trust.json`) |
@@ -91,7 +91,7 @@ ancestor's or `~/.kubic`'s — plus the session root in use
 | `ApprovalVerdict` | `{ approved: true, by: string, justified?: boolean } \| { approved: false, reason: string }` |
 
 `ApprovalStore` (`load`/`save`) has memory and file backings;
-`ApprovalService` + `createApprovalAsk` serve the lane interception
+the installed ask (`installSoloPolicy`) over `ApprovalService` serves the lane interception
 point; `detectTriggers` maps tool calls to capabilities via
 `TriggerContext`. The lane awaits the ask inside its pi-durable
 `ToolTask.beforeTool` hook, which runs before the tool's intent is

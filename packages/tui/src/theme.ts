@@ -10,7 +10,7 @@
 // (`setTuiTheme(createTuiTheme(detectColorLevel(env, isTTY)))`).
 
 import { type ColorLevel, detectColorLevel } from '../../core/src/ui/color.js';
-import { SPINNER_FRAMES, spinnerFrame } from '../../core/src/ui/glyphs.js';
+import { spinnerFrame } from '../../core/src/ui/glyphs.js';
 import {
   createUiTheme,
   type Style,
@@ -25,13 +25,7 @@ import {
 } from '../../core/src/ui/tokens.js';
 
 export type { ColorLevel };
-export {
-  detectColorLevel,
-  parseThemeJson,
-  SPINNER_FRAMES,
-  spinnerFrame,
-  ThemeError,
-};
+export { detectColorLevel, parseThemeJson, spinnerFrame, ThemeError };
 
 export interface TuiTheme {
   readonly level: ColorLevel;
@@ -109,10 +103,4 @@ export function tuiTheme(): TuiTheme {
 
 export function setTuiTheme(theme: TuiTheme): void {
   active = theme;
-}
-
-export function formatElapsed(elapsedMs: number): string {
-  const seconds = Math.floor(Math.max(0, elapsedMs) / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }

@@ -1,11 +1,6 @@
 // Span recorder: nested trace with per-tool time.
 import { describe, expect, it, vi } from 'vitest';
-import {
-  createTranscriptSink,
-  DebugLog,
-  makeWriteLogSink,
-  SpanRecorder,
-} from './spans.js';
+import { DebugLog, SpanRecorder } from './spans.js';
 
 describe('SpanRecorder (order + per-tool time)', () => {
   it('nests kubic.agent.run→pi.harness.hook→pi.tool.execute in order', () => {
@@ -76,31 +71,21 @@ describe('DebugLog (--debug vocabulary, 7 classes)', () => {
   });
 });
 
+// A collector for the lines a debug sink writes.
+const transcriptSink = () => {
+  const lines: string[] = [];
+  return { sink: (line: string) => lines.push(line), lines };
+};
+
 describe('debug transcript (headless transcript + PI_TUI_WRITE_LOG ANSI path)', () => {
   it('headless transcript contains the [policy] and exit lines', () => {
-    const transcript = createTranscriptSink();
+    const transcript = transcriptSink();
     const debug = new DebugLog(transcript.sink);
     debug.policy('route=ask-user tool=bash');
     debug.exit(0);
     const joined = transcript.lines.join('\n');
     expect(joined).toContain('[policy]');
     expect(joined).toContain('exited');
-  });
-
-  it('routes lines to PI_TUI_WRITE_LOG when set, null otherwise', () => {
-    const appended: Array<{ path: string; text: string }> = [];
-    const sink = makeWriteLogSink(
-      { PI_TUI_WRITE_LOG: '/tmp/kubic-tui.log' },
-      (path: string, text: string) => appended.push({ path, text }),
-    );
-    expect(sink).not.toBeNull();
-    sink?.('[policy] route=ask-user');
-    sink?.('[exit] code=0 exited cleanly');
-    const joined = appended.map((entry) => entry.text).join('');
-    expect(appended[0]?.path).toBe('/tmp/kubic-tui.log');
-    expect(joined).toContain('[policy]');
-    expect(joined).toContain('[exit]');
-    expect(makeWriteLogSink({}, () => undefined)).toBeNull();
   });
 });
 

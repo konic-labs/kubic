@@ -15,7 +15,6 @@ import {
   formatPromptTime,
   QUEUED_LABEL,
   renderReceipt,
-  replayTranscript,
   TOOL_OUTPUT_PREVIEW_LINES,
 } from './transcript.js';
 import {
@@ -199,31 +198,6 @@ describe('transcript view', () => {
     expect(doc).toContain('batch two');
     expect(view.isPinned).toBe(true);
     expect([...tails].sort((a, b) => a - b)).toEqual(tails);
-  });
-
-  it('replays the write log to an identical final document', () => {
-    const view = createTranscriptView({ ops: true });
-    view.appendDelta({ id: 'a', kind: 'text', append: 'alpha ' });
-    view.appendDelta({ id: 'a', kind: 'text', append: 'one' });
-    view.appendDelta({ id: 'b', kind: 'tool', append: 'run tests' });
-    view.applyLaneSnapshot(
-      { laneId: 'lane-1' },
-      [
-        { id: 'a', kind: 'text', markdown: 'alpha one' },
-        { id: 'b', kind: 'tool', markdown: 'run tests' },
-        { id: 'c', kind: 'output', markdown: 'ok' },
-      ],
-      3,
-    );
-    view.appendDelta({ id: 'c', kind: 'output', append: '!' });
-    const replayed = replayTranscript(view.writeLog);
-    // Non-vacuous: the live document really holds the snapshot plus the
-    // post-snapshot delta, so an empty replay cannot match it.
-    const doc = view.render(80).join('\n');
-    expect(doc).toContain('alpha one');
-    expect(doc).toContain('run tests');
-    expect(doc).toContain('ok!');
-    expect(replayed.render(80)).toEqual(view.render(80));
   });
 });
 

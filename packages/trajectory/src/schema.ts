@@ -17,24 +17,6 @@
 export const SCHEMA_VERSION = '1.0';
 export const SCHEMA_MAJOR = 1;
 
-// Stability promise: `stable` means additive-only within a major —
-// replay and eval pinned to major 1 keep parsing.
-export const TRAJECTORY_STABILITY = 'stable' as const;
-
-export interface TrajectoryChangelogEntry {
-  version: string;
-  date: string;
-  changes: string[];
-}
-
-export const TRAJECTORY_CHANGELOG: readonly TrajectoryChangelogEntry[] = [
-  {
-    version: '1.0',
-    date: '2026-10-08',
-    changes: ['Initial export contract.'],
-  },
-] as const;
-
 export type JsonValue =
   | string
   | number

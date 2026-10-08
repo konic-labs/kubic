@@ -144,6 +144,45 @@ describe('dep-lint', () => {
     );
   });
 
+  it('fails when production code imports a test-support helper', () => {
+    const dir = fixtureTree({
+      'packages/host/src/feature.ts': `import { fake } from './test-support/fake.js';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some(
+        (v) =>
+          v.from === 'host' &&
+          v.file === join('packages', 'host', 'src', 'feature.ts') &&
+          v.to === './test-support/fake.js',
+      ),
+      `expected test-support violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('fails when an app file imports test-support through a package name', () => {
+    const dir = fixtureTree({
+      'packages/core/src/index.ts': `export const core = 1;\n`,
+      'apps/kubic/src/main.ts': `import { sandbox } from '@kubic/exec/src/test-support/git-sandbox.js';\n`,
+    });
+    const violations = checkTree(dir);
+    assert.ok(
+      violations.some(
+        (v) => v.from === 'kubic' && v.to.includes('test-support'),
+      ),
+      `expected kubic test-support violation, got ${JSON.stringify(violations)}`,
+    );
+  });
+
+  it('allows test files and test-support modules to import test-support', () => {
+    const dir = fixtureTree({
+      'packages/host/src/feature.test.ts': `import { fake } from './test-support/fake.js';\n`,
+      'packages/host/src/test-support/fake.ts': `import { base } from './base.js';\n`,
+      'packages/host/src/test-support/base.ts': `export const base = 1;\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
   it('allows test files to import node builtins for scaffolding', () => {
     const dir = fixtureTree({
       'packages/worker/src/result.test.ts': `import { mkdtempSync } from 'node:fs';\n`,

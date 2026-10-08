@@ -3,18 +3,19 @@
 // render functions only (no terminal, no network).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHeader } from '../../../packages/tui/src/chrome.js';
-import { renderWorkingLine } from '../../../packages/tui/src/editor-frame.js';
+import {
+  formatTurnClock,
+  renderWorkingLine,
+} from '../../../packages/tui/src/editor-frame.js';
 import { sanitizeLaneText } from '../../../packages/tui/src/lane-cells.js';
 import {
   buildLayoutRoot,
-  renderLayout,
   TREE_MAX_ROWS,
 } from '../../../packages/tui/src/layout.js';
 import { bootScreen } from '../../../packages/tui/src/screen.js';
 import {
   createTuiTheme,
   detectColorLevel,
-  formatElapsed,
   setTuiTheme,
   spinnerFrame,
   tuiTheme,
@@ -41,6 +42,12 @@ const plain = (line: string): string =>
 afterEach(() => {
   setTuiTheme(createTuiTheme('none'));
 });
+
+// The rows a layout root renders at a width.
+const renderRows = (
+  root: ReturnType<typeof buildLayoutRoot>,
+  width: number,
+): string[] => root.render(width);
 
 describe('colour level detection', () => {
   it('honours NO_COLOR, FORCE_COLOR, TTY and TERM', () => {
@@ -71,8 +78,8 @@ describe('colour level detection', () => {
 
   it('animates the spinner and formats elapsed time', () => {
     expect(spinnerFrame(0)).not.toBe(spinnerFrame(80));
-    expect(formatElapsed(3_400)).toBe('3s');
-    expect(formatElapsed(75_000)).toBe('1m 15s');
+    expect(formatTurnClock(3_400)).toBe('0:03');
+    expect(formatTurnClock(75_000)).toBe('1:15');
   });
 });
 
@@ -316,7 +323,7 @@ describe('compact tree', () => {
   });
 
   it('sizes the tree row to its content under a header', () => {
-    const rows = renderLayout(
+    const rows = renderRows(
       buildLayoutRoot({
         header: new Text('head', 0, 0),
         tree: new Text('tree', 0, 0),

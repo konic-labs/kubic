@@ -23,11 +23,7 @@ import {
   createInvocation,
   MemoryMemoStore,
 } from '../../worker/src/ops/memos.js';
-import {
-  callOperation,
-  OPERATIONS,
-  type OperationName,
-} from '../../worker/src/ops/registry.js';
+import { callOperation } from '../../worker/src/ops/registry.js';
 import type { OpContext } from '../../worker/src/ops/types.js';
 
 export interface GitCommandDeps {
@@ -196,10 +192,4 @@ export async function runGitCommand(
       return { exitCode: EXIT_OK };
     }
   }
-}
-
-export function gitPushHasNoTool(): boolean {
-  return !Object.keys(OPERATIONS).some((name: string) =>
-    (name as OperationName).includes('push'),
-  );
 }

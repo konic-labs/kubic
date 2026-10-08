@@ -9,10 +9,10 @@
 //   model's window: a `configure({ model })` switch re-clamps both with no
 //   explicit re-clamp step. A pending manual compaction narrows the keep window
 //   through the lane's `ManualKeepScope`.
-// - `compactSoloLane` admits Pi's compaction task with Kubic's compact prompt
-//   as the summarizer instructions. `runManualCompaction` runs one compaction
-//   to its outcome; `runCompactCommand` is the user's `/compact`, which also
-//   holds the manual keep window while the task is pending.
+// - `runManualCompaction` admits Pi's compaction task with Kubic's compact
+//   prompt as the summarizer instructions, then runs it to its outcome.
+//   `runCompactCommand` is the user's `/compact`, which also holds the manual
+//   keep window while the task is pending.
 //
 // The rest of this module is pure policy and formatting. The seam types are
 // type-only imports (erased), no Pi runtime import, no network, no filesystem.
@@ -89,7 +89,7 @@ export const SYSTEM_ENTRY_ESTIMATE = 2822;
 
 // A planning figure for one summary, in estimated tokens. Pi's own budget for a
 // summary is 0.8 of the reserve; a typical summary is far shorter.
-export const SUMMARY_ESTIMATE = 800;
+const SUMMARY_ESTIMATE = 800;
 
 /**
  * The room a compaction leaves for the next exchange: the window, less its
@@ -250,47 +250,12 @@ export interface SoloCompactionLane {
   readonly manualKeep?: ManualKeepScope;
 }
 
-export interface ManualCompactionAdmission {
+interface ManualCompactionAdmission {
   taskId: TaskId<CompactionResult>;
   // The context estimate at admission (Pi's own estimate over the derived
   // model context), so the caller can report what the cut removed. Read
   // BEFORE the task is admitted: after placement the context is the summary.
   tokensBefore: number;
-}
-
-/**
- * Manual compaction admission: reads the context, then admits Pi's
- * `CompactionTask` and returns its id. Pi summarizes while the conversation
- * keeps working and places the summary at once when idle, otherwise at the
- * next turn boundary; the caller waits on `harness.waitForTask`.
- *
- * Kubic's compact prompt — the caller's focus verbatim — is the
- * task's instructions: the one path where Kubic owns the summarizer's text.
- * Automatic (threshold/overflow) compaction uses Pi's own summarization
- * prompt, because pi-durable only accepts instructions through `compact()`.
- */
-export async function compactSoloLane(
-  solo: SoloCompactionLane,
-  focus: string | undefined,
-  context: Context,
-): Promise<ManualCompactionAdmission> {
-  const view = await solo.conversation.context(context);
-  return admitCompaction(solo, focus, view, context);
-}
-
-// Admission on a context the caller has already read. The estimate is taken
-// from that read, before the task is admitted: after placement the context is
-// the summary.
-async function admitCompaction(
-  solo: SoloCompactionLane,
-  focus: string | undefined,
-  view: ContextView,
-  context: Context,
-): Promise<ManualCompactionAdmission> {
-  const instructions = buildCompactPrompt(focus === undefined ? {} : { focus });
-  const tokensBefore = estimateContextTokens(view.messages).tokens;
-  const taskId = await solo.conversation.compact(instructions, context);
-  return { taskId, tokensBefore };
 }
 
 // How a manual compaction ended. `aborted` is the
@@ -314,7 +279,7 @@ type ManualCompactionStatus =
 // turn, so there was nothing to summarize and no task was admitted.
 // `no-cut`: older history exists, but pi-durable found no cut point before the
 // most recent turn.
-export type ManualCompactionReason = 'most-recent-turn' | 'no-cut';
+type ManualCompactionReason = 'most-recent-turn' | 'no-cut';
 
 export interface ManualCompactionOutcome {
   status: ManualCompactionStatus;
@@ -363,6 +328,21 @@ export interface ManualCompactionOptions {
    * the admission commit) replays it here, so a Ctrl-C is never lost.
    */
   onAdmitted?: (taskId: string) => void | Promise<void>;
+}
+
+// Admission on a context the caller has already read. The estimate is taken
+// from that read, before the task is admitted: after placement the context is
+// the summary.
+async function admitCompaction(
+  solo: SoloCompactionLane,
+  focus: string | undefined,
+  view: ContextView,
+  context: Context,
+): Promise<ManualCompactionAdmission> {
+  const instructions = buildCompactPrompt(focus === undefined ? {} : { focus });
+  const tokensBefore = estimateContextTokens(view.messages).tokens;
+  const taskId = await solo.conversation.compact(instructions, context);
+  return { taskId, tokensBefore };
 }
 
 /**

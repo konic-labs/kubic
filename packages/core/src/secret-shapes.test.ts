@@ -4,7 +4,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   containsSecretShape,
-  findSecretShapes,
   REDACTED_SECRET,
   redactSecretShapes,
 } from './secret-shapes.js';
@@ -12,9 +11,12 @@ import {
 describe('case-insensitive prefixes', () => {
   it('matches uppercase SK- keys', () => {
     expect(containsSecretShape('SK-FAUX-TEST-KEY-0001')).toBe(true);
-    expect(findSecretShapes('saw SK-FAUX-TEST-KEY-0001 here')).toEqual([
-      'SK-FAUX-TEST-KEY-0001',
-    ]);
+    expect(redactSecretShapes('saw SK-FAUX-TEST-KEY-0001 here')).toContain(
+      REDACTED_SECRET,
+    );
+    expect(redactSecretShapes('saw SK-FAUX-TEST-KEY-0001 here')).not.toContain(
+      'SK-FAUX',
+    );
   });
 
   it('matches uppercase GitHub-shaped tokens', () => {

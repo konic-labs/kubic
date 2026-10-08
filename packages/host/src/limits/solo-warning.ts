@@ -21,10 +21,6 @@ export function soloWarningLines(): string[] {
   ];
 }
 
-export function formatSoloWarningStderr(): string {
-  return soloWarningLines().join('\n');
-}
-
 export function emitSoloWarning(out: (line: string) => void): void {
   for (const line of soloWarningLines()) out(line);
 }

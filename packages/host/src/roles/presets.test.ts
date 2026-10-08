@@ -8,57 +8,14 @@
 // `false`, `workspace`, `full`; the read-only shell level is the shipped
 // spelling of reviewer/planner `shell: true`; the level itself is the closed
 // allowlist).
-import { basename, dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PermissionClasses } from '../../../agents/src/policy.js';
 import { BUILTIN_ROLE_NAMES, BUILTIN_ROLE_PRESETS } from './builtin-presets.js';
 import {
-  loadRoleDocuments,
   type ParsedRoleDoc,
   parseRoleDocument,
   resolveRole,
 } from './resolver.js';
-
-// The presets as an in-memory role directory: the loader reads the exact text
-// the binary ships, with no filesystem access.
-const PRESETS_DIR = '/builtin/roles';
-
-function presetBridge(): {
-  listDir: (dir: string) => Array<{
-    name: string;
-    path: string;
-    isDirectory: boolean;
-    isSymbolicLink: boolean;
-    size: number;
-    mtimeMs: number;
-  }>;
-  readTextFile: (path: string) => string;
-} {
-  const files = new Map<string, string>(
-    BUILTIN_ROLE_NAMES.map((name): [string, string] => [
-      `${PRESETS_DIR}/${name}.md`,
-      BUILTIN_ROLE_PRESETS[name],
-    ]),
-  );
-  return {
-    listDir: (dir) =>
-      [...files.keys()]
-        .filter((path) => dirname(path) === dir)
-        .map((path) => ({
-          name: basename(path),
-          path,
-          isDirectory: false,
-          isSymbolicLink: false,
-          size: 0,
-          mtimeMs: 0,
-        })),
-    readTextFile: (path) => {
-      const text = files.get(path);
-      if (text === undefined) throw new Error(`no preset at ${path}`);
-      return text;
-    },
-  };
-}
 
 function docNamed(docs: ParsedRoleDoc[], name: string): ParsedRoleDoc {
   const doc = docs.find((entry) => entry.name === name);
@@ -173,7 +130,9 @@ const TABLE: Record<string, Preset> = {
 };
 
 describe('shipped role presets match the table', () => {
-  const docs = loadRoleDocuments(presetBridge(), PRESETS_DIR);
+  const docs = [...BUILTIN_ROLE_NAMES]
+    .sort()
+    .map((name) => parseRoleDocument(BUILTIN_ROLE_PRESETS[name]));
 
   it('ships exactly the five presets the table names', () => {
     expect(docs.map((doc) => doc.name).sort()).toEqual(

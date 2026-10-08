@@ -101,8 +101,8 @@ import { PickerView } from './picker-view.js';
 import { type PreflightInfo, renderPreflight } from './preflight.js';
 import {
   findSlashCommand,
+  parseKnownSlashCommand,
   parseSlashCommand,
-  SLASH_COMMAND_NAMES,
   SLASH_COMMANDS,
   SlashCommandAutocomplete,
   skillCommandSpecs,
@@ -300,21 +300,6 @@ export interface TuiAppSeed {
   readonly fileRoot?: string;
   // The workspace as the approval card shows it (`~/proj`).
   readonly cwdLabel?: string;
-}
-
-// Replication: the TUI holds no authority — it reads the replicated
-// snapshot only. The model id is runtime (not presentation state), so it
-// arrives alongside.
-export function seedFromPresentation(
-  state: KubicPresentationState,
-  model: string,
-  posture: { readonly approvalsSkipped: boolean },
-): TuiAppSeed {
-  return {
-    sessionId: state.session.sessionId,
-    model,
-    approvalsSkipped: posture.approvalsSkipped,
-  };
 }
 
 interface TuiInputResult {
@@ -1135,8 +1120,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   // the palette offers before anything is typed.
   const recentCommands: string[] = [];
   const noteRecentCommand = (prompt: string): void => {
-    const parsed = parseSlashCommand(prompt);
-    if (parsed === undefined || !SLASH_COMMAND_NAMES.has(parsed.name)) return;
+    const parsed = parseKnownSlashCommand(prompt);
+    if (parsed === undefined) return;
     const at = recentCommands.indexOf(parsed.name);
     if (at !== -1) recentCommands.splice(at, 1);
     recentCommands.unshift(parsed.name);

@@ -4,23 +4,20 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import { EXAMPLE_TOML } from '../test-support/config-fixtures.js';
 import {
-  COMMITTED_CONFIG_FILES,
   CONFIG_LAYERS,
   ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
   checkRoleModelRef,
   defaultLayerPaths,
-  EXAMPLE_TOML,
   GITIGNORE_REQUIRED_ENTRIES,
-  isCommittedConfigPath,
-  loadLayered,
   mergeLayered,
   ProjectUntrustedError,
   parseTomlConfig,
-  serializeTomlConfig,
 } from './config.js';
+import { loadRuntimeConfig } from './runtime.js';
 import { McpUnsupportedError } from './stances.js';
 
 type BridgePick = Pick<FileBridge, 'exists' | 'readTextFile'>;
@@ -142,12 +139,6 @@ describe('canonical TOML example', () => {
     expect(parsed.roles?.implementer?.model).toBe('local/llama3');
     expect(parsed.ui?.theme).toBe('dark');
     expect(parsed.session?.store).toBe('jsonl');
-  });
-
-  it('round-trips the example semantically', () => {
-    const once = parseTomlConfig(EXAMPLE_TOML);
-    const twice = parseTomlConfig(serializeTomlConfig(once));
-    expect(twice).toEqual(once);
   });
 
   it('keeps example.toml in sync with EXAMPLE_TOML', () => {
@@ -351,12 +342,6 @@ describe('[policy] + [[audit]]', () => {
       { sink: 'file', level: 'all', target: '/var/log/kubic.jsonl' },
     ]);
   });
-
-  it('round-trips [policy] and [[audit]] through the serializer', () => {
-    const once = parseTomlConfig(POLICY_EXAMPLE);
-    const twice = parseTomlConfig(serializeTomlConfig(once));
-    expect(twice).toEqual(once);
-  });
 });
 
 describe('session.retentionDays', () => {
@@ -443,6 +428,26 @@ describe('[agent] systemPromptFile', () => {
   });
 });
 
+// The live loader, given the composition root's inputs for this home and project.
+function loadRuntime(
+  bridge: BridgePick,
+  options: { projectTrusted?: boolean; workspaceRoot?: string } = {},
+) {
+  return loadRuntimeConfig({
+    bridge,
+    home: '/home/u',
+    cwd: '/repo',
+    projectRoot: '/repo',
+    env: {},
+    ...(options.projectTrusted === undefined
+      ? {}
+      : { projectTrusted: options.projectTrusted }),
+    ...(options.workspaceRoot === undefined
+      ? {}
+      : { workspaceRoot: options.workspaceRoot }),
+  });
+}
+
 describe('trust-gated project-local config', () => {
   it('refuses untrusted project config pre-trust', () => {
     expect(() =>
@@ -478,11 +483,7 @@ describe('trust-gated project-local config', () => {
         return inner.readTextFile(path);
       },
     };
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
-    expect(() => loadLayered(bridge, paths, { projectTrusted: false })).toThrow(
+    expect(() => loadRuntime(bridge, { projectTrusted: false })).toThrow(
       ProjectUntrustedError,
     );
     expect(reads).toEqual([]);
@@ -493,38 +494,19 @@ describe('trust-gated project-local config', () => {
       '/home/u/.kubic/config.toml': '[model]\nprovider = "g"\nid = "m"\n',
       '/repo/.kubic/config.toml': '[journal]\nretentionDays = 7\n',
     });
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
-    const merged = loadLayered(bridge, paths, { projectTrusted: true });
+    const merged = loadRuntime(bridge, { projectTrusted: true });
     expect(merged.config.model?.provider).toBe('g');
     expect(merged.config.journal?.retentionDays).toBe(7);
   });
 
   it('treats absent files as empty layers', () => {
-    const merged = loadLayered(
-      fakeBridge({}),
-      defaultLayerPaths({
-        home: '/home/u',
-        projectRoot: '/repo',
-      }),
-    );
+    const merged = loadRuntime(fakeBridge({}));
     expect(merged.config).toEqual({});
     expect(merged.overriddenAttempts).toEqual([]);
   });
 });
 
 describe('committed vs gitignored split', () => {
-  it('commits config + roles, never sessions/journal/artifacts/audit', () => {
-    expect(isCommittedConfigPath('config.toml')).toBe(true);
-    expect(isCommittedConfigPath('roles/reviewer.md')).toBe(true);
-    expect(isCommittedConfigPath('sessions/s1.jsonl')).toBe(false);
-    expect(isCommittedConfigPath('journal/2026-01-01.jsonl')).toBe(false);
-    expect(isCommittedConfigPath('artifacts/out.txt')).toBe(false);
-    expect(isCommittedConfigPath('audit/audit.jsonl')).toBe(false);
-  });
-
   it('requires every ignored prefix in .gitignore', () => {
     expect(GITIGNORE_REQUIRED_ENTRIES.length).toBeGreaterThan(0);
     const good = GITIGNORE_REQUIRED_ENTRIES.map((entry) => `${entry}*`).join(
@@ -917,12 +899,8 @@ describe('layer merge hardening', () => {
 describe('layered load hardening', () => {
   it('wraps file errors with the layer name', () => {
     const bridge = fakeBridge({ '/etc/kubic/config.toml': '[bad\n' });
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
     try {
-      loadLayered(bridge, paths, { projectTrusted: true });
+      loadRuntime(bridge, { projectTrusted: true });
       expect.unreachable();
     } catch (error) {
       expect((error as Error).message).toMatch(/layer 'enterprise'/);
@@ -930,15 +908,11 @@ describe('layered load hardening', () => {
   });
 
   it('wraps MCP violations with the offending layer', () => {
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
     const bridge = fakeBridge({
       '/home/u/.kubic/config.toml': '[mcp]\nenabled = true\n',
     });
     try {
-      loadLayered(bridge, paths, { projectTrusted: true });
+      loadRuntime(bridge, { projectTrusted: true });
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(McpUnsupportedError);
@@ -947,25 +921,17 @@ describe('layered load hardening', () => {
   });
 
   it('wraps unknown-section violations with the offending layer', () => {
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-    });
     const bridge = fakeBridge({
       '/home/u/.kubic/config.toml': '[telemetry]\nenabled = true\n',
     });
-    expect(() => loadLayered(bridge, paths)).toThrow(/layer 'global'/);
+    expect(() => loadRuntime(bridge)).toThrow(/layer 'global'/);
   });
 
   it('loads the other layers pre-trust when no project file exists', () => {
     const bridge = fakeBridge({
       '/home/u/.kubic/config.toml': '[model]\nprovider = "g"\nid = "m"\n',
     });
-    const merged = loadLayered(
-      bridge,
-      defaultLayerPaths({ home: '/home/u', projectRoot: '/repo' }),
-      { projectTrusted: false },
-    );
+    const merged = loadRuntime(bridge, { projectTrusted: false });
     expect(merged.config.model?.provider).toBe('g');
   });
 
@@ -980,37 +946,15 @@ describe('layered load hardening', () => {
     const bridge = fakeBridge({
       '/ws/.kubic/config.toml': '[ui]\ntheme = "light"\n',
     });
-    const merged = loadLayered(bridge, paths, { projectTrusted: true });
+    const merged = loadRuntime(bridge, {
+      projectTrusted: true,
+      workspaceRoot: '/ws',
+    });
     expect(merged.config.ui?.theme).toBe('light');
   });
 });
 
 describe('config serialization hardening', () => {
-  it('emits role tables sorted by name', () => {
-    const text = serializeTomlConfig({
-      roles: {
-        zebra: { model: 'm' },
-        alpha: { model: 'm' },
-      },
-    });
-    expect(text.indexOf('[roles.alpha]')).toBeLessThan(
-      text.indexOf('[roles.zebra]'),
-    );
-  });
-
-  it('refuses to serialize nested tables as values', () => {
-    expect(() =>
-      serializeTomlConfig({ agent: { name: { nested: true } as never } }),
-    ).toThrow(/cannot serialize nested tables/);
-  });
-
-  it('classifies committed vs runtime paths exactly', () => {
-    expect(isCommittedConfigPath('.kubic/config.toml')).toBe(true);
-    expect(isCommittedConfigPath('.kubic/roles/a.md')).toBe(true);
-    expect(isCommittedConfigPath('other/config.toml')).toBe(false);
-    expect(isCommittedConfigPath('.kubic/sessions/x')).toBe(false);
-  });
-
   it('reports only the missing gitignore entries', () => {
     const partial = `.kubic/sessions/\n.kubic/journal/\n`;
     expect(checkGitignoreSplit(partial).missing).toEqual([
@@ -1034,24 +978,10 @@ describe('config serialization hardening', () => {
       checkGitignoreSplit(shipped.applyRuntimeExcludeBlock('').text).missing,
     ).toEqual([]);
   });
-
-  // The committed half must stay trackable, proven
-  // against the rules that are actually shipped (not a hand-written list).
-  it('keeps every shipped runtime rule off the committed half', async () => {
-    const shipped = await import('../../../exec/src/runtime-exclude.js');
-    expect([...COMMITTED_CONFIG_FILES]).toEqual(['config.toml', 'roles/']);
-    for (const entry of shipped.RUNTIME_EXCLUDE_ENTRIES) {
-      const normalized = entry.replace(/^\.kubic\//, '').replace(/\/$/, '');
-      expect(isCommittedConfigPath(normalized)).toBe(false);
-      expect(isCommittedConfigPath(`.kubic/${normalized}/x`)).toBe(false);
-    }
-    expect(isCommittedConfigPath('.kubic/config.toml')).toBe(true);
-    expect(isCommittedConfigPath('.kubic/roles/reviewer.md')).toBe(true);
-  });
 });
 
 describe('[verify] section', () => {
-  it('parses the four gate commands and the timeout, and round-trips', () => {
+  it('parses the four gate commands and the timeout', () => {
     const text =
       '[verify]\ntests = "npm test"\nbuild = "npm run build"\nlint = "npm run lint"\ntypecheck = "npm run typecheck"\ntimeoutMs = 60000\n';
     const parsed = parseTomlConfig(text);
@@ -1062,9 +992,6 @@ describe('[verify] section', () => {
       typecheck: 'npm run typecheck',
       timeoutMs: 60000,
     });
-    expect(parseTomlConfig(serializeTomlConfig(parsed)).verify).toEqual(
-      parsed.verify,
-    );
   });
 
   it('refuses an unknown key, a non-string or blank command and a bad timeout by name', () => {

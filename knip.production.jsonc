@@ -1,0 +1,45 @@
+{
+  // Production-mode knip: the program as the binary runs it, with test code
+  // left out. `npm run lint:dead:prod` runs it (see docs/contributing.md).
+  "$schema": "https://unpkg.com/knip@6.38.0/schema.json",
+
+  // An export that production code uses inside its own module is live, so it
+  // is not reported here. The gate reports exports that no production code
+  // uses at all, which are the exports only tests import.
+  "ignoreExportsUsedInFile": true,
+
+  // mkfifo is a POSIX utility, not a dependency (see knip.jsonc).
+  "ignoreBinaries": ["mkfifo"],
+
+  // The nine boundary seams are tagged @internal where they are re-exported
+  // (pi-boundary.ts, tui-boundary.ts). knip ignores @internal exports in
+  // production mode only, so the default gate still checks them. No other
+  // export in those files is exempt.
+
+  "workspaces": {
+    ".": {
+      // The vitest plugin would add every *.test.ts as an entry, which makes
+      // any test import count as use. It is off here, so `ignore` below holds.
+      "vitest": false,
+      // bin/kubic.js loads dist/apps/kubic/src/main.js, the tsc output of
+      // apps/kubic/src/main.ts, so the source entry is main.ts. scripts/*.mjs
+      // are repo tooling and are entries in their own right.
+      "entry": [
+        "apps/kubic/src/main.ts",
+        "bin/kubic.js",
+        "scripts/*.mjs",
+        "!scripts/*.test.mjs"
+      ],
+      "project": ["apps/**/*.ts", "packages/**/*.ts"],
+      // Tests, test-support helpers and the test harness are not part of the
+      // program. Their imports must not count as production use.
+      "ignore": [
+        "**/*.test.ts",
+        "**/*.test.mjs",
+        "**/test-support/**",
+        "**/test-harness.ts",
+        "test/**"
+      ]
+    }
+  }
+}

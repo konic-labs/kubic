@@ -109,9 +109,3 @@ export function buildLayoutRoot(slots: LayoutSlots): VStack {
   }
   return new VStack(rows, { gap: 0, align: 'stretch' });
 }
-
-// Headless snapshot: render the root at a fixed width (pure — no
-// terminal). Row count and content assert layout, not pixels.
-export function renderLayout(root: VStack, width: number): string[] {
-  return root.render(width);
-}

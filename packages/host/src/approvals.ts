@@ -1705,47 +1705,7 @@ export class FileApprovalStore implements ApprovalStore {
 // on resume rather than resuming an unapproved call. Single-sourced with the
 // worker seam: `ApprovalCall`/`ApprovalAskVerdict` are the worker's types, so
 // ask and hook cannot drift apart.
-export type ApprovalAsk = (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
-
-export function createApprovalAsk(
-  service: ApprovalService,
-  ctx: TriggerContext,
-  store: FileApprovalStore,
-): ApprovalAsk {
-  // The posture is read ONCE, when the ask is built (session
-  // boot) — never per call, so a posture.json written mid-session by the
-  // model cannot switch approvals off.
-  const posture = store.loadPosture();
-  return async (call) => {
-    const capabilities = detectTriggers(call.toolName, call.args, ctx);
-    if (capabilities.length === 0) return { approved: true, challenged: false };
-    const refusal = controlPlaneRefusal(
-      call.toolName,
-      call.args,
-      ctx.workspace,
-      ctx.controlPlane,
-    );
-    if (refusal !== undefined) return { approved: false, reason: refusal };
-    const asked = posture.fullAccess
-      ? capabilities.filter((capability) => ALWAYS_ASK.has(capability))
-      : capabilities;
-    if (asked.length === 0) {
-      return { approved: true, challenged: true };
-    }
-    for (const capability of asked) {
-      const verdict = await service.request({
-        key: approvalKey(call.toolName, capability, call.args),
-        capability,
-        toolName: call.toolName,
-        ...approvalRequestDisplay(call.toolName, capability, call.args),
-      });
-      if (!verdict.approved) {
-        return { approved: false, reason: verdict.reason };
-      }
-    }
-    return { approved: true, challenged: true };
-  };
-}
+type ApprovalAsk = (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
 
 export function enableFullAccess(
   store: FileApprovalStore,
@@ -1883,32 +1843,6 @@ export function enableSessionFullAccess(
   return {
     posture,
     warning: `full-access approvals skipped for session ${options.sessionId} (recorded ${posture.enabledAt}) — every challenged call runs without asking`,
-  };
-}
-
-// The symmetric revocation path: `kubic tui`'s in-session
-// toggle off writes posture.json (so a later resume boots enforced) and one
-// `posture:approvals` row, exactly as the enable path writes its own.
-export function disableSessionFullAccess(
-  options: SessionFullAccessOptions,
-): SessionFullAccessGrant {
-  const commandLine = `kubic ${options.command}`;
-  const posture = recordFullAccessChange({
-    enabled: false,
-    by: commandLine,
-    sessionId: options.sessionId,
-    workspace: options.workspace,
-    ...(options.sessionDir === undefined
-      ? {}
-      : { sessionDir: options.sessionDir }),
-    ...(options.clock === undefined ? {} : { clock: options.clock }),
-    ...(options.onAuditError === undefined
-      ? {}
-      : { onAuditError: options.onAuditError }),
-  });
-  return {
-    posture,
-    warning: `full-access revoked for session ${options.sessionId} — every challenged call asks again`,
   };
 }
 

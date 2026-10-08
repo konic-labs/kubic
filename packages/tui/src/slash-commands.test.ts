@@ -3,13 +3,13 @@
 // list, so a command that exists is discoverable and an unknown one is
 // refused locally instead of being sent to the model.
 import { describe, expect, it } from 'vitest';
-import { isPresentationCommand } from '../../core/src/presentation.js';
+import { PRESENTATION_COMMANDS } from '../../core/src/presentation.js';
 import { DEFAULT_KEY_REGISTRY } from './keybindings.js';
 import {
   findSlashCommand,
   helpLines,
-  isKnownSlashCommand,
   matchingSlashCommands,
+  parseKnownSlashCommand,
   parseSlashCommand,
   SLASH_COMMANDS,
   SlashCommandAutocomplete,
@@ -49,7 +49,7 @@ describe('slash-command registry', () => {
     // an entry that names a command outside the contract would fail here.
     for (const spec of SLASH_COMMANDS) {
       if (spec.command === undefined) continue;
-      expect(isPresentationCommand(spec.command)).toBe(true);
+      expect(PRESENTATION_COMMANDS).toContain(spec.command);
     }
     // `/new` and `/resume` both attach (the dispatcher keys off this); the
     // local reads and `/quit` carry no presentation command.
@@ -86,11 +86,15 @@ describe('slash-command registry', () => {
   });
 
   it('knows which drafts are commands and which are prompts', () => {
-    expect(isKnownSlashCommand('/help')).toBe(true);
-    expect(isKnownSlashCommand('/quit')).toBe(true);
-    expect(isKnownSlashCommand('/foo')).toBe(false);
-    expect(isKnownSlashCommand('/help me')).toBe(true);
-    expect(isKnownSlashCommand('please /help')).toBe(false);
+    expect(parseKnownSlashCommand('/help')?.name).toBe('help');
+    expect(parseKnownSlashCommand('/quit')?.name).toBe('quit');
+    expect(parseKnownSlashCommand('/foo')).toBeUndefined();
+    expect(parseKnownSlashCommand('/help me')).toEqual({
+      name: 'help',
+      argument: 'me',
+    });
+    expect(parseKnownSlashCommand('please /help')).toBeUndefined();
+    expect(parseKnownSlashCommand('//help')).toBeUndefined();
   });
 
   it('matches completions by the command prefix only', () => {

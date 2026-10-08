@@ -16,7 +16,7 @@ the fail-closed rules and the changelog live in `CONTRACT.md`.
 
 | Module | Exports |
 | --- | --- |
-| `schema.ts` | `TrajectoryExport` and every section interface, `TRAJECTORY_FIELDS`, `SCHEMA_VERSION/MAJOR`, `TRAJECTORY_STABILITY`, `TRAJECTORY_CHANGELOG`, `TRAJECTORY_FAILURE_CODES`, `isTrajectoryFailureCode`, `RESULT_STATUSES`, `TrajectorySchemaError`, `TrajectorySchemaErrorCode`, `parseTrajectoryExport`, `parseTrajectoryExportJSON` |
+| `schema.ts` | `TrajectoryExport` and every section interface, `TRAJECTORY_FIELDS`, `SCHEMA_VERSION/MAJOR`, `TRAJECTORY_FAILURE_CODES`, `isTrajectoryFailureCode`, `RESULT_STATUSES`, `TrajectorySchemaError`, `TrajectorySchemaErrorCode`, `parseTrajectoryExport`, `parseTrajectoryExportJSON` |
 | `export.ts` | `BuildTrajectoryInput`, `RawObservation`, `buildTrajectoryExport`, `MAX_OBSERVATION_BYTES`, `TrajectoryExportError`, `TrajectoryExportErrorCode` |
 | `index.ts` | Re-exports the surface above; callers import `export.ts` / `schema.ts` directly |
 

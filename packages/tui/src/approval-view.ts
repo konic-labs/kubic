@@ -86,33 +86,6 @@ export function approvalOverlayOptions(): ApprovalOverlayOptions {
   };
 }
 
-export interface ApprovalOverlayBounds {
-  readonly width: number;
-  readonly height: number;
-  readonly row: number;
-  readonly col: number;
-}
-
-// NOTE (max-extent estimate — Pi is the layout authority at runtime):
-// Pi's compositeOverlays (pi-tui/dist/tui.js) renders the component at the
-// resolved width and uses content height (overlayLines.length clamped to
-// maxHeight) centered via resolveOverlayLayout — it never sizes the box to
-// termHeight * 60%. This helper returns the 70%-wide / 60%-tall centered
-// max extent for headless estimates and tests only.
-export function approvalOverlayBounds(
-  termWidth: number,
-  termHeight: number,
-): ApprovalOverlayBounds {
-  const width = Math.floor(termWidth * 0.7);
-  const height = Math.floor(termHeight * 0.6);
-  return {
-    width,
-    height,
-    row: Math.max(0, Math.floor((termHeight - height) / 2)),
-    col: Math.max(0, Math.floor((termWidth - width) / 2)),
-  };
-}
-
 // The key that pages a long command (or opens an edit's whole
 // diff) on the approval card. It never decides.
 export const APPROVAL_PAGE_KEY = 'v';
@@ -192,13 +165,6 @@ function resolvedBindings(
     'allow-edits':
       overrides?.['allow-edits'] ?? APPROVAL_DEFAULT_KEYS['allow-edits'],
   };
-}
-
-export function resolveApprovalAction(
-  data: string,
-  overrides?: ApprovalKeyOverrides,
-): ApprovalAction | undefined {
-  return resolveApprovalKey(data, overrides)?.action;
 }
 
 // The action AND the binding that matched: the arming window lets only the
@@ -302,105 +268,4 @@ export interface ApprovalOverlayTui {
   // composited (the dimmed background behind the palette); the live screen
   // honours it, a fake host simply keeps it.
   baseFilter?: ((lines: string[]) => string[]) | undefined;
-}
-
-// memoOnce decisions: first answer wins, persisted through the
-// injected store so a restart/rerender never re-asks. The store is
-// memory by default — file backing (like the host's approvals.json) is
-// composed by the caller, never by this module (I/O confinement).
-export interface ApprovalDecisionStore {
-  load(): Record<string, ApprovalDecision>;
-  save(decisions: Record<string, ApprovalDecision>): void;
-}
-
-class MemoryApprovalDecisionStore implements ApprovalDecisionStore {
-  private decisions: Record<string, ApprovalDecision> = {};
-
-  load(): Record<string, ApprovalDecision> {
-    return { ...this.decisions };
-  }
-
-  save(decisions: Record<string, ApprovalDecision>): void {
-    this.decisions = { ...decisions };
-  }
-}
-
-export interface ApprovalMemo {
-  decided(key: string): ApprovalDecision | undefined;
-  submit(key: string, verdict: ApprovalDecision): ApprovalDecision;
-}
-
-export function createApprovalMemo(
-  store?: ApprovalDecisionStore,
-): ApprovalMemo {
-  const backing = store ?? new MemoryApprovalDecisionStore();
-  const decisions = new Map<string, ApprovalDecision>(
-    Object.entries(backing.load()),
-  );
-  return {
-    decided: (key: string): ApprovalDecision | undefined => decisions.get(key),
-    submit: (key: string, verdict: ApprovalDecision): ApprovalDecision => {
-      const existing = decisions.get(key);
-      if (existing !== undefined) return existing;
-      decisions.set(key, verdict);
-      backing.save(Object.fromEntries(decisions));
-      return verdict;
-    },
-  };
-}
-
-export interface ApprovalWaitOptions {
-  readonly memo: ApprovalMemo;
-  readonly maxPendingMs: number;
-  readonly awaitAnswer?: (key: string) => Promise<ApprovalDecision | undefined>;
-}
-
-// Timeout→deny: every wait is bounded by maxPendingMs, so headless
-// (-p) runs settle without a user. Late answers lose to the memo latch.
-// A rejected awaitAnswer resolves deny (never propagates); the timer is
-// always cleared via .finally.
-export function waitForApproval(
-  key: string,
-  options: ApprovalWaitOptions,
-): Promise<ApprovalDecision> {
-  if (!Number.isFinite(options.maxPendingMs) || options.maxPendingMs < 0) {
-    throw new RangeError(
-      `maxPendingMs must be a finite non-negative number, got ${options.maxPendingMs}`,
-    );
-  }
-  const settled = options.memo.decided(key);
-  if (settled !== undefined) return Promise.resolve(settled);
-  const reason = `approval timed out after ${options.maxPendingMs}ms`;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<ApprovalDecision>((resolve) => {
-    timer = setTimeout(() => {
-      resolve(options.memo.submit(key, { approved: false, reason }));
-    }, options.maxPendingMs);
-    timer.unref?.();
-  });
-  const answer = options.awaitAnswer?.(key);
-  if (answer === undefined) {
-    return timeout.finally(() => {
-      if (timer !== undefined) clearTimeout(timer);
-    });
-  }
-  const raced = Promise.race([
-    answer.then(
-      (verdict) =>
-        verdict === undefined
-          ? timeout
-          : Promise.resolve(options.memo.submit(key, verdict)),
-      (failure: unknown) =>
-        Promise.resolve(
-          options.memo.submit(key, {
-            approved: false,
-            reason: `approval await failed: ${failure instanceof Error ? failure.message : String(failure)}`,
-          }),
-        ),
-    ),
-    timeout,
-  ]);
-  return raced.finally(() => {
-    if (timer !== undefined) clearTimeout(timer);
-  });
 }

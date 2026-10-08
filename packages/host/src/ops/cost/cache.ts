@@ -5,23 +5,6 @@
 // caching note is the user-visible statement that caching is observable,
 // never silent. Pure: no I/O, no network, faux-only.
 
-export interface CachePreservationVerdict {
-  preserved: boolean;
-  reason: string;
-}
-
-export function checkCachePreservation(input: {
-  breaksPrefix: string[];
-}): CachePreservationVerdict {
-  if (input.breaksPrefix.length === 0) {
-    return { preserved: true, reason: 'prefix intact: cache preserved' };
-  }
-  return {
-    preserved: false,
-    reason: `prefix broken by ${input.breaksPrefix.join(', ')}: cache prefix invalidated`,
-  };
-}
-
 export interface PrefixHitRate {
   hits: number;
   total: number;

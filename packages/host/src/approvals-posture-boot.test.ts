@@ -9,16 +9,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SOLO_DEFAULTS } from '../../agents/src/policy.js';
 import {
-  ApprovalService,
-  createApprovalAsk,
-  disableSessionFullAccess,
   enableSessionFullAccess,
   FileApprovalStore,
   installSoloPolicy,
-  triggerContextFor,
-  validatePolicy,
 } from './approvals.js';
 import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
 
@@ -122,20 +116,15 @@ describe('posture is decided at boot', () => {
     expect(resumed.posture.fullAccess).toBe(false);
   });
 
-  it('createApprovalAsk also reads the posture once', async () => {
+  it('the installed ask also reads the posture once', async () => {
     const dir = tmpRoot('store-');
-    const store = new FileApprovalStore(dir);
-    const service = new ApprovalService({
-      policy: validatePolicy({ maxPendingMs: 10 }),
-      store,
+    const installed = installSoloPolicy({
+      workspace: dir,
+      sessionDir: dir,
+      maxPendingMs: 10,
     });
-    const ask = createApprovalAsk(
-      service,
-      triggerContextFor({ ...SOLO_DEFAULTS }, dir),
-      store,
-    );
     forgePosture(dir);
-    expect((await ask(DESTRUCTIVE)).approved).toBe(false);
+    expect((await installed.ask(DESTRUCTIVE)).approved).toBe(false);
   });
 });
 
@@ -223,14 +212,13 @@ describe('the in-session full-access toggle', () => {
       workspace,
       clock: () => 1_700_000_000_000,
     });
-    const revoked = disableSessionFullAccess({
+    const revoked = installSoloPolicy({
+      workspace,
       sessionDir,
       sessionId: 'sess-posture',
-      command: 'tui /approvals off',
-      workspace,
       clock: () => 1_700_000_000_500,
-    });
-    expect(revoked.warning).toContain('full-access revoked');
+    }).setFullAccess?.(false, 'kubic tui /approvals off');
+    expect(revoked?.fullAccess).toBe(false);
     expect(new FileApprovalStore(sessionDir).loadPosture()).toMatchObject({
       fullAccess: false,
     });
@@ -280,14 +268,12 @@ describe('the in-session full-access toggle', () => {
     });
   });
 
-  it('the in-session toggle writes the row the CLI path writes', () => {
+  it('the in-session toggle writes its enable and revoke rows in one shape', () => {
     const workspace = tmpRoot('ws-');
     const clock = () => 1_700_000_000_000;
     const toggleDir = tmpRoot('session-toggle-');
-    const helperDir = tmpRoot('session-helper-');
-    // The same revoke, once through the installed policy's toggle (the TUI
-    // path) and once through the session helper (the CLI path): the rows are
-    // produced by ONE writer, so they cannot drift into two shapes.
+    // Enable and revoke through the installed policy's toggle (the TUI path):
+    // the rows come from one writer, so their shapes must match.
     enableSessionFullAccess({
       sessionDir: toggleDir,
       sessionId: 'sess-posture',
@@ -301,20 +287,6 @@ describe('the in-session full-access toggle', () => {
       sessionId: 'sess-posture',
       clock,
     }).setFullAccess?.(false, 'kubic tui /approvals off');
-    enableSessionFullAccess({
-      sessionDir: helperDir,
-      sessionId: 'sess-posture',
-      command: 'tui',
-      workspace,
-      clock,
-    });
-    disableSessionFullAccess({
-      sessionDir: helperDir,
-      sessionId: 'sess-posture',
-      command: 'tui /approvals off',
-      workspace,
-      clock,
-    });
     const rows = readAuditLedger(auditLedgerDir(workspace)).filter(
       (record) =>
         record.what === 'posture:full-access' ||
@@ -323,16 +295,15 @@ describe('the in-session full-access toggle', () => {
     expect(rows.map((record) => record.what)).toEqual([
       'posture:full-access',
       'posture:approvals',
-      'posture:full-access',
-      'posture:approvals',
     ]);
     // The ledger stamps `when` from the wall clock; every other field — the
     // row shape, the command, the session, the workspace, the posture — is
     // the writer's own record and must be identical.
     const shape = (row: (typeof rows)[number]) =>
       Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'when'));
-    expect(shape(rows[1])).toEqual(shape(rows[3]));
-    expect(shape(rows[0])).toEqual(shape(rows[2]));
+    expect(Object.keys(shape(rows[0])).sort()).toEqual(
+      Object.keys(shape(rows[1])).sort(),
+    );
   });
 
   it('a disabled posture is what a later resume boots with', () => {

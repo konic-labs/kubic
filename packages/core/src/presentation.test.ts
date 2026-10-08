@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { KubicPresentationState, LaneSnapshot } from './presentation.js';
 import {
-  isPresentationCommand,
   PRESENTATION_COMMANDS,
   PRESENTATION_STATE_FIELDS,
 } from './presentation.js';
@@ -72,10 +71,5 @@ describe('presentation contract', () => {
     >().toEqualTypeOf<LaneSnapshot>();
     expectTypeOf<KubicPresentationState>().not.toHaveProperty('agents');
     expectTypeOf<KubicPresentationState>().not.toHaveProperty('lanes');
-  });
-
-  it('command guard accepts known and rejects unknown commands', () => {
-    expect(isPresentationCommand('lane.abort')).toBe(true);
-    expect(isPresentationCommand('eval.run')).toBe(false);
   });
 });

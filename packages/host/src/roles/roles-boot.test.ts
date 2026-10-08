@@ -636,3 +636,54 @@ describe('selectRole unknown roles', () => {
     }
   });
 });
+
+describe('role documents load in file-name order, whatever the listing returns', () => {
+  it('orders each layer by file name for an unsorted listing', () => {
+    const bridge = memBridge({
+      '/repo/.kubic/roles/zulu.md': roleDoc('zulu'),
+      '/repo/.kubic/roles/alpha.md': roleDoc('alpha'),
+      '/repo/.kubic/roles/mike.md': roleDoc('mike'),
+      '/home/.kubic/roles/yankee.md': roleDoc('yankee'),
+      '/home/.kubic/roles/bravo.md': roleDoc('bravo'),
+    });
+    const loaded = loadRoles({
+      bridge,
+      cwd: '/repo',
+      trusted: true,
+      home: '/home',
+    });
+    const inLayer = (source: string) =>
+      loaded.docs
+        .map((doc) => doc.name)
+        .filter((name) => loaded.sources[name] === source);
+    expect(inLayer('repo')).toEqual(['alpha', 'mike', 'zulu']);
+    expect(inLayer('global')).toEqual(['bravo', 'yankee']);
+  });
+
+  it('names withheld repo documents in file-name order', () => {
+    const bridge = memBridge({
+      '/repo/.kubic/roles/zulu.md': roleDoc('zulu'),
+      '/repo/.kubic/roles/alpha.md': roleDoc('alpha'),
+      '/repo/.kubic/roles/mike.md': roleDoc('mike'),
+    });
+    const loaded = loadRoles({ bridge, cwd: '/repo' });
+    expect(loaded.withheld.map((entry) => entry.name)).toEqual([
+      'alpha',
+      'mike',
+      'zulu',
+    ]);
+  });
+
+  it('lists duplicate declared names in name order, not first-seen order', () => {
+    // The a-* files declare 'zulu' and sort first, so first-seen order would
+    // list zulu before alpha. Only the sort puts alpha first.
+    const bridge = memBridge({
+      '/repo/.kubic/roles/b-two.md': roleDoc('alpha'),
+      '/repo/.kubic/roles/a-two.md': roleDoc('zulu'),
+      '/repo/.kubic/roles/b-one.md': roleDoc('alpha'),
+      '/repo/.kubic/roles/a-one.md': roleDoc('zulu'),
+    });
+    const loaded = loadRoles({ bridge, cwd: '/repo', trusted: true });
+    expect(loaded.duplicates.map((dup) => dup.name)).toEqual(['alpha', 'zulu']);
+  });
+});

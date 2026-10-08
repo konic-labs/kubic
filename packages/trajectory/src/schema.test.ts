@@ -8,8 +8,6 @@ import {
   RESULT_STATUSES,
   SCHEMA_MAJOR,
   SCHEMA_VERSION,
-  TRAJECTORY_CHANGELOG,
-  TRAJECTORY_STABILITY,
   TrajectorySchemaError,
 } from './schema.js';
 
@@ -92,11 +90,6 @@ describe('trajectory schema version', () => {
     expect(err.code).toBe('unknown-major');
     expect(err.exitCode).not.toBe(0);
     expect(err.message).toMatch(/2.*major 1|major 1.*2/i);
-  });
-
-  it('publishes stability and a changelog with the single 1.0 entry', () => {
-    expect(TRAJECTORY_STABILITY).toBe('stable');
-    expect(TRAJECTORY_CHANGELOG.map((entry) => entry.version)).toEqual(['1.0']);
   });
 
   it('accepts a newer minor of the same major (tolerant, no shim)', () => {

@@ -4,14 +4,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionEnv, ProcessSnapshot, Provenance } from './env.js';
 import {
-  argvKey,
   FakeExecutionEnv,
   MAX_CHILD_OUTPUT_BYTES,
-  MemoryCheckpointStore,
   NodeExecutionEnv,
   ROOT_PROVENANCE,
   toolSpawnEnv,
 } from './env.js';
+import { argvKey, MemoryCheckpointStore } from './test-support/env-fakes.js';
 
 const PROV: Provenance = {
   sessionId: 's1',

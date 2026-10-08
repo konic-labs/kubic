@@ -12,9 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   type ApprovalRequest,
   ApprovalService,
-  type ApprovalVerdict,
   approvalKey,
-  createApprovalAsk,
   detectTriggers,
   enableFullAccess,
   FileApprovalStore,
@@ -162,6 +160,17 @@ describe('approval service', () => {
       by: 'user',
       justified: false,
     });
+    expect(service.pendingRequests()).toEqual([]);
+  });
+
+  it('a failing surface rejects the request and leaves nothing pending', async () => {
+    const service = new ApprovalService({
+      policy: validatePolicy({ maxPendingMs: 10_000 }),
+      awaitAnswer: () => Promise.reject(new Error('seat unavailable')),
+    });
+    await expect(service.request(request())).rejects.toThrow(
+      'seat unavailable',
+    );
     expect(service.pendingRequests()).toEqual([]);
   });
 
@@ -318,65 +327,52 @@ describe('approval service', () => {
 });
 
 describe('approval adapter, file store, posture', () => {
-  it('passes non-triggered calls without touching the service', async () => {
-    const service = new ApprovalService({
-      policy: validatePolicy({ maxPendingMs: 10 }),
-      awaitAnswer: () => {
+  it('passes non-triggered calls without asking the seat', async () => {
+    const dir = mkTmp('approvals-');
+    const installed = installSoloPolicy({
+      workspace: dir,
+      sessionDir: dir,
+      answer: () => {
         throw new Error('must not ask');
       },
     });
-    const dir = mkTmp('approvals-');
-    const ask = createApprovalAsk(
-      service,
-      triggerContext(),
-      new FileApprovalStore(dir),
-    );
     await expect(
-      ask({ toolName: 'read', args: { path: 'notes.txt' }, toolCallId: 'c1' }),
+      installed.ask({
+        toolName: 'read',
+        args: { path: 'notes.txt' },
+        toolCallId: 'c1',
+      }),
     ).resolves.toEqual({ approved: true, challenged: false });
   });
 
   it('denies triggered calls headless and approves on answer', async () => {
     const dir = mkTmp('approvals-');
-    const store = new FileApprovalStore(dir);
-    const denied = new ApprovalService({
-      policy: validatePolicy({ maxPendingMs: 10 }),
-      store,
+    const headless = installSoloPolicy({
+      workspace: dir,
+      sessionDir: dir,
+      maxPendingMs: 10,
     });
-    const askDenied = createApprovalAsk(denied, triggerContext(), store);
-    const verdict = await askDenied({
+    const verdict = await headless.ask({
       toolName: 'bash',
       args: { command: 'rm -rf /tmp/x' },
       toolCallId: 'c1',
     });
     expect(verdict.approved).toBe(false);
 
-    const approved = new ApprovalService({
-      policy: validatePolicy({ maxPendingMs: 5_000 }),
-      store,
-      // The seat presents the dialog and waits; the answer arrives below
-      // via submit() exactly as a surface delivers it (the waiter path).
-      // The seat waits for its verdict: it never resolves undefined immediately,
-      // and the ask is not answered through the timeout-denial's latch.
-      awaitAnswer: () => new Promise<ApprovalVerdict | undefined>(() => {}),
+    // The seat presents the dialog and its verdict arrives as the answer.
+    const seated = installSoloPolicy({
+      workspace: dir,
+      sessionDir: dir,
+      maxPendingMs: 5_000,
+      answer: async () => ({ approved: true, by: 'user' }),
     });
-    const askApproved = createApprovalAsk(approved, triggerContext(), store);
-    const pending = askApproved({
-      toolName: 'bash',
-      args: { command: 'git push origin main' },
-      toolCallId: 'c2',
-    });
-    const key = approvalKey('bash', 'git-push', {
-      command: 'git push origin main',
-    });
-    approved.submit(
-      { key, capability: 'git-push', toolName: 'bash', summary: 'push' },
-      { approved: true, by: 'user' },
-    );
-    await expect(pending).resolves.toEqual({
-      approved: true,
-      challenged: true,
-    });
+    await expect(
+      seated.ask({
+        toolName: 'bash',
+        args: { command: 'git push origin main' },
+        toolCallId: 'c2',
+      }),
+    ).resolves.toEqual({ approved: true, challenged: true });
   });
 
   it('persists decisions and posture across restarts; fresh dirs start safe', async () => {
@@ -577,5 +573,15 @@ describe('approval adapter, file store, posture', () => {
       approved: false,
       reason: expect.stringContaining('timed out'),
     });
+  });
+});
+
+describe('approval policy maxPendingMs bound', () => {
+  it('refuses a non-positive or non-numeric maxPendingMs when the policy loads', () => {
+    for (const maxPendingMs of [Number.NaN, 0, -1]) {
+      expect(() => validatePolicy({ maxPendingMs })).toThrow(
+        'maxPendingMs must be a positive number',
+      );
+    }
   });
 });

@@ -5,12 +5,11 @@
 // tests drive a REAL Harness over MemoryStorage with the faux provider, so
 // they pin what Kubic hands the harness (`soloCompactionSettings`: the clamped
 // live reserve, the keep-recent window, the background decision) and what
-// Kubic asks for by hand (`compactSoloLane`: the compact prompt and verbatim
+// Kubic asks for by hand (`runManualCompaction`: the compact prompt and verbatim
 // caller focus).
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildCompactPrompt,
-  compactSoloLane,
   createManualKeepScope,
   DEFAULT_RESERVE_TOKENS,
   effectiveKeepRecentTokens,
@@ -293,7 +292,7 @@ describe('the harness threshold follows the live reserve', () => {
 
     // The summary request's maxTokens is derived from the reserve the agent
     // model resolves at that use: 0.8 * 750 = 600 on the small window.
-    await compactSoloLane(
+    await runManualCompaction(
       { harness: result.harness, conversation: result.root },
       undefined,
       BACKGROUND_CONTEXT,
@@ -314,7 +313,7 @@ describe('the harness threshold follows the live reserve', () => {
 
     // Same settings object, new window: 0.8 * 16384 = 13107, capped by the
     // model's own 5000. A stale clamp would still send 600.
-    await compactSoloLane(
+    await runManualCompaction(
       { harness: result.harness, conversation: result.root },
       undefined,
       BACKGROUND_CONTEXT,
@@ -361,9 +360,9 @@ describe('automatic compaction (threshold crossing)', () => {
   });
 });
 
-// ─── manual compaction: compactSoloLane ───────────────────────────────────
+// ─── manual compaction: runManualCompaction ───────────────────────────────────
 
-describe('compactSoloLane (manual compaction)', () => {
+describe('runManualCompaction (manual compaction)', () => {
   it('passes the focus verbatim into Kubic compact prompt as the instructions', async () => {
     const focus = 'keep the failing test names and exact file paths';
     const result = await openSolo({
@@ -378,12 +377,11 @@ describe('compactSoloLane (manual compaction)', () => {
     await turn(result.root, text('u1', 500));
     await turn(result.root, text('u2', 500));
 
-    const { taskId } = await compactSoloLane(
+    await runManualCompaction(
       { harness: result.harness, conversation: result.root },
       focus,
       BACKGROUND_CONTEXT,
     );
-    expect(typeof taskId).toBe('number');
     await result.harness.waitForIdle(BACKGROUND_CONTEXT);
 
     expect(result.requests.summary).toHaveLength(1);
@@ -476,19 +474,15 @@ describe('runManualCompaction (the TUI /compact path)', () => {
     });
     await turn(result.root, text('u1', 500));
     await turn(result.root, text('u2', 500));
-    // Abort the conversation between admission and settlement: the operator's
+    // Abort the conversation the moment the task is admitted: the operator's
     // Esc/Ctrl-C path (the TUI drives exactly this).
-    const admitted = await compactSoloLane(
+    const cancelled = await runManualCompaction(
       { harness: result.harness, conversation: result.root },
       undefined,
       BACKGROUND_CONTEXT,
+      { onAdmitted: () => result.root.abort(BACKGROUND_CONTEXT) },
     );
-    await result.root.abort(BACKGROUND_CONTEXT);
-    const settled = await result.harness.waitForTask(
-      admitted.taskId,
-      BACKGROUND_CONTEXT,
-    );
-    expect(['aborted', 'orphaned']).toContain(settled.state.outcome.status);
+    expect(cancelled.status).toBe('aborted');
     // runManualCompaction reports the same terminal state without throwing.
     const again = await runManualCompaction(
       { harness: result.harness, conversation: result.root },

@@ -24,7 +24,6 @@ import {
 import { detectTriggers } from '../../../packages/host/src/approvals.js';
 import {
   GIT_NOT_A_REPO,
-  gitPushHasNoTool,
   runGitCommand,
 } from '../../../packages/host/src/git-cli.js';
 import {
@@ -87,8 +86,7 @@ function fakeGitCli(statusOut: string): {
 }
 
 describe('git guard + CLI + reconciliation', () => {
-  it('push has no tool and always raises the git-push approval trigger', () => {
-    expect(gitPushHasNoTool()).toBe(true);
+  it('a bash git push raises the git-push approval trigger', () => {
     const triggers = detectTriggers(
       'bash',
       { command: 'git push origin main' },

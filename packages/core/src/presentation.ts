@@ -114,7 +114,3 @@ export const PRESENTATION_COMMANDS = [
 ] as const;
 
 export type PresentationCommand = (typeof PRESENTATION_COMMANDS)[number];
-
-export function isPresentationCommand(cmd: string): cmd is PresentationCommand {
-  return (PRESENTATION_COMMANDS as readonly string[]).includes(cmd);
-}

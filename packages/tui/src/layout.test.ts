@@ -5,7 +5,7 @@
 // order, widths, and the narrow collapse. Alt-screen boot/stop is covered
 // with a fake Terminal capturing writes (CSI 2026 + restore).
 import { describe, expect, it } from 'vitest';
-import { buildLayoutRoot, NARROW_COLUMNS, renderLayout } from './layout.js';
+import { buildLayoutRoot, NARROW_COLUMNS } from './layout.js';
 import { Text } from './tui-boundary.js';
 
 function slots(): {
@@ -22,11 +22,17 @@ function slots(): {
   };
 }
 
+// The rows a layout root renders at a width.
+const renderRows = (
+  root: ReturnType<typeof buildLayoutRoot>,
+  width: number,
+): string[] => root.render(width);
+
 describe('tui layout root', () => {
   it('orders tree / transcript / editor / status top to bottom', () => {
     const s = slots();
     const root = buildLayoutRoot(s);
-    const rows = renderLayout(root, 100);
+    const rows = renderRows(root, 100);
     expect(rows.length).toBeGreaterThan(0);
     const doc = rows.join('\n');
     const order = ['tree', 'body', 'editor', 'status'].map((m) =>
@@ -37,7 +43,7 @@ describe('tui layout root', () => {
   });
 
   it('puts the notice above the editor and the hints at the bottom', () => {
-    const rows = renderLayout(
+    const rows = renderRows(
       buildLayoutRoot({
         ...slots(),
         header: new Text('head', 0, 0),
@@ -62,7 +68,7 @@ describe('tui layout root', () => {
   it('gives an empty notice no row and hides a tree the caller turned off', () => {
     const empty = { render: (): string[] => [], invalidate: (): void => {} };
     const plain = (extra: object): string[] =>
-      renderLayout(
+      renderRows(
         buildLayoutRoot({
           tree: new Text('tree', 0, 0),
           transcript: new Text('body', 0, 0),
@@ -82,9 +88,9 @@ describe('tui layout root', () => {
 
   it('collapses the tree below 80 columns without overflow', () => {
     const s = slots();
-    const wide = renderLayout(buildLayoutRoot(s), 100);
+    const wide = renderRows(buildLayoutRoot(s), 100);
     expect(wide.join('\n')).toContain('tree');
-    const narrow = renderLayout(buildLayoutRoot(s), 70);
+    const narrow = renderRows(buildLayoutRoot(s), 70);
     expect(narrow.join('\n')).not.toContain('tree');
     expect(narrow.join('\n')).toContain('body');
     for (const line of narrow) {
@@ -95,7 +101,7 @@ describe('tui layout root', () => {
 
   it('keeps every line within the width at 100 and 70 columns', () => {
     for (const width of [100, 70]) {
-      for (const line of renderLayout(buildLayoutRoot(slots()), width)) {
+      for (const line of renderRows(buildLayoutRoot(slots()), width)) {
         expect(visibleWidth(line)).toBeLessThanOrEqual(width);
       }
     }
@@ -104,10 +110,10 @@ describe('tui layout root', () => {
 
 describe('tui layout boundary (mutation hardening)', () => {
   it('keeps the tree visible at exactly 80 columns, hides at 79', () => {
-    expect(renderLayout(buildLayoutRoot(slots()), 80).join('\n')).toContain(
+    expect(renderRows(buildLayoutRoot(slots()), 80).join('\n')).toContain(
       'tree',
     );
-    const narrow = renderLayout(buildLayoutRoot(slots()), 79);
+    const narrow = renderRows(buildLayoutRoot(slots()), 79);
     expect(narrow.join('\n')).not.toContain('tree');
     expect(narrow.join('\n')).toContain('body');
   });

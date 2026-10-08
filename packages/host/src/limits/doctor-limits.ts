@@ -220,31 +220,3 @@ export function limitsDoctorExit(checks: readonly DoctorCheck[]): ExitCode {
   }
   return EXIT_OK;
 }
-
-export interface LimitsJsonReport {
-  ok: boolean;
-  exitCode: ExitCode;
-  checks: DoctorCheck[];
-}
-
-// --json envelope: the same {ok, exitCode, checks} shape the
-// doctor command emits, so human and machine readers agree.
-export function buildLimitsJsonReport(checks: DoctorCheck[]): LimitsJsonReport {
-  const exitCode = limitsDoctorExit(checks);
-  return { ok: exitCode === EXIT_OK, exitCode, checks };
-}
-
-export interface LimitProbeInputs {
-  providers: readonly LimitProviderProbe[];
-  deps: readonly LimitDepProbe[];
-  policy: unknown;
-}
-
-export function collectLimitChecks(input: LimitProbeInputs): DoctorCheck[] {
-  return [
-    ...staticLimitChecks(),
-    providerAvailabilityCheck(input.providers),
-    depsLimitCheck(input.deps),
-    policyEnforceabilityCheck(input.policy),
-  ];
-}

@@ -97,34 +97,6 @@ export function hintLine(theme: CliTheme, text: string, indent = 2): string {
   return `${' '.repeat(indent)}${hintText(theme, text)}`;
 }
 
-/** A muted key padded to `keyWidth`, then the value in primary text. */
-export function kvLine(
-  theme: CliTheme,
-  key: string,
-  value: string,
-  keyWidth = 0,
-): string {
-  return `${theme.ui.fg('fg2')(padVisible(key, keyWidth))} ${theme.ui.fg('fg0')(value)}`;
-}
-
-/**
- * Rows of `LABEL  content`: the label column is a section label, multi-line
- * content continues under the content column.
- */
-export function alignedRows(
-  theme: CliTheme,
-  rows: readonly (readonly [label: string, content: string])[],
-  labelWidth = 12,
-): string[] {
-  const lines: string[] = [];
-  for (const [label, content] of rows) {
-    const [first = '', ...rest] = content.split('\n');
-    lines.push(`${sectionLabel(theme, label, labelWidth)}${first}`);
-    for (const line of rest) lines.push(`${' '.repeat(labelWidth)}${line}`);
-  }
-  return lines;
-}
-
 export function formatDuration(ms: number): string {
   const safe = Math.max(0, ms);
   if (safe < 60_000) return `${(safe / 1000).toFixed(1)}s`;

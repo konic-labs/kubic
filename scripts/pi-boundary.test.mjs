@@ -143,7 +143,7 @@ describe('pi pinning + boundary', () => {
     const file = join(ROOT, 'packages', 'worker', 'src', 'pi-boundary.ts');
     assert.ok(existsSync(file), 'missing packages/worker/src/pi-boundary.ts');
     const src = readFileSync(file, 'utf8');
-    for (const needle of ['ExecutionEnv', 'beforeTool', 'JUSTIFICATION']) {
+    for (const needle of ['FileSystem', 'beforeTool', 'JUSTIFICATION']) {
       assert.ok(src.includes(needle), `pi-boundary.ts must document ${needle}`);
     }
   });

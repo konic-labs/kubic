@@ -118,6 +118,22 @@ function sameCell(left: TranscriptEntry, right: TranscriptEntry): boolean {
   );
 }
 
+// A snapshot's cells, keeping the object of every unchanged cell (by id).
+// The TUI applies a snapshot per lane event, so copying every cell each
+// time allocated the whole document per event (and invalidated the
+// render caches keyed on the object's text).
+function reuseUnchanged(
+  cells: ReadonlyArray<TranscriptEntry>,
+  byId: ReadonlyMap<string, TranscriptEntry>,
+): TranscriptEntry[] {
+  return cells.map((cell) => {
+    const previous = byId.get(cell.id);
+    return previous !== undefined && sameCell(previous, cell)
+      ? previous
+      : { ...cell };
+  });
+}
+
 export function createTranscriptView(
   options: TranscriptViewOptions = {},
 ): TranscriptView {
@@ -213,25 +229,11 @@ export function createTranscriptView(
       if (lane.laneId === laneId && next <= revision) return;
       laneId = lane.laneId;
       revision = next;
-      // Diff by id and keep the object of every unchanged cell.
-      // The TUI applies a snapshot per lane event, so copying every cell each
-      // time allocated the whole document per event (and invalidated the
-      // render caches keyed on the object's text).
-      const nextEntries: TranscriptEntry[] = [];
-      const nextById = new Map<string, TranscriptEntry>();
-      for (const cell of cells) {
-        const previous = byId.get(cell.id);
-        const entry =
-          previous !== undefined && sameCell(previous, cell)
-            ? previous
-            : { ...cell };
-        nextEntries.push(entry);
-        nextById.set(cell.id, entry);
-      }
+      const nextEntries = reuseUnchanged(cells, byId);
       entries.length = 0;
       entries.push(...nextEntries);
       byId.clear();
-      for (const [id, entry] of nextById) byId.set(id, entry);
+      for (const entry of nextEntries) byId.set(entry.id, entry);
       if (logOps) {
         log.push({
           op: 'snapshot',

@@ -1,3 +1,15 @@
+// `kubic cost [--session <id>] [--json]`.
+// Presentation only over session cost rows: one table row per aggregated row
+// plus the task total, or the in-code `toCostJson` shape under --json. Rows
+// arrive injected (faux in tests); the prod loader below reads real
+// session stats out of the session store — this module never invents
+// costs, and the task total is always Σ(rows) by construction.
+//
+// The rows that carry tokens and cost also carry `cacheRead`/`cacheWrite`, so
+// the prefix hit-rate (cache.ts) is measured over real usage rows and reported
+// on the readout. No new top-level --json field: the extra per-row numbers are
+// additive inside the existing `rows` entries.
+
 import { join } from 'node:path';
 import {
   listSessions,

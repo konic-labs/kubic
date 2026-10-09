@@ -178,14 +178,25 @@ that decide them:
 Every child the exec seam spawns — the bash tool, host `git` calls —
 starts from an explicit allowlist (`TOOL_ENV_ALLOWLIST` in
 `packages/exec/src/env/tool-env.ts`: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
-`TERM`, `LANG`, `LC_*`, `XDG_*`, `TMPDIR`, `TZ`, `CI`, `NO_COLOR`, `CLICOLOR`,
-proxy vars (`HTTP(S)_PROXY`, `NO_PROXY`, either case), trust roots
+`TERM`, `LANG`, the locale categories, the XDG base directories, `TMPDIR`,
+`TZ`, `CI`, `NO_COLOR`, `CLICOLOR`, `GIT_CONFIG_NOSYSTEM`, proxy vars
+(`HTTP(S)_PROXY`, `NO_PROXY`, either case), trust roots
 (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`), plus Windows
 process basics, matched case-insensitively there), never kubic's inherited environment. Any
 secret-shaped name (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`,
-`*_CREDENTIALS`) is dropped even when it matches, so a provider API key
+`*_CREDENTIALS`) is dropped even when it is listed, so a provider API key
 in kubic's environment never reaches a tool. `SSH_AUTH_SOCK` and
 credential helpers' variables are not passed either.
+
+The locale and XDG variables are listed by name, not by prefix:
+`LC_ALL`, `LC_CTYPE`, `LC_COLLATE`, `LC_MESSAGES`, `LC_MONETARY`,
+`LC_NUMERIC`, `LC_TIME` and the GNU `LC_ADDRESS`, `LC_IDENTIFICATION`,
+`LC_MEASUREMENT`, `LC_NAME`, `LC_PAPER`, `LC_TELEPHONE`; and `XDG_CONFIG_HOME`,
+`XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`,
+`XDG_CONFIG_DIRS`, `XDG_DATA_DIRS`. SSH passes any `LC_` variable by default
+(`AcceptEnv LANG LC_*`), and some setups carry credentials that way, so any
+other name under either prefix (`LC_PGPASSWORD`, `XDG_SECRET_URL`) is
+withheld like every unlisted name.
 
 **Proxy URLs lose their userinfo.** A proxy variable is
 allowlisted for reachability, and its value may carry credentials that the

@@ -977,6 +977,44 @@ describe('toolSpawnEnv allowlist coverage', () => {
       GIT_CONFIG_NOSYSTEM: '1',
     });
   });
+
+  // `LC_*` travels over SSH (`AcceptEnv LANG LC_*`), so the prefix alone is
+  // no reason to pass a variable: only the locale categories and the XDG
+  // base directories get through.
+  it('passes the locale and XDG directory names, nothing else under their prefixes', () => {
+    const allowed = [
+      'LC_ALL',
+      'LC_CTYPE',
+      'LC_COLLATE',
+      'LC_MESSAGES',
+      'LC_MONETARY',
+      'LC_NUMERIC',
+      'LC_TIME',
+      'LC_ADDRESS',
+      'LC_IDENTIFICATION',
+      'LC_MEASUREMENT',
+      'LC_NAME',
+      'LC_PAPER',
+      'LC_TELEPHONE',
+      'XDG_CONFIG_HOME',
+      'XDG_DATA_HOME',
+      'XDG_STATE_HOME',
+      'XDG_CACHE_HOME',
+      'XDG_RUNTIME_DIR',
+      'XDG_CONFIG_DIRS',
+      'XDG_DATA_DIRS',
+    ];
+    const withheld = [
+      'LC_PGPASSWORD',
+      'LC_DATABASE_URL',
+      'LC_KUBECONFIG',
+      'XDG_SECRET_URL',
+    ];
+    const base = Object.fromEntries(
+      [...allowed, ...withheld].map((key) => [key, 'value']),
+    );
+    expect(Object.keys(toolSpawnEnv(base)).sort()).toEqual([...allowed].sort());
+  });
 });
 
 // The workload-identity federation keys carry no secret suffix; only the

@@ -7,6 +7,7 @@
 import { createUiTheme } from '@kubic/core/ui/style';
 import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
+import { CARD_CHROME_ROWS } from './app/approvals.js';
 import {
   APPROVAL_COMMAND_PAGE_LINES,
   type ApprovalCardOptions,
@@ -20,7 +21,7 @@ import {
   APPROVAL_QUIET_MS,
   type ApprovalViewRequest,
 } from './approval-view.js';
-import { CARD_CHROME_ROWS, createTuiApp } from './tui-app.js';
+import { createTuiApp } from './tui-app.js';
 import { visibleWidth } from './tui-boundary.js';
 
 const plain = createUiTheme(DARK_PALETTE, 'none');

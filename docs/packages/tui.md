@@ -23,7 +23,8 @@ TUI-side analogue of the agent Pi boundary.
 | `tree.ts` | `RunStatus`, `ToolCallState`, `statusGlyph`, `toolGlyph`, `TreeState`, `createTreeState`, `toggleTree`, `TreeToolSnapshot`, `TreeLaneSnapshot`, `applyTreeSnapshot`, `collapsedSummary`, `renderTreeLines`, `TreeMouseEvent`, `TreeMouseResult`, `TreeViewOptions`, `AgentTreeView` |
 | `editor-view.ts` | `editorTheme`, `PromptEditor` (Pi `Editor` behind the seam: Enter submit, multi-line entry, history, focus forwarding, `insertText` at the cursor) |
 | `lane-cells.ts` | `LaneEntryLike`, `PROMPT_PREFIX`, `TOOL_RESULT_MAX_CHARS`, `TOOL_DETAIL_MAX_CHARS`, `TOOL_OUTCOME_MAX_CHARS`, `sanitizeLaneText`, `summarizeToolArguments`, `summarizeToolOutcome`, `entriesToCells` — committed lane entries → coarse transcript cells; every cell's text (user, assistant, tool result, tool name) is sanitized here so model-supplied content cannot drive the terminal. `sanitizeLaneText` strips complete ECMA-48 sequences (CSI, OSC, C1 CSI, 2-byte ESC forms — not just the ESC byte), collapses carriage-return overwrites to the text after the last `\r`, expands tabs by visible column width, and drops the remaining C0/C1 controls |
-| `tui-app.ts` | `TuiAppSeed`, `TuiApp`, `createTuiApp` — the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
+| `tui-app.ts` | `TuiAppSeed`, `TuiApp`, `createTuiApp` — wires the app's controllers (`app/`) over one shared core and returns the `TuiApp` API |
+| `app/` | The app's controllers: `core.ts` (the shared views and state), `session-view.ts` (session id, title, model, the first screen), `turn-view.ts` (busy/cancel/error, tool timing, receipts, lane entries, the prompt echo, notices), `panel.ts`, `overlays.ts` (the picker seat, the keys overlay, the confirm dialog), `palette-controller.ts`, `blocks.ts` (block mode and the viewer), `approvals.ts` (the card's wiring), `quit.ts`, `layout.ts`, and `input-router.ts` — every key goes through one route table in precedence order; the global keys (Ctrl-C/Esc/Ctrl-D/Ctrl-T) are classified through Pi's `parseKey` (see `tui-boundary.ts`), so both legacy-byte and Kitty CSI-u encodings are honoured |
 | `diff-view.ts` | `DiffOp`, `DiffFileChange`, `DiffRenderOptions`, `isBinaryText`, `unifiedHunks`, `renderDiffHeader`, `renderDiffLines` (pure render functions; the panel owns the document and its scrolling) |
 | `approval-view.ts` | `ApprovalAction`, `ApprovalViewRequest`, `ApprovalDecision`, `APPROVAL_MIN_WIDTH`, `ApprovalOverlayOptions`, `approvalOverlayOptions`, `APPROVAL_PAGE_KEY`, `APPROVAL_DEFAULT_KEYS`, `APPROVAL_ARMING_MS`, `APPROVAL_QUIET_MS`, `APPROVAL_REPEAT_MS`, `APPROVAL_IMMEDIATE_KEY`, `ApprovalKeyOverrides`, `resolveApprovalKey`, `approvalKeyProblems`, `ApprovalKeyConflict`, `approvalKeyConflicts`, `ApprovalOverlayHandle`, `ApprovalOverlayTui` |
 | `approval-card.ts` | `APPROVAL_COMMAND_PAGE_LINES`, `wrapByColumns`, `approvalReason`, `ApprovalCardOptions`, `renderApprovalCard` (the inline approval card) |
@@ -32,7 +33,7 @@ TUI-side analogue of the agent Pi boundary.
 | `picker-view.ts` | `PickerViewOptions`, `PickerView` (every "choose one" overlay — model, session, theme, thinking, prompt — over `ui/picker.ts`, Pi's `Input` for the filter) |
 | `palette-view.ts` | `PaletteViewOptions`, `PaletteView` (the ^P overlay: Pi's `Input` for the query, `ui/palette.ts` for the rest) |
 | `journal-view.ts` | `JournalFilter`, `filterJournalChanges`, `renderJournalLines`, `JournalViewOptions`, `JournalView` |
-| `views.ts`, `components.ts` | Pointer | View assembly lives in `layout.ts` / `*-view.ts` / `tui-app.ts`; no shared or aggregated module |
+| `views.ts`, `components.ts` | Pointer | View assembly lives in `layout.ts` / `app/layout.ts` / `*-view.ts`; no shared or aggregated module |
 | `index.ts` | Pointer | No barrel — import a module by its subpath, `@kubic/tui/<subpath>` (`tui-boundary` seam + views); `tui/` stays presentation-only |
 
 ## UI kit (`packages/tui/src/ui`)
@@ -222,8 +223,8 @@ notice from its seed (`workspace`, `clock`, `laneNotice`) and
   entries into ordered transcript cells (`› ` prompts, `tool <name>` calls,
   truncated tool output) — the coarse-cell feed the prompt loop
   re-applies after every turn.
-- **App** (`tui-app.ts`): `createTuiApp` arranges the views and routes
-  input. The shipped key map is Enter (submit), Ctrl-J / Shift+Enter /
+- **App** (`tui-app.ts`, `app/`): `createTuiApp` arranges the views and
+  routes input through `app/input-router.ts`. The shipped key map is Enter (submit), Ctrl-J / Shift+Enter /
   `\`+Enter (newline), Ctrl-T (tree toggle), Esc (close a dropdown or
   overlay, else interrupt the turn — never quits), Ctrl-C (cancel while a
   turn runs, clear a draft, else arm: a second press within 2 s quits),

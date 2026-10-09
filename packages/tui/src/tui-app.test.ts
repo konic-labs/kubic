@@ -9,13 +9,14 @@ import type {
   LaneSnapshot,
 } from '@kubic/core/presentation';
 import { describe, expect, it, vi } from 'vitest';
+import { QUIT_ARM_MS } from './app/quit.js';
 import { createApprovalSurface } from './approval-surface.js';
 import type {
   ApprovalOverlayTui,
   ApprovalViewRequest,
 } from './approval-view.js';
 import { createKeyRegistry } from './keybindings.js';
-import { createTuiApp, QUIT_ARM_MS } from './tui-app.js';
+import { createTuiApp } from './tui-app.js';
 
 const SESSION = 'sess-1';
 const MODEL = 'test-model';

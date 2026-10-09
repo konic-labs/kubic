@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: one declaration per config key is the point of this module: the parser, the runtime, example.toml and the docs tables all derive from this one list, so splitting it would split that source.
 // Every configuration key, declared once: the check its value must pass,
 // what the runtime does with it, its environment override and default, its
 // value in the example config, and its row in the docs. The parser

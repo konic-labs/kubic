@@ -156,6 +156,10 @@ are re-exported.
 
 - **Erasable-syntax TypeScript only** — no parameter properties, `enum`,
   `namespace`, `import =` / `export =`.
+- **Size** — no production module over 600 lines and no function over 150
+  (`npm run lint`, through biome's `noExcessiveLinesPerFile` and
+  `noExcessiveLinesPerFunction`). An exception is a `biome-ignore` at the
+  declaration that says why the code is one unit.
 - **Exact pins** — no `^` / `~` on any dependency, and every runtime dependency
   declared by the root `package.json`, the manifest npm installs
   (`npm run check:pins`). The build refuses an import the root does not

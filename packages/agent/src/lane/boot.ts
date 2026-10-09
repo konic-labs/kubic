@@ -8,7 +8,6 @@
 
 import type { ExecutionEnv } from '@kubic/exec/env';
 import type { FileJournalStore } from '@kubic/exec/journal';
-import { withReadRoots } from '@kubic/exec/read-roots';
 import {
   compactionSettings,
   createManualKeepScope,
@@ -16,11 +15,7 @@ import {
   type ManualKeepScope,
 } from '../compaction.js';
 import type { EscalationLadder, ThinkingInputs } from '../model-select.js';
-import {
-  ModelSelectError,
-  resolveThinkingLevel,
-  validateEscalation,
-} from '../model-select.js';
+import { validateEscalation } from '../model-select.js';
 import type { PermissionClasses } from '../permissions.js';
 import { toolsForClasses, validateClasses } from '../permissions.js';
 import {
@@ -48,7 +43,6 @@ import {
   type TaskAffinity,
   taskModelForTurn,
 } from '../prompts.js';
-import { createSessionSpillSink } from '../spill.js';
 import { OperationKillRegistry } from './abort.js';
 import {
   activateLaneTools,
@@ -59,15 +53,7 @@ import {
   reconcileStoredModel,
   toolContextFor,
 } from './boot-steps.js';
-import {
-  type PolicyInterceptorOptions,
-  policyInterceptorHooks,
-} from './interceptors/index.js';
-import {
-  applyToolPolicy,
-  PolicyRefusedError,
-  toolsForNames,
-} from './policy.js';
+import type { PolicyInterceptorOptions } from './interceptors/index.js';
 import {
   laneConversationIdOf,
   type SessionHandle,

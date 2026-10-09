@@ -131,7 +131,6 @@ export function benchmarkRunner(io: ProdRunnerIo): ProdRunners['benchmark'] {
 }
 
 export function replayRunner(io: ProdRunnerIo): ProdRunners['replay'] {
-  const { out } = io;
   return (options, cliConfig) => {
     const enterprisePolicy = runtimePolicy(cliConfig);
     // The live re-execution tiers boot the real lane,

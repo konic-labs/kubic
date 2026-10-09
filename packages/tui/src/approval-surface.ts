@@ -244,6 +244,7 @@ function decisionFor(action: ApprovalAction): ApprovalDecision {
   return { approved: false, reason: 'denied by the user' };
 }
 
+// biome-ignore lint/complexity/noExcessiveLinesPerFunction: one state machine (the queue, the shown ask, its arming window and timer) whose short methods share that state; it stays a closure, not a class, because `seat` is handed out as a plain function.
 export function createApprovalSurface(
   options: ApprovalSurfaceOptions = {},
 ): ApprovalSurface {

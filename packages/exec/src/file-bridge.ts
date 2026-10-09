@@ -176,6 +176,7 @@ function sanitizePrefix(prefix: string): string {
   return prefix.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 32) || 'tmp-';
 }
 
+// biome-ignore lint/complexity/noExcessiveLinesPerFunction: the whole FileBridge, one short closure per method over `cwd`; it stays a plain object, not a class, because callers spread it (redactBridgeWrites wraps its writes).
 export function createNodeFileBridge(cwd: string): FileBridge {
   const absolutePath = (path: string): string => resolve(cwd, path);
   const ensureParent = (abs: string, mode?: number): void => {

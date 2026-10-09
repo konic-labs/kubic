@@ -23,8 +23,8 @@ import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CliConfigResult } from './config/load.js';
 import { loadCliConfig } from './config/load.js';
-import { prodTuiDeps } from './runners/session.js';
 import { createProdRunners } from './prod-runners.js';
+import { prodTuiDeps } from './runners/session.js';
 import { tuiDepsWithDefaults } from './tui/deps.js';
 
 const roots: string[] = [];

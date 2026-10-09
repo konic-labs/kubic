@@ -228,6 +228,61 @@ function describeJson(exported: TrajectoryExport): unknown {
   };
 }
 
+// How every outcome of one export prints: a `--json` envelope on stdout, or
+// text (records on stdout, refusals through the logger on stderr).
+interface ExportOutput {
+  // A refusal with its machine code (`[code] message` in text).
+  fail(code: string, message: string, exitCode?: ExitCode): ExitCode;
+  record(type: ExportDatasetType, record: unknown): ExitCode;
+  excluded(type: ExportDatasetType, excluded: unknown): ExitCode;
+  invalid(errors: string[]): ExitCode;
+  // An unexpected failure: `export-failed` under --json, the bare message in
+  // text.
+  crashed(message: string): ExitCode;
+}
+
+function exportOutput(
+  json: boolean,
+  out: (line: string) => void,
+  log: CliLogger,
+): ExportOutput {
+  const failure = (code: string, message: string, exitCode: ExitCode) =>
+    out(formatJson({ ok: false, exitCode, error: { code, message } }));
+  return {
+    fail: (code, message, exitCode = EXIT_USAGE) => {
+      if (json) failure(code, message, exitCode);
+      else log.error(`[${code}] ${message}`);
+      return exitCode;
+    },
+    record: (type, record) => {
+      if (json) out(formatJson({ ok: true, exitCode: EXIT_OK, type, record }));
+      else out(canonicalJson(record));
+      return EXIT_OK;
+    },
+    excluded: (type, excluded) => {
+      if (json) {
+        out(formatJson({ ok: true, exitCode: EXIT_OK, type, excluded }));
+      } else {
+        const tag = (excluded as { tag?: unknown }).tag;
+        const reason = (excluded as { reason?: unknown }).reason;
+        out(`excluded: ${String(tag)} — ${String(reason)}`);
+      }
+      return EXIT_OK;
+    },
+    invalid: (errors) => {
+      const message = `record failed validation: ${errors.join('; ')}`;
+      if (json) failure('invalid-record', message, EXIT_FAILED);
+      else log.error(`[invalid-record] ${message}`);
+      return EXIT_FAILED;
+    },
+    crashed: (message) => {
+      if (json) failure('export-failed', message, EXIT_FAILED);
+      else log.error(message);
+      return EXIT_FAILED;
+    },
+  };
+}
+
 export async function runExportCommand(
   options: ExportCommandOptions,
   deps: ExportCliDeps,
@@ -240,98 +295,14 @@ export async function runExportCommand(
     log.error(parsed);
     return { exitCode: EXIT_USAGE };
   }
-  const fail = (
-    code: string,
-    message: string,
-    exitCode: ExitCode = EXIT_USAGE,
-  ): ExitCode => {
-    if (parsed.json) {
-      deps.out(
-        formatJson({
-          ok: false,
-          exitCode,
-          error: { code, message },
-        }),
-      );
-    } else {
-      log.error(`[${code}] ${message}`);
-    }
-    return exitCode;
-  };
-  // Batch export — every matching trajectory in, one JSONL
-  // plus a manifest out. Pairing/grouping is automatic and every exclusion
-  // is counted by tag, never silently dropped.
+  const output = exportOutput(parsed.json, deps.out, log);
   if (parsed.dataset !== undefined) {
-    const { listDir, writeFile, appendFile } = deps;
-    if (
-      listDir === undefined ||
-      writeFile === undefined ||
-      appendFile === undefined
-    ) {
-      return {
-        exitCode: fail(
-          'dataset-unsupported',
-          'dataset export needs the filesystem deps (listDir/writeFile/appendFile)',
-        ),
-      };
-    }
-    const fs: DatasetFs = {
-      listDir,
-      readFile: deps.readFile,
-      writeFile,
-      appendFile,
-    };
-    try {
-      const manifest = exportDataset({
-        type: parsed.type as ExportDatasetType,
-        dataset: parsed.dataset,
-        out: parsed.out as string,
-        fs,
-      });
-      if (parsed.json) {
-        deps.out(
-          formatJson({
-            ok: true,
-            exitCode: EXIT_OK,
-            type: manifest.type,
-            dataset: manifest.dataset,
-            out: manifest.out,
-            manifest,
-          }),
-        );
-      } else {
-        const excluded = Object.values(manifest.excluded).reduce(
-          (sum, count) => sum + count,
-          0,
-        );
-        deps.out(
-          `dataset: ${manifest.records} record(s) from ${manifest.files} file(s), ${excluded} excluded, manifest: ${manifest.manifest}`,
-        );
-      }
-      return { exitCode: EXIT_OK };
-    } catch (error) {
-      if (error instanceof DatasetError) {
-        return { exitCode: fail(error.code, error.message, error.exitCode) };
-      }
-      // Mirror the single-file path: an unexpected failure (an --out that
-      // names a directory, EACCES/ENOSPC on the JSONL or the manifest) is
-      // `export-failed` (exit 1) with its envelope, never a raw throw past
-      // the command's error contract.
-      return {
-        exitCode: fail(
-          'export-failed',
-          error instanceof Error ? error.message : String(error),
-          EXIT_FAILED,
-        ),
-      };
-    }
+    return { exitCode: exportDatasetFiles(parsed, deps, output) };
   }
-
   const loaded = loadExport(deps.readFile, parsed.trajectory as string);
-  if (!('exported' in loaded))
-    return { exitCode: fail(loaded.code, loaded.message) };
-  const exported = loaded.exported;
-
+  if (!('exported' in loaded)) {
+    return { exitCode: output.fail(loaded.code, loaded.message) };
+  }
   // No --type: validate + describe the trajectory export itself.
   if (parsed.type === undefined) {
     if (parsed.json) {
@@ -339,128 +310,151 @@ export async function runExportCommand(
         formatJson({
           ok: true,
           exitCode: EXIT_OK,
-          trajectory: describeJson(exported),
+          trajectory: describeJson(loaded.exported),
         }),
       );
     } else {
-      for (const line of describeText(exported)) deps.out(line);
+      for (const line of describeText(loaded.exported)) deps.out(line);
     }
     return { exitCode: EXIT_OK };
   }
-
-  const type = parsed.type;
-  const emitRecord = (record: unknown): ExitCode => {
-    if (parsed.json) {
-      deps.out(
-        formatJson({
-          ok: true,
-          exitCode: EXIT_OK,
-          type,
-          record,
-        }),
-      );
-    } else {
-      deps.out(canonicalJson(record));
-    }
-    return EXIT_OK;
-  };
-  const emitExcluded = (excluded: unknown): ExitCode => {
-    if (parsed.json) {
-      deps.out(
-        formatJson({
-          ok: true,
-          exitCode: EXIT_OK,
-          type,
-          excluded,
-        }),
-      );
-    } else {
-      const tag = (excluded as { tag?: unknown }).tag;
-      const reason = (excluded as { reason?: unknown }).reason;
-      deps.out(`excluded: ${String(tag)} — ${String(reason)}`);
-    }
-    return EXIT_OK;
-  };
-  const emitInvalid = (errors: string[]): ExitCode => {
-    const message = `record failed validation: ${errors.join('; ')}`;
-    if (parsed.json) {
-      deps.out(
-        formatJson({
-          ok: false,
-          exitCode: EXIT_FAILED,
-          error: { code: 'invalid-record', message },
-        }),
-      );
-    } else {
-      log.error(`[invalid-record] ${message}`);
-    }
-    return EXIT_FAILED;
-  };
-
   try {
-    switch (type) {
-      case 'sft': {
-        const record = buildSftRecord(exported);
-        const checked = validateSftRecord(record);
-        if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
-        return { exitCode: emitRecord(record) };
-      }
-      case 'tooluse': {
-        const record = buildToolUseRecord(exported);
-        const checked = validateToolUseRecord(record);
-        if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
-        return { exitCode: emitRecord(record) };
-      }
-      case 'coding': {
-        const record = buildCodingRecord(exported);
-        const checked = validateCodingRecord(record);
-        if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
-        return { exitCode: emitRecord(record) };
-      }
-      case 'dpo':
-      case 'preference':
-      case 'grpo': {
-        const other = loadExport(deps.readFile, parsed.against as string);
-        if (!('exported' in other))
-          return { exitCode: fail(other.code, other.message) };
-        if (type === 'grpo') {
-          const group = buildGrpoGroup([exported, other.exported]);
-          const checked = validateGrpoGroup(group);
-          if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
-          return { exitCode: emitRecord(group) };
-        }
-        if (type === 'dpo') {
-          const built = buildDpoRecord(exported, other.exported);
-          if (built.record === null)
-            return { exitCode: emitExcluded(built.excluded) };
-          const checked = validateDpoRecord(built.record);
-          if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
-          return { exitCode: emitRecord(built.record) };
-        }
-        const built = buildPreferencePair(exported, other.exported);
-        if (built.pair === null)
-          return { exitCode: emitExcluded(built.excluded) };
-        const checked = validatePreferencePair(built.pair);
-        if (!checked.valid) return { exitCode: emitInvalid(checked.errors) };
-        return { exitCode: emitRecord(built.pair) };
-      }
-    }
+    return {
+      exitCode: exportRecord(
+        parsed.type,
+        loaded.exported,
+        parsed,
+        deps,
+        output,
+      ),
+    };
   } catch (error) {
     if (error instanceof RlProvenanceError) {
-      return { exitCode: fail('rl-refused', error.message) };
+      return { exitCode: output.fail('rl-refused', error.message) };
     }
-    const message = error instanceof Error ? error.message : String(error);
+    return {
+      exitCode: output.crashed(
+        error instanceof Error ? error.message : String(error),
+      ),
+    };
+  }
+}
+
+// Batch export — every matching trajectory in, one JSONL
+// plus a manifest out. Pairing/grouping is automatic and every exclusion
+// is counted by tag, never silently dropped.
+function exportDatasetFiles(
+  parsed: ExportOptions,
+  deps: ExportCliDeps,
+  output: ExportOutput,
+): ExitCode {
+  const { listDir, writeFile, appendFile } = deps;
+  if (
+    listDir === undefined ||
+    writeFile === undefined ||
+    appendFile === undefined
+  ) {
+    return output.fail(
+      'dataset-unsupported',
+      'dataset export needs the filesystem deps (listDir/writeFile/appendFile)',
+    );
+  }
+  const fs: DatasetFs = {
+    listDir,
+    readFile: deps.readFile,
+    writeFile,
+    appendFile,
+  };
+  try {
+    const manifest = exportDataset({
+      type: parsed.type as ExportDatasetType,
+      dataset: parsed.dataset as string,
+      out: parsed.out as string,
+      fs,
+    });
     if (parsed.json) {
       deps.out(
         formatJson({
-          ok: false,
-          exitCode: EXIT_FAILED,
-          error: { code: 'export-failed', message },
+          ok: true,
+          exitCode: EXIT_OK,
+          type: manifest.type,
+          dataset: manifest.dataset,
+          out: manifest.out,
+          manifest,
         }),
       );
     } else {
-      log.error(message);
+      const excluded = Object.values(manifest.excluded).reduce(
+        (sum, count) => sum + count,
+        0,
+      );
+      deps.out(
+        `dataset: ${manifest.records} record(s) from ${manifest.files} file(s), ${excluded} excluded, manifest: ${manifest.manifest}`,
+      );
     }
-    return { exitCode: EXIT_FAILED };
+    return EXIT_OK;
+  } catch (error) {
+    if (error instanceof DatasetError) {
+      return output.fail(error.code, error.message, error.exitCode);
+    }
+    // Mirror the single-file path: an unexpected failure (an --out that
+    // names a directory, EACCES/ENOSPC on the JSONL or the manifest) is
+    // `export-failed` (exit 1) with its envelope, never a raw throw past
+    // the command's error contract.
+    return output.fail(
+      'export-failed',
+      error instanceof Error ? error.message : String(error),
+      EXIT_FAILED,
+    );
+  }
+}
+
+// One record of the requested type from one export (or, for the paired
+// types, from it and `--against`), validated before it prints.
+function exportRecord(
+  type: ExportDatasetType,
+  exported: TrajectoryExport,
+  parsed: ExportOptions,
+  deps: ExportCliDeps,
+  output: ExportOutput,
+): ExitCode {
+  const emit = (
+    record: unknown,
+    checked: { valid: true } | { valid: false; errors: string[] },
+  ): ExitCode =>
+    checked.valid
+      ? output.record(type, record)
+      : output.invalid(checked.errors);
+  switch (type) {
+    case 'sft': {
+      const record = buildSftRecord(exported);
+      return emit(record, validateSftRecord(record));
+    }
+    case 'tooluse': {
+      const record = buildToolUseRecord(exported);
+      return emit(record, validateToolUseRecord(record));
+    }
+    case 'coding': {
+      const record = buildCodingRecord(exported);
+      return emit(record, validateCodingRecord(record));
+    }
+    case 'dpo':
+    case 'preference':
+    case 'grpo': {
+      const other = loadExport(deps.readFile, parsed.against as string);
+      if (!('exported' in other)) return output.fail(other.code, other.message);
+      if (type === 'grpo') {
+        const group = buildGrpoGroup([exported, other.exported]);
+        return emit(group, validateGrpoGroup(group));
+      }
+      if (type === 'dpo') {
+        const built = buildDpoRecord(exported, other.exported);
+        if (built.record === null) return output.excluded(type, built.excluded);
+        return emit(built.record, validateDpoRecord(built.record));
+      }
+      const built = buildPreferencePair(exported, other.exported);
+      if (built.pair === null) return output.excluded(type, built.excluded);
+      return emit(built.pair, validatePreferencePair(built.pair));
+    }
   }
 }

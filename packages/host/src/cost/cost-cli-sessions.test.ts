@@ -28,6 +28,7 @@ import { EXIT_OK, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FAUX_PROVIDER_ID } from '../models/index.js';
+import { capture } from '../test-support/capture.js';
 import { loadSessionCostRows, runCostCommand } from './index.js';
 
 const attached = vi.hoisted(() => ({
@@ -53,23 +54,6 @@ vi.mock('@kubic/agent/lane/session-store', async (importOriginal) => {
     },
   };
 });
-
-// stdout (`lines`) and stderr (`errs`) captured separately: data and
-// diagnostics never share a channel.
-function capture() {
-  const lines: string[] = [];
-  const errs: string[] = [];
-  return {
-    lines,
-    errs,
-    out: (line: string): void => {
-      lines.push(line);
-    },
-    err: (line: string): void => {
-      errs.push(line);
-    },
-  };
-}
 
 describe('kubic cost lock-free reads', () => {
   const made: string[] = [];

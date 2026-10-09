@@ -11,20 +11,13 @@ import { join } from 'node:path';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createInvocation, MemoryMemoStore } from './memos.js';
+import { inv } from '../test-support/invocation.js';
 import { READ_RESULT_MAX_BYTES, readOperation } from './read.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { OpContext } from './types.js';
 
 const MIB = 1024 * 1024;
 
 let dir: string;
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
-}
 
 function ctx(): OpContext {
   return { env: new NodeExecutionEnv(dir), sessionId: 's1', agentId: 'a1' };

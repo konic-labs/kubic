@@ -9,6 +9,7 @@ import {
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
+import { entry } from '../test-support/journal-entry.js';
 import { captureBaseline } from './baseline.js';
 import { applyDelta, encodeDelta } from './delta.js';
 import type { GitCommand } from './git.js';
@@ -16,21 +17,7 @@ import { sha256Hex } from './hash.js';
 import { restoreEntry } from './restore.js';
 import { FileJournalStore } from './store.js';
 import { reconcile } from './sweep.js';
-import type { JournalEntry, JournalEntryInput } from './types.js';
-
-function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
-  return {
-    path: 'src/a.ts',
-    op: 'write',
-    before: null,
-    after: 'hello\n',
-    bytesDelta: 6,
-    sessionId: 's1',
-    toolCallId: 'call-1',
-    timestamp: 1700000000000,
-    ...overrides,
-  };
-}
+import type { JournalEntry } from './types.js';
 
 describe('journal store', () => {
   it('appends entries and reads them back with hashes and toolCallId', () => {

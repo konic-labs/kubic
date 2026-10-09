@@ -1,6 +1,6 @@
 // Layered TOML config, precedence, trust gate, example.
-import type { FileBridge } from '@kubic/exec/file-bridge';
 import { describe, expect, it } from 'vitest';
+import { type BridgePick, fakeBridge } from '../test-support/config-bridge.js';
 import { checkRoleModelRef } from './checks.js';
 import {
   checkGitignoreSplit,
@@ -11,20 +11,6 @@ import {
 } from './config.js';
 import { loadRuntimeConfig } from './runtime.js';
 import { McpUnsupportedError } from './stances.js';
-
-type BridgePick = Pick<FileBridge, 'exists' | 'readTextFile'>;
-
-function fakeBridge(files: Record<string, string>): BridgePick {
-  const store = new Map(Object.entries(files));
-  return {
-    exists: (path: string): boolean => store.has(path),
-    readTextFile: (path: string): string => {
-      const hit = store.get(path);
-      if (hit === undefined) throw new Error(`no such file: ${path}`);
-      return hit;
-    },
-  };
-}
 
 // The live loader, given the composition root's inputs for this home and project.
 function loadRuntime(

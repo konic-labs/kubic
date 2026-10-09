@@ -22,6 +22,7 @@ import {
 } from '../../src/tui/commands/parse.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
+import { waitFor } from '../fixtures/wait.js';
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_PROVIDER', undefined);
@@ -32,13 +33,6 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
 });
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  expect(condition()).toBe(true);
-}
 
 // The alt-screen rewrites the whole frame per render, so joining every
 // write on every poll turns a footer wait into seconds of string copies.

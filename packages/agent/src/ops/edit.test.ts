@@ -10,9 +10,9 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { applyUndo, FileJournalStore, planUndo } from '@kubic/exec/journal';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
-import { createInvocation, MemoryMemoStore } from './memos.js';
+import { inv } from '../test-support/invocation.js';
 import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { OpContext } from './types.js';
 
 function setup(): { root: string; journal: FileJournalStore; c: OpContext } {
   const root = tempDir('edit-tool-');
@@ -25,13 +25,6 @@ function setup(): { root: string; journal: FileJournalStore; c: OpContext } {
     journal,
   };
   return { root, journal, c };
-}
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
 }
 
 describe('edit line endings and BOM', () => {

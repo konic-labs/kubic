@@ -10,9 +10,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BACKGROUND_CONTEXT,
-  createModels,
   fauxAssistantMessage,
-  fauxProvider,
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
@@ -37,6 +35,7 @@ import {
 } from '../../src/config/projections.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
+import { modelsWith } from '../fixtures/models.js';
 
 function tmpRoot(prefix: string): string {
   return tempDir(`kubic-approvals-config-${prefix}`);
@@ -66,16 +65,6 @@ function loadedWith(
   const loaded = loadCliConfig({ home, cwd: tmpRoot('cwd-'), env });
   expect(loaded.error).toBeUndefined();
   return loaded;
-}
-
-function modelsWith(
-  steps: ReturnType<typeof fauxAssistantMessage>[],
-): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(steps);
-  return models;
 }
 
 function destructiveThenDone(): MutableModels {

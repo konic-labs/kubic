@@ -28,6 +28,7 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FAUX_PROVIDER_ID } from '../models/index.js';
 import { readSessionUsage, totalSessionUsage } from '../sessions/index.js';
+import { capture } from '../test-support/capture.js';
 import {
   loadSessionCostRows,
   readSessionRunUsage,
@@ -76,23 +77,6 @@ const ROWS = [
     output: 60,
   },
 ];
-
-// stdout (`lines`) and stderr (`errs`) captured separately: data and
-// diagnostics never share a channel.
-function capture() {
-  const lines: string[] = [];
-  const errs: string[] = [];
-  return {
-    lines,
-    errs,
-    out: (line: string): void => {
-      lines.push(line);
-    },
-    err: (line: string): void => {
-      errs.push(line);
-    },
-  };
-}
 
 describe('kubic cost text view', () => {
   it('prints one row per session plus the task total', async () => {

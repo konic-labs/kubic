@@ -8,7 +8,6 @@ import {
   bootFauxLane,
   promptToolsLine,
 } from '@kubic/agent/test-support/lane-harness';
-import type { FileBridge } from '@kubic/exec/file-bridge';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   ensureRuntimeExcludeRules,
@@ -27,6 +26,7 @@ import {
   isToolAllowed,
   isToolAllowedByEnterprise,
 } from '../policy/index.js';
+import { fakeBridge } from '../test-support/config-bridge.js';
 import {
   checkWorkspaceIgnoreSplit,
   effectiveConfigView,
@@ -36,20 +36,6 @@ import {
   type RuntimeConfigInputs,
   runtimeKeyDisposition,
 } from './runtime.js';
-
-type BridgePick = Pick<FileBridge, 'exists' | 'readTextFile'>;
-
-function fakeBridge(files: Record<string, string>): BridgePick {
-  const store = new Map(Object.entries(files));
-  return {
-    exists: (path: string): boolean => store.has(path),
-    readTextFile: (path: string): string => {
-      const hit = store.get(path);
-      if (hit === undefined) throw new Error(`no such file: ${path}`);
-      return hit;
-    },
-  };
-}
 
 const HOME = '/home/u';
 

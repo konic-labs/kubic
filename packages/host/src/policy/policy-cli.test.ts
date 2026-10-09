@@ -5,6 +5,7 @@
 import { createCliTheme } from '@kubic/core/cli/theme';
 import { REDACTED_SECRET } from '@kubic/core/secret-shapes';
 import { describe, expect, it } from 'vitest';
+import { capture } from '../test-support/capture.js';
 import {
   type EffectivePolicy,
   isToolAllowed,
@@ -12,22 +13,6 @@ import {
   resolveEffectivePolicy,
   runPolicyCommand,
 } from './index.js';
-
-// stdout (`lines`) and stderr (`errs`) captured separately.
-function capture() {
-  const lines: string[] = [];
-  const errs: string[] = [];
-  return {
-    lines,
-    errs,
-    out: (line: string): void => {
-      lines.push(line);
-    },
-    err: (line: string): void => {
-      errs.push(line);
-    },
-  };
-}
 
 function emptyPolicy(): EffectivePolicy {
   return resolveEffectivePolicy([]).policy;

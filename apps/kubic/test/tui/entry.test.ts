@@ -4,12 +4,6 @@
 // @kubic/tui (dep-lint): the fake terminal satisfies the seam structurally.
 // Faux lane boot only — zero network.
 
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  type MutableModels,
-} from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { runRunCommand } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +11,7 @@ import { terminalRig } from '../../../../test/fake-terminal.js';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { runTuiCommand } from '../../src/tui/run.js';
+import { fauxModels } from '../fixtures/faux-models.js';
 
 beforeEach(() => {
   // The no-isolation notice is not under test here (approvals/no-isolation-notice.test.ts owns
@@ -27,14 +22,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
 });
-
-function fauxModels(texts: string[]): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
-  return models;
-}
 
 function fakeTerminal(width: number) {
   return terminalRig(width, 30);

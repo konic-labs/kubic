@@ -17,11 +17,8 @@ import {
 import { readSessionEntries } from '@kubic/agent/lane/transcript';
 import {
   BACKGROUND_CONTEXT,
-  createModels,
   fauxAssistantMessage,
-  fauxProvider,
   fauxToolCall,
-  type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
@@ -41,6 +38,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
+import { modelsWith } from '../fixtures/models.js';
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -61,16 +59,6 @@ const ctx = triggerContextFor(
   },
   WS,
 );
-
-function modelsWith(
-  steps: ReturnType<typeof fauxAssistantMessage>[],
-): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(steps);
-  return models;
-}
 
 async function transcriptOf(root: string, sessionId: string): Promise<string> {
   const store = openSessionStore(root, createNodeFileBridge(root));

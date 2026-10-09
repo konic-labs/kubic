@@ -18,13 +18,7 @@ import {
 } from '../../src/tui/commands/appearance.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  expect(condition()).toBe(true);
-}
+import { waitFor } from '../fixtures/wait.js';
 
 // A terminal that records every frame it is handed.
 function recordingTerminal(): {

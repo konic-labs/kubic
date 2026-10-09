@@ -9,6 +9,7 @@ import {
 } from '@kubic/core/secret-shapes';
 import { describe, expect, it } from 'vitest';
 import { EXAMPLE_AUDIT_RECORD } from '../test-support/audit-fixtures.js';
+import { capture } from '../test-support/capture.js';
 import {
   AUDIT_FIELDS,
   fullAccessEnabledAudit,
@@ -36,22 +37,6 @@ function seeded(): OrgAuditRecord[] {
       reason: `policy allow (saw ${FAUX_SHAPED} and ${FAUX_LISTED} on the wire)`,
     },
   ];
-}
-
-// stdout (`lines`) and stderr (`errs`) captured separately.
-function capture() {
-  const lines: string[] = [];
-  const errs: string[] = [];
-  return {
-    lines,
-    errs,
-    out: (line: string): void => {
-      lines.push(line);
-    },
-    err: (line: string): void => {
-      errs.push(line);
-    },
-  };
 }
 
 describe('kubic audit secret backstop', () => {

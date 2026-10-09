@@ -12,10 +12,7 @@ import {
   BACKGROUND_CONTEXT,
   createModels,
   createRegistry,
-  fauxAssistantMessage,
-  fauxProvider,
   Harness,
-  type MutableModels,
   UserEntry,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
@@ -27,6 +24,7 @@ import { runSessionsCommand } from '@kubic/host/sessions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
+import { fauxModels } from '../fixtures/faux-models.js';
 
 const FAKE_PID = 424242;
 
@@ -39,14 +37,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
 });
-
-function fauxModels(texts: string[]): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
-  return models;
-}
 
 function stubKill(alive: boolean): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(process, 'kill').mockImplementation((() => {

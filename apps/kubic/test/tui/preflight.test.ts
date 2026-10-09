@@ -7,13 +7,7 @@ import { EXIT_PROVIDER } from '@kubic/core/cli/exit-codes';
 import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  expect(condition()).toBe(true);
-}
+import { waitFor } from '../fixtures/wait.js';
 
 describe('the first screen on kubic tui', () => {
   it('opens on the preflight with the version, trust and recent sessions', async () => {

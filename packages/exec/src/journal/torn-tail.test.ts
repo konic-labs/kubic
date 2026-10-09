@@ -17,8 +17,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import type { FileBridge } from '../file-bridge.js';
+import { entry } from '../test-support/journal-entry.js';
 import { FileJournalStore } from './store.js';
-import type { JournalEntryInput } from './types.js';
 
 // Controllable failure surface shared by the module mock below (vi.hoisted
 // keeps it reachable from the hoisted factory). `failAppend` is a predicate
@@ -82,20 +82,6 @@ afterEach(() => {
   hooks.failReadRange = null;
   hooks.withoutReadFileRange = false;
 });
-
-function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
-  return {
-    path: 'src/a.ts',
-    op: 'write',
-    before: null,
-    after: 'hello\n',
-    bytesDelta: 6,
-    sessionId: 's1',
-    toolCallId: 'call-1',
-    timestamp: 1700000000000,
-    ...overrides,
-  };
-}
 
 describe('journal torn tail', () => {
   it('closes a trailing fragment on its own line so the next entry is readable', () => {

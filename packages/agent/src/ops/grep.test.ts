@@ -8,24 +8,17 @@ import { join } from 'node:path';
 import { type FileSystem, NodeExecutionEnv } from '@kubic/exec/env';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
+import { inv } from '../test-support/invocation.js';
 import {
   GREP_MAX_FILE_BYTES,
   GREP_MAX_LINE_LENGTH,
   GREP_RESULT_MAX_BYTES,
 } from './grep.js';
-import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation, OPERATION_PARAMETERS, OPERATIONS } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { OpContext } from './types.js';
 
 function ctx(root: string): OpContext {
   return { env: new NodeExecutionEnv(root), sessionId: 's1', agentId: 'a1' };
-}
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
 }
 
 describe('grep bounds', () => {

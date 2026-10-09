@@ -247,6 +247,14 @@ describe('dep-lint', () => {
     assert.deepEqual(checkTree(dir), []);
   });
 
+  it('allows test-support modules and app test folders to import node:fs', () => {
+    const dir = fixtureTree({
+      'packages/host/src/test-support/temp.ts': `import { mkdtempSync } from 'node:fs';\n`,
+      'apps/kubic/test/fixtures/temp.ts': `import { mkdtempSync } from 'node:fs';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
   it('allows test files to import node builtins for scaffolding', () => {
     const dir = fixtureTree({
       'packages/agent/src/result.test.ts': `import { mkdtempSync } from 'node:fs';\n`,

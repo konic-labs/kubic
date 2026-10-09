@@ -14,9 +14,9 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import type { FileBridge } from '../file-bridge.js';
+import { entry } from '../test-support/journal-entry.js';
 import { sha256Hex } from './hash.js';
 import { FileJournalStore } from './store.js';
-import type { JournalEntryInput } from './types.js';
 
 // Controllable failure/hook surface shared by the two module mocks below.
 // vi.hoisted keeps it reachable from the hoisted factories.
@@ -77,20 +77,6 @@ vi.mock('../file-bridge.js', async (importOriginal) => {
     },
   };
 });
-
-function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
-  return {
-    path: 'src/a.ts',
-    op: 'write',
-    before: null,
-    after: 'hello\n',
-    bytesDelta: 6,
-    sessionId: 's1',
-    toolCallId: 'call-1',
-    timestamp: 1700000000000,
-    ...overrides,
-  };
-}
 
 describe('journal durability', () => {
   it('fsyncs the index on every append, through the durable bridge seam', () => {

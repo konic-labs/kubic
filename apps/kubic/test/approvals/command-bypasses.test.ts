@@ -15,13 +15,7 @@ import {
   defaultIsDestructive,
   isNetworkCommand,
 } from '@kubic/agent/lane/interceptors';
-import {
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  type MutableModels,
-} from '@kubic/agent/pi-boundary';
+import { fauxAssistantMessage, fauxToolCall } from '@kubic/agent/pi-boundary';
 import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
@@ -35,6 +29,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
+import { modelsWith } from '../fixtures/models.js';
 
 const WS = '/work';
 
@@ -59,19 +54,6 @@ function ctx(overrides: Partial<TriggerContext> = {}): TriggerContext {
 
 function triggers(command: string, overrides: Partial<TriggerContext> = {}) {
   return detectTriggers('bash', { command }, ctx(overrides));
-}
-
-// Regression reproductions, end to end through `kubic run`'s headless
-// path (faux provider, zero network): each of these bash calls must ask,
-// never exit 0 with no ask.
-function modelsWith(
-  steps: ReturnType<typeof fauxAssistantMessage>[],
-): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(steps);
-  return models;
 }
 
 async function runBash(command: string, workspace: string) {

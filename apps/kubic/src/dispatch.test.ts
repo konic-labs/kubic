@@ -10,45 +10,23 @@
 // {loadRecords,loadSecrets,out}, export {readFile,out})
 // and the eval runSuite refusal message, verbatim.
 
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 import type { CommandResult } from '@kubic/core/cli/exit-codes';
 import { createCliTheme } from '@kubic/core/cli/theme';
 import { NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterAll, describe, expect, it } from 'vitest';
 import { ROOT_HELP } from './cli/root-help.js';
 import type { CliConfigResult } from './config/load.js';
-import { CONFIG_CONSUMING_COMMANDS, loadCliConfig } from './config/load.js';
+import { CONFIG_CONSUMING_COMMANDS } from './config/load.js';
+import { dispatchCommand } from './dispatch.js';
 import {
-  type DispatchDeps,
-  type DispatchRunners,
-  dispatchCommand,
-} from './dispatch.js';
-
-type RunnerKey = keyof DispatchRunners;
-
-// The runner roster: one entry per command seam the root wires inline
-// (23 command names, 17 runners — the four journal commands share one).
-const RUNNER_KEYS: readonly RunnerKey[] = [
-  'sessions',
-  'git',
-  'journal',
-  'models',
-  'run',
-  'tui',
-  'doctor',
-  'skills',
-  'cost',
-  'policy',
-  'config',
-  'trust',
-  'audit',
-  'eval',
-  'benchmark',
-  'replay',
-  'export',
-];
+  FIXTURE,
+  harness,
+  loadedConfig,
+  RUNNER_KEYS,
+  type RunnerKey,
+  refusedConfig,
+} from './test-support/dispatch-harness.js';
 
 // Every command in the if-chain, the argv it is dispatched with, and the
 // runner it must reach. Journal commands receive `[command, ...rest]` —
@@ -112,103 +90,9 @@ const PARSED: Readonly<Record<string, unknown>> = {
   export: { trajectory: 'trajectory.json' },
 };
 
-// Every runner receives the options commander parsed.
-type AnyRunner = (
-  input: unknown,
-  config: CliConfigResult,
-) => CommandResult | Promise<CommandResult>;
-
-interface RunnerCall {
-  readonly key: RunnerKey;
-  // The options commander parsed for the command.
-  readonly rest: unknown;
-  readonly config: CliConfigResult;
-}
-
-interface Harness {
-  readonly deps: DispatchDeps;
-  readonly calls: RunnerCall[];
-  readonly lines: string[];
-  // The options each `loadConfig` call received (the accepted
-  // trust answer is threaded into the load as an explicit decision).
-  readonly loadOptions: ReadonlyArray<{ projectTrusted?: boolean } | undefined>;
-  readonly state: {
-    excludeCalls: number;
-    excludeEntries: readonly string[] | undefined;
-  };
-}
-
-// A dispatch over fully faux runners: every runner records its call and
-// answers 0 unless overridden. `out`/`ensureRuntimeExclude` are captured,
-// `version` is a constant, `loadConfig` answers the given result.
-function harness(
-  options: {
-    runners?: Partial<Record<RunnerKey, AnyRunner>>;
-    config?: CliConfigResult;
-    version?: string;
-    interactive?: boolean;
-    resolveTrust?: () => Promise<boolean | undefined>;
-  } = {},
-): Harness {
-  const calls: RunnerCall[] = [];
-  const lines: string[] = [];
-  const loadOptions: Array<{ projectTrusted?: boolean } | undefined> = [];
-  const state: Harness['state'] = {
-    excludeCalls: 0,
-    excludeEntries: undefined,
-  };
-  const runners = {} as Record<RunnerKey, AnyRunner>;
-  for (const key of RUNNER_KEYS) {
-    const override = options.runners?.[key];
-    runners[key] = (rest, config) => {
-      calls.push({
-        key,
-        rest: Array.isArray(rest) ? [...(rest as string[])] : rest,
-        config,
-      });
-      return override === undefined ? { exitCode: 0 } : override(rest, config);
-    };
-  }
-  const deps: DispatchDeps = {
-    out: (line) => {
-      lines.push(line);
-    },
-    loadConfig: (load) => {
-      loadOptions.push(load);
-      return options.config ?? loadedConfig();
-    },
-    version: () => options.version ?? '9.9.9',
-    ensureRuntimeExclude: (entries) => {
-      state.excludeCalls += 1;
-      state.excludeEntries = entries;
-    },
-    runners: runners as unknown as DispatchRunners,
-    isInteractive: () => options.interactive === true,
-    ...(options.resolveTrust === undefined
-      ? {}
-      : { resolveProjectTrust: options.resolveTrust }),
-  };
-  return { deps, calls, lines, loadOptions, state };
-}
-
-// Fixture home/cwd for the real config load and the prod cost store: an
-// empty dir has no config files, so the documented defaults load.
-const FIXTURE = mkdtempSync(join(tmpdir(), 'kubic-dispatch-'));
-
 afterAll(() => {
   rmSync(FIXTURE, { recursive: true, force: true });
 });
-
-// The refused load's shape (what loadCliConfig returns for a broken
-// config): runtime absent, named reason present.
-function refusedConfig(error = 'unknown key [nope]'): CliConfigResult {
-  return {
-    runtime: undefined,
-    error,
-    ignoreSplit: { missing: [], checked: [], applicable: false },
-    trust: NO_PROJECT_TRUST,
-  };
-}
 
 // The defensive no-reason shape (the `config refused` fallback path).
 function refusedConfigWithoutReason(): CliConfigResult {
@@ -218,20 +102,6 @@ function refusedConfigWithoutReason(): CliConfigResult {
     ignoreSplit: { missing: [], checked: [], applicable: false },
     trust: NO_PROJECT_TRUST,
   };
-}
-
-let loadedOnce: CliConfigResult | undefined;
-
-// A real loaded result over the fixture (no files → defaults). The
-// dispatch only distinguishes present-vs-absent; runner fakes ignore it.
-function loadedConfig(): CliConfigResult {
-  loadedOnce ??= loadCliConfig({ cwd: FIXTURE, home: FIXTURE, env: {} });
-  if (loadedOnce.runtime === undefined) {
-    throw new Error(
-      `fixture config load refused: ${loadedOnce.error ?? 'unknown reason'}`,
-    );
-  }
-  return loadedOnce;
 }
 
 describe('dispatch routing', () => {

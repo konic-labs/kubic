@@ -86,8 +86,15 @@ function concernFolder(owner, file, root) {
 // `kubic` owner in FORBIDDEN.
 const OWNER_OF_PACKAGE_NAME = { cli: 'kubic' };
 
+// Test code: a test file, a test-support module, or anything in an app's
+// integration-test folder (apps/<app>/test/).
 function isTestScaffold(rel) {
-  return TEST_FILE.test(rel) || rel.split(sep).includes('test-support');
+  const parts = rel.split(sep);
+  return (
+    TEST_FILE.test(rel) ||
+    parts.includes('test-support') ||
+    (parts[0] === 'apps' && parts[2] === 'test')
+  );
 }
 
 function listDir(dir) {
@@ -206,7 +213,7 @@ export function checkTree(root) {
             spec.startsWith('node:child_process/') ||
             spec === 'child_process') &&
           owner !== 'exec' &&
-          !file.endsWith('.test.ts')
+          !isTestScaffold(relative(root, file))
         ) {
           // I/O confinement: only packages/exec (the
           // ExecutionEnv binding) touches node:fs/child_process. Tools go

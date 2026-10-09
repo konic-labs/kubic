@@ -11,22 +11,8 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
+import { entry } from '../test-support/journal-entry.js';
 import { FileJournalStore } from './store.js';
-import type { JournalEntryInput } from './types.js';
-
-function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
-  return {
-    path: 'src/a.ts',
-    op: 'write',
-    before: null,
-    after: 'hello\n',
-    bytesDelta: 6,
-    sessionId: 's1',
-    toolCallId: 'call-1',
-    timestamp: 1700000000000,
-    ...overrides,
-  };
-}
 
 function storeBytes(dir: string): number {
   const index = statSync(join(dir, 'index.jsonl')).size;

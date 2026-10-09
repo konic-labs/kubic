@@ -13,9 +13,7 @@ import {
 import {
   BACKGROUND_CONTEXT,
   createModels,
-  fauxAssistantMessage,
   fauxProvider,
-  type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
@@ -25,6 +23,8 @@ import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
+import { fauxModels } from '../fixtures/faux-models.js';
+import { waitFor } from '../fixtures/wait.js';
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -34,14 +34,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
-
-function fauxModels(texts: string[]): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
-  return models;
-}
 
 async function crashAfterAccept(
   root: string,
@@ -90,13 +82,6 @@ function fakeTerminal(): {
     started: () => rig.counts.started,
     feed: rig.feed,
   };
-}
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  expect(condition()).toBe(true);
 }
 
 describe('kubic tui --session after a crash', () => {

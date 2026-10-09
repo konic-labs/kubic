@@ -128,7 +128,13 @@ are re-exported.
   owns a local server stays hermetic. A test that needs an environment
   variable stubs it with `vi.stubEnv` and restores it in `afterEach`.
 - **Clean up.** A test removes every temp dir, environment change and child
-  process it creates.
+  process it creates. `tempDir()` from `test/temp-dir.ts` makes a directory
+  that is removed after the current test.
+- **Shared fixtures.** A helper two test files need lives in one place: a
+  package's `src/test-support/` (for its own tests, or through its exports
+  map), `apps/kubic/test/fixtures/` for the integration tests, or the root
+  `test/` folder across packages. Test fixtures never ship: a production
+  module that imports one fails `npm run lint:deps`.
 - **Lanes.** Boot a lane with `bootFauxLane`
   (`packages/agent/src/test-support/lane-harness.ts`): the real `bootLane`
   over in-memory or temp-dir storage. A faux tool round must end with

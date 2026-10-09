@@ -4,38 +4,13 @@
 // VStack renders pure, like renderLayout in layout.test.ts. Faux-only,
 // zero network.
 
-import type {
-  KubicPresentationState,
-  LaneSnapshot,
-} from '@kubic/core/presentation';
 import { describe, expect, it, vi } from 'vitest';
 import { QUIT_ARM_MS } from './app/quit.js';
 import { createKeyRegistry } from './keybindings.js';
+import { presentation, SESSION } from './test-support/presentation.js';
 import { createTuiApp } from './tui-app.js';
 
-const SESSION = 'sess-1';
-
 const MODEL = 'test-model';
-
-// The app renders replicated state, so a test builds the state a
-// projector would produce (the projector itself lives in host).
-function presentation(
-  over: Partial<LaneSnapshot> = {},
-): KubicPresentationState {
-  return {
-    session: { sessionId: SESSION, approvalsSkipped: false },
-    lane: {
-      status: 'running',
-      tools: [],
-      queued: [],
-      compacting: false,
-      ...over,
-    },
-    approvals: [],
-    usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
-    connection: { status: 'connected' },
-  };
-}
 
 describe('tui app root', () => {
   it('orders header / transcript / status / hints top to bottom', () => {

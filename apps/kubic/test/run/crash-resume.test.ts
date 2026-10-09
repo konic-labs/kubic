@@ -16,9 +16,7 @@ import { readSessionEntries } from '@kubic/agent/lane/transcript';
 import {
   BACKGROUND_CONTEXT,
   createModels,
-  fauxAssistantMessage,
   fauxProvider,
-  type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
@@ -26,6 +24,7 @@ import { runSessionsCommand } from '@kubic/host/sessions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
+import { fauxModels } from '../fixtures/faux-models.js';
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -35,14 +34,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
-
-function fauxModels(texts: string[]): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
-  return models;
-}
 
 function stubDeadHolder(): void {
   vi.spyOn(process, 'kill').mockImplementation((() => {

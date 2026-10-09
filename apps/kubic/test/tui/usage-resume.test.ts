@@ -23,6 +23,7 @@ import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane, statusRowsFromSessionUsage } from '../../src/tui/boot.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
+import { waitFor } from '../fixtures/wait.js';
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_PROVIDER', undefined);
@@ -105,13 +106,6 @@ function fauxModels(
 
 function recordingTerminal() {
   return terminalRig(140, 30);
-}
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  expect(condition()).toBe(true);
 }
 
 describe('kubic tui --session seeds the committed spend', () => {

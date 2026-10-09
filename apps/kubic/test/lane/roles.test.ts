@@ -5,20 +5,6 @@
 // Faux provider only (zero network, zero paid tokens).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROMPT_SECTION } from '@kubic/agent/lane/boot';
-import {
-  attachSession,
-  openSessionStore,
-} from '@kubic/agent/lane/session-store';
-import { readSessionEntries } from '@kubic/agent/lane/transcript';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  fauxAssistantMessage,
-  fauxProvider,
-  type MutableModels,
-  SystemEntry,
-} from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { projectTrustCheck } from '@kubic/host/config';
@@ -28,14 +14,8 @@ import { runRunCommand } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-function fauxModels(texts: string[]): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
-  return models;
-}
+import { committedPrompt } from '../fixtures/committed-prompt.js';
+import { fauxModels } from '../fixtures/faux-models.js';
 
 // The shape .kubic/roles/*.md really use: frontmatter + a `## Prompt`
 // section carrying the role text.
@@ -51,34 +31,6 @@ function writeRole(
     join(dir, `${name}.md`),
     `---\nrole: ${name}\n${frontmatter}---\n\n# ${name}\n\n## Prompt\n\n${prompt}\n`,
   );
-}
-
-// The prompt the lane committed for this session (the reader): the
-// run's own durable record of the bytes the model saw — the harness-spy
-// equivalent on the durable lane.
-async function committedPrompt(
-  root: string,
-  sessionId: string,
-): Promise<string> {
-  const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
-  try {
-    const entries = await readSessionEntries(
-      session.storage,
-      BACKGROUND_CONTEXT,
-    );
-    for (const entry of [...entries].reverse()) {
-      if (!SystemEntry.is(entry)) continue;
-      const messages = entry.model as unknown as
-        | Array<{ sections?: Record<string, string | null> }>
-        | undefined;
-      const prompt = messages?.[0]?.sections?.[PROMPT_SECTION];
-      if (typeof prompt === 'string' && prompt !== '') return prompt;
-    }
-    return '';
-  } finally {
-    await session.release(BACKGROUND_CONTEXT);
-  }
 }
 
 // The no-isolation notice is pinned by approvals/no-isolation-notice.test.ts; here it

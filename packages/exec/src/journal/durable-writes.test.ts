@@ -10,9 +10,9 @@ import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import type { FileBridge } from '../file-bridge.js';
+import { entry } from '../test-support/journal-entry.js';
 import { sha256Hex } from './hash.js';
 import { FileJournalStore } from './store.js';
-import type { JournalEntryInput } from './types.js';
 
 // Every I/O seam the durable path is supposed to use, in order, plus a count
 // of the real fsyncs that reached the filesystem.
@@ -100,20 +100,6 @@ afterEach(() => {
   hooks.refuseFlush = null;
   hooks.failFlush = null;
 });
-
-function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
-  return {
-    path: 'src/a.ts',
-    op: 'write',
-    before: null,
-    after: 'hello\n',
-    bytesDelta: 6,
-    sessionId: 's1',
-    toolCallId: 'call-1',
-    timestamp: 1700000000000,
-    ...overrides,
-  };
-}
 
 // A pre-existing blob file at `hash`, as crash residue or an external
 // write leaves it.

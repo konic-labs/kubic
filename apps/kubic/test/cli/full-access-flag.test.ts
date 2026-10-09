@@ -15,9 +15,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  createModels,
   fauxAssistantMessage,
-  fauxProvider,
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
@@ -43,6 +41,7 @@ import { runHeadlessPrompt } from '../../src/run/command.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
+import { modelsWith } from '../fixtures/models.js';
 
 function tmpRoot(prefix: string): string {
   return tempDir(`kubic-full-access-${prefix}`);
@@ -56,16 +55,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
-
-function modelsWith(
-  steps: ReturnType<typeof fauxAssistantMessage>[],
-): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(steps);
-  return models;
-}
 
 function destructiveThenDone(): MutableModels {
   return modelsWith([

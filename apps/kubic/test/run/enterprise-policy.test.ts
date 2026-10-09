@@ -18,7 +18,7 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
-import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
+import { NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
@@ -29,6 +29,7 @@ import {
 } from '../../src/config/projections.js';
 import { createProdRunners, prodRunDeps } from '../../src/prod-runners.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
+import { cliConfig, ENTERPRISE } from '../fixtures/cli-config.js';
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -41,8 +42,6 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
-
 const PROJECT = '/nonexistent-cwd/.kubic/config.toml';
 
 // The tests below load workspace role documents, so they run
@@ -53,39 +52,6 @@ const TRUSTED = {
   envTrust: true,
   trusted: true,
 } as CliConfigResult['trust'];
-
-function cliConfig(
-  files: Record<string, string>,
-  options: {
-    env?: Record<string, string>;
-    cliModel?: { provider: string; id: string };
-    // Role documents resolve under project trust — tests that
-    // load workspace role docs opt into the trusted report.
-    trust?: CliConfigResult['trust'];
-  } = {},
-): CliConfigResult {
-  const runtime = loadRuntimeConfig({
-    bridge: {
-      exists: (path: string): boolean => path in files,
-      readTextFile: (path: string): string => files[path] as string,
-    },
-    home: '/nonexistent-home',
-    cwd: '/nonexistent-cwd',
-    enterprisePath: ENTERPRISE,
-    productPath: '/nonexistent/product.toml',
-    projectTrusted: true,
-    env: options.env ?? {},
-    ...(options.cliModel === undefined
-      ? {}
-      : { cli: { model: options.cliModel } }),
-  });
-  return {
-    runtime,
-    error: undefined,
-    ignoreSplit: { missing: [], checked: [], applicable: false },
-    trust: options.trust ?? NO_PROJECT_TRUST,
-  };
-}
 
 // The prod runners over a temp workspace: cwd is the workspace, stdout and the
 // diagnostics channel are captured, and the faux notice the run path writes to

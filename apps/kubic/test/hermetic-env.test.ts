@@ -11,51 +11,17 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { connect, Socket } from 'node:net';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
-import { PROMPT_SECTION } from '@kubic/agent/lane/boot';
 import {
-  attachSession,
-  openSessionStore,
-} from '@kubic/agent/lane/session-store';
-import { readSessionEntries } from '@kubic/agent/lane/transcript';
-import {
-  BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-  SystemEntry,
 } from '@kubic/agent/pi-boundary';
-import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
 import { tempDir } from '../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../src/run/command.js';
-
-// The prompt the lane committed for this session (the reader).
-async function committedPrompt(
-  root: string,
-  sessionId: string,
-): Promise<string> {
-  const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
-  try {
-    const entries = await readSessionEntries(
-      session.storage,
-      BACKGROUND_CONTEXT,
-    );
-    for (const entry of [...entries].reverse()) {
-      if (!SystemEntry.is(entry)) continue;
-      const messages = entry.model as unknown as
-        | Array<{ sections?: Record<string, string | null> }>
-        | undefined;
-      const prompt = messages?.[0]?.sections?.[PROMPT_SECTION];
-      if (typeof prompt === 'string' && prompt !== '') return prompt;
-    }
-    return '';
-  } finally {
-    await session.release(BACKGROUND_CONTEXT);
-  }
-}
+import { committedPrompt } from './fixtures/committed-prompt.js';
 
 function writeSkill(root: string, name: string): void {
   const dir = join(root, name);

@@ -8,13 +8,12 @@ import { DEFAULT_PERMISSIONS } from '../permissions.js';
 import {
   AgentDoc,
   BACKGROUND_CONTEXT,
-  type Context,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   MemoryStorage,
-  type Storage,
 } from '../pi-boundary.js';
+import type { TestSession } from '../test-support/session-handle.js';
 import { bootLane, type Lane } from './boot.js';
 import { applyToolPolicy } from './policy.js';
 
@@ -67,15 +66,6 @@ afterEach(async () => {
     await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
 });
-
-type TestSession = {
-  id: string;
-  dir: string;
-  storage: Storage;
-  meta: { cwd: string; createdAt: string };
-  adopt(): Storage;
-  release(context: Context): Promise<void>;
-};
 function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();
   return {

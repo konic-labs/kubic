@@ -25,10 +25,10 @@ import {
 } from '@kubic/exec/journal';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
+import { inv } from '../test-support/invocation.js';
 import { PREIMAGE_CHUNK_BYTES, PREIMAGE_MAX_BYTES } from './atomic-file.js';
-import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { OpContext } from './types.js';
 
 function setup(): { root: string; journal: FileJournalStore; c: OpContext } {
   const root = tempDir('ws-');
@@ -41,13 +41,6 @@ function setup(): { root: string; journal: FileJournalStore; c: OpContext } {
     journal,
   };
   return { root, journal, c };
-}
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
 }
 
 const posix = process.platform !== 'win32';

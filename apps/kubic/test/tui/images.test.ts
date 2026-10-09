@@ -20,6 +20,7 @@ import { readImageFile } from '../../src/tui/commands/media.js';
 import { PASTE_IDLE_MS } from '../../src/tui/input.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
+import { waitFor } from '../fixtures/wait.js';
 
 // 1x1 transparent PNG.
 const PNG = Buffer.from(
@@ -88,13 +89,6 @@ function fauxModels(
 
 function recordingTerminal() {
   return terminalRig(140, 30);
-}
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  expect(condition()).toBe(true);
 }
 
 interface Session {

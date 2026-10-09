@@ -36,6 +36,7 @@ import { bootTuiLane } from '../../src/tui/boot.js';
 import { tuiDepsWithDefaults } from '../../src/tui/deps.js';
 import type { TuiRunOptions } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
+import { waitFor } from '../fixtures/wait.js';
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -250,13 +251,6 @@ function twoModels(): MutableModels {
 
 function recordingTerminal() {
   return terminalRig(100, 30);
-}
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  expect(condition()).toBe(true);
 }
 
 describe('the TUI selects the pinned model', () => {

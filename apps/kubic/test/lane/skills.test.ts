@@ -9,7 +9,6 @@
 // transcript (the reader) after a real `kubic run`.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROMPT_SECTION } from '@kubic/agent/lane/boot';
 import {
   attachSession,
   openSessionStore,
@@ -24,8 +23,6 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-  type MutableModels,
-  SystemEntry,
 } from '@kubic/agent/pi-boundary';
 import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
@@ -36,14 +33,8 @@ import { bootSkills } from '@kubic/host/skills';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-function fauxModels(texts: string[]): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
-  return models;
-}
+import { committedPrompt } from '../fixtures/committed-prompt.js';
+import { fauxModels } from '../fixtures/faux-models.js';
 
 // A discovery root holding one skill, written with real files: the prod
 // path runs the real FileBridge, so a fake bridge would not prove it.
@@ -56,33 +47,6 @@ function writeSkill(root: string, name: string, description: string): string {
     `---\nname: ${name}\ndescription: ${description}\n---\n\nBody for ${name}.\n`,
   );
   return file;
-}
-
-// The prompt the lane committed for this session (the reader): the
-// run's own durable record of the bytes the model saw.
-async function committedPrompt(
-  root: string,
-  sessionId: string,
-): Promise<string> {
-  const store = openSessionStore(root, createNodeFileBridge(root));
-  const session = await attachSession(store, sessionId, BACKGROUND_CONTEXT);
-  try {
-    const entries = await readSessionEntries(
-      session.storage,
-      BACKGROUND_CONTEXT,
-    );
-    for (const entry of [...entries].reverse()) {
-      if (!SystemEntry.is(entry)) continue;
-      const messages = entry.model as unknown as
-        | Array<{ sections?: Record<string, string | null> }>
-        | undefined;
-      const prompt = messages?.[0]?.sections?.[PROMPT_SECTION];
-      if (typeof prompt === 'string' && prompt !== '') return prompt;
-    }
-    return '';
-  } finally {
-    await session.release(BACKGROUND_CONTEXT);
-  }
 }
 
 beforeEach(() => {

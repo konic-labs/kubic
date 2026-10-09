@@ -15,19 +15,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createInvocation, MemoryMemoStore } from './memos.js';
+import { inv } from '../test-support/invocation.js';
 import { readFailure, readOperation, validateReadArgs } from './read.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { OpContext } from './types.js';
 import { OpError } from './types.js';
 
 let dir: string;
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
-}
 
 function ctxFor(env: NodeExecutionEnv): OpContext {
   return { env, sessionId: 's1', agentId: 'a1' };

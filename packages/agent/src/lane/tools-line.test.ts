@@ -12,7 +12,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PERMISSIONS } from '../permissions.js';
 import {
   BACKGROUND_CONTEXT,
-  type Context,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
@@ -21,6 +20,7 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
+import type { TestSession } from '../test-support/session-handle.js';
 import { bootLane, type Lane, PROMPT_SECTION } from './boot.js';
 
 vi.mock('./interceptors/index.js', () => ({
@@ -76,15 +76,6 @@ afterEach(async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-type TestSession = {
-  id: string;
-  dir: string;
-  storage: Storage;
-  meta: { cwd: string; createdAt: string };
-  adopt(): Storage;
-  release(context: Context): Promise<void>;
-};
 function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();
   return {

@@ -6,7 +6,6 @@ import { abortLane } from '@kubic/agent/lane/abort';
 import { createSession } from '@kubic/agent/lane/session-store';
 import {
   createModels,
-  fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
@@ -15,6 +14,7 @@ import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
+import { fauxModels } from '../fixtures/faux-models.js';
 
 const mockState = vi.hoisted(() => ({ closeShouldReject: false }));
 
@@ -70,14 +70,6 @@ vi.mock('@kubic/agent/lane/session-store', async (importOriginal) => {
     return session;
   }
 });
-
-function fauxModels(texts: string[]): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
-  return models;
-}
 
 // A provider that never answers: the run's guard is the only way out.
 function hangingModels(): MutableModels {

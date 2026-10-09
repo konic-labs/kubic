@@ -25,14 +25,7 @@ import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-function fauxModels(texts: string[]): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
-  return models;
-}
+import { fauxModels } from '../fixtures/faux-models.js';
 
 // A model that never answers: the run's guards are the only way out.
 function hangingModels(): MutableModels {

@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createInvocation, MemoryMemoStore } from './memos.js';
+import { inv } from '../test-support/invocation.js';
 import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { OpContext } from './types.js';
 
 const scratchDirs: string[] = [];
 
@@ -33,13 +33,6 @@ function ctx(journal?: FileJournalStore): OpContext {
     toolCallId: 'call-9',
     ...(journal === undefined ? {} : { journal }),
   };
-}
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
 }
 
 describe('journal interception', () => {

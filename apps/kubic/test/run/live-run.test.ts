@@ -18,7 +18,6 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-  type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
@@ -31,6 +30,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
+import { fauxModels } from '../fixtures/faux-models.js';
 
 beforeEach(() => {
   // The no-isolation notice is not under test here (approvals/no-isolation-notice.test.ts owns
@@ -41,14 +41,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
 });
-
-function fauxModels(texts: string[]): MutableModels {
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  faux.setResponses(texts.map((text) => fauxAssistantMessage(text)));
-  return models;
-}
 
 function entryTexts(entries: unknown): string[] {
   if (!Array.isArray(entries)) return [];

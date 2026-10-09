@@ -11,6 +11,7 @@ import {
 } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
+import { setup } from '../test-support/journal-cli.js';
 import {
   colorizeDiffLine,
   type JournalRequest,
@@ -20,34 +21,6 @@ import {
 afterEach(() => {
   disposeAllGitSandboxes();
 });
-
-function setup(): {
-  journalDir: string;
-  root: string;
-  out: { lines: string[]; write: (line: string) => void };
-} {
-  const journalDir = tempDir('j-');
-  const root = tempDir('ws-');
-  writeFileSync(join(root, 'a.txt'), 'v1\n');
-  const store = new FileJournalStore(journalDir);
-  store.append({
-    path: 'a.txt',
-    op: 'write',
-    before: 'v1\n',
-    after: 'v2\n',
-    bytesDelta: 0,
-    sessionId: 's1',
-    toolCallId: 'call-1',
-    timestamp: 1700000000000,
-  });
-  writeFileSync(join(root, 'a.txt'), 'v2\n');
-  const lines: string[] = [];
-  return {
-    journalDir,
-    root,
-    out: { lines, write: (line) => lines.push(line) },
-  };
-}
 
 // A successful undo is journaled as a `kubic-undo` entry, so
 // `diff`/`log` describe the world after the undo instead of the pre-undo

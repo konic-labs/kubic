@@ -9,10 +9,10 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { createSessionSpillSink } from '../spill.js';
+import { inv } from '../test-support/invocation.js';
 import { BASH_RESULT_MAX_CHARS, BASH_RESULT_MAX_LINES } from './bash.js';
-import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { OpContext } from './types.js';
 
 /** A real workspace + a real session dir with the real session sink. */
 function ctx(): OpContext {
@@ -22,13 +22,6 @@ function ctx(): OpContext {
     agentId: 'a1',
     spill: createSessionSpillSink(tempDir('bash-tool-session-')),
   };
-}
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
 }
 
 function writeCommand(script: string): string {

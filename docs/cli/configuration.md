@@ -807,8 +807,7 @@ not. The split, exactly as shipped:
   state is local wherever it is written), and the write never fails a run.
   This repository's own `.gitignore` ignores its whole `.kubic/` directory
   (`/.kubic/`) and also lists the same four rules, because `kubic doctor` checks
-  for those literal lines. The rules, the writer, and this page are pinned
-  together by `scripts/runtime-exclude.test.mjs` and the config tests.
+  for those literal lines.
 - **Models**: Pi's built-in providers (`anthropic`, `openai`, `google`,
   `amazon-bedrock`, …) are always registered; each is usable once its
   documented env key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,

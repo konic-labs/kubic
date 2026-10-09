@@ -164,6 +164,15 @@ describe('ensureRuntimeExcludeRules', () => {
     );
   });
 
+  it('ignores a path under every shipped runtime entry, never .kubic/ itself', () => {
+    const repo = roleScratchRepo();
+    ensureRuntimeExcludeRules({ cwd: repo.path });
+    for (const entry of RUNTIME_EXCLUDE_ENTRIES) {
+      expect(isIgnored(repo, `${entry}probe`), entry).toBe(true);
+    }
+    expect(isIgnored(repo, '.kubic/')).toBe(false);
+  });
+
   it('is idempotent: a second call rewrites nothing', () => {
     const repo = roleScratchRepo();
     const first = ensureRuntimeExcludeRules({ cwd: repo.path });

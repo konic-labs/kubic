@@ -125,8 +125,7 @@ The ship-vs-ignore split is not kept by hand twice:
 `runtime-exclude.ts` — the entries `kubic run` and `kubic tui` write into
 a user repo's local `.git/info/exclude` under a rewritable marker block.
 `.kubic/` itself is never ignored, so `config.toml` and `roles/*.md` stay
-committable. Pinned by `config.test.ts` and gated repo-wide by
-`scripts/runtime-exclude.test.mjs`.
+committable.
 
 ### Doctor (`doctor/`)
 

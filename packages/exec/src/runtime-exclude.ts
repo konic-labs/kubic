@@ -13,12 +13,9 @@
 //   * `.kubic/` itself stays unignored, so `config.toml` + `roles/*.md`
 //     remain committable (mixed directory, by construction).
 //
-// Placement is forced by: only packages/exec may spawn processes or
-// touch node:fs. This module is deliberately self-contained (node:
-// builtins only, no relative imports) so the plain `node --test` gate
-// (`scripts/runtime-exclude.test.mjs`, no build step) can drive the real
-// mechanism without `.js`-specifier resolution, and so @kubic/host can
-// derive its required-entry list from the same source of truth.
+// It lives in packages/exec because only exec may spawn processes or touch
+// node:fs, and @kubic/host derives its required-entry list from the same
+// source of truth.
 //
 // Fail-open: any git/fs failure degrades to a skip. Writing ignore rules
 // serves the user's commit path; it must never fail a run.

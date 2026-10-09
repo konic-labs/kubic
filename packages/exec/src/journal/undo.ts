@@ -52,7 +52,7 @@ import type { UndoPlan } from './undo-plan.js';
 import {
   canUndo,
   collectPlanBefore,
-  markerPositions,
+  headMoveBarrier,
   stateAfterUndo,
   stepCrosses,
   verdictFor,
@@ -219,8 +219,7 @@ export function applyUndo(
   // The barrier, evaluated against the live index (which may
   // have grown since planning — a concurrent append cannot smuggle a step
   // past a marker).
-  const undoAll = store.entries();
-  const undoMarkers = markerPositions(undoAll);
+  const barrier = headMoveBarrier(store.entries());
   // Dry-run simulates the walk's writes; a real run re-probes the actual
   // disk before each step (which the walk itself is mutating). Both follow
   // the same verdict rules, so --dry-run reports what the real run does.
@@ -239,7 +238,7 @@ export function applyUndo(
     // with `--force` — its pre-move content does not belong on the moved
     // HEAD. The dry run reports the same skip, so it never promises a
     // restore the real run refuses.
-    const crossing = stepCrosses(undoAll, step, undoMarkers);
+    const crossing = stepCrosses(barrier, step);
     if (crossing !== null && !force) {
       const reason =
         `head-moved: '${step.path}' was journaled before HEAD moved ` +

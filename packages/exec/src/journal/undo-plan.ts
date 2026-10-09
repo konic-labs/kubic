@@ -32,49 +32,49 @@ export interface UndoPlan {
   headMoves: HeadMove[];
 }
 
-// Chronological positions of in-scope markers in `all`, and
-// whether `step` is older than any of them (restoring it crosses the move).
-// Position-matched by value, not reference: applyUndo re-reads the index,
-// so its entry objects differ from the plan's. Duplicate-shaped entries
-// (identical JSON at two positions) resolve conservatively — crossing if
-// ANY matching position is older than a marker — the safe direction, and
-// `--force` is the override either way.
-export function markerPositions(all: JournalEntry[]): number[] {
-  const out: number[] = [];
-  all.forEach((e, i) => {
+// The HEAD-move barrier over one read of the index: the markers in
+// chronological order, and each entry's earliest position. Positions match
+// by value, not reference: applyUndo re-reads the index, so its entry
+// objects differ from the plan's. Duplicate-shaped entries (identical JSON
+// at two positions) resolve conservatively — the earliest position counts,
+// so the step crosses if ANY copy is older than a marker — the safe
+// direction, and `--force` is the override either way.
+interface HeadMoveBarrier {
+  markers: Array<{ at: number; move: HeadMove }>;
+  firstAt: Map<string, number>;
+}
+
+export function headMoveBarrier(all: JournalEntry[]): HeadMoveBarrier {
+  const markers: HeadMoveBarrier['markers'] = [];
+  all.forEach((e, at) => {
     if (
       e.op === 'marker' &&
       e.headFrom !== undefined &&
       e.headTo !== undefined
     ) {
-      out.push(i);
+      markers.push({ at, move: { from: e.headFrom, to: e.headTo } });
     }
   });
-  return out;
+  const firstAt = new Map<string, number>();
+  // Without a marker nothing can cross: no entry is keyed.
+  if (markers.length > 0) {
+    all.forEach((e, at) => {
+      const key = JSON.stringify(e);
+      if (!firstAt.has(key)) firstAt.set(key, at);
+    });
+  }
+  return { markers, firstAt };
 }
 
+// The move restoring `step` would cross: the oldest marker newer than it.
 export function stepCrosses(
-  all: JournalEntry[],
+  barrier: HeadMoveBarrier,
   step: JournalEntry,
-  markers: number[],
 ): HeadMove | null {
-  if (markers.length === 0) return null;
-  const key = JSON.stringify(step);
-  for (let i = 0; i < all.length; i++) {
-    if (JSON.stringify(all[i]) !== key) continue;
-    const newer = markers.filter((m) => m > i);
-    if (newer.length > 0) {
-      const marker = all[newer[0] ?? -1];
-      if (
-        marker?.op === 'marker' &&
-        marker.headFrom !== undefined &&
-        marker.headTo !== undefined
-      ) {
-        return { from: marker.headFrom, to: marker.headTo };
-      }
-    }
-  }
-  return null;
+  if (barrier.markers.length === 0) return null;
+  const at = barrier.firstAt.get(JSON.stringify(step));
+  if (at === undefined) return null;
+  return barrier.markers.find((marker) => marker.at > at)?.move ?? null;
 }
 
 // A step is reversible when its pre-state is recoverable: a before-blob,
@@ -188,7 +188,7 @@ export function planUndo(
   // exactly like a whole-run one), so they survive the path filter and are
   // dropped only when steps are selected.
   const all = store.entries();
-  const markers = markerPositions(all);
+  const barrier = headMoveBarrier(all);
   let steps = [...all].reverse();
   if (scope.path !== undefined) {
     const path = scope.path;
@@ -251,7 +251,7 @@ export function planUndo(
   // deduplicated (one marker can block many steps).
   const headMoves: HeadMove[] = [];
   for (const step of steps) {
-    const move = stepCrosses(all, step, markers);
+    const move = stepCrosses(barrier, step);
     if (
       move !== null &&
       !headMoves.some(

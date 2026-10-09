@@ -160,6 +160,204 @@ function oneLine(request: ApprovalViewRequest): string {
   return `${request.toolName} ${what}`.replace(/\s+/g, ' ').trim();
 }
 
+const INDENT = '  ';
+const KEY_GAP = '    ';
+
+// What will run: the edit/write diff preview, else the command (paged by
+// lines), else the paths or the summary. `paged` says whether the page key
+// shows more.
+function whatRows(
+  ui: UiTheme,
+  request: ApprovalViewRequest,
+  room: number,
+  commandPage: number,
+): { rows: string[]; paged: boolean } {
+  const preview = request.preview;
+  const rows: string[] = [];
+  if (preview !== undefined) {
+    const all = previewRows(preview);
+    const full = commandPage % 2 === 1;
+    const shown = full ? all : all.slice(0, APPROVAL_PREVIEW_ROWS);
+    const digits = Math.max(1, ...all.map((row) => row.number.length));
+    for (const line of renderDiffRows(ui, shown, room, {
+      numberWidth: digits,
+    })) {
+      rows.push(`${INDENT}${line}`);
+    }
+    if (all.length <= shown.length) return { rows, paged: false };
+    rows.push(
+      `${INDENT}${ui.fg('fg2')(`… ${all.length - shown.length} more lines`)}`,
+    );
+    return { rows, paged: true };
+  }
+  if (request.command !== undefined && request.command !== '') {
+    const all = commandRows(request.command, room - 2);
+    const pages = Math.max(
+      1,
+      Math.ceil(all.length / APPROVAL_COMMAND_PAGE_LINES),
+    );
+    const page = ((commandPage % pages) + pages) % pages;
+    const from = page * APPROVAL_COMMAND_PAGE_LINES;
+    const shown = all.slice(from, from + APPROVAL_COMMAND_PAGE_LINES);
+    shown.forEach((row, index) => {
+      rows.push(
+        `${INDENT}${index === 0 && page === 0 ? ui.fg('fg2')('$ ') : '  '}${emphasize(ui, row)}`,
+      );
+    });
+    if (pages <= 1) return { rows, paged: false };
+    rows.push(
+      `${INDENT}${ui.fg('fg2')(`… lines ${from + 1}–${from + shown.length} of ${all.length}`)}`,
+    );
+    return { rows, paged: true };
+  }
+  const what =
+    request.paths !== undefined && request.paths.length > 0
+      ? request.paths.join(', ')
+      : (request.summary ?? '');
+  rows.push(`${INDENT}${ui.fg('fg0')(what)}`);
+  return { rows, paged: false };
+}
+
+// Why it asks: the capability's reason, the working directory, the model's
+// explanation when asked for, and the next queued ask.
+function whyRows(
+  ui: UiTheme,
+  request: ApprovalViewRequest,
+  options: ApprovalCardOptions,
+  narrow: boolean,
+): string[] {
+  const rows: string[] = [];
+  const [label, sentence] = approvalReason(request.capability);
+  rows.push(
+    `${INDENT}${ui.fg('warn')('▲')} ${ui.fg('fg0')(label.padEnd(LABEL_WIDTH))}${narrow || sentence === '' ? '' : ` ${ui.fg('fg1')(sentence)}`}`,
+  );
+  if (options.cwd !== undefined && options.cwd !== '') {
+    const journaled =
+      request.toolName === 'edit' || request.toolName === 'write'
+        ? ' · the journal keeps the old file, /undo restores it'
+        : '';
+    rows.push(
+      `${INDENT}${ui.fg('fg2')('○')} ${ui.fg('fg0')('cwd'.padEnd(LABEL_WIDTH))} ${ui.fg('fg2')(`${options.cwd}${narrow ? '' : journaled}`)}`,
+    );
+  }
+  if (options.explain) {
+    const why = request.justification ?? request.summary ?? '';
+    rows.push(
+      `${INDENT}${ui.fg('info')('ℹ')} ${ui.fg('fg0')('why'.padEnd(LABEL_WIDTH))} ${ui.fg('fg1')(why === '' ? 'the model gave no reason' : why)}`,
+    );
+  }
+  if (options.next !== undefined) {
+    rows.push('');
+    rows.push(
+      `${INDENT}${ui.fg('fg2')('next:')} ${ui.fg('fg1')(oneLine(options.next))}${options.next.preview === undefined ? '' : ` ${previewCounts(ui, options.next.preview)}`}`,
+    );
+  }
+  return rows;
+}
+
+// The keys that answer it: `shown` is what the card shows now (the open
+// input, the too-short refusal, the locked hint, or the keys), `armed` the
+// keys once the card is armed.
+function keyParts(
+  ui: UiTheme,
+  request: ApprovalViewRequest,
+  options: ApprovalCardOptions,
+  pageable: boolean,
+): { shown: string[]; armed: string[] } {
+  const cap = (action: ApprovalAction): string =>
+    options.keys[action]
+      .filter((key) => key !== 'escape')
+      .map((key) => keyCap(key))
+      .join('/');
+  const key = (k: string, what: string): string =>
+    k === ''
+      ? ''
+      : `${ui.style({ fg: 'fg0', bold: true })(k)}  ${ui.fg('fg1')(what)}`;
+  const armed = [
+    key(cap('allow-once'), 'allow once'),
+    key(cap('allow-session'), 'allow for session'),
+    key(cap('deny'), 'deny'),
+    // Steering — only where the host offered it.
+    key(cap('comment'), 'deny + comment'),
+    request.editable === true ? key(cap('edit'), 'edit command') : '',
+    request.batchable === true
+      ? key(cap('allow-edits'), 'allow all edits this turn')
+      : '',
+    pageable
+      ? key(
+          options.pageKey,
+          request.preview === undefined ? 'next page' : 'full diff',
+        )
+      : '',
+    key(options.explainKey, 'explain'),
+  ].filter((part) => part !== '');
+  if (options.input !== undefined) {
+    // The open input stands where the keys were.
+    const editing = options.input.kind === 'edit';
+    return {
+      shown: [
+        `${ui.fg('fg2')(editing ? 'edit the command ›' : 'deny with a comment ›')} ${ui.fg('fg0')(options.input.text)}${ui.fg('accent')('▏')}`,
+        key('⏎', editing ? 'allow as edited' : 'deny with it'),
+        key('esc', 'back'),
+      ],
+      armed,
+    };
+  }
+  if (!options.allowable) {
+    return {
+      shown: [
+        ui.fg('warn')(
+          'the terminal is too short to show this command — enlarge it',
+        ),
+        key(cap('deny'), 'deny'),
+      ],
+      armed,
+    };
+  }
+  if (!options.armed) {
+    return { shown: [ui.fg('fg2')('… keys unlock in a moment')], armed };
+  }
+  return { shown: armed, armed };
+}
+
+// The rows a set of keys takes: one row when it fits beside `esc = deny`,
+// else whole keys per row (a key is never cut off; a part wider than a row
+// wraps on its own) with `esc = deny` on the last row.
+function keyRows(
+  set: readonly string[],
+  inner: number,
+  narrow: boolean,
+  escDeny: string,
+): string[] {
+  const oneRow = `${INDENT}${set.join(KEY_GAP)}`;
+  if (!narrow && visibleWidth(oneRow) + visibleWidth(escDeny) + 1 <= inner) {
+    return [leftRight(oneRow, escDeny, inner)];
+  }
+  const rows: string[] = [];
+  const keyRoom = Math.max(1, inner - INDENT.length);
+  let row = '';
+  for (const part of set) {
+    const pieces =
+      visibleWidth(part) > keyRoom ? wrapStyled(part, keyRoom) : [part];
+    for (const piece of pieces) {
+      if (row === '') {
+        row = piece;
+      } else if (
+        visibleWidth(row) + KEY_GAP.length + visibleWidth(piece) <=
+        keyRoom
+      ) {
+        row += `${KEY_GAP}${piece}`;
+      } else {
+        rows.push(`${INDENT}${row}`);
+        row = piece;
+      }
+    }
+  }
+  if (row !== '') rows.push(`${INDENT}${row}`);
+  if (escDeny !== '') rows.push(`${INDENT}${escDeny}`);
+  return rows;
+}
+
 export function renderApprovalCard(
   ui: UiTheme,
   request: ApprovalViewRequest,
@@ -170,175 +368,33 @@ export function renderApprovalCard(
   // The frame's inner width (a left edge only) minus the body's indent.
   const inner = Math.max(1, w - 2);
   const room = Math.max(1, inner - 3);
-  const body: string[] = [];
-  const indent = '  ';
-  // What will run.
-  const preview = request.preview;
-  let paged = false;
-  if (preview !== undefined) {
-    const rows = previewRows(preview);
-    const full = options.commandPage % 2 === 1;
-    const shown = full ? rows : rows.slice(0, APPROVAL_PREVIEW_ROWS);
-    const digits = Math.max(1, ...rows.map((row) => row.number.length));
-    for (const line of renderDiffRows(ui, shown, room, {
-      numberWidth: digits,
-    })) {
-      body.push(`${indent}${line}`);
-    }
-    if (rows.length > shown.length) {
-      paged = true;
-      body.push(
-        `${indent}${ui.fg('fg2')(`… ${rows.length - shown.length} more lines`)}`,
-      );
-    }
-  } else if (request.command !== undefined && request.command !== '') {
-    const rows = commandRows(request.command, room - 2);
-    const pages = Math.max(
-      1,
-      Math.ceil(rows.length / APPROVAL_COMMAND_PAGE_LINES),
-    );
-    const page = ((options.commandPage % pages) + pages) % pages;
-    const from = page * APPROVAL_COMMAND_PAGE_LINES;
-    const shown = rows.slice(from, from + APPROVAL_COMMAND_PAGE_LINES);
-    shown.forEach((row, index) => {
-      body.push(
-        `${indent}${index === 0 && page === 0 ? ui.fg('fg2')('$ ') : '  '}${emphasize(ui, row)}`,
-      );
-    });
-    if (pages > 1) {
-      paged = true;
-      body.push(
-        `${indent}${ui.fg('fg2')(`… lines ${from + 1}–${from + shown.length} of ${rows.length}`)}`,
-      );
-    }
-  } else {
-    const what =
-      request.paths !== undefined && request.paths.length > 0
-        ? request.paths.join(', ')
-        : (request.summary ?? '');
-    body.push(`${indent}${ui.fg('fg0')(what)}`);
-  }
-  body.push('');
-  // Why it asks.
-  const [label, sentence] = approvalReason(request.capability);
   const narrow = w < 60;
-  body.push(
-    `${indent}${ui.fg('warn')('▲')} ${ui.fg('fg0')(label.padEnd(LABEL_WIDTH))}${narrow || sentence === '' ? '' : ` ${ui.fg('fg1')(sentence)}`}`,
+  const what = whatRows(ui, request, room, options.commandPage);
+  const keys = keyParts(
+    ui,
+    request,
+    options,
+    what.paged || request.preview !== undefined,
   );
-  if (options.cwd !== undefined && options.cwd !== '') {
-    const journaled =
-      request.toolName === 'edit' || request.toolName === 'write'
-        ? ' · the journal keeps the old file, /undo restores it'
-        : '';
-    body.push(
-      `${indent}${ui.fg('fg2')('○')} ${ui.fg('fg0')('cwd'.padEnd(LABEL_WIDTH))} ${ui.fg('fg2')(`${options.cwd}${narrow ? '' : journaled}`)}`,
-    );
-  }
-  if (options.explain) {
-    const why = request.justification ?? request.summary ?? '';
-    body.push(
-      `${indent}${ui.fg('info')('ℹ')} ${ui.fg('fg0')('why'.padEnd(LABEL_WIDTH))} ${ui.fg('fg1')(why === '' ? 'the model gave no reason' : why)}`,
-    );
-  }
-  if (options.next !== undefined) {
-    body.push('');
-    body.push(
-      `${indent}${ui.fg('fg2')('next:')} ${ui.fg('fg1')(oneLine(options.next))}${options.next.preview === undefined ? '' : ` ${previewCounts(ui, options.next.preview)}`}`,
-    );
-  }
-  body.push('');
-  // The keys that answer it.
-  const cap = (action: ApprovalAction): string =>
-    options.keys[action]
-      .filter((key) => key !== 'escape')
-      .map((key) => keyCap(key))
-      .join('/');
-  const key = (k: string, what: string): string =>
-    k === ''
-      ? ''
-      : `${ui.style({ fg: 'fg0', bold: true })(k)}  ${ui.fg('fg1')(what)}`;
   const escDeny =
     options.input === undefined && options.keys.deny.includes('escape')
       ? `${ui.fg('fg2')('esc = deny')} `
       : '';
-  // The keys once the card is armed (the row a locked card reserves).
-  const armedParts = [
-    key(cap('allow-once'), 'allow once'),
-    key(cap('allow-session'), 'allow for session'),
-    key(cap('deny'), 'deny'),
-    // Steering — only where the host offered it.
-    key(cap('comment'), 'deny + comment'),
-    request.editable === true ? key(cap('edit'), 'edit command') : '',
-    request.batchable === true
-      ? key(cap('allow-edits'), 'allow all edits this turn')
-      : '',
-    paged || preview !== undefined
-      ? key(options.pageKey, preview === undefined ? 'next page' : 'full diff')
-      : '',
-    key(options.explainKey, 'explain'),
-  ].filter((part) => part !== '');
-  let parts: string[];
-  if (options.input !== undefined) {
-    // The open input stands where the keys were.
-    const editing = options.input.kind === 'edit';
-    parts = [
-      `${ui.fg('fg2')(editing ? 'edit the command ›' : 'deny with a comment ›')} ${ui.fg('fg0')(options.input.text)}${ui.fg('accent')('▏')}`,
-      key('⏎', editing ? 'allow as edited' : 'deny with it'),
-      key('esc', 'back'),
-    ];
-  } else if (!options.allowable) {
-    parts = [
-      ui.fg('warn')(
-        'the terminal is too short to show this command — enlarge it',
-      ),
-      key(cap('deny'), 'deny'),
-    ];
-  } else if (!options.armed) {
-    parts = [ui.fg('fg2')('… keys unlock in a moment')];
-  } else {
-    parts = armedParts;
-  }
-  const gap = '    ';
-  // The rows a set of keys takes: one row when it fits beside `esc = deny`,
-  // else whole keys per row (a key is never cut off; a part wider than a row
-  // wraps on its own) with `esc = deny` on the last row.
-  const keyRows = (set: readonly string[]): string[] => {
-    const oneRow = `${indent}${set.join(gap)}`;
-    if (!narrow && visibleWidth(oneRow) + visibleWidth(escDeny) + 1 <= inner) {
-      return [leftRight(oneRow, escDeny, inner)];
-    }
-    const rows: string[] = [];
-    const keyRoom = Math.max(1, inner - indent.length);
-    let row = '';
-    for (const part of set) {
-      const pieces =
-        visibleWidth(part) > keyRoom ? wrapStyled(part, keyRoom) : [part];
-      for (const piece of pieces) {
-        if (row === '') {
-          row = piece;
-        } else if (
-          visibleWidth(row) + gap.length + visibleWidth(piece) <=
-          keyRoom
-        ) {
-          row += `${gap}${piece}`;
-        } else {
-          rows.push(`${indent}${row}`);
-          row = piece;
-        }
-      }
-    }
-    if (row !== '') rows.push(`${indent}${row}`);
-    if (escDeny !== '') rows.push(`${indent}${escDeny}`);
-    return rows;
-  };
-  const shownRows = keyRows(parts);
+  const shownRows = keyRows(keys.shown, inner, narrow, escDeny);
   // A locked card keeps the height it will have once armed, so arming never
   // moves the frame (nor changes whether the card fits).
   if (options.input === undefined && options.allowable && !options.armed) {
-    const armedHeight = keyRows(armedParts).length;
+    const armedHeight = keyRows(keys.armed, inner, narrow, escDeny).length;
     while (shownRows.length < armedHeight) shownRows.push('');
   }
-  body.push(...shownRows);
+  const body = [
+    ...what.rows,
+    '',
+    ...whyRows(ui, request, options, narrow),
+    '',
+    ...shownRows,
+  ];
+  const preview = request.preview;
   const title = `${badge(ui, 'APPROVAL', 'waiting')}${ui.fg('warn')(' ━ ')}${ui.style({ fg: 'fg0', bold: true })(request.toolName)}${
     preview === undefined ? '' : ` ${previewCounts(ui, preview)}`
   }`;

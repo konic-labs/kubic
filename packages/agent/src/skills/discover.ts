@@ -61,9 +61,10 @@ function loadSkillDir(
 // rooting turned './my-skill' into '/my-skill/SKILL.md') and never at the
 // bridge's own root (which is the sessions root on `kubic run`). A bare
 // name resolves against the discovery roots first (first hit wins — the
-// shipped precedence), then against the cwd as a last resort. No absolute
-// '/<name>' probe is made (a stray filesystem-root hit must never
-// win over the roots).
+// shipped precedence): a top-level `<root>/<name>` in any root, then a
+// nested skill directory of that name, found by the walk discovery makes.
+// The cwd is the last resort. No absolute '/<name>' probe is made (a stray
+// filesystem-root hit must never win over the roots).
 function loadExplicitSkill(
   bridge: FileBridge,
   value: string,
@@ -80,6 +81,12 @@ function loadExplicitSkill(
   for (const root of roots) {
     const hit = loadSkillDir(bridge, joinPosix(root, value), 'cli', log);
     if (hit !== undefined) return hit;
+  }
+  for (const root of roots) {
+    const nested = listSkillDirs(bridge, root).find(
+      (dir) => basenameOf(dir) === value,
+    );
+    if (nested !== undefined) return loadSkillDir(bridge, nested, 'cli', log);
   }
   return loadSkillDir(bridge, joinPosix(cwd, value), 'cli', log);
 }

@@ -1122,6 +1122,49 @@ describe('explicit skill loading hardening', () => {
     expect(result.skills.map((skill) => skill.name)).toEqual(['bare']);
   });
 
+  it('resolves a bare --skill name to a nested skill under a discovery root', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.agents/skills/group/nested/SKILL.md`,
+      skillMd('name: nested\ndescription: Nested'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['nested'],
+    });
+    expect(result.unknownSkills).toEqual([]);
+    expect(
+      result.skills.map((skill) => [skill.name, skill.source, skill.filePath]),
+    ).toEqual([
+      ['nested', 'cli', `${HOME}/.agents/skills/group/nested/SKILL.md`],
+    ]);
+  });
+
+  it('prefers a top-level skill in any root over a nested one for a bare name', () => {
+    const { env, bridge } = setup();
+    env.fs.writeFile(
+      `${HOME}/.pi/agent/skills/group/twin/SKILL.md`,
+      skillMd('name: twin\ndescription: Nested twin'),
+    );
+    env.fs.writeFile(
+      `${HOME}/.kubic/skills/twin/SKILL.md`,
+      skillMd('name: twin\ndescription: Top-level twin'),
+    );
+    const result = discoverSkills({
+      bridge,
+      homeDir: HOME,
+      cwd: CWD,
+      trusted: false,
+      cliSkills: ['twin'],
+    });
+    expect(
+      result.skills.map((skill) => [skill.source, skill.filePath]),
+    ).toEqual([['cli', `${HOME}/.kubic/skills/twin/SKILL.md`]]);
+  });
+
   it('skips missing settings dirs silently', () => {
     const { bridge } = setup();
     const result = discoverSkills({

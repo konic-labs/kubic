@@ -64,7 +64,7 @@ hooks after `kubic.policy`, so a blocked call opens no span —
 unchanged (the hook never fails a call).
 
 Two destinations, both documented on the
-[commands page](../cli/commands.md#where-the-spans-go):
+[commands page](../cli/run.md#where-the-spans-go):
 
 1. **stderr, behind `kubic run --debug`** — each span close emits one
    classed line through the shared `DebugSink`. Off by default, so stdout

@@ -313,7 +313,7 @@ describe('approval card on the kubic tui path', () => {
     fake.feed('\r');
     await waitFor(() => fake.frame.includes('APPROVAL'));
     // Ctrl-C once cancels the RUNNING turn (documented in
-    // docs/cli/commands.md) and the shutdown path settles the pending
+    // docs/cli/tui-keys.md) and the shutdown path settles the pending
     // approval as a deny — so the turn ends without waiting for the lane's
     // own timeout and no frame is left showing a request nobody can answer.
     fake.feed('\x03');

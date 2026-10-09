@@ -2,7 +2,7 @@
 // Maps the real `kubic run` events (lane accept, lane drive, harness tool
 // hooks) onto the SpanRecorder, so a live `kubic run` records spans
 // instead of leaving unimplemented. Destination is documented in
-// docs/packages/host.md and docs/cli/commands.md:
+// docs/packages/host.md and docs/cli/run.md:
 //   - durable artifact: <sessions-root>/<id>/spans.jsonl (one JSON record
 //     per span, written by the composition root next to the journal),
 //   - stderr debug lines on the existing vocabulary (`[agent]` lane

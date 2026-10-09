@@ -37,7 +37,15 @@ rationale, package APIs and CLI behaviour never mix.
 
 | Page | Covers |
 | --- | --- |
-| [commands.md](cli/commands.md) | Every `kubic` command and flag |
+| [commands.md](cli/commands.md) | The command index: global behaviour and where each command is documented |
+| [run.md](cli/run.md) | `kubic run`, `kubic attach`, `kubic resume` |
+| [tui.md](cli/tui.md) | `kubic tui`: the interactive surface |
+| [tui-keys.md](cli/tui-keys.md) | The TUI's screen layout, keys and keybindings file |
+| [approvals.md](cli/approvals.md) | The approval card and what each trigger detects |
+| [sessions.md](cli/sessions.md) | `kubic sessions`: listing, forking and pruning sessions |
+| [journal.md](cli/journal.md) | `kubic diff`, `undo`, `log`, `status`, `git`, `commit`, `journal prune` |
+| [models.md](cli/models.md) | `kubic models`, `kubic setup`, `models.json` and provider keys |
+| [analysis.md](cli/analysis.md) | `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy`, `audit` |
 | [exit-codes.md](cli/exit-codes.md) | The exit-code table |
 | [configuration.md](cli/configuration.md) | Config precedence and secrets |
 | [doctor-and-debug.md](cli/doctor-and-debug.md) | `kubic doctor` diagnostics and debugging |

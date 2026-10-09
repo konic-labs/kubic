@@ -91,7 +91,7 @@ prints `doctor: 16 pass, 6 warn, 1 fail, 0 skip`. Its one failure is
 honest limits and the detection-only policy note. See
 [`docs/cli/doctor-and-debug.md`](docs/cli/doctor-and-debug.md). With a provider key
 in your environment, `./bin/kubic.js setup` saves a default model to
-`~/.kubic/config.toml`; see [`docs/cli/commands.md`](docs/cli/commands.md#kubic-setup).
+`~/.kubic/config.toml`; see [`docs/cli/commands.md`](docs/cli/models.md#kubic-setup).
 
 `dist/` is gitignored build output: `npm run build` bundles the CLI into one
 file, `dist/kubic.js`, with esbuild (`scripts/build.mjs`). Third-party packages

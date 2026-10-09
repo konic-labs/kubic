@@ -36,6 +36,22 @@ searched, and a user skill root is never reported as a project skill.
 The decision is threaded to every consuming command (`run`, `tui`,
 `replay`, `models` and `doctor`).
 
+## `kubic trust [--revoke] [--list] [path]`
+
+Record, revoke or list the durable project-trust decision that makes a
+committed `.kubic/config.toml` usable — see [project trust](trust.md).
+`kubic trust` grants trust for the current directory (or the `[path]`
+operand — a directory, or a symlink to one: the grant is recorded under the
+resolved path), `--revoke` removes the recorded decision so the pre-trust
+refusal comes back, and `--list` prints every recorded decision. **One
+grant covers the whole project tree**, not only `config.toml`: the
+committed `.kubic/config.toml`, the project `models.json` (its provider
+URLs are sent the key of any `*_API_KEY` or `KUBIC_*` variable it names,
+`KUBIC_API_KEY` when it names none) and the
+project skills. The help, the interactive prompt and the grant output all
+say so. Exit 0 on success; a corrupt store is named and exits 1; a path that
+is not a directory, or `--list` combined with `--revoke`/a path, exits 2.
+
 ## `kubic trust`
 
 | Invocation | Effect |
@@ -59,7 +75,7 @@ Exit codes: **0** recorded, revoked or listed; **1** an unreadable or
 corrupt store (the file is named — fix or delete it and run the command
 again); **2** a usage error (a path that is not a directory, `--list`
 combined with `--revoke` or a path). `kubic trust --help` prints the
-generated usage — [commands](commands.md#kubic-trust---revoke---list-path).
+generated usage — [commands](#kubic-trust---revoke---list-path).
 
 ## The store
 

@@ -10,7 +10,7 @@
 // approval wiring and the quit arming; app/input-router.ts routes every key
 // through one precedence table.
 //
-// Key map (the shipped loop; docs/cli/commands.md mirrors it):
+// Key map (the shipped loop; docs/cli/tui-keys.md mirrors it):
 //   Enter            submit the draft
 //   Ctrl-J, Shift+Enter, `\`+Enter   newline (multi-line entry)
 //   Ctrl-T           show / hide the tree (it starts hidden)

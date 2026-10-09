@@ -34,10 +34,17 @@ hand-rolled flags); `./bin/kubic.js` is the committed executable over that
 output. All command examples below assume the built binary (`./bin/kubic.js
 …`, equivalently `npm run kubic -- …`). Rebuilding is byte-equivalent.
 
-- [commands.md](commands.md) — every `kubic` command and flag
+- [commands.md](commands.md) — the command index and the rules every command follows
+- [run.md](run.md) — `kubic run`, `attach`, `resume`
+- [tui.md](tui.md) — `kubic tui`, with its [keys](tui-keys.md) and [approvals](approvals.md)
+- [sessions.md](sessions.md) — `kubic sessions`
+- [journal.md](journal.md) — `kubic diff`, `undo`, `log`, `status`, `git`, `commit`, `journal prune`
+- [models.md](models.md) — `kubic models`, `setup`, `models.json` and provider keys
+- [analysis.md](analysis.md) — `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy`, `audit`
 - [exit-codes.md](exit-codes.md) — exit-code table
 - [tools.md](tools.md) — the fifteen tools the model calls: argument contract and result shapes
-- [configuration.md](configuration.md) — config precedence and secrets
+- [configuration.md](configuration.md) — config layers, keys and `kubic config`
+- [enterprise.md](enterprise.md) — the managed policy layer
 - [trust.md](trust.md) — `kubic trust` and the project-trust store
 - [doctor-and-debug.md](doctor-and-debug.md) — `kubic doctor` diagnostics
 - [skills.md](skills.md) — `kubic skills`: which skills loaded and why any were left out

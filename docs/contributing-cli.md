@@ -134,7 +134,7 @@ keyed by signal name: SIGHUP 129, SIGINT 130, SIGTERM 143.
   otherwise (pipes, CI, NO_COLOR), aligned by terminal display width (wide
   CJK cells count 2).
 - **The output kit** (`packages/core/src/cli/kit.ts`) is the TTY
-  layer for human-facing output (``): `brandHeading`,
+  layer for human-facing output: `brandHeading`,
   `sectionLabel`, `statusMark` (✓ ▲ ✕ ○ ℹ and the spinner frame),
   `alignedRows`, `receipt`, `nextActions`, `errorBlock`, `hintLine`
   (backtick spans highlighted) and `kvLine`. Use it only when

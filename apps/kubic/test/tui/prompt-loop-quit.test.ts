@@ -221,7 +221,7 @@ describe('kubic tui prompt loop', () => {
   });
 
   it('quits on a second Ctrl-C during a turn, matching the documented key table', async () => {
-    // docs/cli/commands.md ships: "Ctrl-C | Cancel the in-flight turn; while
+    // docs/cli/tui-keys.md ships: "Ctrl-C | Cancel the in-flight turn; while
     // idle, quit. A second Ctrl-C during a turn also quits." The second one
     // arrives while the cancellation is still draining — the turn is no
     // longer "running" but the abort has not settled. That must quit.

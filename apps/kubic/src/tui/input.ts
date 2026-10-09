@@ -179,7 +179,7 @@ export class TuiInput {
         }
         // Ctrl-C during a turn. The first one cancels the operation and
         // keeps the session alive; a second one (while the cancellation is
-        // still draining) quits, which is the contract docs/cli/commands.md
+        // still draining) quits, which is the contract docs/cli/tui-keys.md
         // ships.
         if (!running.isCancelling()) {
           this.interruptTurn(running);

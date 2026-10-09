@@ -532,7 +532,7 @@ export class TuiTurnRunner {
 
   // True between a cancel request and the turn settling: the loop uses it to
   // distinguish the *first* Ctrl-C (cancel the operation) from a second one
-  // (quit), which is the shipped contract in docs/cli/commands.md.
+  // (quit), which is the shipped contract in docs/cli/tui-keys.md.
   isCancelling(): boolean {
     return this.aborted && this.isRunning();
   }

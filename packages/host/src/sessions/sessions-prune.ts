@@ -4,7 +4,7 @@
 // Scope: `<root>/<session-id>/` state dirs only — the journal store, spans,
 // approvals posture, and the session lock live there. A folder that holds no
 // session file is not a session and is never this command's scope
-// (documented in docs/cli/commands.md): a prune may only take a directory it
+// (documented in docs/cli/sessions.md): a prune may only take a directory it
 // can prove belongs to one session alone.
 //
 // Rails (each pinned behaviourally by sessions-prune.test.ts):

@@ -815,7 +815,7 @@ export const CONFIG_SECTIONS = [
       {
         keys: ['audit.sink', 'audit.level', 'audit.target', 'audit.facility'],
         label: '`audit` (`[[audit]]`)',
-        text: 'Sink tables (`sink` = `syslog` \\| `file` \\| `memory`, `level` = `privileged` \\| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory repo ledger (see [Audit sinks](#audit-sinks-audit)).',
+        text: 'Sink tables (`sink` = `syslog` \\| `file` \\| `memory`, `level` = `privileged` \\| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory repo ledger (see [Audit sinks](enterprise.md#audit-sinks-audit)).',
       },
     ],
   },

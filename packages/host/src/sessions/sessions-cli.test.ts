@@ -210,7 +210,10 @@ describe('sessions CLI', () => {
   it('create --cwd refuses a missing or non-directory path by name', async () => {
     const root = tmpRoot();
     writeFileSync(join(root, 'file'), 'not a directory\n');
-    for (const bad of [join(root, 'does-not-exist'), join(root, 'file')]) {
+    for (const [bad, reason] of [
+      [join(root, 'does-not-exist'), 'no such directory'],
+      [join(root, 'file'), 'not a directory'],
+    ] as const) {
       const o = out();
       const e = out();
       const code = (
@@ -224,7 +227,9 @@ describe('sessions CLI', () => {
         )
       ).exitCode;
       expect(code).toBe(1);
-      expect(e.lines.join('\n')).toContain(bad);
+      expect(e.lines.join('\n')).toContain(
+        `kubic sessions create: --cwd ${bad}: ${reason}`,
+      );
     }
     // Neither refusal created a session.
     const listing = out();

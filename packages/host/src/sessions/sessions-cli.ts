@@ -241,14 +241,18 @@ export async function runSessionsCommand(
     // I/O confinement: the check rides a root-anchored bridge, so an
     // absolute operand passes through unconfined.
     const cwd = resolve(process.cwd(), invocation.cwd ?? process.cwd());
-    let isDirectory = false;
+    // A path that exists but is no directory is named as such, not as
+    // missing.
+    let refusal: string | undefined;
     try {
-      isDirectory = createNodeFileBridge('/').fileInfo(cwd).isDirectory;
+      if (!createNodeFileBridge('/').fileInfo(cwd).isDirectory) {
+        refusal = 'not a directory';
+      }
     } catch {
-      isDirectory = false;
+      refusal = 'no such directory';
     }
-    if (!isDirectory) {
-      log.error(`kubic sessions create: --cwd ${cwd}: no such directory`);
+    if (refusal !== undefined) {
+      log.error(`kubic sessions create: --cwd ${cwd}: ${refusal}`);
       return { exitCode: EXIT_FAILED };
     }
     const session = await createSession(store, { cwd }, BACKGROUND_CONTEXT);

@@ -12,13 +12,12 @@ same-major records parse with no shim, unknown fields are preserved, and
 an unknown major is refused with `unknown-major` (exit 2). The field list,
 the fail-closed rules and the changelog live in `CONTRACT.md`.
 
-## Public API (`packages/trajectory/src`)
+## Entry points
 
-| Module | Exports |
+| Entry point | What it holds |
 | --- | --- |
-| `schema.ts` | `TrajectoryExport` and every section interface, `TRAJECTORY_FIELDS`, `SCHEMA_VERSION/MAJOR`, `TRAJECTORY_FAILURE_CODES`, `isTrajectoryFailureCode`, `RESULT_STATUSES`, `TrajectorySchemaError`, `TrajectorySchemaErrorCode`, `parseTrajectoryExport`, `parseTrajectoryExportJSON` |
-| `export.ts` | `BuildTrajectoryInput`, `RawObservation`, `buildTrajectoryExport`, `MAX_OBSERVATION_BYTES`, `TrajectoryExportError`, `TrajectoryExportErrorCode` |
-| `index.ts` | Re-exports the surface above; callers import `export.ts` / `schema.ts` directly |
+| `@kubic/trajectory/schema` | `TrajectoryExport` and its sections, the version, the result statuses and failure codes, and `parseTrajectoryExport` (`TrajectorySchemaError`: `unknown-major` or `malformed`, exit 2) |
+| `@kubic/trajectory/export` | `buildTrajectoryExport`, which assembles and checks one record (`TrajectoryExportError`, exit 2, names the fail-closed rule a record broke) |
 
 ## Producers
 
@@ -49,32 +48,17 @@ The pure assembler is `packages/host/src/run/run-trajectory.ts`
 
 ## Contracts
 
-`RESULT_STATUSES` is `completed`, `failed`, `cancelled`, `timeout`,
-`turn_limit`. `TRAJECTORY_FAILURE_CODES` snapshots the 16 lane failure
-codes owned by `packages/agent/src/lane/failures.ts` (pinned equal by
-test): `model_failed`, `model_refused`, `provider_transient`,
-`provider_auth`, `tool_failed`, `tool_invalid_args`, `tool_timeout`,
-`tool_unavailable`, `process_crashed`, `process_spawn_failed`,
-`workspace_failed`, `context_overflow`, `context_polluted`, `run_limit`,
-`approval_denied`, `approval_timed_out`.
-
-`buildTrajectoryExport` takes `task`, `identity`, `model`, `prompt`,
-`resources`, `actions`, `observations: RawObservation[]`
-(`{ seq, actionSeq, output }`), `state`, `provenance`, `environment`,
-`worktree`, `diff`, `approvals`, `timestamps: { startedAt, endedAt }`,
-`usage`, `result` and `eval?`. `MAX_OBSERVATION_BYTES` is 8 KiB. Build
-failures throw `TrajectoryExportError` (exit 2) with
-`TrajectoryExportErrorCode`: `missing-provenance`, `invalid-provenance`,
-`missing-environment`, `untrusted-environment`,
-`missing-failure-category`, `contradictory-result`, `invalid-timestamps`,
-`invalid-usage`, `invalid-escalation`. Parse failures throw
-`TrajectorySchemaError` (exit 2, the usage code): `unknown-major` | `malformed`.
+A result status is `completed`, `failed`, `cancelled`, `timeout` or
+`turn_limit`, and a failed run carries one of the lane's failure codes
+(`packages/agent/src/lane/failures.ts`), which the schema snapshots. An
+observation keeps at most 8 KiB. The fail-closed rules a record must pass
+are in `CONTRACT.md`.
 
 The package imports none of the shapes it records: the execution
-environment (`exec` `env/`), file-change diffs (`exec`
-`journal/diff.ts`), approval verdicts (`host` `approvals/`), usage rows
-(`agent` `usage.ts`) and failure codes (`agent` `lane/failures.ts`) are
-structural snapshots pinned by the golden fixture test.
+environment (`exec` `env/`), file-change diffs (`exec` `journal/diff.ts`),
+approval verdicts (`host` `approvals/`), usage rows (`agent` `usage.ts`) and
+failure codes (`agent` `lane/failures.ts`) are structural snapshots pinned by
+the golden fixture test.
 
 ## Dep-direction neighbours
 

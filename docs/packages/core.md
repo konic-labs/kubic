@@ -9,7 +9,7 @@ classifiers and the license constants. It imports nothing internal —
 `scripts/dep-lint.mjs` rejects any
 `core → exec/agent/host/trajectory/eval/tui` edge structurally.
 
-## Public API (`packages/core/src`)
+## Entry points (`packages/core/src`)
 
 | Module | Exports |
 | --- | --- |
@@ -24,7 +24,6 @@ classifiers and the license constants. It imports nothing internal —
 | `cli/output.ts` | `formatJson`, `outputModeFor` — the `--json` rule |
 | `cli/kit.ts`, `cli/table.ts`, `cli/spinner.ts`, `cli/prompt.ts`, `cli/theme.ts`, `cli/width.ts` | The CLI output kit: headings, status marks, receipts, tables, a TTY-only spinner, prompts that never run non-interactively, the CLI theme and display-width helpers |
 | `ui/tokens.ts`, `ui/color.ts`, `ui/style.ts`, `ui/glyphs.ts`, `ui/theme-file.ts` | The design tokens shared by the TUI and the CLI: colour roles and palettes, colour-depth detection, the style engine, glyphs and JSON theme files |
-| `index.ts` | No barrel — import a module by its subpath, `@kubic/core/<subpath>` |
 
 ## Contracts
 
@@ -37,27 +36,12 @@ facts and its single live lane, with no id-keyed collections. Deliberately
 absent: no `eval`-style command channel, no raw event stream, no path from
 the presentation to the harness.
 
-| Field | Type |
-| --- | --- |
-| `session` | `SessionSnapshot` |
-| `lane` | `LaneSnapshot` |
-| `approvals` | `readonly ApprovalRequest[]` |
-| `usage` | `UsageTotals` |
-| `connection` | object with `status: 'connected' \| 'disconnected' \| 'reconnecting'`, `detail?` |
-
+It holds five replicated fields — `session`, `lane`, `approvals`, `usage` and
+`connection` (the interfaces and their fields are in `presentation.ts`).
 `PRESENTATION_STATE_FIELDS` pins exactly those five keys via
-`satisfies Record<keyof KubicPresentationState, true>` — adding or
-removing a field breaks compilation, and the projector re-checks the same
-list at runtime before every hand-out.
-
-| Interface | Fields |
-| --- | --- |
-| `SessionSnapshot` | `sessionId: string`, `model?: string`, `thinking?: string`, `workspace?: string`, `approvalsSkipped: boolean` |
-| `LaneSnapshot` | `status: 'idle'\|'running'\|'done'`, `tools: LaneToolSnapshot[]`, `queued: string[]`, `compacting: boolean`, `fault?`, `retrying?` |
-| `LaneToolSnapshot` | `toolCallId`, `toolName`, `status: 'running'\|'done'`, `isError`, `args?`, `entry?`, `durationMs?` |
-| `LaneImagePart` | `mimeType`, `data` (base64, no `data:` prefix), `filename?`, `bytes?` |
-| `ApprovalRequest` | `requestId`, `toolName?`, `capability?`, `detail?` |
-| `UsageTotals` | `inputTokens`, `outputTokens`, `costUsd`, `requests?`, `cacheReadTokens?`, `cacheWriteTokens?` |
+`satisfies Record<keyof KubicPresentationState, true>` — adding or removing a
+field breaks compilation, and the projector re-checks the same list at runtime
+before every hand-out.
 
 The state is produced by the host-side projector
 (`packages/host/src/presentation/projector.ts`), which folds the lane event

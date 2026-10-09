@@ -61,6 +61,17 @@ Under the same lock (an append's pass runs inside the append's lock):
 A failed rewrite (step 5 or 6) leaves the old index in place: no prune, no
 data lost.
 
+The size bound covers the whole store, index lines included
+(`[journal] maxBytes`, 100 MiB by default): content addressing dedupes
+blobs, so a file toggling between two contents grows only the index.
+
+### The mutation lock
+
+Appends and retention passes hold `index.jsonl.lock`, created with `O_EXCL`
+and recording the holder's pid. A nested call in the same store is
+re-entrant; another process waits up to five seconds, then fails by name; a
+lock older than ten seconds belongs to a crashed holder and is taken over.
+
 ### Reads
 
 - A blob is served only if its content hashes to its name; anything else
@@ -72,16 +83,42 @@ data lost.
 - Lines written before entries carried `source` are mapped on read (`undo`,
   `sweep` or `tool`), so every reader sees a source.
 
-### Restore (`restoreEntry`, used by undo)
+### Restore and undo (`restoreEntry`, `applyUndo`)
 
 The pre-image is written to a sibling `<target>.kubic-restore-<pid>.tmp`
 (`0600`, then the target's own mode), and renamed over the target, so the
-target holds either its old content or the restored content. Undo checks
-that the inverse entry fits the bound before it restores, and appends that
-entry after the restore.
+target holds either its old content or the restored content. A restore
+refuses an entry path that crosses a symlinked directory.
+
+Every restore appends its inverse entry (`source: undo`): the pre-undo
+content as before, the restored content as after. `kubic undo --step` on
+that entry is the redo, while a plain undo skips these records, so
+repeating it changes nothing. The inverse entry is measured against the
+size bound before the file is touched, and one that cannot fit skips the
+step with a warning. A pre-undo file that is not valid UTF-8 is recorded by
+hash only, and the undo warns that it cannot be redone.
+
+An agent-made create is undone by removing the file, when its content still
+matches the recorded after-hash.
 
 ### End-of-run sweep (`reconcile`)
 
 Changes no tool call recorded (a formatter, `sed -i`, a build) are found by
 comparing a walk of the workspace with the boot baseline and appended as
 `source: sweep` entries through the same append protocol.
+
+- The walk honours every `.gitignore` on the way down: a nested file's
+  rules come after its parents', and the last match wins. Nested patterns
+  match the workspace-relative path, so an anchored pattern in a nested
+  file must be written from the root. `.git/info/exclude` and
+  `core.excludesFile` are not read. The matcher (`../ignore.ts`) is the one
+  the agent's find and grep use; it covers `*`, `?`, `**`, `dir/` and `!`
+  in linear time.
+- "Could not look" never reads as "deleted". A file the walk sees but
+  cannot read stays in the baseline as `unreadable`, a directory whose
+  listing fails keeps its previous hashes, and only `ENOENT` records a
+  delete.
+- A path only a tool journaled (gitignored, or under `.git/` or `.kubic/`)
+  is not in the walk, so it is probed directly before a delete is recorded.
+- A changed file above 4 MiB, or one whose UTF-8 decode is lossy, is
+  recorded by hash only (`afterOmitted`), and `kubic diff` says so.

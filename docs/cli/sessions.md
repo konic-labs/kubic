@@ -46,12 +46,11 @@ document, written in the creating commit, so anything holding the session
 open reads it from the same durable state as the transcript. Session JSONL
 is not fsynced; the change journal is the fsync'd store.
 
-This release starts a clean session format. Session folders written by
-earlier builds are ignored: they are never listed, the overlap warning
-(`kubic doctor`) never counts them, and attaching one exits 1 as an unknown
-session. Nothing is converted, moved or rewritten, and `kubic sessions prune`
-only ever considers `<root>/<id>/` directories that hold a session
-([below](#session-retention-prune)).
+A folder without that storage is not a session: it is never listed, the
+overlap warning (`kubic doctor`) never counts it, and attaching it exits 1
+as an unknown session. Kubic never converts, moves or rewrites such a
+folder, and `kubic sessions prune` only ever considers `<root>/<id>/`
+directories that hold a session ([below](#session-retention-prune)).
 
 ### Session retention (`prune`)
 
@@ -96,7 +95,7 @@ journal entries at read time (see the read-time self-heal note under
   **process-local**: it reads this machine's process table, so a session
   held by a run on another machine or in another container is not seen as
   held (the same local-filesystem-only caveat the lock itself carries —
-  see [agent](../packages/agent.md#session-locking)). The
+  see [agent](../packages/agent.md#invariants)). The
   probe is `process.kill(pid, 0)`: any result other than success —
   including `EPERM` for a pid this user cannot signal — reads as dead;
   same-user holders always signal, so a per-user sessions root never

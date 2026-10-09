@@ -6,7 +6,7 @@ rationale, package APIs and CLI behaviour never mix.
 | Area | Directory | Belongs here | Does not belong here |
 | --- | --- | --- | --- |
 | Architecture | [architecture/](architecture/README.md) | Topology and why: the in-process runtime, the change journal, the approvals safety model, the package map | API signatures, CLI flags, config keys |
-| Packages | [packages/](packages/README.md) | One page per package: public API, contracts, dependency neighbours | Architecture rationale, CLI usage |
+| Packages | [packages/](packages/README.md) | One page per package: entry points, invariants, neighbours | Architecture rationale, CLI usage |
 | CLI & operations | [cli/](cli/README.md) | Commands, flags, exit codes, configuration, `doctor` diagnostics | Package internals |
 | Contributing | [contributing.md](contributing.md) | Workflow, Conventional Commits, the docs-update rule | Feature documentation |
 
@@ -26,7 +26,7 @@ rationale, package APIs and CLI behaviour never mix.
 | --- | --- |
 | `packages/core` | [packages/core.md](packages/core.md) |
 | `packages/exec` | [packages/exec.md](packages/exec.md) |
-| `packages/agent` | [agent.md](packages/agent.md) |
+| `packages/agent` | [packages/agent.md](packages/agent.md) |
 | `packages/host` | [packages/host.md](packages/host.md) |
 | `packages/trajectory` | [packages/trajectory.md](packages/trajectory.md) |
 | `packages/eval` | [packages/eval.md](packages/eval.md) |

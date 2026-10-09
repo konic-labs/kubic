@@ -7,7 +7,7 @@
 // emission decision so both surfaces read and behave identically; the
 // sinks themselves live at the composition root:
 // apps/kubic/src/run/output.ts writes the block to stderr before the
-// first turn; apps/kubic/src/tui-run.ts shows the one-line statement in the
+// first turn; apps/kubic/src/tui/chrome.ts shows the one-line statement in the
 // welcome block from the first render and the full block on `/safety`.
 export function noIsolationTuiLine(): string {
   return 'Kubic runs in-process with your authority: no isolation (files, network, credentials); controls: approvals + journal';

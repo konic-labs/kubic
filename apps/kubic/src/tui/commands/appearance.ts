@@ -1,4 +1,6 @@
-// The theme and keybinding files, resolved before the screen opens.
+// The theme and keybinding files, resolved before the screen opens, and
+// `/theme`, which switches the theme for the session.
+import { basename } from 'node:path';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import type { KeyRegistry } from '@kubic/tui/keybindings';
 import {
@@ -12,8 +14,102 @@ import {
   createThemeFromPalette,
   isThemeBuiltin,
   parseThemeJson,
+  setTuiTheme,
   ThemeError,
 } from '@kubic/tui/theme';
+import type { TuiSubmitOutcome } from '@kubic/tui/tui-app';
+import type { TuiContext } from '../context.js';
+import { refuse, type TuiCommandTable } from './handler.js';
+
+// `/theme [name]` — the built-ins and the configured theme
+// file, previewed live as the selection moves; ⏎ keeps it for this
+// session (the config is never written), esc restores the one before.
+export const appearanceCommands: TuiCommandTable = {
+  theme: {
+    run(ctx, command) {
+      return openThemePicker(ctx, command.argument);
+    },
+  },
+};
+
+function openThemePicker(ctx: TuiContext, argument: string): TuiSubmitOutcome {
+  const choices = themeChoices(ctx);
+  if (argument !== '') {
+    if (!choices.includes(argument)) {
+      return refuse(
+        ctx,
+        `theme: unknown theme '${argument}' — ${choices.join(', ')}`,
+      );
+    }
+    if (!applyTheme(ctx, argument)) return 'refused';
+    keepTheme(ctx, argument);
+    return 'command';
+  }
+  const before = ctx.activeTheme;
+  const configured = configuredTheme(ctx);
+  const opened = ctx.app.openPicker({
+    title: 'Theme',
+    rows: choices.map((name) => ({
+      value: name,
+      label: name === configured ? basename(name) : name,
+      ...(name === ctx.activeTheme ? { current: true } : {}),
+      ...(name === configured ? { description: 'from [ui] theme' } : {}),
+    })),
+    onMove: (value) => {
+      if (value !== undefined) applyTheme(ctx, value);
+    },
+    onSelect: (value) => {
+      if (applyTheme(ctx, value)) keepTheme(ctx, value);
+    },
+    onCancel: () => {
+      if (ctx.stopped) return;
+      applyTheme(ctx, before);
+      ctx.app.setEditorFooter(`theme: ${before} (kept)`);
+      ctx.screen?.render();
+    },
+  });
+  if (!opened) {
+    ctx.say('theme picker needs a wider terminal — use /theme <name>');
+  }
+  return 'command';
+}
+
+// The configured `[ui] theme` file, when it names one (not a built-in).
+function configuredTheme(ctx: TuiContext): string | undefined {
+  const theme = ctx.deps.theme;
+  return theme !== undefined && theme !== '' && !isThemeBuiltin(theme)
+    ? theme
+    : undefined;
+}
+
+function themeChoices(ctx: TuiContext): string[] {
+  const configured = configuredTheme(ctx);
+  return [
+    'dark',
+    'light',
+    'terminal',
+    ...(configured === undefined ? [] : [configured]),
+  ];
+}
+
+function applyTheme(ctx: TuiContext, name: string): boolean {
+  try {
+    setTuiTheme(resolveTuiTheme(name, ctx.theme.level, ctx.files));
+  } catch (error) {
+    ctx.say(`theme: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+  ctx.render();
+  return true;
+}
+
+function keepTheme(ctx: TuiContext, name: string): void {
+  ctx.activeTheme = name;
+  ctx.app.appendNotice([
+    `theme: ${name} for this session — to keep it: [ui] theme = "${name}" in ~/.kubic/config.toml`,
+  ]);
+  ctx.say(`theme: ${name}`);
+}
 
 // The `[ui] theme` reference → the active theme. A
 // built-in name (`default`, `dark`, `light`, `terminal`) needs

@@ -1,11 +1,10 @@
 // The run's guard on its own: the turn bound, the wall clock, the interrupts
 // and the order they win in, over a fake signal source and fake timers.
 import { EventEmitter } from 'node:events';
-import type { Lane } from '@kubic/agent/lane/boot';
 import { turnAbortReasonOf } from '@kubic/agent/lane/turn';
 import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { guardStopMessage, killLaneChildren, RunGuard } from './guard.js';
+import { guardStopMessage, RunGuard } from './guard.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -101,31 +100,5 @@ describe('RunGuard', () => {
     expect(guardStopMessage({ kind: 'turn-limit', turns: 1 })).toBe(
       'turn limit reached after 1 turns',
     );
-  });
-});
-
-describe('killLaneChildren', () => {
-  it('kills every child of the conversation, past one that already exited', () => {
-    const killed: string[] = [];
-    const drained: string[] = [];
-    const lane = {
-      conversation: { id: 'conversation-1' },
-      kills: {
-        drain: (key: string) => {
-          drained.push(key);
-          return [
-            () => killed.push('first'),
-            () => {
-              throw new Error('ESRCH');
-            },
-            () => killed.push('third'),
-          ];
-        },
-      },
-    } as unknown as Lane;
-    killLaneChildren(lane);
-    expect(drained).toEqual(['conversation-1']);
-    expect(killed).toEqual(['first', 'third']);
-    expect(() => killLaneChildren(undefined)).not.toThrow();
   });
 });

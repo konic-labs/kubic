@@ -8,7 +8,7 @@
 // Ctrl-C cancel / an Esc deny never becomes a quit.
 //
 // One shared harness: a recording fake Terminal under the real bootScreen,
-// with the real tui-run listener attached by runTuiCommand. Faux provider /
+// with the real input listener attached by runTuiCommand. Faux provider /
 // fake execution env only: zero network, zero paid tokens.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,8 +33,9 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { tuiLoop } from './tui/lane-loop.js';
+import type { TuiRunDeps } from './tui/options.js';
 import { runTuiCommand } from './tui/run.js';
-import type { TuiApprovalSeat, TuiRunDeps } from './tui/types.js';
+import type { TuiApprovalSeat } from './tui/types.js';
 
 const made: string[] = [];
 

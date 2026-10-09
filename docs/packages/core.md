@@ -61,7 +61,7 @@ list at runtime before every hand-out.
 
 The state is produced by the host-side projector
 (`packages/host/src/presentation/projector.ts`), which folds the lane event
-stream plus the approval facts the host feeds it; `apps/kubic/src/tui-run.ts`
+stream plus the approval facts the host feeds it; `apps/kubic/src/tui/`
 feeds the TUI from it, and `packages/tui/src/tui-app.ts` renders it
 (`applyPresentation`) — the presentation never folds raw events itself.
 The projector also exposes `revision()`, its monotonic fold counter (0 at

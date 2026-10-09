@@ -19,9 +19,10 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane } from './tui/boot.js';
+import type { TuiRunDeps } from './tui/options.js';
 import { runTuiCommand } from './tui/run.js';
 import { TuiTurnRunner } from './tui/turn-runner.js';
-import type { TuiLaneBoot, TuiRunDeps } from './tui/types.js';
+import type { TuiLaneBoot } from './tui/types.js';
 
 const made: string[] = [];
 

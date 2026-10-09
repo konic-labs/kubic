@@ -18,7 +18,7 @@ import type { SessionsInvocation } from '@kubic/host/sessions';
 import type { SkillsCommandOptions } from '@kubic/host/skills';
 import type { AnalysisRunners } from '../commands/analysis.js';
 import type { CliConfigResult } from '../config-runtime.js';
-import type { TuiCommandOptions } from '../tui/types.js';
+import type { TuiCommandOptions } from '../tui/options.js';
 
 // A command's runner takes the options commander parsed (the `Input`
 // parameter). `config` is the one process-wide config load, so every runner

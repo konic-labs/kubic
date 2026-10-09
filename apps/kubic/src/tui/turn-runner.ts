@@ -1,23 +1,23 @@
 // The prompt turn driver: one accepted prompt driven to settlement on the
-// durable lane, with the conversation's events folded into the views.
+// durable lane (the submit + wait), with the conversation's committed events
+// folded into the views as they arrive. `cancel` aborts the conversation
+// through the loop's durable abort — the same path the quit drain uses — and
+// a Ctrl-C that lands while the submit is still in flight is replayed on the
+// real turn rather than being lost (or worse, treated as a quit, which would
+// kill the process mid-turn).
 import { randomUUID } from 'node:crypto';
 import type { KubicLaneEvent, LaneEventSink } from '@kubic/agent/lane/events';
-import type { TurnOutcome } from '@kubic/agent/lane/turn';
-import { TURN_BUSY_REASON } from '@kubic/agent/lane/turn';
+import { TURN_BUSY_REASON, type TurnOutcome } from '@kubic/agent/lane/turn';
 import type { ModelSelection } from '@kubic/agent/model-select';
-import type {
-  EntryRecord,
-  ModelThinkingLevel,
-  SubmissionId,
+import {
+  ConversationBusy,
+  type ModelThinkingLevel,
+  type SubmissionId,
 } from '@kubic/agent/pi-boundary';
-import { ConversationBusy } from '@kubic/agent/pi-boundary';
-import { PresentationProjector } from '@kubic/host/presentation';
 import type { DebugSink, TurnSpansSink } from '@kubic/host/run';
-import { hookErrorLine, modelLine } from '@kubic/host/run';
-import type { LaneEntryLike } from '@kubic/tui/lane-cells';
 import type { StatusUsageRow } from '@kubic/tui/status-bar';
 import type { TuiApp } from '@kubic/tui/tui-app';
-import { laneEntryFor } from './entries.js';
+import { TuiTranscriptFeed } from './transcript-feed.js';
 import type {
   TuiLaneLoop,
   TuiModelChoice,
@@ -26,17 +26,11 @@ import type {
   TuiTurnOutcome,
 } from './types.js';
 
-// Drives one accepted prompt to settlement (the durable submit + wait) and
-// folds the conversation's committed lane events into the views as they arrive.
-// `cancel` aborts the conversation through the loop's durable abort — the same
-// path the quit drain uses — and a Ctrl-C that lands while the submit is still
-// in flight is replayed on the real turn rather than being lost (or worse,
-// treated as a quit, which would kill the process mid-turn). What the busy
-// latch reads for one submitted turn. `pending` is the window between `run()`
-// and the harness' admission answer (a Ctrl-C there must cancel, never quit);
-// `placed` is work the harness put in the transcript. Neither is true for a
-// submission waiting in the inbox — a follow-up admitted during a turn, or one
-// a failed run left behind.
+// What the busy latch reads for one submitted turn. `pending` is the window
+// between `run()` and the harness' admission answer (a Ctrl-C there must
+// cancel, never quit); `placed` is work the harness put in the transcript.
+// Neither is true for a submission waiting in the inbox — a follow-up
+// admitted during a turn, or one a failed run left behind.
 interface TuiRunState {
   placed: boolean;
   pending: boolean;
@@ -53,6 +47,8 @@ export class TuiTurnRunner {
   private readonly app: TuiApp;
   private readonly loop: TuiLaneLoop;
   private model: string;
+  // The views the lane events feed.
+  private readonly feed: TuiTranscriptFeed;
   // Every turn in flight, from the moment a submit is accepted
   // by the runner, with the placement fact the busy latch reads. A busy
   // Enter adds a QUEUED follow-up's own run here while the running turn is
@@ -79,25 +75,21 @@ export class TuiTurnRunner {
   // Set once a quit starts draining: from then on the operation's kills stay
   // registered for the session close's backstop even if the turn settles.
   private quitting = false;
-
-  // Called after a mid-turn transcript apply lands (the root repaints).
-  private readonly onUpdate: (() => void) | undefined;
-
-  // Every lane event, after the app folded it in (the root
-  // requests a journal read on tool-end).
+  // Every lane event, before the views fold it in (the root
+  // requests a journal read on tool-end and owns the queue map).
   private readonly onLaneEvent: ((event: KubicLaneEvent) => void) | undefined;
-
   // Per-turn spans (absent means the turn records none).
   private readonly spans: TurnSpansSink | undefined;
-
-  // The debug sink (absent means lines are dropped,
-  // except the fault notice which always renders).
-  private readonly debug: DebugSink | undefined;
+  // The live thinking level (the `pi.agent` document). Read once
+  // from the lane, then kept by every switch — the status bar and the
+  // `/thinking` report read the same value.
+  private thinking: ModelThinkingLevel | undefined;
 
   constructor(
     app: TuiApp,
     loop: TuiLaneLoop,
     model: string,
+    // Called after a mid-turn transcript apply lands (the root repaints).
     onUpdate?: () => void,
     onLaneEvent?: (event: KubicLaneEvent) => void,
     // The session's committed spend, so the first live usage
@@ -107,43 +99,37 @@ export class TuiTurnRunner {
     // Per-turn spans; absent means the turn records none.
     spans?: TurnSpansSink,
     // The debug sink; absent drops the lines (the fault
-    // notice below still renders — it does not need the sink).
+    // notice still renders — it does not need the sink).
     debug?: DebugSink,
   ) {
     this.app = app;
     this.loop = loop;
     this.model = model;
-    this.onUpdate = onUpdate;
     this.onLaneEvent = onLaneEvent;
-    this.usageRows = [...usageRows];
     this.spans = spans;
-    this.debug = debug;
-    this.projector = new PresentationProjector(app.presentationSeed());
+    this.feed = new TuiTranscriptFeed(app, usageRows, onUpdate, debug);
   }
 
-  // The inbox carries submission ids, not prompt text —
-  // the loop owns the text of the submissions it queued, so it hands its
-  // in-place map in and the projector resolves `lane.queued` from it. The
-  // state is then the ONE writer of the `queued:` rows: the app writes them
-  // on every presentation apply instead of only on the two events that used
-  // to re-sync them.
   setQueuedText(text: ReadonlyMap<string, string>): void {
-    this.projector.setQueuedText(text);
+    this.feed.setQueuedText(text);
   }
 
-  // The queue map changed under the state (a submission
-  // was just admitted), so hand the app the resolved state now — the state is
-  // the only writer of the `queued:` rows, and without this the row would
-  // wait for the next lane event.
   refreshPresentation(): void {
-    this.app.applyPresentation(this.projector.state());
-    this.onUpdate?.();
+    this.feed.refreshPresentation();
+  }
+
+  async refreshTranscript(): Promise<void> {
+    await this.feed.refresh(() => this.loop.entries(this.loop.context));
   }
 
   // The live model label (updated by a `/model` switch), so the
   // `/model` report and the headers never read a stale boot snapshot.
   get modelRef(): string {
     return this.model;
+  }
+
+  get thinkingRef(): ModelThinkingLevel | undefined {
+    return this.thinking;
   }
 
   // `/model provider/id`. The loop owns the lane-side switch
@@ -176,15 +162,6 @@ export class TuiTurnRunner {
     const limits = this.loop.contextLimits?.(selection.provider, selection.id);
     if (limits !== undefined) this.app.setContextLimits(limits);
     return label;
-  }
-
-  // The live thinking level (the `pi.agent` document). Read once
-  // from the lane, then kept by every switch — the status bar and the
-  // `/thinking` report read the same value.
-  private thinking: ModelThinkingLevel | undefined;
-
-  get thinkingRef(): ModelThinkingLevel | undefined {
-    return this.thinking;
   }
 
   /** The live level, read from the lane on first use. */
@@ -248,31 +225,14 @@ export class TuiTurnRunner {
     return false;
   }
 
-  // The single lane-event consumer for this conversation (exactly
-  // one). The committed entries the events carry are folded into the feed
-  // (REPLACE on the attach snapshot, upsert on a committed message or tool
-  // result) instead of re-reading the lane per event; tool status drives the
-  // tree and usage rows drive the status bar.
+  // The single lane-event consumer for this conversation (exactly one).
   private readonly sink: LaneEventSink = (event: KubicLaneEvent): void => {
     // The loop's own bookkeeping runs FIRST: it owns the queue map the state
     // resolves `lane.queued` from (a `run-start` drops the id the harness just
     // placed), so folding before it would hand the app a row the placement
     // already consumed — and then no further event would clear it.
     this.onLaneEvent?.(event);
-    // The projector folds the event; the app renders the
-    // state it produces (the presentation never folds raw events).
-    const revision = this.projector.revision();
-    this.projector.apply(event);
-    this.app.applyPresentation(this.projector.state());
-    if (this.projector.revision() !== revision) {
-      // The loop's bookkeeping above repaints
-      // BEFORE this write (it owns the map the state resolves the queue
-      // from), so the state the write produced needs a paint of its own —
-      // without one a `queued:` row it just resolved only appears on the
-      // next tick. Events that do not change the state (a `message-delta`,
-      // a committed `entry`) keep their own paint paths.
-      this.onUpdate?.();
-    }
+    this.feed.apply(event);
     if (event.type === 'run-start') {
       // The run is placed: a latched Ctrl-C may now abort it for real, and a
       // submission the harness queued earlier (a follow-up waiting behind a
@@ -282,154 +242,30 @@ export class TuiTurnRunner {
       // The turn's run span opens on placement.
       this.spans?.turns.startRun(turnKey(event.inputs));
     }
-    if (event.type === 'snapshot') {
-      // REPLACE semantics: the attach snapshot is the transcript.
-      // It is also the rebase — a consumer that fell behind the
-      // watch gets a fresh snapshot, so the streamed draft is stale and goes.
-      this.clearStream();
-      this.replaceLaneEntries(event.entries);
-      return;
-    }
-    if (event.type === 'message-delta') {
-      // The in-flight generation's text, rendered as a draft
-      // while it streams. The committed entry replaces it at
-      // `message_end`, so this only ever appends to the draft.
-      this.streamText += event.text;
-      this.app.setStream(this.streamText);
-      this.onUpdate?.();
-      return;
-    }
-    if (event.type === 'usage') {
-      // The row names the provider/model that answered; the status
-      // bar reads tokens + cost only.
-      // The same row feeds the [model] token line (sink
-      // only — the status bar already shows the spend, so the transcript
-      // stays quiet).
-      this.usageRows.push({
-        model: event.row.model,
-        provider: event.row.provider,
-        usage: event.row.usage,
-        ...(event.row.entryId === undefined
-          ? {}
-          : { entryId: event.row.entryId }),
-        ...(event.row.toolCallId === undefined
-          ? {}
-          : { toolCallId: event.row.toolCallId }),
-      });
-      this.app.setUsage([...this.usageRows]);
-      this.debug?.(
-        modelLine(
-          event.row.usage.input,
-          event.row.usage.output,
-          event.row.usage.cacheRead,
-          `${event.row.provider}/${event.row.model}`,
-        ),
-      );
-      // The committed assistant entry is here. Clear the draft
-      // FIRST — `clearStream` paints nothing, so no frame can show the text
-      // vanishing — and fold second, because the fold's own paint is the one
-      // frame that must carry the committed cell WITHOUT the draft beside it
-      // (folding first would paint the just-committed text twice).
-      this.clearStream();
-      this.foldLaneEntries([event.entry]);
-      return;
-    }
-    if (event.type === 'entry') {
-      // A committed non-assistant entry (a compaction summary, a
-      // reset handoff, a user turn) joins the transcript live.
-      this.foldLaneEntries([event.entry]);
-      return;
-    }
     if (event.type === 'tool-start') {
       // The turn's tool span opens with the call.
       this.spans?.turns.startTool(event.toolCallId, event.toolName);
-    }
-    if (event.type === 'fault') {
-      // A faulted harness task (pi-durable `task_failed` —
-      // Pi 1.0 has no `handler_error` event) is the handler_error
-      // line. It rides the debug sink when one is attached, and it ALWAYS
-      // lands as a transcript notice: the TUI has no --debug channel, so
-      // a silent sink would swallow an extension/hook failure whole.
-      const line = hookErrorLine(event.code, event.message);
-      this.debug?.(line);
-      this.app.appendNotice([line]);
-    }
-    if (event.type === 'tool-end' && event.entry !== undefined) {
-      // A tool result that faulted or was orphaned has no entry: the tree
-      // already shows the error, and the transcript has nothing to append.
-      this.foldLaneEntries([event.entry]);
     }
     if (event.type === 'tool-end') {
       // Entry or not, the call settled — a faulted or orphaned
       // call has no entry but its span still closes.
       this.spans?.turns.endTool(event.toolCallId, event.isError);
     }
-    if (event.type === 'run-end') {
-      // The turn settled — flush its artifact (run span plus
-      // its tool spans). Telemetry never fails a turn.
-      const spans = this.spans;
-      if (spans !== undefined) {
-        const artifact = spans.turns.endRun(turnKey(event.inputs));
-        if (artifact !== undefined) {
-          try {
-            spans.write(artifact);
-          } catch {
-            // A failed artifact write is not a turn failure.
-          }
-        }
-      }
-    }
+    if (event.type === 'run-end') this.flushSpans(event.inputs);
   };
 
-  // The presentation state the app renders. Seeded from the app's own
-  // session facts and fed every lane event the subscription delivers.
-  private readonly projector: PresentationProjector;
-
-  // The text streamed for the in-flight generation. Cleared when
-  // the committed entry lands, on a snapshot rebase and at settlement.
-  private streamText = '';
-
-  private clearStream(): void {
-    if (this.streamText === '') return;
-    this.streamText = '';
-    this.app.setStream(undefined);
-  }
-
-  private readonly usageRows: StatusUsageRow[];
-
-  // The accumulated committed-transcript feed: the attach snapshot replaces
-  // it, every later entry-bearing event upserts into it, and every apply is a
-  // fresh snapshot for the app (revision semantics).
-  private laneEntries: LaneEntryLike[] = [];
-  private readonly laneEntryIndex = new Map<string, number>();
-
-  private replaceLaneEntries(entries: readonly EntryRecord[]): void {
-    this.laneEntries = [];
-    this.laneEntryIndex.clear();
-    this.foldLaneEntries(entries);
-  }
-
-  private foldLaneEntries(entries: readonly EntryRecord[]): void {
-    for (const entry of entries) {
-      const cell = laneEntryFor(entry);
-      if (cell === undefined) continue;
-      const id = String(cell.id);
-      const at = this.laneEntryIndex.get(id);
-      if (at === undefined) {
-        this.laneEntryIndex.set(id, this.laneEntries.length);
-        this.laneEntries.push(cell);
-      } else {
-        this.laneEntries[at] = cell;
-      }
+  // The turn settled — flush its artifact (run span plus
+  // its tool spans). Telemetry never fails a turn.
+  private flushSpans(inputs: readonly SubmissionId[]): void {
+    const spans = this.spans;
+    if (spans === undefined) return;
+    const artifact = spans.turns.endRun(turnKey(inputs));
+    if (artifact === undefined) return;
+    try {
+      spans.write(artifact);
+    } catch {
+      // A failed artifact write is not a turn failure.
     }
-    this.applyLaneEntries();
-  }
-
-  private applyLaneEntries(): void {
-    // Every apply replaces the transcript's cells instead of appending them
-    // (the app's revision counter makes the snapshot a replacement).
-    this.app.applyLaneEntries(this.laneEntries);
-    this.onUpdate?.();
   }
 
   // The in-flight runs: a quit waits on them, bounded. The
@@ -447,7 +283,7 @@ export class TuiTurnRunner {
           // A submission admitted into the inbox (a busy follow-up, or one
           // queued behind a failed run's leftovers) is not placed work: it
           // becomes busy only if the harness places it later, which the
-          // `run-start` event below reports.
+          // `run-start` event reports.
           state.placed = admitted === 'placed';
           options.onSubmitted?.(submissionId, admitted);
         },
@@ -594,7 +430,6 @@ export class TuiTurnRunner {
     for (const row of this.loop.drainEscalationRows?.() ?? []) {
       this.app.appendNotice([row]);
     }
-
     return outcome;
   }
 
@@ -619,28 +454,7 @@ export class TuiTurnRunner {
       this.markPlaced = markPlaced;
     }
     try {
-      // The subscription is snapshot-safe: the attach snapshot
-      // replaces the feed, so nothing committed between the boot read and
-      // this turn can be lost, and no event can arrive before the sink is
-      // listening. ONE subscription serves the whole busy period.
-      await this.ensureSubscription();
-      const turn = await this.loop.runTurn(prompt, {
-        // The prompt is this invocation's own intent: a fresh id per submit
-        // so pi-durable's requestId dedupe never collapses two prompts the
-        // operator really sent.
-        requestId: randomUUID(),
-        context: this.loop.context,
-        ...(options.images === undefined || options.images.length === 0
-          ? {}
-          : { images: options.images }),
-        // A queued follow-up / steer is the caller's explicit
-        // mode; anything else keeps `reject` — a submit that races a
-        // settling turn fails loudly instead of sitting in the inbox.
-        whenBusy: options.whenBusy ?? 'reject',
-        ...(options.onSubmitted === undefined
-          ? {}
-          : { onSubmitted: options.onSubmitted }),
-      });
+      const turn = await this.submit(prompt, options);
       record.turn = turn;
       // A SETTLED turn's kills are forgotten, not run: a kept background job
       // outlives Kubic, and a recycled pid must not receive a stale group
@@ -659,29 +473,9 @@ export class TuiTurnRunner {
       // transcript, this single read is the turn's full one.
       // A turn that ends without a committed assistant entry
       // (an abort mid-stream) leaves no draft behind.
-      this.clearStream();
+      this.feed.clearStream();
       await this.refreshTranscript();
-      // The lane's own terminal record is authoritative: an abort that raced
-      // a completing turn must not be relabelled as cancelled (the work
-      // really did land), and a turn the abort did stop settles 'aborted'.
-      if (turn.kind === 'completed') return { status: 'completed' };
-      if (turn.kind === 'aborted') return { status: 'cancelled' };
-      // `FailureCode` is the closed vocabulary; the busy refusal is Kubic's
-      // own reason and may or may not be part of it depending on the
-      // turn module's typing, so the comparison is on the plain string.
-      const reason: string = turn.reason;
-      if (reason === TURN_BUSY_REASON) {
-        // The busy refusal keeps the shape the operator saw when the lane
-        // refused an admission: the prompt never reaches the model.
-        return {
-          status: 'failed',
-          detail: `lane refused the prompt: ${turn.error ?? 'the conversation is busy'}`,
-        };
-      }
-      return {
-        status: 'failed',
-        detail: turn.error ?? `lane ${turn.reason}`,
-      };
+      return settledOutcome(turn);
     } catch (error) {
       // Defensive: lane/turn.ts maps a rejected submit to a busy failure, so a
       // ConversationBusy escaping here is a wiring bug — report it as the
@@ -703,13 +497,32 @@ export class TuiTurnRunner {
     }
   }
 
-  // The durable abort path: conversation.abort + the conversation's
-  // kill drain. It THROWS when the abort or a kill fails, so the cancel path
-  // reports a refusal instead of a silent no-op and the quit drain can bound
-  // it. The abort targets the conversation, which is the only turn that can
-  // be in flight here (the runner admits one turn at a time).
-  private async abort(): Promise<void> {
-    await this.loop.abort(this.loop.context);
+  // The durable submit and wait. The subscription is snapshot-safe: the
+  // attach snapshot replaces the feed, so nothing committed between the boot
+  // read and this turn can be lost, and no event can arrive before the sink
+  // is listening. ONE subscription serves the whole busy period.
+  private async submit(
+    prompt: string,
+    options: TuiTurnOptions,
+  ): Promise<TurnOutcome> {
+    await this.ensureSubscription();
+    return this.loop.runTurn(prompt, {
+      // The prompt is this invocation's own intent: a fresh id per submit
+      // so pi-durable's requestId dedupe never collapses two prompts the
+      // operator really sent.
+      requestId: randomUUID(),
+      context: this.loop.context,
+      ...(options.images === undefined || options.images.length === 0
+        ? {}
+        : { images: options.images }),
+      // A queued follow-up / steer is the caller's explicit
+      // mode; anything else keeps `reject` — a submit that races a
+      // settling turn fails loudly instead of sitting in the inbox.
+      whenBusy: options.whenBusy ?? 'reject',
+      ...(options.onSubmitted === undefined
+        ? {}
+        : { onSubmitted: options.onSubmitted }),
+    });
   }
 
   // Ctrl-C: the lane can always be cancelled. Part of TuiTurnDriver.
@@ -738,24 +551,34 @@ export class TuiTurnRunner {
     // for the turn to end) instead of slipping between the two.
     await this.placed;
     if (this.quitting) return true;
-    await this.abort();
+    // The durable abort path: conversation.abort + the conversation's
+    // kill drain. It THROWS when the abort or a kill fails, so the cancel
+    // path reports a refusal instead of a silent no-op.
+    await this.loop.abort(this.loop.context);
     return true;
   }
+}
 
-  // Reads are tagged in issue order: a background refresh that resolves
-  // after a newer one (e.g. the settlement refresh) is dropped instead of
-  // overwriting the fresher feed.
-  private readSeq = 0;
-  private appliedSeq = 0;
-
-  async refreshTranscript(): Promise<void> {
-    this.readSeq += 1;
-    const seq = this.readSeq;
-    const entries = await this.loop.entries(this.loop.context);
-    if (seq < this.appliedSeq) return;
-    this.appliedSeq = seq;
-    // The accumulated event feed is the live transcript; a settling read
-    // replaces it with the completed one (.5's readConversationEntries).
-    this.replaceLaneEntries(entries);
+// The lane's own terminal record is authoritative: an abort that raced
+// a completing turn must not be relabelled as cancelled (the work
+// really did land), and a turn the abort did stop settles 'aborted'.
+function settledOutcome(turn: TurnOutcome): TuiTurnOutcome {
+  if (turn.kind === 'completed') return { status: 'completed' };
+  if (turn.kind === 'aborted') return { status: 'cancelled' };
+  // `FailureCode` is the closed vocabulary; the busy refusal is Kubic's
+  // own reason and may or may not be part of it depending on the
+  // turn module's typing, so the comparison is on the plain string.
+  const reason: string = turn.reason;
+  if (reason === TURN_BUSY_REASON) {
+    // The busy refusal keeps the shape the operator saw when the lane
+    // refused an admission: the prompt never reaches the model.
+    return {
+      status: 'failed',
+      detail: `lane refused the prompt: ${turn.error ?? 'the conversation is busy'}`,
+    };
   }
+  return {
+    status: 'failed',
+    detail: turn.error ?? `lane ${turn.reason}`,
+  };
 }

@@ -19,8 +19,8 @@ import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane } from './tui/boot.js';
+import type { TuiRunDeps } from './tui/options.js';
 import { runTuiCommand } from './tui/run.js';
-import type { TuiRunDeps } from './tui/types.js';
 
 const made: string[] = [];
 

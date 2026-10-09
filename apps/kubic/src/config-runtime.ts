@@ -720,7 +720,7 @@ export function runtimeRunDeps(result: CliConfigResult): {
 // its journal attribution carry, and the config-sourced role layers the
 // `--role` resolution merges under the role document. ONE projection with
 // two one-line consumers — `kubic run` (run/command.ts) and `kubic tui`
-// (tui-run.ts) — so both entry points name the lane and layer the roles
+// (tui/boot.ts) — so both entry points name the lane and layer the roles
 // identically. Absent means the shipped behaviour: agent id 'root', no
 // layers. adds the effective thinking level with its source, which
 // the lane resolves against the session's record and the role default.

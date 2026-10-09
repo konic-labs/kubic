@@ -33,8 +33,8 @@ import { terminalRig } from '../../../../test/fake-terminal.js';
 import { runtimeLaneDeps, runtimeModelPin } from '../config-runtime.js';
 import { bootTuiLane } from '../tui/boot.js';
 import { tuiDepsWithDefaults } from '../tui/deps.js';
+import type { TuiRunOptions } from '../tui/options.js';
 import { runTuiCommand } from '../tui/run.js';
-import type { TuiRunOptions } from '../tui/types.js';
 
 const tempDirs: string[] = [];
 

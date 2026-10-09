@@ -1,5 +1,68 @@
 // The journal panels' feed, and the `/diff` and `/undo` commands.
+import { applyUndo, diffEntries, planUndo } from '@kubic/exec/journal';
 import type { JournalChangeLike } from '@kubic/tui/tui-app';
+import type { TuiContext } from '../context.js';
+import { busyRefusal, refuse, type TuiCommandTable } from './handler.js';
+
+export const journalCommands: TuiCommandTable = {
+  diff: {
+    run(ctx) {
+      ctx.app.openPanel('diff');
+      ctx.say('diff: panel open (Ctrl-O closes)');
+      return 'accepted';
+    },
+  },
+  undo: {
+    run(ctx, { busy }) {
+      if (busy) return busyRefusal(ctx, 'undo');
+      const store = ctx.boot.journal;
+      const root = ctx.boot.cwd;
+      if (store === undefined || root === undefined) {
+        return refuse(ctx, 'undo: this session has no journal to undo');
+      }
+      const plan = planUndo(store, {}, root);
+      if (plan.steps.length === 0) {
+        ctx.say('undo: nothing to undo');
+        return 'accepted';
+      }
+      const result = applyUndo(store, plan, root, {});
+      const summary = `undo: ${result.restored.length} restored, ${result.skipped.length} skipped`;
+      ctx.app.appendNotice([
+        summary,
+        ...result.warnings.map((warning) => `warn: ${warning}`),
+      ]);
+      ctx.app.setEditorFooter(summary);
+      ctx.journalFeed?.now();
+      ctx.render();
+      return 'accepted';
+    },
+  },
+};
+
+// The Ctrl-O / Ctrl-R panels read the session journal the
+// boot created — loaded once at start (a resumed session shows its earlier
+// turns), after each tool call (throttled) and at every settlement. The feed
+// reads the CURRENT boot's store, so `/new` and `/resume` never leave a
+// stale reader behind (the feed itself is session-agnostic and built once).
+export function journalPanelFeed(
+  ctx: TuiContext,
+): JournalPanelFeed | undefined {
+  if (ctx.boot.journal === undefined && ctx.deps.journalFeedError === undefined)
+    return undefined;
+  return new JournalPanelFeed({
+    read: () => {
+      const store = ctx.boot.journal;
+      return store === undefined ? [] : diffEntries(store, {});
+    },
+    apply: (rows) => {
+      ctx.app.setJournalChanges(rows);
+      if (!ctx.stopped) ctx.screen?.update();
+    },
+    ...(ctx.deps.journalFeedError === undefined
+      ? {}
+      : { onError: ctx.deps.journalFeedError }),
+  });
+}
 
 // The inspectable pair reads the session journal through
 // the SAME projection `kubic diff` uses (diffEntries: one change per path,

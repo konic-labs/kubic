@@ -116,3 +116,17 @@ export async function abortLane(
 export function forgetLaneKills(lane: AbortableLane): void {
   lane.kills.drain(String(lane.conversation.id));
 }
+
+// The interrupt and quit backstop: every process group the lane still tracks
+// for its conversation is killed now, synchronously, without waiting on the
+// durable abort. A child that already exited does not stop the rest.
+export function killLaneProcesses(lane: AbortableLane | undefined): void {
+  if (lane === undefined) return;
+  for (const kill of lane.kills.drain(String(lane.conversation.id))) {
+    try {
+      kill();
+    } catch {
+      // Already exited — the registry drains every entry regardless.
+    }
+  }
+}

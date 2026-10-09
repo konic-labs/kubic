@@ -95,7 +95,7 @@ export function selectModel(
 
 // The `--thinking <level>` value rule: the level vocabulary is
 // the shared one, so `--thinking banana` is refused by name with the levels
-// that exist — the same wording `/thinking` uses (tui-run.ts).
+// that exist — the same wording `/thinking` uses (apps/kubic/src/tui/commands/parse.ts).
 export function parseThinkingFlag(flag: string): ModelThinkingLevel {
   if (!isThinkingLevel(flag)) {
     throw new ModelSelectError(

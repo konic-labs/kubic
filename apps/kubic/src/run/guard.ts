@@ -2,7 +2,6 @@
 // (`--max-turns`) and the interrupts (SIGINT/SIGTERM/SIGHUP). Each one stops
 // the run's waits through one cancellable context, and the first stop is
 // the one the run reports.
-import type { Lane } from '@kubic/agent/lane/boot';
 import { turnAbort } from '@kubic/agent/lane/turn';
 import { type Context, withCancel } from '@kubic/agent/pi-boundary';
 import type { InterruptSignal, SignalSource } from './options.js';
@@ -134,19 +133,5 @@ export class RunGuard {
     if (!this.attached) return;
     this.attached = false;
     for (const name of INTERRUPT_SIGNALS) this.signals.off(name, this.onSignal);
-  }
-}
-
-// The first signal kills the running children synchronously: they sit in
-// their own process groups and never saw the signal (the registry keys them
-// by conversation id).
-export function killLaneChildren(lane: Lane | undefined): void {
-  if (lane === undefined) return;
-  for (const kill of lane.kills.drain(String(lane.conversation.id))) {
-    try {
-      kill();
-    } catch {
-      // Already exited.
-    }
   }
 }

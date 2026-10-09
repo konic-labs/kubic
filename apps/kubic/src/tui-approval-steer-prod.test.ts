@@ -33,8 +33,9 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { tuiLoop } from './tui/lane-loop.js';
+import type { TuiRunDeps } from './tui/options.js';
 import { runTuiCommand } from './tui/run.js';
-import type { TuiApprovalSeat, TuiRunDeps } from './tui/types.js';
+import type { TuiApprovalSeat } from './tui/types.js';
 
 const made: string[] = [];
 
@@ -89,7 +90,7 @@ function fauxLaneBoot(
     const model = models.getModels(provider.id)[0];
     if (model === undefined) throw new Error('no model registered');
     // The production policy derivation, with the seat the composition root
-    // would attach (tui-run.ts does this on the real path).
+    // would attach (the TUI command does this on the real path).
     const { installPolicy } = await import('@kubic/host/approvals');
     const installed = installPolicy({
       workspace: '/fake',

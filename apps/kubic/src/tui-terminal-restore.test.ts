@@ -21,8 +21,8 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane } from './tui/boot.js';
+import type { TuiProcessEvents, TuiRunDeps } from './tui/options.js';
 import { runTuiCommand } from './tui/run.js';
-import type { TuiProcessEvents, TuiRunDeps } from './tui/types.js';
 
 const made: string[] = [];
 

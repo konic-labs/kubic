@@ -1082,7 +1082,7 @@ describe('app-level wiring that no test executed', () => {
       approvalsSkipped: false,
       approvalSurface: surface,
     });
-    // The lane asked while the app had no seat (the boot order in tui-run).
+    // The lane asked while the app had no seat (the boot order of `kubic tui`).
     const pending = ui.requestApproval(REQUEST);
     const seatState = seat();
     ui.attachApprovalOverlay(seatState.host);

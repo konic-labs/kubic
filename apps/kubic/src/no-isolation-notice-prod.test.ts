@@ -41,8 +41,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './run/command.js';
 import { tuiLoop } from './tui/lane-loop.js';
+import type { TuiRunDeps } from './tui/options.js';
 import { runTuiCommand } from './tui/run.js';
-import type { TuiRunDeps } from './tui/types.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..');

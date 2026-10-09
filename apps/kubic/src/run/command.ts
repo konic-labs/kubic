@@ -9,6 +9,7 @@
 // The run is a sequence of phases over one RunState: the boot (boot.ts), the
 // turn (turn.ts) under the guard (guard.ts), the terminus (outcome.ts), the
 // close (close.ts) and the settled result (finish.ts).
+import { killLaneProcesses } from '@kubic/agent/lane/abort';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
@@ -17,7 +18,7 @@ import type { SessionBoot } from '../session/bootstrap.js';
 import { bootLane, createRunBoot, validateRun } from './boot.js';
 import { closeRun } from './close.js';
 import { finishRun } from './finish.js';
-import { killLaneChildren, RunGuard } from './guard.js';
+import { RunGuard } from './guard.js';
 import type { HeadlessRunDeps, HeadlessRunOptions } from './options.js';
 import { type RunStop, runResult } from './outcome.js';
 import { announceNoIsolation } from './output.js';
@@ -74,8 +75,10 @@ async function runBooted(
   guard: RunGuard,
   notice: boolean,
 ): Promise<RunStop> {
+  // The first signal kills the running children synchronously: they sit in
+  // their own process groups and never saw the signal.
   guard.start(state.options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, () =>
-    killLaneChildren(boot.lane),
+    killLaneProcesses(boot.lane),
   );
   const refused = await bootLane(state, boot);
   if (refused !== undefined) {

@@ -199,7 +199,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   },
 ];
 
-export const SLASH_COMMAND_NAMES: ReadonlySet<string> = new Set(
+const SLASH_COMMAND_NAMES: ReadonlySet<string> = new Set(
   SLASH_COMMANDS.map((spec) => spec.name),
 );
 

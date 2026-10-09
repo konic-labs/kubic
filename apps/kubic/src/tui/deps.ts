@@ -11,12 +11,8 @@ import { ProcessTerminal } from '@kubic/tui/tui-boundary';
 import type { runtimeLaneDeps } from '../config-runtime.js';
 import { readTuiWorkspace } from '../tui-workspace.js';
 import { bootTuiLane } from './boot.js';
-import type {
-  TuiApprovalSeat,
-  TuiBootFlags,
-  TuiRunDeps,
-  TuiRunOptions,
-} from './types.js';
+import type { TuiBootFlags, TuiRunDeps, TuiRunOptions } from './options.js';
+import type { TuiApprovalSeat } from './types.js';
 
 // The channels `tuiDepsWithDefaults` adds to, plus every config projection;
 // `tuiBootOptions` projects the pair into the boot options.

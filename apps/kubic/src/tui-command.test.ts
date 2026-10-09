@@ -11,8 +11,8 @@ import type { Terminal } from '@kubic/tui/tui-boundary';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeTerminal as sharedFakeTerminal } from '../../../test/fake-terminal.js';
 import { bootTuiLane } from './tui/boot.js';
+import type { TuiRunDeps } from './tui/options.js';
 import { runTuiCommand } from './tui/run.js';
-import type { TuiRunDeps } from './tui/types.js';
 
 afterEach(() => {
   vi.unstubAllEnvs();

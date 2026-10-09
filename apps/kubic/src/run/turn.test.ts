@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { killLaneProcesses } from '@kubic/agent/lane/abort';
 import type { Lane } from '@kubic/agent/lane/boot';
 import {
   entriesToTranscript,
@@ -21,7 +22,7 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { bootLane, createRunBoot } from './boot.js';
 import { closeRun } from './close.js';
-import { killLaneChildren, RunGuard } from './guard.js';
+import { RunGuard } from './guard.js';
 import type { HeadlessRunOptions } from './options.js';
 import { RunState } from './state.js';
 import { runTurn } from './turn.js';
@@ -67,7 +68,7 @@ async function bootedRun(
   const boot = createRunBoot(state, guard);
   expect(await boot.open()).toBeUndefined();
   state.attach(boot);
-  guard.start(60_000, () => killLaneChildren(boot.lane));
+  guard.start(60_000, () => killLaneProcesses(boot.lane));
   expect(await bootLane(state, boot)).toBeUndefined();
   return {
     state,

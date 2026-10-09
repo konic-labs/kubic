@@ -15,6 +15,7 @@ import {
   type GitCommand,
   type GitCommandResult,
   readGitBlob,
+  sameHeadState,
   saveGitBaseline,
   saveHeadState,
 } from './git.js';
@@ -277,6 +278,27 @@ describe('captureHeadState', () => {
       symbolicRef: { status: 1, stdout: '' },
     });
     expect(captureHeadState('/repo', run)?.branch).toBe('(detached)');
+  });
+
+  it('keeps HEAD and branch when the stash list fails, the count unknown', () => {
+    const sha = 'd'.repeat(40);
+    const { run: base } = fakeHead({ revParse: `${sha}\n` });
+    const run: GitCommand = (args, cwd) =>
+      args[0] === 'stash'
+        ? { status: 1, stdout: Buffer.alloc(0) }
+        : base(args, cwd);
+    expect(captureHeadState('/repo', run)).toEqual({
+      head: sha,
+      branch: 'main',
+    });
+  });
+
+  it('compares an unknown stash count as unchanged', () => {
+    const at = { head: 'd'.repeat(40), branch: 'main' };
+    expect(sameHeadState({ ...at, stash: 2 }, at)).toBe(true);
+    expect(sameHeadState(at, { ...at, stash: 0 })).toBe(true);
+    expect(sameHeadState({ ...at, stash: 1 }, { ...at, stash: 2 })).toBe(false);
+    expect(sameHeadState(at, { ...at, branch: 'other' })).toBe(false);
   });
 
   it('returns null when HEAD does not resolve (unborn repo, fail-open)', () => {

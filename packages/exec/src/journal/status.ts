@@ -16,7 +16,10 @@ import type { FileJournalStore } from './store.js';
 
 /** One side of a head-moved marker, human-readable. */
 function formatHeadState(state: HeadState): string {
-  const stash = state.stash > 0 ? ` (stash ${state.stash})` : '';
+  const stash =
+    state.stash !== undefined && state.stash > 0
+      ? ` (stash ${state.stash})`
+      : '';
   return `${state.branch}@${state.head.slice(0, 12)}${stash}`;
 }
 

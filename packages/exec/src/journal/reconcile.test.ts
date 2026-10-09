@@ -418,6 +418,57 @@ describe('HEAD-move markers', () => {
     expect(journal.entries()).toHaveLength(1);
   });
 
+  it('chains a second move in one run from where the last marker ended', () => {
+    const { root, journal } = ws();
+    const baseline = captureBaseline(root);
+    const state = { head: SHA_A, branch: 'main', stash: 0 };
+    const { run } = headRepo(state);
+    const boot = captureHeadState(root, run);
+    const sweep = (): number =>
+      reconcile(journal, baseline, root, CTX, {
+        headBaseline: boot,
+        gitRun: run,
+      });
+    state.head = SHA_B;
+    expect(sweep()).toBe(1);
+    state.head = 'c'.repeat(40);
+    expect(sweep()).toBe(1);
+    // A move back to the boot state is a move too.
+    state.head = SHA_A;
+    expect(sweep()).toBe(1);
+    expect(sweep()).toBe(0);
+    expect(
+      journal.entries().map((e) => [e.headFrom?.head, e.headTo?.head]),
+    ).toEqual([
+      [SHA_A, SHA_B],
+      [SHA_B, 'c'.repeat(40)],
+      ['c'.repeat(40), SHA_A],
+    ]);
+  });
+
+  it('still marks a HEAD move when the stash list cannot be read', () => {
+    const { root, journal } = ws();
+    const baseline = captureBaseline(root);
+    const state = { head: SHA_A, branch: 'main', stash: 0 };
+    const { run: base } = headRepo(state);
+    const run: GitCommand = (args, cwd) =>
+      args[0] === 'stash'
+        ? { status: 1, stdout: Buffer.alloc(0) }
+        : base(args, cwd);
+    const boot = captureHeadState(root, run);
+    state.head = SHA_B;
+    expect(
+      reconcile(journal, baseline, root, CTX, {
+        headBaseline: boot,
+        gitRun: run,
+      }),
+    ).toBe(1);
+    expect(journal.entries()[0]).toMatchObject({
+      headFrom: { head: SHA_A, branch: 'main' },
+      headTo: { head: SHA_B, branch: 'main' },
+    });
+  });
+
   it('emits no marker without a boot snapshot or when HEAD is unresolvable', () => {
     const { root, journal } = ws();
     const baseline = captureBaseline(root);

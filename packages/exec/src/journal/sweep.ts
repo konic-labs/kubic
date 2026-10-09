@@ -367,29 +367,27 @@ function recordDeletes(sweep: Sweep, current: Baseline): void {
 // The HEAD-move marker. Recorded after the file finds so the
 // marker is the sweep's newest entry — `undo --step` (which never targets
 // markers) still lands on the latest file entry. One marker per observed
-// move: a repeat sweep of an unchanged HEAD appends nothing.
+// move: a repeat sweep of an unchanged HEAD appends nothing. Moves chain: a
+// later move in the same run starts where this run's last marker ended
+// (A→B, then B→C), so a move back to the boot state is recorded too.
 function recordHeadMove(sweep: Sweep): void {
   const { store, ctx, root, options } = sweep;
   const headBaseline = options.headBaseline;
   if (headBaseline === undefined || headBaseline === null) return;
   const currentHead = captureHeadState(root, options.gitRun);
-  if (currentHead === null || sameHeadState(headBaseline, currentHead)) return;
-  const known = entriesSinceRunStart(store.entries(), ctx.runStart).some(
-    (e) =>
-      e.op === 'marker' &&
-      e.headFrom !== undefined &&
-      e.headTo !== undefined &&
-      sameHeadState(e.headFrom, headBaseline) &&
-      sameHeadState(e.headTo, currentHead),
-  );
-  if (known) return;
+  if (currentHead === null) return;
+  let from = headBaseline;
+  for (const e of entriesSinceRunStart(store.entries(), ctx.runStart)) {
+    if (e.op === 'marker' && e.headTo !== undefined) from = e.headTo;
+  }
+  if (sameHeadState(from, currentHead)) return;
   store.append({
     path: '',
     op: 'marker',
     before: null,
     after: null,
     bytesDelta: 0,
-    headFrom: headBaseline,
+    headFrom: from,
     headTo: currentHead,
     sessionId: ctx.sessionId,
     source: 'sweep',

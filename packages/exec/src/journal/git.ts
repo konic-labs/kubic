@@ -184,18 +184,20 @@ export function readGitBlob(
  * (or `(detached)`), and how many stashes existed. Compared at sweep: any
  * difference means the agent moved HEAD (`checkout`, `reset`, `stash`), and
  * the sweep appends a marker entry instead of letting hundreds of
- * unattributed file entries pretend nothing happened.
+ * unattributed file entries pretend nothing happened. `stash` is absent
+ * when git could not list the stashes: the HEAD and branch still count.
  */
 export interface HeadState {
   head: string;
   branch: string;
-  stash: number;
+  stash?: number;
 }
 
 /**
  * Read the current HEAD state, or null when git cannot answer (non-repo,
  * unborn HEAD, missing binary — fail-open, the sweep then emits no
- * marker). Three metadata calls, no content reads.
+ * marker). Three metadata calls, no content reads. A failed stash list
+ * leaves only the stash count unknown.
  */
 export function captureHeadState(
   root: string,
@@ -211,7 +213,7 @@ export function captureHeadState(
       ? branchOut.stdout.toString('utf8').trim()
       : '(detached)';
   const stashOut = runGit(['stash', 'list', '--format=%H'], root);
-  if (stashOut.status !== 0) return null;
+  if (stashOut.status !== 0) return { head, branch };
   const stash = stashOut.stdout
     .toString('utf8')
     .split('\n')
@@ -250,8 +252,14 @@ function headStatePath(dir: string, runId: string): string {
   return `${dir}/baseline-${runId}.head.json`;
 }
 
+// An unknown stash count on either side compares as unchanged: only a
+// count both sides read can show a stash move.
 export function sameHeadState(a: HeadState, b: HeadState): boolean {
-  return a.head === b.head && a.branch === b.branch && a.stash === b.stash;
+  return (
+    a.head === b.head &&
+    a.branch === b.branch &&
+    (a.stash === undefined || b.stash === undefined || a.stash === b.stash)
+  );
 }
 
 export function saveHeadState(

@@ -6,12 +6,12 @@ import { join } from 'node:path';
 import { FakeExecutionEnv } from '@kubic/exec/env';
 import { argvKey } from '@kubic/exec/test-support/env-fakes';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createSessionSpillSink } from '../spill.js';
-import { BASH_RESULT_MAX_CHARS } from './bash.js';
-import { runGit } from './git.js';
-import { createInvocation, MemoryMemoStore } from './memos.js';
-import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import { createSessionSpillSink } from '../../spill.js';
+import { BASH_RESULT_MAX_CHARS } from '../bash.js';
+import { createInvocation, MemoryMemoStore } from '../memos.js';
+import { callOperation } from '../registry.js';
+import type { OpContext, ToolInvocation } from '../types.js';
+import { runGit } from './run.js';
 
 function ctx(
   scripts: Record<string, { exitCode: number; stdout: string; stderr: string }>,

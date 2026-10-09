@@ -15,11 +15,11 @@ import {
   disposeAllGitSandboxes,
 } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
-import { OperationKillRegistry } from '../lane/abort.js';
-import { runGit } from './git.js';
-import { createInvocation, MemoryMemoStore } from './memos.js';
-import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import { OperationKillRegistry } from '../../lane/abort.js';
+import { createInvocation, MemoryMemoStore } from '../memos.js';
+import { callOperation } from '../registry.js';
+import type { OpContext, ToolInvocation } from '../types.js';
+import { runGit } from './run.js';
 
 afterEach(() => {
   disposeAllGitSandboxes();

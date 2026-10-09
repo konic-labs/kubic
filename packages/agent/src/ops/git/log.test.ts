@@ -3,9 +3,9 @@
 import { FakeExecutionEnv } from '@kubic/exec/env';
 import { argvKey } from '@kubic/exec/test-support/env-fakes';
 import { describe, expect, it } from 'vitest';
-import { createInvocation, MemoryMemoStore } from './memos.js';
-import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import { createInvocation, MemoryMemoStore } from '../memos.js';
+import { callOperation } from '../registry.js';
+import type { OpContext, ToolInvocation } from '../types.js';
 
 function ctx(
   scripts: Record<string, { exitCode: number; stdout: string; stderr: string }>,

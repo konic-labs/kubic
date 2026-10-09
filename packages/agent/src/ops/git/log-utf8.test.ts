@@ -12,9 +12,9 @@ import {
   type GitSandbox,
 } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createInvocation, MemoryMemoStore } from './memos.js';
-import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import { createInvocation, MemoryMemoStore } from '../memos.js';
+import { callOperation } from '../registry.js';
+import type { OpContext, ToolInvocation } from '../types.js';
 
 afterEach(() => {
   disposeAllGitSandboxes();

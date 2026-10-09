@@ -78,8 +78,8 @@
       "default": "./src/ops/display-diff.ts"
     },
     "./ops/git": {
-      "source": "./src/ops/git.ts",
-      "default": "./src/ops/git.ts"
+      "source": "./src/ops/git/index.ts",
+      "default": "./src/ops/git/index.ts"
     },
     "./ops/memos": {
       "source": "./src/ops/memos.ts",

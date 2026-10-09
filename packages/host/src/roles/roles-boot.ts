@@ -8,6 +8,7 @@
 // injected, so tests drive fixtures while prod passes the real FileBridge.
 
 import type { PermissionClasses } from '@kubic/agent/permissions';
+import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import type { DoctorCheck } from '../doctor/index.js';
 import type { EffectivePolicy } from '../policy/index.js';
@@ -19,6 +20,7 @@ import type { RoleLayerInput } from './resolver.js';
 import {
   type ParsedRoleDoc,
   parseRoleDocument,
+  RESERVED_ROLE_REASON,
   type ResolvedRole,
   RoleParseError,
   RoleRefusedError,
@@ -419,6 +421,11 @@ function duplicateRefusal(dup: { name: string; paths: string[] }): string {
 }
 
 export function selectRole(input: RoleSelectionInput): SelectedRole {
+  if (input.role === DEFAULT_RUN_ROLE) {
+    throw new RoleBootError(
+      `${RESERVED_ROLE_REASON}; omit --role to run without one`,
+    );
+  }
   const loaded = loadRoles(input);
   // A forked name is refused before anything else — no copy
   // wins, not even a same-named builtin.
@@ -443,9 +450,14 @@ export function selectRole(input: RoleSelectionInput): SelectedRole {
     // learn it is trust, not a typo, that blocks them.
     const held = loaded.withheld.find((entry) => entry.name === input.role);
     if (held !== undefined) throw new RoleBootError(held.reason);
+    // A withheld document is never read, so its declared role may differ
+    // from its file name: name the withheld files too, so a name that trust
+    // would unlock does not read as a typo. The builtins always load, so
+    // the loaded list is never empty.
     const known = loaded.docs.map((entry) => entry.name).join(', ');
+    const withheldNames = loaded.withheld.map((entry) => entry.name).join(', ');
     throw new RoleBootError(
-      `no role document for '${input.role}' under ${ROLES_DIR}${known === '' ? ' (no role documents found)' : ` (loaded: ${known})`}`,
+      `no role document for '${input.role}' under ${ROLES_DIR} (loaded: ${known}${withheldNames === '' ? '' : `; withheld by project trust: ${withheldNames}`})`,
     );
   }
   const resolved = resolveRole(doc, input.layers ?? [], {

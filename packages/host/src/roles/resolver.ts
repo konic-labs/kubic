@@ -17,6 +17,7 @@ import {
   toolsForClasses,
   validateClasses,
 } from '@kubic/agent/permissions';
+import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import type { ConfigLayer, RoleModelEntry } from '../config/index.js';
 import { CONFIG_LAYERS } from '../config/index.js';
 import type { DoctorCheck } from '../doctor/index.js';
@@ -33,6 +34,10 @@ export class RoleParseError extends Error {
     this.name = 'RoleParseError';
   }
 }
+
+// Why no role document or `--role` may use the name a run without --role
+// records.
+export const RESERVED_ROLE_REASON = `role name '${DEFAULT_RUN_ROLE}' is reserved for runs without --role`;
 
 interface RoleToolPolicy {
   filesystem?: unknown;
@@ -177,6 +182,11 @@ export function parseRoleDocument(markdown: string): ParsedRoleDoc {
     throw new RoleParseError(
       `'role' (${JSON.stringify(name)}) disagrees with 'name' (${JSON.stringify(alias)}): one document, one role`,
     );
+  }
+  // A run without --role records the role `default`: a document of that
+  // name could not be told apart from it in trajectory and audit records.
+  if (name === DEFAULT_RUN_ROLE) {
+    throw new RoleParseError(RESERVED_ROLE_REASON);
   }
   // The document model pin: `provider/id`, both sides
   // non-empty — the same rule the config `[roles.<r>].model` check and

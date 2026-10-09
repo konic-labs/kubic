@@ -90,6 +90,17 @@ describe('parseRoleDocument', () => {
       parseRoleDocument(`---\nrole: reviewer\npriority: high\n---\n# R\n`),
     ).toThrow(/unknown frontmatter key 'priority'/);
   });
+
+  // A run without --role records the role `default`: a document of that
+  // name would be indistinguishable from it in trajectories and audit rows.
+  it("refuses the reserved role name 'default', declared either way", () => {
+    expect(() => parseRoleDocument(`---\nrole: default\n---\n# D\n`)).toThrow(
+      "role name 'default' is reserved for runs without --role",
+    );
+    expect(() => parseRoleDocument(`---\nname: default\n---\n# D\n`)).toThrow(
+      "role name 'default' is reserved for runs without --role",
+    );
+  });
 });
 
 const REVIEWER_MD = `---

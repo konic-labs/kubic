@@ -146,6 +146,57 @@ describe('project role documents are trust-gated', () => {
     ).toThrow(/withheld: untrusted project root/);
   });
 
+  it('refuses --role default as the reserved name of a run without --role', () => {
+    expect(() =>
+      selectRole({
+        bridge: memBridge({}),
+        cwd: '/repo',
+        projectRoot: '/repo',
+        trusted: true,
+        role: 'default',
+      }),
+    ).toThrow(
+      "role name 'default' is reserved for runs without --role; omit --role to run without one",
+    );
+  });
+
+  it("reports a document declaring the reserved role 'default' as invalid", () => {
+    const loaded = loadRoles({
+      bridge: memBridge({
+        '/repo/.kubic/roles/default.md': '---\nrole: default\n---\n# D\n',
+      }),
+      cwd: '/repo',
+      projectRoot: '/repo',
+      trusted: true,
+    });
+    expect(loaded.docs.map((doc) => doc.name)).not.toContain('default');
+    expect(loaded.invalid).toEqual([
+      expect.objectContaining({
+        name: 'default',
+        reason: "role name 'default' is reserved for runs without --role",
+      }),
+    ]);
+  });
+
+  it('names the withheld documents when --role matches none of their file names', () => {
+    // An untrusted document is never read, so its declared role (which may
+    // differ from its file name) is unknown: the refusal names what trust
+    // would unlock instead of reading as a plain typo.
+    expect(() =>
+      selectRole({
+        bridge: memBridge({
+          '/repo/.kubic/roles/scouting.md':
+            files['/repo/.kubic/roles/scout.md'],
+        }),
+        cwd: '/repo/sub',
+        projectRoot: '/repo',
+        role: 'scout',
+      }),
+    ).toThrow(
+      /no role document for 'scout' under \.kubic\/roles \(loaded: .+; withheld by project trust: scouting\)$/,
+    );
+  });
+
   it('still resolves the builtins from an untrusted root', () => {
     const selected = selectRole({
       bridge: memBridge(files),

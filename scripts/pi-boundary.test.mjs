@@ -1,6 +1,7 @@
-// The Pi dependency contract: exact pins in the two manifests that declare
-// Pi, the root override for its transitive telemetry package, one hoisted copy
-// of every Pi package in the lockfile, and a JUSTIFICATION block on every
+// The Pi dependency contract: exact pins in the two workspace manifests that
+// declare Pi and in the root manifest npm installs (which also pins Pi's
+// transitive telemetry package), one hoisted copy of every Pi package in the
+// lockfile, and a JUSTIFICATION block on every
 // export of the two boundary files (which files may import Pi at all is
 // `npm run lint:deps`).
 import assert from 'node:assert/strict';
@@ -31,9 +32,10 @@ const ABSENT_FROM_LOCK = [
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-protocol',
 ];
-// Transitive Pi deps re-pinned to PI_VERSION by a root `overrides` entry
-// (pi-ai@1.0.2 declares pi-telemetry with a caret).
-const OVERRIDDEN_PI_DEPS = ['@earendil-works/pi-telemetry'];
+// Transitive Pi deps the root pins directly: pi-ai@1.0.2 declares
+// pi-telemetry with a caret, and a direct exact dependency is the pin that
+// holds in an npm install (overrides do not).
+const ROOT_PINNED_PI_DEPS = ['@earendil-works/pi-telemetry'];
 const PI_VERSION = '1.0.2';
 
 // Every `export` statement in either Pi boundary file must be
@@ -113,15 +115,16 @@ describe('pi pinning + boundary', () => {
     }
   });
 
-  it('root overrides pin the transitive Pi telemetry exactly', () => {
+  it('the root pins every Pi package an install of kubic needs', () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-    // pi-ai@1.0.2 declares `@earendil-works/pi-telemetry: ^1.0.2`; Kubic
-    // re-pins it exactly so a telemetry release cannot move the runtime tree.
-    assert.equal(
-      pkg.overrides?.['@earendil-works/pi-telemetry'],
-      PI_VERSION,
-      `pi-telemetry must be overridden to ${PI_VERSION}`,
-    );
+    for (const dep of [...PI_DEPS, ...ROOT_PINNED_PI_DEPS]) {
+      assert.equal(
+        pkg.dependencies?.[dep],
+        PI_VERSION,
+        `${dep} must be a root dependency pinned to ${PI_VERSION}`,
+      );
+    }
+    assert.equal(pkg.overrides, undefined, 'the root must have no overrides');
   });
 
   it('both Pi boundary files justify every export', () => {
@@ -229,7 +232,7 @@ describe('pi pinning + boundary', () => {
       readFileSync(join(ROOT, 'package-lock.json'), 'utf8'),
     );
     const pkgs = lock.packages ?? {};
-    for (const dep of [...PI_DEPS, ...OVERRIDDEN_PI_DEPS]) {
+    for (const dep of [...PI_DEPS, ...ROOT_PINNED_PI_DEPS]) {
       // npm may hoist or nest each copy (pi-ai appears both under the agent
       // and under pi-durable), so pin every resolved copy, not one path.
       const suffix = `node_modules/${dep}`;

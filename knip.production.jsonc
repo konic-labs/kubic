@@ -22,6 +22,17 @@
 
   "workspaces": {
     ".": {
+      // The root manifest is the one npm installs, so it declares every
+      // runtime dependency, the Pi packages included. packages/agent and
+      // packages/tui import and declare those too, which is where knip
+      // counts the use; `npm run check:pins` keeps the two declarations equal.
+      "ignoreDependencies": [
+        "@earendil-works/chord",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-durable",
+        "@earendil-works/pi-telemetry",
+        "@earendil-works/pi-tui"
+      ],
       // The vitest plugin would add every *.test.ts as an entry, which makes
       // any test import count as use. It is off here, so `ignore` below holds.
       "vitest": false,

@@ -69,7 +69,7 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 | `binary-contract.mjs` | Runs the built binary: only the shipped artifact proves its exit codes, its startup output and the purity of its `--json` output. |
 | `faux-smoke.mjs` | Drives the built binary through a whole faux-provider run with a tool call. |
 | `dep-lint.mjs` | The import rules: package direction, no relative import across packages, test fixtures in tests only, `node:fs`/`node:child_process` only in `exec`, the two Pi boundary files, a host concern folder reached through its `index.ts`, and one argv parser. It reads `vi.mock` specifiers as imports too. dependency-cruiser, the standard tool, cannot parse TypeScript 7 sources. |
-| `check-pinned-deps.mjs` | Every dependency in every manifest is one exact version. `.npmrc` sets `save-exact=true` for new installs; the check catches a hand edit. |
+| `check-pinned-deps.mjs` | Every dependency in every manifest is one exact version, no manifest has `overrides` (npm ignores them when someone installs kubic), and every workspace dependency is declared by the root manifest with the same version. `.npmrc` sets `save-exact=true` for new installs; the check catches a hand edit. |
 | `check-docs-links.mjs` | Every relative link in `docs/` resolves, with no dependency to install. |
 | `gen-config-docs.mjs` | Generates the config key tables and `example.toml` from the config schema; `--check` fails when they are stale. |
 | `pi-boundary.test.mjs` | The Pi dependency contract: exact Pi pins, one hoisted copy of each Pi package in the lockfile, and a `JUSTIFICATION:` block on every boundary export. |
@@ -154,7 +154,10 @@ are re-exported.
 
 - **Erasable-syntax TypeScript only** — no parameter properties, `enum`,
   `namespace`, `import =` / `export =`.
-- **Exact pins** — no `^` / `~` on any dependency (`npm run check:pins`).
+- **Exact pins** — no `^` / `~` on any dependency, and every runtime dependency
+  declared by the root `package.json`, the manifest npm installs
+  (`npm run check:pins`). The build refuses an import the root does not
+  declare.
 - **Dependency direction** — packages import "downward" only, and the TUI
   never imports `host` / `agent` implementation; contracts come from
   `core`. A package imports another as `@kubic/<pkg>/<subpath>`, a subpath its

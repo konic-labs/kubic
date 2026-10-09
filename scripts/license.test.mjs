@@ -89,13 +89,16 @@ describe('LICENSE', () => {
     assert.match(text, /MIT/);
   });
 
-  it('NOTICE.md lists every direct third-party CLI dependency', () => {
+  it('NOTICE.md lists every direct runtime dependency', () => {
     const text = readFileSync(join(ROOT, 'NOTICE.md'), 'utf8');
     const root = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
     const direct = Object.keys(root.dependencies ?? {});
-    // Floor, not an exact count: the CLI stack is commander (+ extra-typings),
-    // consola and @clack/prompts; colour and tables are Kubic's own.
-    assert.ok(direct.length >= 4, `expected the CLI stack, saw ${direct}`);
+    // Floor, not an exact count: the root declares the Pi packages and the
+    // CLI stack (commander with its typings, consola, @clack/prompts).
+    assert.ok(
+      direct.length >= 9,
+      `expected Pi and the CLI stack, saw ${direct}`,
+    );
     for (const dep of direct) {
       assert.ok(text.includes(`\`${dep}\``), `NOTICE.md must list ${dep}`);
     }

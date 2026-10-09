@@ -1,8 +1,10 @@
 // Exact-pin check for every dependency.
 //
 // `scripts/check-pinned-deps.mjs` (`npm run check:pins`) rejects every
-// `^`/`~`/range spec on `@earendil-works/*` and the CLI stack: the runtime
-// tree must not move under a release.
+// `^`/`~`/range spec on `@earendil-works/*` and the CLI stack (the runtime
+// tree must not move under a release), every `overrides` entry, and any
+// workspace dependency the root manifest, the one npm installs, does not pin
+// identically.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -90,47 +92,66 @@ describe('check-pinned-deps', () => {
     );
   });
 
-  it('pinned check rejects ranges in overrides', () => {
-    const dir = fixturePackageJson({});
+  it('refuses every overrides entry: overrides never reach an npm install', () => {
+    const dir = scratchDir('pinned-ovr-');
     writeFileSync(
       join(dir, 'package.json'),
       JSON.stringify({
         name: 'fixture',
         private: true,
-        overrides: {
-          '@earendil-works/pi-ai': '^0.85.1',
-          lodash: '^4.0.0',
-        },
+        overrides: { '@earendil-works/pi-ai': '0.85.1', lodash: '^4.0.0' },
+      }),
+    );
+    assert.deepEqual(
+      checkPinned(dir).map((v) => `${v.file}:${v.dep}:${v.reason}`),
+      [
+        'package.json:@earendil-works/pi-ai:override',
+        'package.json:lodash:override',
+      ],
+    );
+  });
+
+  it('refuses a workspace dependency the root does not declare', () => {
+    const dir = fixturePackageJson({ consola: '3.4.2' });
+    mkdirSync(join(dir, 'packages', 'agent'), { recursive: true });
+    writeFileSync(
+      join(dir, 'packages', 'agent', 'package.json'),
+      JSON.stringify({
+        name: '@kubic/agent',
+        dependencies: { '@earendil-works/pi-ai': '1.0.2' },
+      }),
+    );
+    assert.deepEqual(
+      checkPinned(dir).map((v) => `${v.file}:${v.dep}:${v.reason}`),
+      ['packages/agent/package.json:@earendil-works/pi-ai:missing-from-root'],
+    );
+  });
+
+  it('refuses a workspace dependency pinned differently from the root', () => {
+    const dir = fixturePackageJson({ '@earendil-works/pi-ai': '1.0.2' });
+    mkdirSync(join(dir, 'packages', 'agent'), { recursive: true });
+    writeFileSync(
+      join(dir, 'packages', 'agent', 'package.json'),
+      JSON.stringify({
+        name: '@kubic/agent',
+        dependencies: { '@earendil-works/pi-ai': '1.0.3' },
       }),
     );
     const violations = checkPinned(dir);
     assert.deepEqual(
-      violations.map((v) => `${v.file}:${v.dep}@${v.spec}:${v.reason}`),
-      ['package.json:@earendil-works/pi-ai@^0.85.1:range-not-exact'],
+      violations.map((v) => `${v.dep}@${v.spec}:${v.reason}:${v.rootSpec}`),
+      ['@earendil-works/pi-ai@1.0.3:differs-from-root:1.0.2'],
     );
   });
 
-  it('pinned check passes exact pins in overrides', () => {
-    const dir = fixturePackageJson({});
+  it('accepts a workspace dependency the root pins identically', () => {
+    const dir = fixturePackageJson({ '@earendil-works/pi-ai': '1.0.2' });
+    mkdirSync(join(dir, 'packages', 'agent'), { recursive: true });
     writeFileSync(
-      join(dir, 'package.json'),
+      join(dir, 'packages', 'agent', 'package.json'),
       JSON.stringify({
-        name: 'fixture',
-        private: true,
-        overrides: { '@earendil-works/pi-ai': '0.85.1' },
-      }),
-    );
-    assert.deepEqual(checkPinned(dir), []);
-  });
-
-  it('pinned check ignores null overrides (npm deletion marker)', () => {
-    const dir = fixturePackageJson({});
-    writeFileSync(
-      join(dir, 'package.json'),
-      JSON.stringify({
-        name: 'fixture',
-        private: true,
-        overrides: { '@earendil-works/pi-ai': null },
+        name: '@kubic/agent',
+        dependencies: { '@earendil-works/pi-ai': '1.0.2' },
       }),
     );
     assert.deepEqual(checkPinned(dir), []);
@@ -163,23 +184,12 @@ describe('check-pinned-deps', () => {
     );
     const violations = checkPinned(dir);
     assert.deepEqual(
-      violations.map((v) => `${v.file}:${v.dep}`),
-      ['apps/kubic/package.json:@earendil-works/pi-ai'],
+      violations.map((v) => `${v.file}:${v.dep}:${v.reason}`),
+      [
+        'apps/kubic/package.json:@earendil-works/pi-ai:range-not-exact',
+        'apps/kubic/package.json:@earendil-works/pi-ai:missing-from-root',
+      ],
     );
-  });
-
-  it('pinned check ignores non-Pi ranges in overrides only', () => {
-    const dir = scratchDir('pinned-ovr-nonpi-');
-    writeFileSync(
-      join(dir, 'package.json'),
-      JSON.stringify({
-        name: 'fixture',
-        private: true,
-        dependencies: { '@earendil-works/pi-ai': '0.85.1' },
-        overrides: { lodash: '^4.0.0' },
-      }),
-    );
-    assert.deepEqual(checkPinned(dir), []);
   });
 
   it('pinned check rejects non-string specs', () => {
@@ -264,7 +274,7 @@ describe('check-pinned-deps', () => {
     );
     assert.equal(result.status, 1, 'CLI must exit 1 on an unpinned tree');
     assert.match(result.stdout, /is not an exact pin/);
-    assert.match(result.stdout, /1 unpinned dependency\(ies\)/);
+    assert.match(result.stdout, /1 dependency pin problem\(s\)/);
     assert.doesNotMatch(result.stdout, /dependency pins OK/);
   });
 

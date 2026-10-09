@@ -139,6 +139,19 @@ describe('listFullAccessSessions', () => {
     expect(await describeFullAccessSession(root, 'nope')).toBeUndefined();
   });
 
+  it('never joins an id that is not a session id onto the sessions root', async () => {
+    const root = tempRoot();
+    // A live full-access session one level up: `../<id>` would reach it.
+    const outside = join(root, 'outside');
+    await create(outside, 'escaped', join(root, 'repo'));
+    grantFullAccess(outside, 'escaped');
+    const sessionsRoot = join(root, 'sessions');
+    expect(
+      await describeFullAccessSession(sessionsRoot, '../outside/escaped'),
+    ).toBeUndefined();
+    expect(await describeFullAccessSession(sessionsRoot, '')).toBeUndefined();
+  });
+
   it('treats a corrupt posture file as enforced, never a crash', async () => {
     const root = tempRoot();
     const workspace = join(root, 'repo');

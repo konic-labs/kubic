@@ -9,6 +9,7 @@
 import { join } from 'node:path';
 import {
   openSessionStore,
+  SESSION_ID_PATTERN,
   sessionLockIsLive,
   sessionsTouchingWorkspace,
 } from '@kubic/agent/lane/session-store';
@@ -25,11 +26,14 @@ export interface FullAccessSession {
 // The one-session read behind `doctor --session <id>`: the
 // same live + fullAccess rule as the workspace enumeration, without the
 // workspace filter — the operator named the session explicitly. Undefined
-// covers missing, released and enforced sessions alike.
+// covers missing, released and enforced sessions alike, and an id that is
+// not a session id: it is checked here before the join, whatever the caller
+// already checked, so `../<id>` can never leave the sessions root.
 export async function describeFullAccessSession(
   sessionsRoot: string,
   sessionId: string,
 ): Promise<FullAccessSession | undefined> {
+  if (!SESSION_ID_PATTERN.test(sessionId)) return undefined;
   const dir = join(sessionsRoot, sessionId);
   if (sessionLockIsLive(dir) === undefined) return undefined;
   const posture = new FileApprovalStore(dir).loadPosture();

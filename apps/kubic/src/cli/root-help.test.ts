@@ -8,7 +8,7 @@ import {
   TERMINAL_PALETTE,
 } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { registerSessionCommands } from '../commands/session.js';
+import { registerSetupCommands } from '../commands/setup.js';
 import type { CliConfigResult } from '../config/load.js';
 import { COMMAND_NAMES } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';
@@ -90,7 +90,7 @@ async function subcommandHelp(level: 'none' | 'truecolor'): Promise<string> {
     rootHelp: ROOT_HELP,
     helpTheme: createCliTheme(level),
   });
-  registerSessionCommands(program, contextFor());
+  registerSetupCommands(program, contextFor());
   await runKubicProgram(program, ['doctor', '--help'], channels, {
     code: () => 0,
     finished: () => true,
@@ -132,7 +132,7 @@ describe('usage errors on a colour terminal', () => {
         rootHelp: ROOT_HELP,
         errorTheme: createCliTheme(level),
       });
-      registerSessionCommands(program, contextFor());
+      registerSetupCommands(program, contextFor());
       const code = await runKubicProgram(
         program,
         ['doctor', '--bogus'],

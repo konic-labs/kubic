@@ -21,6 +21,7 @@ import type { AuditOptions } from '@kubic/host/audit';
 import type { CostOptions } from '@kubic/host/cost';
 import type { PolicyOptions } from '@kubic/host/policy';
 import type { ReplayCommandOptions } from '@kubic/host/replay';
+import { examples } from '../cli/argv.js';
 import type { CommandRegistrar, KubicProgram } from '../cli/context.js';
 import type { CliConfigResult } from '../config/load.js';
 
@@ -66,10 +67,6 @@ const THINKING_HELP = 'thinking level, recorded verbatim';
 // eval --trajectory reads model/thinking/worktree from the export: the flag
 // only cross-checks it.
 const FROM_EXPORT = '; --trajectory reads it from the export';
-
-function examples(lines: readonly string[]): string {
-  return `\nExamples:\n${lines.map((line) => `  $ ${line}`).join('\n')}`;
-}
 
 function command(
   program: KubicProgram,

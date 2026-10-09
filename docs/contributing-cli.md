@@ -26,7 +26,8 @@ Each command group owns one module under `apps/kubic/src/commands/`:
 
 | Module | Commands |
 | --- | --- |
-| `session.ts` | run, tui, doctor, models, config, sessions |
+| `session.ts` | run, tui, attach, resume, sessions |
+| `setup.ts` | doctor, skills, models, setup, config, trust |
 | `journal.ts` | diff, undo, log, status, journal prune, git |
 | `analysis.ts` | cost, policy, audit, eval, benchmark, replay, export |
 

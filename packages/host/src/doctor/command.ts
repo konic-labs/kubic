@@ -24,7 +24,7 @@ function summarize(checks: DoctorCheck[]): string {
 }
 
 // The parsed `kubic doctor` invocation (commander owns the argv:
-// apps/kubic/src/commands/session.ts). Each `skip` entry may list several
+// apps/kubic/src/commands/setup.ts). Each `skip` entry may list several
 // comma-separated check ids.
 export interface DoctorCommandOptions {
   readonly skip?: readonly string[];

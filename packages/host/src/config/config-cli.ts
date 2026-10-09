@@ -7,7 +7,7 @@
 //
 // Exit codes: 0 report, 1 load failure (a broken config fails closed here
 // too — the operator sees the named reason, not a silent default); a usage
-// error is commander's (exit 2, apps/kubic/src/commands/session.ts).
+// error is commander's (exit 2, apps/kubic/src/commands/setup.ts).
 
 import {
   type CommandResult,

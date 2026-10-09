@@ -1,5 +1,5 @@
-// In-process mode commands (the architecture, not a mode): run, tui, doctor,
-// models, config, sessions. Registered on the root program by
+// The session commands: run, tui, attach, resume and sessions. Registered on
+// the root program by
 // ../dispatch.ts; this module is the one place their commander
 // definitions live — every flag, operand and value rule below is the
 // command's whole argv surface, and the generated `--help` is its usage.
@@ -8,10 +8,8 @@
 // stray operands) exit 2 through the program's parse-error mapping; the
 // runners receive typed options and never see argv.
 
-import {
-  type Command,
-  InvalidArgumentError,
-} from '@commander-js/extra-typings';
+import type { Command } from '@commander-js/extra-typings';
+import { InvalidArgumentError } from '@commander-js/extra-typings';
 import { parseModelFlag, parseThinkingFlag } from '@kubic/agent/model-select';
 import { CliUsageError } from '@kubic/core/cli/exit-codes';
 import {
@@ -20,42 +18,17 @@ import {
   parseRunTimeout,
   parseSessionIdArg,
 } from '@kubic/host/run';
+import { collect, examples, rule } from '../cli/argv.js';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
 
 // The `--model` help: one sentence per behaviour the
 // flag actually has, no promise the cli layer does not keep.
 const MODEL_FLAG_HELP =
   'override the model for this invocation (provider/id; beats env and file, never a frozen enterprise key)';
-const MODEL_FLAG_HELP_REPORT =
-  'report the config as if this model were passed (provider/id; the cli layer)';
 // The `--thinking` help: one sentence per behaviour the
 // flag actually has, no promise the cli layer does not keep.
 const THINKING_FLAG_HELP =
   'override the thinking level for this invocation (beats env and file, never a frozen enterprise key)';
-const THINKING_FLAG_HELP_REPORT =
-  'report the config as if this level were passed (the cli layer)';
-
-// A host value rule as a commander argument parser: its refusal becomes
-// commander's `option '…' argument '…' is invalid. <reason>` (exit 2).
-function rule<T>(parse: (value: string) => T): (value: string) => T {
-  return (value) => {
-    try {
-      return parse(value);
-    } catch (error) {
-      throw new InvalidArgumentError(
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-  };
-}
-
-// Repeatable value flags collect into an array, in argv order.
-function collect<T>(
-  parse: (value: string) => T,
-): (value: string, previous: T[]) => T[] {
-  const one = rule(parse);
-  return (value, previous) => [...previous, one(value)];
-}
 
 function nonNegativeInt(what: string): (value: string) => number {
   return rule((value) => {
@@ -113,10 +86,6 @@ function toolSelectionOf(
     tools: Array.isArray(parsed) ? parsed.flat() : [],
     noTools: parsed === false,
   };
-}
-
-function examples(lines: readonly string[]): string {
-  return `\nExamples:\n${lines.map((line) => `  $ ${line}`).join('\n')}`;
 }
 
 // `-p <text>` vs `--prompt=<text>` / `-p<text>`: only the attached forms
@@ -327,185 +296,6 @@ function registerTui(program: Command, ctx: CommandContext): void {
     });
 }
 
-function registerDoctor(program: Command, ctx: CommandContext): void {
-  program
-    .command('doctor')
-    .description('check dependencies, providers, policy and limits')
-    .option(
-      '--skip <ids>',
-      'skip checks by id (comma-separated, repeatable)',
-      collect((value: string) => value),
-      [] as string[],
-    )
-    .option('--json', 'print one JSON report')
-    .option(
-      '--verbose',
-      'print every check in full (the default on a terminal is a grouped summary)',
-    )
-    .option(
-      '--session <id>',
-      'check one session (its installed posture and full-access state)',
-    )
-    .addHelpText(
-      'after',
-      examples([
-        'kubic doctor',
-        'kubic doctor --verbose',
-        'kubic doctor --skip node,license:kubic --json',
-      ]),
-    )
-    .action(async (opts) => {
-      ctx.finish(
-        await ctx.runners.doctor(
-          {
-            skip: opts.skip,
-            ...(opts.json === true ? { json: true } : {}),
-            ...(opts.verbose === true ? { verbose: true } : {}),
-            ...(opts.session === undefined ? {} : { session: opts.session }),
-          },
-          ctx.config,
-        ),
-      );
-    });
-}
-
-function registerSkills(program: Command, ctx: CommandContext): void {
-  program
-    .command('skills')
-    .description('list discovered skills and why any were left out')
-    .option('--role <name>', 'gate the listing as the lane would for this role')
-    .option('--json', 'print the listing as one JSON array')
-    .addHelpText(
-      'after',
-      examples(['kubic skills', 'kubic skills --role reviewer --json']),
-    )
-    .action(async (opts) => {
-      ctx.finish(
-        await ctx.runners.skills(
-          {
-            ...(opts.role === undefined ? {} : { role: opts.role }),
-            ...(opts.json === true ? { json: true } : {}),
-          },
-          ctx.config,
-        ),
-      );
-    });
-}
-
-function registerModels(program: Command, ctx: CommandContext): void {
-  program
-    .command('models')
-    .description('list the model catalog or resolve one model')
-    .argument('[provider]', 'list one provider in full')
-    .option('--all', 'include providers without a configured key')
-    .option('--json', 'print the catalog as one JSON document')
-    .option(
-      '--resolve <provider/id>',
-      'resolve one model through the selection chain',
-    )
-    .addHelpText(
-      'after',
-      examples([
-        'kubic models',
-        'kubic models anthropic',
-        'kubic models --all',
-        'kubic models --resolve faux/echo',
-      ]),
-    )
-    .action(async (provider, opts) => {
-      ctx.finish(
-        await ctx.runners.models(
-          {
-            ...(provider === undefined ? {} : { provider }),
-            ...(opts.all === true ? { all: true } : {}),
-            ...(opts.json === true ? { json: true } : {}),
-            ...(opts.resolve === undefined ? {} : { resolve: opts.resolve }),
-          },
-          ctx.config,
-        ),
-      );
-    });
-}
-
-// `kubic setup` — provider, default model, thinking level
-// and the project trust question, saved to ~/.kubic/config.toml.
-function registerSetup(program: Command, ctx: CommandContext): void {
-  program
-    .command('setup')
-    .description(
-      'choose a provider and default model, saved to ~/.kubic/config.toml (interactive)',
-    )
-    .addHelpText('after', examples(['kubic setup']))
-    .action(async () => {
-      ctx.finish(await ctx.runners.setup({}, ctx.config));
-    });
-}
-
-function registerConfig(program: Command, ctx: CommandContext): void {
-  program
-    .command('config')
-    .description(
-      'show the effective configuration and where each value came from',
-    )
-    .option('--json', 'print the effective configuration as JSON')
-    .option(
-      '--model <provider/id>',
-      MODEL_FLAG_HELP_REPORT,
-      rule(parseModelFlag),
-    )
-    .option(
-      '--thinking <level>',
-      THINKING_FLAG_HELP_REPORT,
-      rule(parseThinkingFlag),
-    )
-    .action(async (opts) => {
-      ctx.finish(
-        await ctx.runners.config(
-          opts.json === true ? { json: true } : {},
-          ctx.config,
-        ),
-      );
-    });
-}
-
-// `kubic trust`: the durable project-trust grant. It is a
-// config-command sibling — it must run while the project layer is refused
-// (that is the case it repairs), so `configRefusalExit` lets it through.
-function registerTrust(program: Command, ctx: CommandContext): void {
-  program
-    .command('trust')
-    .description(
-      "record, revoke or list project trust — one grant covers the project's .kubic/config.toml, its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names) and its project skills",
-    )
-    .argument(
-      '[path]',
-      'the project directory to trust (default: the current directory)',
-    )
-    .option('--revoke', 'remove the recorded decision — the refusal comes back')
-    .option('--list', 'list every recorded decision')
-    .addHelpText(
-      'after',
-      examples([
-        'kubic trust',
-        'kubic trust --list',
-        'kubic trust --revoke',
-        'kubic trust ../another-repo',
-      ]),
-    )
-    .action(async (path, opts) => {
-      ctx.finish(
-        await ctx.runners.trust(
-          {
-            ...(path === undefined ? {} : { path }),
-            ...(opts.revoke === true ? { revoke: true } : {}),
-            ...(opts.list === true ? { list: true } : {}),
-          },
-          ctx.config,
-        ),
-      );
-    });
-}
-
 function registerSessions(program: Command, ctx: CommandContext): void {
   const sessions = program
     .command('sessions')
@@ -670,12 +460,6 @@ export const registerSessionCommands: CommandRegistrar = (program, ctx) => {
   registerRun(program, ctx);
   registerTui(program, ctx);
   registerReattach(program, ctx);
-  registerDoctor(program, ctx);
-  registerSkills(program, ctx);
-  registerModels(program, ctx);
-  registerSetup(program, ctx);
-  registerConfig(program, ctx);
-  registerTrust(program, ctx);
   registerSessions(program, ctx);
 };
 

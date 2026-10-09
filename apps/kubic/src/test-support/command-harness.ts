@@ -5,6 +5,7 @@ import { expect } from 'vitest';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
 import { registerSessionCommands } from '../commands/session.js';
+import { registerSetupCommands } from '../commands/setup.js';
 import type { CliConfigResult } from '../config/load.js';
 
 const CONFIG = {} as CliConfigResult;
@@ -72,6 +73,7 @@ export async function kubic(
     },
   };
   registerSessionCommands(program, ctx);
+  registerSetupCommands(program, ctx);
   const exit = await runKubicProgram(program, argv, channels, {
     code: () => code,
     finished: () => finished,

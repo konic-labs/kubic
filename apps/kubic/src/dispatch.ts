@@ -46,6 +46,7 @@ import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './cli/root-help.js';
 import { registerAnalysisCommands } from './commands/analysis.js';
 import { registerJournalCommands } from './commands/journal.js';
 import { registerSessionCommands } from './commands/session.js';
+import { registerSetupCommands } from './commands/setup.js';
 import type { CliConfigResult } from './config/load.js';
 import { configRefusalExit } from './config/load.js';
 
@@ -201,6 +202,7 @@ export function cliModelFromArgs(
 // command migrations never edit the same file.
 const REGISTRARS: readonly CommandRegistrar[] = [
   registerSessionCommands,
+  registerSetupCommands,
   registerJournalCommands,
   registerAnalysisCommands,
 ];

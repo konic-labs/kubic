@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { registerAnalysisCommands } from '../commands/analysis.js';
 import { registerJournalCommands } from '../commands/journal.js';
 import { registerSessionCommands } from '../commands/session.js';
+import { registerSetupCommands } from '../commands/setup.js';
 import type { CliConfigResult } from '../config/load.js';
 import { COMMAND_NAMES } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';
@@ -227,6 +228,7 @@ describe('command registry', () => {
     const p = program(channels);
     const { ctx } = context([]);
     registerSessionCommands(p, ctx);
+    registerSetupCommands(p, ctx);
     registerJournalCommands(p, ctx);
     registerAnalysisCommands(p, ctx);
     return p;
@@ -255,16 +257,18 @@ describe('command registry', () => {
     };
     expect(owned(registerSessionCommands)).toEqual([
       'attach',
-      'config',
-      'doctor',
-      'models',
       'resume',
       'run',
       'sessions',
+      'tui',
+    ]);
+    expect(owned(registerSetupCommands)).toEqual([
+      'config',
+      'doctor',
+      'models',
       'setup',
       'skills',
       'trust',
-      'tui',
     ]);
     expect(owned(registerJournalCommands)).toEqual([
       'commit',
@@ -306,6 +310,7 @@ describe('command registry', () => {
       };
       for (const register of [
         registerSessionCommands,
+        registerSetupCommands,
         registerJournalCommands,
         registerAnalysisCommands,
       ]) {

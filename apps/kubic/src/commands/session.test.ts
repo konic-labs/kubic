@@ -1,5 +1,6 @@
-// The command group's commander surface (run, tui, doctor, models,
-// config, sessions): every flag parses into the typed options the runner
+// The session group's commander surface (run, tui, attach, resume,
+// sessions), and the generated help and unknown-flag refusals of every
+// command: every flag parses into the typed options the runner
 // receives, `--help` is commander's generated help (exit 0), and every
 // usage error — unknown flag, missing value, a value the command's rules
 // refuse, a stray operand — exits 2 on stderr without reaching a runner.
@@ -388,5 +389,210 @@ describe('kubic run', () => {
     expect(await usageError(['run', '-p', 'x', '--role'])).toContain(
       'argument missing',
     );
+  });
+});
+
+describe('kubic tui', () => {
+  it('parses the parity flags', async () => {
+    const result = await kubic([
+      'tui',
+      '--session',
+      's1',
+      '--role',
+      'planner',
+      '--skill',
+      '/one.md',
+      '--skill',
+      '/two.md',
+      '--no-skills',
+    ]);
+    expect(result.calls).toEqual([
+      {
+        key: 'tui',
+        input: {
+          session: 's1',
+          role: 'planner',
+          skills: ['/one.md', '/two.md'],
+          noSkills: true,
+        },
+      },
+    ]);
+  });
+
+  it('opens with no flags', async () => {
+    expect((await kubic(['tui'])).calls).toEqual([{ key: 'tui', input: {} }]);
+  });
+
+  // The explicit model pin, same `provider/id` rule as replay.
+  it('parses --model <provider/id> and refuses a malformed ref', async () => {
+    expect((await kubic(['tui', '--model', 'faux/b'])).calls).toEqual([
+      { key: 'tui', input: { model: { provider: 'faux', id: 'b' } } },
+    ]);
+    expect(await usageError(['tui', '--model', 'nope'])).toContain(
+      "must be 'provider/id'",
+    );
+    expect(await usageError(['tui', '--model'])).toContain('argument missing');
+  });
+
+  // The flag is documented, and the `=` spelling (the cli config
+  // layer reads the same token for the one config load) reaches the runner
+  // exactly like the space form above.
+  it('documents and accepts the config-layer --model flag', async () => {
+    const help = (await kubic(['tui', '--help'])).out.join('\n');
+    expect(help).toContain('--model <provider/id>');
+    expect((await kubic(['tui', '--model=faux/small'])).calls).toEqual([
+      { key: 'tui', input: { model: { provider: 'faux', id: 'small' } } },
+    ]);
+  });
+
+  it('refuses operands, missing values and unsafe ids', async () => {
+    expect(await usageError(['tui', 'extra'])).toContain('too many arguments');
+    expect(await usageError(['tui', '--role'])).toContain('argument missing');
+    expect(await usageError(['tui', '--skill'])).toContain('argument missing');
+    expect(await usageError(['tui', '--session', 'a/b'])).toContain(
+      'use [A-Za-z0-9_-]',
+    );
+  });
+
+  // Skills never fetch — no fetch/install flag exists on the
+  // skill surface (run and tui), so commander refuses one by name.
+  it('refuses fetcher/install skill flags on run and tui', async () => {
+    for (const flag of ['--fetch-skills', '--install-skill', '--skill-fetch']) {
+      expect(await usageError(['run', '-p', 'x', flag])).toContain(flag);
+      expect(await usageError(['tui', flag])).toContain(flag);
+    }
+  });
+});
+
+describe('kubic sessions', () => {
+  it('parses create', async () => {
+    expect(
+      (
+        await kubic([
+          'sessions',
+          'create',
+          '--cwd',
+          '/work',
+          '--dangerously-skip-approvals',
+        ])
+      ).calls,
+    ).toEqual([
+      {
+        key: 'sessions',
+        input: {
+          command: 'create',
+          cwd: '/work',
+          dangerouslySkipApprovals: true,
+        },
+      },
+    ]);
+    expect(await usageError(['sessions', 'create', '--cwd'])).toContain(
+      'argument missing',
+    );
+  });
+
+  it('parses list', async () => {
+    expect((await kubic(['sessions', 'list', '--json'])).calls).toEqual([
+      { key: 'sessions', input: { command: 'list', json: true } },
+    ]);
+  });
+
+  it('parses attach, including the -- terminator before an id', async () => {
+    expect(
+      (await kubic(['sessions', 'attach', 'abc', '--tail', '0'])).calls,
+    ).toEqual([
+      { key: 'sessions', input: { command: 'attach', id: 'abc', tail: 0 } },
+    ]);
+    expect((await kubic(['sessions', 'attach', '--', 'abc'])).calls).toEqual([
+      { key: 'sessions', input: { command: 'attach', id: 'abc' } },
+    ]);
+    expect(await usageError(['sessions', 'attach'])).toContain(
+      "missing required argument 'id'",
+    );
+    expect(await usageError(['sessions', 'attach', '../x'])).toContain(
+      'use [A-Za-z0-9_-]',
+    );
+    expect(
+      await usageError(['sessions', 'attach', 'abc', '--tail', '-1']),
+    ).toContain('need a non-negative integer');
+  });
+
+  it('parses prune', async () => {
+    expect(
+      (
+        await kubic([
+          'sessions',
+          'prune',
+          '--keep-days',
+          '30',
+          '--keep-session',
+          'a',
+          '--keep-session',
+          'b',
+          '--yes',
+        ])
+      ).calls,
+    ).toEqual([
+      {
+        key: 'sessions',
+        input: {
+          command: 'prune',
+          keepDays: 30,
+          keepSession: ['a', 'b'],
+          yes: true,
+        },
+      },
+    ]);
+    expect((await kubic(['sessions', 'prune', '--dry-run'])).calls).toEqual([
+      {
+        key: 'sessions',
+        input: { command: 'prune', keepSession: [], dryRun: true },
+      },
+    ]);
+  });
+
+  it('refuses malformed prune flags by name', async () => {
+    for (const [argv, reason] of [
+      [['--keep-days'], 'argument missing'],
+      [['--keep-days', 'thirty'], 'non-negative integer of days'],
+      [['--keep-days', '-1'], 'non-negative integer of days'],
+      [['--keep-session'], 'argument missing'],
+      [['--keep-session', '../etc'], 'use [A-Za-z0-9_-]'],
+      [['--yes', '--dry-run'], '--yes and --dry-run contradict'],
+    ] as const) {
+      expect(await usageError(['sessions', 'prune', ...argv])).toContain(
+        reason,
+      );
+    }
+  });
+});
+
+describe('--dangerously-skip-approvals on run and tui', () => {
+  it('run passes the session-scoped flag to the runner', async () => {
+    const result = await kubic([
+      'run',
+      '--dangerously-skip-approvals',
+      '-p',
+      'hi',
+    ]);
+    expect(result.calls).toEqual([
+      { key: 'run', input: { prompt: 'hi', dangerouslySkipApprovals: true } },
+    ]);
+  });
+
+  it('tui passes the session-scoped flag to the runner', async () => {
+    const result = await kubic(['tui', '--dangerously-skip-approvals']);
+    expect(result.calls).toEqual([
+      { key: 'tui', input: { dangerouslySkipApprovals: true } },
+    ]);
+  });
+
+  it('documents the flag in run and tui help', async () => {
+    for (const command of ['run', 'tui']) {
+      const result = await kubic([command, '--help']);
+      expect(result.out.join('\n'), command).toContain(
+        '--dangerously-skip-approvals',
+      );
+    }
   });
 });

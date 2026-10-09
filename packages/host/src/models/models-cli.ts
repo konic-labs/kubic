@@ -40,7 +40,7 @@ export interface ModelsCommandDeps extends CliIo {
 }
 
 // The parsed `kubic models` invocation (commander owns the argv:
-// apps/kubic/src/commands/session.ts).
+// apps/kubic/src/commands/setup.ts).
 export interface ModelsCommandOptions {
   readonly json?: boolean;
   readonly resolve?: string;

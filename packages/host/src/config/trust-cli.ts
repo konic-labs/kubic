@@ -23,7 +23,7 @@ import { canonicalTrustPath, type ProjectTrustStore } from './trust-store.js';
 const BRIDGE = createNodeFileBridge('/');
 
 // The parsed `kubic trust` invocation (commander owns the argv:
-// apps/kubic/src/commands/session.ts). Absent `path` means the cwd.
+// apps/kubic/src/commands/setup.ts). Absent `path` means the cwd.
 export interface TrustCommandOptions {
   readonly path?: string;
   readonly revoke?: boolean;

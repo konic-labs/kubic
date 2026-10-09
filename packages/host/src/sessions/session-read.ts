@@ -4,7 +4,7 @@
 // removes `lock.json` or writes a byte, so the session dir mtime (the prune
 // age signal) stays untouched.
 
-import { join, sep } from 'node:path';
+import { isAbsolute, join, sep } from 'node:path';
 import { bridgeToPiFileSystem } from '@kubic/agent/lane/session-fs';
 import { SessionAttachError } from '@kubic/agent/lane/session-store';
 import {
@@ -55,12 +55,14 @@ function canonicalWorkspace(path: string): string {
 // recorded workspace (`meta.workspace ?? meta.cwd`) matches when it nests
 // with the invocation either way — a run started at the repo root covers a
 // reader in a subdirectory, and a subdir run still belongs to a reader at
-// the root — so both directions count as touching the workspace.
+// the root — so both directions count as touching the workspace. A relative
+// record has no anchor and never matches: resolved against the filesystem
+// root, it could land on a real directory that only shares its name.
 export function touchesWorkspace(
   recorded: string | undefined,
   workspace: string,
 ): boolean {
-  if (recorded === undefined || recorded === '') return false;
+  if (recorded === undefined || !isAbsolute(recorded)) return false;
   const left = canonicalWorkspace(recorded);
   const right = canonicalWorkspace(workspace);
   if (left === right) return true;

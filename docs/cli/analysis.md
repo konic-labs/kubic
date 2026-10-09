@@ -55,9 +55,8 @@ suite name.
   printed. The size is not part of an export, so `--size` stays
   mandatory; the determinism tier is derived from the path.
 
-Exports written by earlier builds (schema 1.0 to 1.3) still parse, for
-`replay`, `eval` and `export` alike. Keys the 1.0 contract no longer defines
-are carried through unread, and an escalation recorded without its model
+Exports at schema 1.0 through 1.3 parse, for `replay`, `eval` and `export`
+alike. Keys the 1.0 contract does not define are carried through unread, and an escalation recorded without its model
 endpoints reads them as `null`.
 
 Every record carries `suite`, `caseId`, `success`, `costUsd`, `tokens`,

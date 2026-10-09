@@ -45,8 +45,8 @@ them:
   a role document or the model.
 - `network_policy` — `"proxy"` is carried as the engine's `allowlist`
   mode; the engine names (`none`, `allowlist`, `full`) are accepted too.
-  Proxy-mediated enforcement is a named follow-up, so the value is **not
-  enforced** today; `kubic config` lists it (`kept`) instead of the section
+  Kubic has no proxy-mediated enforcement, so the value is **not
+  enforced**; `kubic config` lists it (`kept`) instead of the section
   being silently ignored.
 - `filesystem_policy` — `"workspace-only"` is the engine's
   `workspace-write`; the engine level names are accepted too.

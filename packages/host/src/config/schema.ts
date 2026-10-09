@@ -513,7 +513,7 @@ export const CONFIG_SECTIONS = [
         name: 'statusBar',
         check: 'boolean',
         runtime: {
-          kept: 'pi-tui owns presentation; the status bar belongs to the TUI — key parsed and reported for forward-compat only',
+          kept: 'the status bar is always shown; the key is parsed and reported but hides nothing',
         },
         example: 'true',
       },
@@ -525,7 +525,7 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['ui.statusBar'],
-        text: 'Kept: the status bar is always shown; hiding it is a named follow-up — parsed and reported for forward-compat only.',
+        text: 'Kept: the status bar is always shown. The key is parsed and reported but hides nothing.',
       },
     ],
   },
@@ -537,7 +537,7 @@ export const CONFIG_SECTIONS = [
         name: 'store',
         check: 'string',
         runtime: {
-          kept: 'jsonl is the only store implemented; sqlite/memory are a separate decision — key parsed and reported for forward-compat only',
+          kept: 'jsonl is the only store; the key is parsed and reported, and sqlite/memory are not implemented',
         },
         example: '"jsonl"',
       },
@@ -546,7 +546,7 @@ export const CONFIG_SECTIONS = [
         check: 'string',
         runtime: {
           notYetImplemented:
-            'sessions stay under ~/.kubic/sessions; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first)',
+            'sessions stay under ~/.kubic/sessions; the key does not relocate them',
         },
         example: '".kubic/sessions"',
       },
@@ -598,11 +598,11 @@ export const CONFIG_SECTIONS = [
     docs: [
       {
         keys: ['session.store'],
-        text: 'Kept: `jsonl` is the only store implemented; `sqlite`/`memory` are a separate decision — parsed and reported for forward-compat only.',
+        text: 'Kept: `jsonl` is the only store. The key is parsed and reported; `sqlite` and `memory` are not implemented.',
       },
       {
         keys: ['session.dir'],
-        text: 'Not yet implemented: sessions stay under `~/.kubic/sessions`; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first).',
+        text: 'Not implemented: sessions stay under `~/.kubic/sessions`, and the key does not relocate them.',
       },
       {
         keys: ['session.retentionDays'],
@@ -728,7 +728,7 @@ export const CONFIG_SECTIONS = [
         field: 'networkPolicy',
         check: 'networkPolicy',
         runtime: {
-          kept: 'resolved into the effective policy but NOT enforced: proxy-mediated enforcement is a named follow-up, listed here rather than silently ignored (doctor does not report it yet)',
+          kept: 'resolved into the effective policy but NOT enforced: Kubic has no proxy-mediated enforcement, so the key is listed here rather than silently ignored (doctor does not report it)',
         },
         example: '"proxy"',
       },
@@ -737,7 +737,7 @@ export const CONFIG_SECTIONS = [
         field: 'allowedDomains',
         check: 'strings',
         runtime: {
-          kept: 'resolved into the effective policy alongside network_policy; no live network enforcement exists yet',
+          kept: 'resolved into the effective policy alongside network_policy; Kubic has no live network enforcement',
         },
         example: '["registry.npmjs.org", "github.com"]',
       },
@@ -746,7 +746,7 @@ export const CONFIG_SECTIONS = [
         field: 'filesystemPolicy',
         check: 'filesystemPolicy',
         runtime: {
-          kept: 'resolved into the effective policy but NOT enforced as its own gate: the lane derives filesystem reach from [permissions] classes today',
+          kept: 'resolved into the effective policy but NOT enforced as its own gate: the lane derives filesystem reach from the [permissions] classes',
         },
         example: '"workspace-only"',
       },
@@ -764,7 +764,7 @@ export const CONFIG_SECTIONS = [
         field: 'loggingPolicy',
         check: 'string',
         runtime: {
-          kept: 'carried and reported; the one shipped audit ledger is not (yet) selected by this key',
+          kept: 'carried and reported; the audit ledger is not selected by this key',
         },
         example: '"full-audit"',
       },
@@ -784,11 +784,11 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['policy.network_policy', 'policy.allowed_domains'],
-        text: 'Parsed and resolved into the effective policy: `"proxy"` is carried as the engine\'s allowlist mode. **Not enforced today:** proxy-mediated enforcement is a named follow-up, so these keys protect nothing yet — `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` reports the one shape it can judge: an `allowlist` with no domains is unenforceable and fails `policy:enterprise-network`; proxy-mediated enforcement itself stays unreported. The engine mode names (`none`, `allowlist`, `full`) are accepted too.',
+        text: 'Parsed and resolved into the effective policy: `"proxy"` is carried as the engine\'s allowlist mode. **Not enforced:** Kubic has no proxy-mediated enforcement, so these keys protect nothing; `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` reports the one shape it can judge: an `allowlist` with no domains is unenforceable and fails `policy:enterprise-network`; proxy-mediated enforcement itself stays unreported. The engine mode names (`none`, `allowlist`, `full`) are accepted too.',
       },
       {
         keys: ['policy.filesystem_policy'],
-        text: "Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from `[permissions]` classes today, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it.",
+        text: "Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from the `[permissions]` classes, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it.",
       },
       {
         keys: ['policy.data_policy', 'policy.logging_policy'],

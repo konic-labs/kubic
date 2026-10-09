@@ -35,8 +35,10 @@ import {
 
 // Observations longer than this keep their byte count but are cut —
 // trajectories stay shareable without hauling full tool output.
+/** @internal */
 export const MAX_OBSERVATION_BYTES = 8 * 1024;
 
+/** @internal */
 export type TrajectoryExportErrorCode =
   | 'missing-provenance'
   | 'invalid-provenance'
@@ -48,6 +50,7 @@ export type TrajectoryExportErrorCode =
   | 'invalid-usage'
   | 'invalid-escalation';
 
+/** @internal */
 export class TrajectoryExportError extends Error {
   readonly code: TrajectoryExportErrorCode;
   readonly exitCode: ExitCode = EXIT_USAGE;

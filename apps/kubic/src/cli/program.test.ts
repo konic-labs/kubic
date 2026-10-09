@@ -8,9 +8,10 @@ import { registerAnalysisCommands } from '../commands/analysis.js';
 import { registerJournalCommands } from '../commands/journal.js';
 import { registerSessionCommands } from '../commands/session.js';
 import type { CliConfigResult } from '../config/load.js';
-import { COMMAND_NAMES, ROOT_HELP } from '../dispatch.js';
+import { COMMAND_NAMES } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';
 import { createKubicProgram, runKubicProgram } from './program.js';
+import { ROOT_HELP } from './root-help.js';
 
 function io() {
   const out: string[] = [];

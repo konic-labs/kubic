@@ -3,10 +3,10 @@
   // left out. `npm run lint:dead:prod` runs it (see docs/contributing.md).
   "$schema": "https://unpkg.com/knip@6.38.0/schema.json",
 
-  // An export that production code uses inside its own module is live, so it
-  // is not reported here. The gate reports exports that no production code
-  // uses at all, which are the exports only tests import.
-  "ignoreExportsUsedInFile": true,
+  // An export only tests import is reported, even when production code uses
+  // it inside its own module: such an export is tagged @internal (below), and
+  // everything else is either used by production code elsewhere or private.
+  "ignoreExportsUsedInFile": false,
 
   // Exports named by a package's exports map are entry files for knip (see
   // knip.jsonc). This keeps the production gate reporting them too.
@@ -15,11 +15,10 @@
   // mkfifo is a POSIX utility, not a dependency (see knip.jsonc).
   "ignoreBinaries": ["mkfifo"],
 
-  // Exports tagged @internal exist for tests only: the nine Pi and TUI seams
-  // where they are re-exported (pi-boundary.ts, tui-boundary.ts), and the
-  // approval detectors the composition-root tests drive
-  // (packages/host/src/approvals/index.ts). knip ignores @internal exports in
-  // production mode only, so the default gate still checks them.
+  // Exports tagged @internal exist for tests: limits and pure helpers a test
+  // pins directly, and the Pi and TUI seams only tests reach. knip ignores
+  // @internal exports in production mode only, so the default gate still
+  // checks them.
 
   "workspaces": {
     ".": {

@@ -143,10 +143,12 @@ function parseImageCommand(prompt: string): TuiImageCommand | undefined {
 // operator named it); a relative one resolves against the workspace. A
 // missing file, a directory or a file over the cap is refused by name, and
 // the read is bounded so an oversize file is never loaded in full.
+/** @internal */
 export type ImageFileRead =
   | { readonly ok: true; readonly filename: string; readonly bytes: Uint8Array }
   | { readonly ok: false; readonly message: string };
 
+/** @internal */
 export function readImageFile(files: FileBridge, path: string): ImageFileRead {
   const full = files.absolutePath(path);
   const filename = basename(full);

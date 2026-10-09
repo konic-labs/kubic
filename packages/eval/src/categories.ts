@@ -1,5 +1,6 @@
 // Eval categories.
 // The eight benchmark categories every matrix run covers.
+/** @internal */
 export const EVAL_CATEGORIES = [
   'swe',
   'repo-mod',

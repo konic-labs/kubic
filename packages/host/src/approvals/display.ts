@@ -19,6 +19,7 @@ import { redactSecrets } from '@kubic/agent/lane/interceptors';
 // The summary's command budget: summaries are one-line labels (trajectory,
 // audit detail). The full command
 // travels separately in the request's `command` field.
+/** @internal */
 export const SUMMARY_COMMAND_LIMIT = 120;
 
 // \p{Default_Ignorable_Code_Point} covers U+3164 / U+115F / U+FFA0 (Hangul

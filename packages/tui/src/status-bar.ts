@@ -159,6 +159,7 @@ const TURN_ROLE: Record<StatusTurnState, TokenRole> = {
 };
 
 // `200k`, `1M`: the window as people say it.
+/** @internal */
 export function compactCount(count: number): string {
   if (count >= 1_000_000) {
     const millions = Math.round(count / 100_000) / 10;
@@ -244,6 +245,7 @@ function assemble(
  * and the turn state word on the right, painted on bg1. A
  * running turn turns the mark into the spinner.
  */
+/** @internal */
 export function renderStatusLine(
   state: StatusBarState,
   width: number,

@@ -115,6 +115,7 @@ const LINUX_CLOCK_TICK_MS = 10;
  * so the field arithmetic is pinned by a fixture test on every platform
  * (the file reads themselves only exist on Linux).
  */
+/** @internal */
 export function procStartTimeFromStat(
   stat: string,
   bootTimeMs: number,

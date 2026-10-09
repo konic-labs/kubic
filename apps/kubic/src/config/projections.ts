@@ -187,6 +187,7 @@ export function runtimeSkillsDeps(result: CliConfigResult): {
 // first-layer-wins merge sees exactly the provenance the config load
 // recorded — `roles.implementer.model` from the project layer never
 // masquerades as an enterprise value. The layer order is CONFIG_LAYERS'.
+/** @internal */
 export function roleLayersFromConfig(runtime: RuntimeConfig): RoleLayerInput[] {
   const roles = runtime.config.roles;
   if (roles === undefined) return [];

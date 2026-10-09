@@ -272,6 +272,7 @@ export async function resolveInteractiveProjectTrust(
 
 // The config the rest of the process runs on; a refusal throws with its
 // named reason instead of returning defaults.
+/** @internal */
 export function requireRuntimeConfig(result: CliConfigResult): RuntimeConfig {
   if (result.runtime === undefined) {
     throw new Error(result.error ?? 'config refused');
@@ -306,6 +307,7 @@ const CONFIG_REPORTING_COMMANDS = new Set([
 // The reporting commands (`config`, `doctor`, `trust`) must still run so
 // the named reason can surface; sessions/journal read only
 // `session.retentionDays` (undefined-safe: no invented window).
+/** @internal */
 export const CONFIG_CONSUMING_COMMANDS: ReadonlySet<string> = new Set([
   'run',
   'tui',

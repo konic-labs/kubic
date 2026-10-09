@@ -70,6 +70,7 @@ function resultDetails(entry: unknown): Record<string, unknown> | undefined {
 }
 
 // Pi's display diff: `+12 text`, `-12 text`, ` 12 text`, ` <pad> ...`.
+/** @internal */
 export function countDiffLines(diff: string): {
   added: number;
   removed: number;

@@ -51,8 +51,10 @@ const EDITOR_FALLBACK_ROWS = 24;
 // How many prompts Up can recall — Pi's editor keeps the newest
 // 100 itself, so seeding more would only be dropped; the bound keeps a long
 // resumed session cheap to seed.
+/** @internal */
 export const PROMPT_HISTORY_MAX = 100;
 
+/** @internal */
 export function editorTheme(): EditorTheme {
   // Read per call so a theme set after construction applies.
   const ui = () => tuiTheme().ui;

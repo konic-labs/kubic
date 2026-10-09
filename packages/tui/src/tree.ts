@@ -23,9 +23,12 @@ import { tuiTheme } from './theme.js';
 import type { Component, MouseRegionHandler } from './tui-boundary.js';
 import { MouseRegion, truncateToWidth } from './tui-boundary.js';
 
+/** @internal */
 export type RunStatus = 'idle' | 'running' | 'done';
+/** @internal */
 export type ToolCallState = 'running' | 'done';
 
+/** @internal */
 export function statusGlyph(status: RunStatus): string {
   if (status === 'running') return '●';
   if (status === 'done') return '✓';
@@ -35,6 +38,7 @@ export function statusGlyph(status: RunStatus): string {
 // A finished call that failed gets its own glyph — ✓ on an error
 // was the bug. The colour is applied at render time (styleTreeLine), so the
 // glyph stays distinct with NO_COLOR too.
+/** @internal */
 export function toolGlyph(state: ToolCallState, error = false): string {
   if (state === 'running') return '●';
   return error ? '✗' : '✓';
@@ -84,6 +88,7 @@ export interface TreeState {
   usage: TreeUsage;
 }
 
+/** @internal */
 export function createTreeState(label = DEFAULT_RUN_ROLE): TreeState {
   return {
     label,
@@ -95,6 +100,7 @@ export function createTreeState(label = DEFAULT_RUN_ROLE): TreeState {
   };
 }
 
+/** @internal */
 export function toggleTree(state: TreeState): void {
   state.collapsed = !state.collapsed;
 }
@@ -111,6 +117,7 @@ function previousDurationMs(state: TreeState): number {
 // host projector folds — there is ONE lane input (the snapshot below), not a
 // second event-driven path beside it. The summarizers stay here, so the state
 // never carries a display string.
+/** @internal */
 export interface TreeToolSnapshot {
   readonly toolCallId: string;
   readonly toolName: string;
@@ -173,6 +180,7 @@ export function applyTreeSnapshot(
   }
 }
 
+/** @internal */
 export function collapsedSummary(state: TreeState): string {
   const calls = previousCalls(state) + state.tools.length;
   const total =
@@ -228,6 +236,7 @@ function fitLine(line: string, width: number): string {
 
 // Pure headless render (no VirtualTerminal in Pi 0.85.1): callers render
 // these lines directly like renderLayout in layout.test.ts.
+/** @internal */
 export function renderTreeLines(state: TreeState, width: number): string[] {
   const w = Math.max(0, Math.floor(width));
   const lines = [headLine(state)];

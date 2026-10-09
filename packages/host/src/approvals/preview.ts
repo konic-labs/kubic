@@ -12,6 +12,7 @@ import {
 import type { FileBridge } from '@kubic/exec/file-bridge';
 
 /** Files past this size are not read for a preview. */
+/** @internal */
 export const APPROVAL_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 
 type PreviewFiles = Pick<FileBridge, 'exists' | 'fileInfo' | 'readTextFile'>;

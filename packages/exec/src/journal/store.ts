@@ -37,6 +37,7 @@ const MUTATION_LOCK_WAIT_MS = 5_000;
  * about to rename into place. Exported so a destructive command can observe
  * the lock read-only (`liveLockHolder`) and skip instead of racing.
  */
+/** @internal */
 export function journalMutationLockPath(indexPath: string): string {
   return `${indexPath}.lock`;
 }

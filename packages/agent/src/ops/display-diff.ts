@@ -31,6 +31,7 @@ export interface WriteDisplay {
 export type ToolDisplay = DiffDisplay | WriteDisplay;
 
 const DISPLAY_DIFF_CONTEXT = 3;
+/** @internal */
 export const DISPLAY_DIFF_MAX_ROWS = 400;
 const WRITE_PREVIEW_LINES = 40;
 // The LCS table's cell budget (rows × columns of the changed middle).

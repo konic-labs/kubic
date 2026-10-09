@@ -258,6 +258,7 @@ export interface RoleLayerInput {
   roles: Record<string, RoleLayerSpec>;
 }
 
+/** @internal */
 export interface MergedRole {
   tools: string[] | undefined;
   classes: PermissionClasses;
@@ -293,6 +294,7 @@ const CLASS_ORDER: Array<keyof PermissionClasses> = [
 // key set above it. The role document is the fallback base below every
 // layer. Overridden attempts are reported, never applied (mirrors
 // mergeLayered in host config).
+/** @internal */
 export function mergeRoleLayers(
   doc: ParsedRoleDoc,
   inputs: RoleLayerInput[],
@@ -539,6 +541,7 @@ export function resolveRole(
 // is refused with a named reason, never silently narrowed. Unknown
 // tools are refused the same way: policy, not enforcement, owns the
 // vocabulary, and the lane must never register what it cannot name.
+/** @internal */
 export function validateResolvedRole(resolved: ResolvedRole): void {
   for (const tool of resolved.tools) {
     if (!(KNOWN_ROLE_TOOLS as readonly string[]).includes(tool)) {

@@ -5,6 +5,7 @@ import type { AppCore } from './core.js';
 
 // An idle, empty Ctrl-C arms the quit for this long; a second
 // press inside the window quits.
+/** @internal */
 export const QUIT_ARM_MS = 2000;
 
 export class QuitArming {

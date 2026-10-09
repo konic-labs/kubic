@@ -28,6 +28,7 @@ const ENV_REF = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
 // word boundary: a mid-word quote is far more
 // likely an apostrophe (`don't`) than grouping, so it stays literal and
 // the helper receives exactly what was written. A close always closes.
+/** @internal */
 export function splitSecretCommand(input: string): string[] {
   const argv: string[] = [];
   let current = '';

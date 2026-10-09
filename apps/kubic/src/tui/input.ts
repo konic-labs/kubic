@@ -25,6 +25,7 @@ import type { TuiTurnDriver } from './types.js';
 // chunks of one real paste (the pty delivers them back to back, and pi-tui's
 // StdinBuffer flushes a partial OSC after 50 ms), short enough that a stray
 // escape never swallows the operator's typing.
+/** @internal */
 export const PASTE_IDLE_MS = 150;
 
 type Routed = ReturnType<TuiApp['handleInput']>;

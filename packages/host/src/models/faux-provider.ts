@@ -101,6 +101,7 @@ function parseArgs(raw: string | undefined): Record<string, unknown> | string {
 }
 
 // The scripted reply for one call — exported for the unit tests.
+/** @internal */
 export function fauxReplyFor(
   messages: readonly Message[],
 ): ReturnType<typeof fauxAssistantMessage> {

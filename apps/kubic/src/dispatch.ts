@@ -49,17 +49,10 @@ import { registerSessionCommands } from './commands/session.js';
 import type { CliConfigResult } from './config/load.js';
 import { configRefusalExit } from './config/load.js';
 
-// The root help: one text, printed by `--help`/`-h`
-// (exit 0 — a help request is a successful invocation), by the bare
-// invocation or a bare TUI flag off a TTY (exit 1 — usage-on-no-args is the
-// deliberate POSIX posture), and by an unknown command or root option (exit
-// 2 — a usage error). The plain text is pinned by
-// scripts/binary-contract.mjs; on a TTY the same text is coloured.
-export { ROOT_HELP };
-
 // The supported command names, read off the help's command groups so the
 // routing table and the listing can never drift apart (program.test.ts also
 // pins that the registered commander commands are exactly these).
+/** @internal */
 export const COMMAND_NAMES: ReadonlySet<string> = new Set(
   COMMAND_GROUPS.flatMap((group) => group.commands),
 );
@@ -142,6 +135,7 @@ function tryParseCliThinking(value: string): string | undefined {
 // left to commander, whose own option rule refuses it with exit 2), and
 // later occurrences win. Both spellings are read: `--thinking <level>` and
 // `--thinking=<level>`.
+/** @internal */
 export function cliThinkingFromArgs(
   command: string | undefined,
   rest: readonly string[],
@@ -175,6 +169,7 @@ export function cliThinkingFromArgs(
 // left to commander, whose own option rule refuses it with exit 2 before any
 // runner runs. Later occurrences win, matching commander's repetition
 // behaviour, so the load sees the same value the parser will.
+/** @internal */
 export function cliModelFromArgs(
   command: string | undefined,
   rest: readonly string[],

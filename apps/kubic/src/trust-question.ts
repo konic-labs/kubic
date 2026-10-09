@@ -72,6 +72,7 @@ export function trustQuestionLines(
 
 /** Files past this size are not shown in full. */
 const TRUST_VIEW_MAX_BYTES = 64 * 1024;
+/** @internal */
 export const TRUST_VIEW_MAX_LINES = 40;
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a repository's file never drives the terminal

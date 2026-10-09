@@ -55,6 +55,7 @@ const THINKING_ORDER = [
   'max',
 ];
 
+/** @internal */
 export function clampThinking(
   level: string,
   supported: readonly string[],

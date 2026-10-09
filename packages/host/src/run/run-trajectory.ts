@@ -94,6 +94,7 @@ export interface RunTrajectoryInput {
 // Two runs of one prompt answer the same task, so they can form a
 // preference pair; the id is a digest of
 // the prompt text — stable, and never the prompt itself.
+/** @internal */
 export function taskIdForPrompt(prompt: string): string {
   return `prompt:${createHash('sha256').update(prompt).digest('hex').slice(0, 16)}`;
 }

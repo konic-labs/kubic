@@ -7,6 +7,7 @@
 // `wrapTool` decorators apply on top of that.
 import type { ToolRegistration } from '../pi-boundary.js';
 
+/** @internal */
 export type ExecuteFn = (...args: unknown[]) => unknown;
 
 export interface ToolContribution {
@@ -30,6 +31,7 @@ export function composeTools(
   });
 }
 
+/** @internal */
 export class PolicyDeniedError extends Error {
   constructor(toolName: string) {
     super(`tool '${toolName}' denied by policy wrapper`);

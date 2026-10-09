@@ -27,6 +27,7 @@ import type { Baseline } from './baseline.js';
 /** Workspace-relative path → index blob OID, for files clean at baseline. */
 export type GitBaseline = Record<string, string>;
 
+/** @internal */
 export interface GitCommandResult {
   status: number | null;
   stdout: Buffer;

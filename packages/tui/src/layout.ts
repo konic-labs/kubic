@@ -9,6 +9,7 @@
 import type { Component } from './tui-boundary.js';
 import { VStack } from './tui-boundary.js';
 
+/** @internal */
 export const NARROW_COLUMNS = 80;
 
 // The panel row's height while a panel is open. Same basis as
@@ -24,6 +25,7 @@ interface Viewport {
 
 // The tree row sizes to its content up to this many rows (TUI polish: a
 // fixed 12-row block left most of the top of the screen blank in Kubic).
+/** @internal */
 export const TREE_MAX_ROWS = 6;
 
 export interface LayoutSlots {

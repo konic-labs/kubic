@@ -48,6 +48,7 @@ export interface SecretAuditEvent {
   at: string;
 }
 
+/** @internal */
 export interface SecretResolverDeps {
   env: Record<string, string | undefined>;
   runCommand: (argv: string[]) => string | Promise<string>;
@@ -57,6 +58,7 @@ export interface SecretResolverDeps {
 
 // Request-time resolve: every call re-resolves (commands have no TTL) and
 // appends exactly one audit event. Fails closed on missing/empty secrets.
+/** @internal */
 export async function resolveSecretRef(
   ref: SecretRef,
   deps: SecretResolverDeps,
@@ -273,6 +275,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // like its provider) would blank every word it spells and refuse the
 // credential-use row that names the provider. Real provider keys are far
 // longer; below this length a value is not matched at all.
+/** @internal */
 export const MIN_MATCHABLE_SECRET_LENGTH = 8;
 
 // The inventory the substring paths may search for.

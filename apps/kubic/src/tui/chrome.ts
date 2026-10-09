@@ -16,6 +16,7 @@ import type { TuiContext } from './context.js';
 import { tildePath } from './paths.js';
 
 // How often the header clock checks whether its minute changed.
+/** @internal */
 export const TUI_CLOCK_TICK_MS = 30_000;
 
 // The app over the first boot. Its callbacks read the context, so they

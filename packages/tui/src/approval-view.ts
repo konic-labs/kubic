@@ -48,6 +48,7 @@ export type ApprovalDecision =
 // Overlay geometry: centered 70% width / 60% height, visible at
 // 80+ columns. Approvals are an inline card now; the question
 // and confirm dialogs still use this overlay.
+/** @internal */
 export const APPROVAL_MIN_WIDTH = 80;
 
 // Structural overlay options mirroring Pi's OverlayOptions without

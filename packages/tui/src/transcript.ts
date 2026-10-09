@@ -159,6 +159,7 @@ interface LaneIdentity {
 }
 
 // Collapsed tool output shows this many lines; Ctrl-X expands every block.
+/** @internal */
 export const TOOL_OUTPUT_PREVIEW_LINES = 5;
 
 const PROMPT_MARK = '›';
@@ -183,6 +184,7 @@ function firstSentence(text: string): string {
  * `^O review diff   /undo revert` on the right when files changed; the
  * right part drops first on a narrow terminal.
  */
+/** @internal */
 export function renderReceipt(
   ui: TuiTheme['ui'],
   receipt: TurnReceipt,
@@ -238,6 +240,7 @@ export interface ToolCallState {
 }
 
 /** Local `HH:MM:SS` for the prompt block. */
+/** @internal */
 export function formatPromptTime(timestamp: number): string {
   const date = new Date(timestamp);
   const pad = (value: number): string => String(value).padStart(2, '0');
@@ -246,11 +249,13 @@ export function formatPromptTime(timestamp: number): string {
 // The label in front of a queued follow-up's first line. Plain
 // ASCII, because it prefixes untrusted prompt text and must never be
 // confused with a committed prompt row (`›`).
+/** @internal */
 export const QUEUED_LABEL = 'queued:';
 
 // Markdown on the design tokens — calm headings, inline
 // code on bg2, fenced code in a fg3 `┌ lang` / `└` frame with highlighted
 // lines behind a `│` gutter, info links, fg2 `•` bullets, fg3 quote gutters.
+/** @internal */
 export function markdownThemeFor(theme: TuiTheme): MarkdownTheme {
   const ui = theme.ui;
   // Pi draws a fence's opening and closing border through one hook; the two

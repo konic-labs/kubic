@@ -34,8 +34,10 @@ export interface LaneEntryLike {
 
 // Upper bound on the output a cell carries (the view collapses it further
 // to TOOL_OUTPUT_PREVIEW_LINES unless the operator expands it with Ctrl-X).
+/** @internal */
 export const TOOL_RESULT_MAX_CHARS = 20_000;
 const TOOL_RESULT_MAX_LINES = 400;
+/** @internal */
 export const TOOL_DETAIL_MAX_CHARS = 120;
 
 const ROLE_USER = 'user';
@@ -118,6 +120,7 @@ export function summarizeToolArguments(args: unknown): string {
 // anything else yields no outcome. Both fields come from untrusted tool output,
 // so the returned text is sanitized and newline-collapsed before it reaches the
 // tree.
+/** @internal */
 export const TOOL_OUTCOME_MAX_CHARS = 60;
 
 // The one shell tool Kubic registers (`packages/agent/src/ops/bash.ts`);
@@ -296,6 +299,7 @@ function stripControlSequences(text: string): string {
 // the columns a terminal would actually draw. The stop is measured with
 // `visibleWidth`: a CJK glyph occupies two columns, so
 // counting UTF-16 units misaligned every line after it.
+/** @internal */
 export const TAB_STOP = 8;
 
 function expandTabs(text: string): string {

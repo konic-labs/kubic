@@ -245,6 +245,7 @@ export function parseKnownSlashCommand(
 
 // The commands whose name starts with the draft's command prefix (`'he'` →
 // `/help`), for the autocomplete.
+/** @internal */
 export function matchingSlashCommands(
   prefix: string,
   commands: readonly SlashCommandSpec[] = SLASH_COMMANDS,

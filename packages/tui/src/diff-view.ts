@@ -41,6 +41,7 @@ export interface DiffRenderOptions {
 // tool wrote binary content, which unified hunks must never split.
 // Total (never throws): non-string input at runtime (undefined/null
 // from a corrupt row) returns false instead of throwing in includes.
+/** @internal */
 export function isBinaryText(content: string): boolean {
   if (typeof content !== 'string') return false;
   return content.includes('\0');
@@ -50,6 +51,7 @@ export function isBinaryText(content: string): boolean {
 // Mirror of exec unifiedHunks (display only — never parsed back); the
 // header counts accumulate while emitting so they can never
 // disagree with the lines printed.
+/** @internal */
 export function unifiedHunks(
   before: string,
   after: string,
@@ -100,6 +102,7 @@ export function unifiedHunks(
 
 // Path header with the op label (write/edit/create/delete/rename) plus
 // the unattributed badge for reconciliation-only entries.
+/** @internal */
 export function renderDiffHeader(change: DiffFileChange): string {
   return `${change.path} — ${change.op}${change.unattributed ? ' [unattributed]' : ''}`;
 }

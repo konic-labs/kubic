@@ -282,7 +282,7 @@ export {
   Harness,
   hook,
   /** @internal */ LiveDoc,
-  /** @internal */ MemoryStorage,
+  MemoryStorage,
   SystemEntry,
   section,
   ToolResultEntry,

@@ -835,6 +835,7 @@ export function defaultLayerPaths(args: {
 // repo, so this list is a projection of
 // that module — never a second hand-maintained copy. `config.test.ts`
 // pins the two together, so a rule added there cannot go unchecked here.
+/** @internal */
 export const GITIGNORE_REQUIRED_ENTRIES = [...RUNTIME_EXCLUDE_ENTRIES] as const;
 
 export function checkGitignoreSplit(gitignoreText: string): {

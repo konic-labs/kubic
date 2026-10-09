@@ -37,6 +37,7 @@ const GROUP_ORDER = [
 
 type Group = (typeof GROUP_ORDER)[number];
 
+/** @internal */
 export function doctorGroup(id: string): Group {
   if (id.startsWith('role:')) return 'roles';
   if (
@@ -79,6 +80,7 @@ function match(text: string, pattern: RegExp): string | undefined {
 }
 
 /** The short form of one check, for the grouped summary. */
+/** @internal */
 export function doctorShort(check: DoctorCheck): string {
   const { id, detail } = check;
   const suffix = id.includes(':') ? id.slice(id.indexOf(':') + 1) : id;

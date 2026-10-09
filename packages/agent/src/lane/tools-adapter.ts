@@ -265,6 +265,7 @@ function renderReadText(result: ReadResult): string {
 }
 
 // `[grep /<pattern>/: N matches]` + one `path:line: text` per match.
+/** @internal */
 export function renderGrepText(result: GrepResult): string {
   const count = result.matches.length;
   // A cut result names WHICH cap stopped it: the walk's entry

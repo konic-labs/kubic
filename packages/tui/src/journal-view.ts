@@ -19,6 +19,7 @@ export interface JournalFilter {
 // Post-aggregation filter over one FileChange per path (assumes the
 // caller passes already-aggregated rows, at most one entry per path): exact
 // match on the path.
+/** @internal */
 export function filterJournalChanges(
   changes: ReadonlyArray<DiffFileChange>,
   filter: JournalFilter,
@@ -30,6 +31,7 @@ export function filterJournalChanges(
 
 // Multi-file text: the per-file blocks of exec's renderDiff, one after the
 // other, with the `no changes` empty case journal-cli.ts prints.
+/** @internal */
 export function renderJournalLines(
   changes: ReadonlyArray<DiffFileChange>,
   options: DiffRenderOptions = {},

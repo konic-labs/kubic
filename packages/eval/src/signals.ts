@@ -53,6 +53,7 @@ export function gatesPass(
 //     known — unknown gates abstain, they neither earn nor cost);
 //   - halved when the verifier detected a regression (`signal:regression`
 //     = fail: a gate that passed at the base revision fails after the run).
+/** @internal */
 export function patchQuality(
   completion: boolean,
   gates: readonly GateSignal[],

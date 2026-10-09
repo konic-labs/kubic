@@ -104,6 +104,7 @@ export const DARK_PALETTE: Palette = {
 
 // The same roles for a light terminal background: dark text on near-white
 // surfaces, Konic red deepened so it keeps its contrast on white.
+/** @internal */
 export const LIGHT_PALETTE: Palette = {
   bg0: '#ffffff',
   bg1: '#f3f3f6',
@@ -134,6 +135,7 @@ export const LIGHT_PALETTE: Palette = {
 // image backgrounds show through), semantic roles on the ANSI palette slots
 // so the user's terminal theme decides the actual colours. Selection uses
 // bright black, the one background most palettes keep readable.
+/** @internal */
 export const TERMINAL_PALETTE: Palette = {
   bg0: 'none',
   bg1: 'none',

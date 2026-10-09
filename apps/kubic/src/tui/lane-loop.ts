@@ -63,6 +63,7 @@ import type {
 // bootTuiLane installs. Exported so the prod boot, embedders and the tests
 // share ONE wiring: a lane member the loop needs cannot be forgotten in a
 // hand-spread fake (the failure mode that hides a dropped dep).
+/** @internal */
 export function tuiLoop(
   lane: Lane,
   context: Context = BACKGROUND_CONTEXT,

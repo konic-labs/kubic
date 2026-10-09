@@ -14,6 +14,7 @@ import type { TuiApprovalRequest, TuiInputResult } from './types.js';
 
 // The rows an approval card leaves for the rest of the screen —
 // the header, status and hint rows and three rows of transcript.
+/** @internal */
 export const CARD_CHROME_ROWS = 6;
 
 export class ApprovalsController {

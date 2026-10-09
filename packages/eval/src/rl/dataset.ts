@@ -149,6 +149,7 @@ function tryList(fs: DatasetFs, path: string): DatasetDirEntry[] | null {
 // The dataset operand is a directory (every `.json` it holds) or a glob
 // (`*`/`?` in the basename). Files come back sorted so the JSONL and the
 // manifest are byte-stable across runs.
+/** @internal */
 export function resolveDatasetFiles(pattern: string, fs: DatasetFs): string[] {
   const trimmed = pattern.replace(/\/+$/, '');
   const asDir = tryList(fs, trimmed === '' ? '/' : trimmed);

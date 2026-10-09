@@ -328,6 +328,7 @@ export function skillsDoctorProbe(input: BootSkillOptions): DoctorCheck[] {
 // met — loaded, hidden, withheld, errors. Errors warn (a skill the lane
 // silently misses is worth a look); the line never fails, and anything
 // narrower (a role's own narrowing) stays on the run's debug log.
+/** @internal */
 export function skillsDoctorSummary(booted: BootSkills): DoctorCheck {
   const errors = booted.skipped.filter(
     (skip) => skip.status === 'error',

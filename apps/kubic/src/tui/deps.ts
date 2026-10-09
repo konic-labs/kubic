@@ -103,6 +103,7 @@ function definedOnly<T extends object>(
 // wiring — including the model pin — is testable without opening a terminal.
 // The forwarding table lives here: every TuiConfigProjection key must appear
 // (possibly undefined), so omitting one is a compile error.
+/** @internal */
 export function tuiBootOptions(
   provided: TuiDepsInput,
   flags: TuiBootFlags | undefined,

@@ -58,6 +58,7 @@ const WORD_DIFF_MAX_CHARS = 400;
  * Which tokens of each side changed, or undefined when the lines are too
  * long or share less than half their content (a rewrite, not an edit).
  */
+/** @internal */
 export function wordDiff(
   before: string,
   after: string,

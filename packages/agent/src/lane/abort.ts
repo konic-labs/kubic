@@ -63,6 +63,7 @@ export interface LaneAbortResult {
   killed: number;
 }
 
+/** @internal */
 export class LaneDriveError extends Error {
   constructor(message: string) {
     super(message);

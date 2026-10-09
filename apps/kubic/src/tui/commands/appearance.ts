@@ -186,4 +186,5 @@ export function resolveTuiKeybindings(
 // The largest theme file Kubic reads: a theme is a few
 // hundred bytes of JSON, so this is generous by orders of magnitude while
 // still refusing a path that would be read whole for no reason.
+/** @internal */
 export const THEME_MAX_BYTES = 64 * 1024;

@@ -38,6 +38,7 @@ import {
 
 type Env = Readonly<Record<string, string | undefined>>;
 
+/** @internal */
 export function globalConfigPath(home: string): string {
   return join(home, '.kubic', 'config.toml');
 }
@@ -45,6 +46,7 @@ export function globalConfigPath(home: string): string {
 // The first-run rule for a bare `kubic` on a terminal: no global config yet,
 // no model pinned in the environment, not the testing provider, and not
 // explicitly skipped (KUBIC_SKIP_SETUP=1, used by tests and scripts).
+/** @internal */
 export function needsFirstRunSetup(env: Env, home: string): boolean {
   if (env.KUBIC_SKIP_SETUP === '1') return false;
   if ((env.KUBIC_MODEL ?? '') !== '') return false;

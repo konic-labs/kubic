@@ -22,6 +22,7 @@ import {
   SpanRecorder,
 } from './spans.js';
 
+/** @internal */
 export const RUN_SPAN_NAMES = {
   run: 'kubic.agent.run',
   accept: 'kubic.lane.accept',

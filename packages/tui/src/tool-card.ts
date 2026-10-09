@@ -47,6 +47,7 @@ const READ_TOOLS: ReadonlySet<string> = new Set([
   'git_diff',
 ]);
 
+/** @internal */
 export interface ShellOutput {
   /** Undefined when the shell reported no code (`none`). */
   readonly exitCode: number | undefined;
@@ -65,6 +66,7 @@ const SPILL_NOTICE =
   /^\[kubic: \d+ leading chars dropped(?: — full output: (.+))?\]$/u;
 
 /** The bash record as fields; undefined when the text is not one. */
+/** @internal */
 export function parseShellText(text: string): ShellOutput | undefined {
   const lines = text.split('\n');
   const head = BASH_HEAD.exec(lines[0] ?? '');
@@ -128,6 +130,7 @@ export function formatToolDuration(ms: number): string {
 
 // A test runner's tally, in one line: node:test's `ℹ tests N` / `ℹ pass N` /
 // `ℹ fail N` triple, else the first `N passed` / `N failed` line.
+/** @internal */
 export function testSummary(lines: readonly string[]): string | undefined {
   const tally = (name: string): string | undefined => {
     const pattern = new RegExp(

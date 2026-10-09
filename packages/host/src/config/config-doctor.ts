@@ -43,6 +43,7 @@ export interface ConfigDoctorInput {
   compactionSummary?: string;
 }
 
+/** @internal */
 export const CONFIG_DOCTOR_ID = 'config-load';
 
 // The trust half of the detail, naming the exact provenance —

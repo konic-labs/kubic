@@ -23,6 +23,7 @@ export interface FrameOptions {
 }
 
 /** The inner width a frame of `width` cells leaves for the body. */
+/** @internal */
 export function frameInnerWidth(
   width: number,
   sides: FrameOptions['sides'] = 'both',

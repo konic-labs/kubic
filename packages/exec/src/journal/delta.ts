@@ -12,6 +12,7 @@ type DeltaOp = { eq: number } | { del: number } | { ins: string[] };
 // Single-hunk prefix/suffix delta: exact reconstruction, tiny encoding
 // for the common case (a few lines changed in a large file). Not a
 // minimal diff — storage only, never shown to users.
+/** @internal */
 export function encodeDelta(before: string, after: string): string {
   const a = before.split('\n');
   const b = after.split('\n');
@@ -37,6 +38,7 @@ export function encodeDelta(before: string, after: string): string {
   return JSON.stringify(ops);
 }
 
+/** @internal */
 export function applyDelta(before: string, delta: string): string | null {
   try {
     const lines = before.split('\n');

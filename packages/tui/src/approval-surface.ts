@@ -43,6 +43,7 @@ import { matchesKey } from './tui-boundary.js';
 
 // The reason recorded when the session cannot collect a verdict. Named
 // once: the deny that a quit produces must read the same everywhere.
+/** @internal */
 export const APPROVAL_CANCELLED_REASON = 'the approval was never answered';
 
 export interface ApprovalSurfaceOptions {

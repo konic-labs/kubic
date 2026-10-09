@@ -15,6 +15,7 @@ const RETENTION_DROP_SHARE = 10;
 // delta or its after-blob (a delta entry has no after-blob).
 // Collapsed per entry: a no-op write with before === after references the
 // same blob once, and the retention refcounts are per entry.
+/** @internal */
 export function blobHashesOf(entry: JournalEntry): string[] {
   const hashes: string[] = [];
   if (entry.beforeHash !== null) hashes.push(entry.beforeHash);
@@ -37,6 +38,7 @@ function indexLineBytes(entry: JournalEntry): number {
 // journal can carry entries appended out of timestamp order (reconciliation
 // writes real clock stamps into a session whose other entries were seeded),
 // and only the minimum proves that nothing has aged out.
+/** @internal */
 export function oldestTimestampOf(entries: JournalEntry[]): number | null {
   let oldest: number | null = null;
   for (const entry of entries) {
@@ -58,6 +60,7 @@ export interface RetentionPlan {
 // Which entries a retention pass keeps, decided from the index and the blob
 // sizes alone: `sizeOf` answers from the store's size cache, which the pass
 // has already brought up to date, so planning does no I/O.
+/** @internal */
 export function planRetention(
   all: JournalEntry[],
   policy: RetentionPolicy,

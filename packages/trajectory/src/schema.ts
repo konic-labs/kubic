@@ -16,6 +16,7 @@
 
 import { EXIT_USAGE, type ExitCode } from '@kubic/core/cli/exit-codes';
 export const SCHEMA_VERSION = '1.0';
+/** @internal */
 export const SCHEMA_MAJOR = 1;
 
 export type JsonValue =
@@ -29,6 +30,7 @@ export type JsonValue =
 // Failure taxonomy — snapshot of FAILURE_CODES owned by
 // packages/agent/src/lane/failures.ts. The agent owns the spelling;
 // this list is pinned equal by test so a drift breaks loudly here.
+/** @internal */
 export const TRAJECTORY_FAILURE_CODES = [
   'model_failed',
   'model_refused',
@@ -56,6 +58,7 @@ export function isTrajectoryFailureCode(
   return (TRAJECTORY_FAILURE_CODES as readonly string[]).includes(value);
 }
 
+/** @internal */
 export const RESULT_STATUSES = [
   'completed',
   'failed',
@@ -230,6 +233,7 @@ export interface TrajectoryExport {
 
 // Closed-world field coverage: adding or removing a trajectory section breaks
 // compilation here, so the contract cannot drift silently.
+/** @internal */
 export const TRAJECTORY_FIELDS = {
   schema_version: true,
   task: true,

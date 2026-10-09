@@ -8,6 +8,7 @@
 // close — when it is the only candidate that contains the input. Ties keep
 // the candidates' own order, so the caller decides which wins.
 
+/** @internal */
 export function editDistance(a: string, b: string): number {
   const left = a.toLowerCase();
   const right = b.toLowerCase();

@@ -81,12 +81,14 @@ export const PROMPT_SECTION = 'kubic';
 // sentences match the pre ad-hoc prompt; the wiring delta is that
 // boot now appends the byte-stable `cwd:` / `tools:` / `meta:` lines
 // from prompts.ts instead of the `Working directory:` sentence.
+/** @internal */
 export const DEFAULT_ROLE_PROMPT = [
   'You are a coding agent working in a terminal.',
   'Use the read, write, edit, grep, find, ls, and bash tools to inspect and change files.',
   'Keep answers short and technical.',
 ].join('\n');
 
+/** @internal */
 export interface PromptInput {
   cwd: string;
   toolNames: string[];
@@ -103,6 +105,7 @@ export interface PromptInput {
 // would change the model-visible bytes; a single untagged section carries
 // exactly the prompt the model sees, and the harness still diffs it as one
 // positional `pi.system` entry.
+/** @internal */
 export function assemblePrompt(input: PromptInput): string {
   const full: SystemPromptInput = {
     role: input.role ?? DEFAULT_ROLE_PROMPT,
@@ -323,6 +326,7 @@ export interface Lane {
   close(context: Context): Promise<void>;
 }
 
+/** @internal */
 export function splitModelId(id: string): {
   provider: string;
   modelId: string;

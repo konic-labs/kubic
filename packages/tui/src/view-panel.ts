@@ -45,6 +45,7 @@ export interface JournalChangeLike {
 // An empty panel is not an empty frame: `kubic diff` prints `no changes` and
 // the panel says the same, so a keypress never yields a blank rectangle the
 // operator cannot tell apart from a broken view.
+/** @internal */
 export const PANEL_EMPTY_LINE = 'no changes';
 
 // Sanitise a journal row before it reaches a render function. The fields are

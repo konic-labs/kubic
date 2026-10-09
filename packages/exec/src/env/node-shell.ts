@@ -17,6 +17,7 @@ import { toolSpawnEnv } from './tool-env.js';
 // far above any legitimate tool result (the model-facing cap is smaller
 // still) but far below OOM territory: the accumulator is the thing the
 // cap bounds, so the run can never hold a child's whole output in memory.
+/** @internal */
 export const MAX_CHILD_OUTPUT_BYTES = 10 * 1024 * 1024;
 
 // SIGTERM → SIGKILL escalation window for kill(): long enough for a

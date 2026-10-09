@@ -80,6 +80,7 @@ function redactListedSecrets(text: string, secrets: readonly string[]): string {
   return out;
 }
 
+/** @internal */
 export class AuditSinkError extends Error {
   constructor(message: string, secrets: readonly string[] = []) {
     // Fail-closed messages: secret-shaped substrings and every listed-secret
@@ -93,6 +94,7 @@ export class AuditSinkError extends Error {
 // Shape violations (unknown top-level keys, secret-shaped smuggling) are a
 // distinct fail-closed signal that still satisfies `instanceof
 // AuditSinkError` for existing catch sites.
+/** @internal */
 export class AuditShapeError extends AuditSinkError {
   constructor(message: string, secrets: readonly string[] = []) {
     super(message, secrets);
@@ -174,6 +176,7 @@ export type SyslogTarget =
 
 // The platform's syslog socket: `/var/run/syslog` on macOS,
 // `/dev/log` elsewhere. No import needed — `process.platform` is global.
+/** @internal */
 export function defaultSyslogSocketPath(): string {
   return process.platform === 'darwin' ? '/var/run/syslog' : '/dev/log';
 }
@@ -370,6 +373,7 @@ function cloneAuditRecord(record: OrgAuditRecord): OrgAuditRecord {
 // messages via redactSecretShapes, but unshaped listed values cannot be
 // redacted from error text — pass the inventory (emitAudit forwards
 // options.secrets) whenever one exists.
+/** @internal */
 export function appendAudit(
   sinks: AuditSink[],
   record: OrgAuditRecord,

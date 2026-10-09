@@ -94,12 +94,15 @@ const DEFAULT_APPROVALS_ROUTE = configKey('approvals', 'route').default as
 
 // What the runtime does with each config key (`kubic config`, `kubic
 // doctor`): consumed, kept with the reason, or pending.
+/** @internal */
 export type RuntimeKeyEffect = KeyEffect;
 
+/** @internal */
 export type RuntimeKeyDisposition = 'consumed' | 'kept' | 'pending' | 'unknown';
 
 // The schema's runtime rows: one per `section.key`, plus a section's own row,
 // which the keys of an open-ended section resolve through.
+/** @internal */
 export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> =
   Object.fromEntries(
     CONFIG_SECTIONS.flatMap((section) => {
@@ -117,6 +120,7 @@ export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> =
 // The table lookup is section-or-key (the rule): `roles.implementer.
 // model` resolves through `roles`. Undefined means the table has no row for
 // the key at all — `config-doctor` flags exactly that by name.
+/** @internal */
 export function keyEffectFor(key: string): RuntimeKeyEffect | undefined {
   const direct = RUNTIME_KEY_EFFECTS[key];
   if (direct !== undefined) return direct;
@@ -124,6 +128,7 @@ export function keyEffectFor(key: string): RuntimeKeyEffect | undefined {
   return RUNTIME_KEY_EFFECTS[section];
 }
 
+/** @internal */
 export function runtimeKeyDisposition(
   entry: RuntimeKeyEffect | undefined,
 ): RuntimeKeyDisposition {

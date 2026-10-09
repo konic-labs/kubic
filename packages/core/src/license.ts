@@ -3,8 +3,10 @@
 // check report these constants, so the CLI can never drift from what
 // LICENSE and the package.json license fields declare.
 
+/** @internal */
 export const KUBIC_LICENSE = 'MIT' as const;
 
+/** @internal */
 export const KUBIC_LICENSE_FILE = 'LICENSE' as const;
 
 export function formatVersionLine(version: string): string {

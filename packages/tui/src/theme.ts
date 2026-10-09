@@ -87,6 +87,7 @@ export function createThemeFromPalette(
 }
 
 /** The default (dark brand) theme at a colour depth. */
+/** @internal */
 export function createTuiTheme(level: ColorLevel): TuiTheme {
   return createThemeFromPalette(builtinPalette('dark'), level, 'dark');
 }

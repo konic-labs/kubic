@@ -45,6 +45,7 @@ const REASONS: Readonly<Record<string, readonly [string, string]>> = {
   ],
 };
 
+/** @internal */
 export function approvalReason(capability: string): readonly [string, string] {
   return REASONS[capability] ?? [capability, ''];
 }
@@ -92,6 +93,7 @@ export interface ApprovalCardOptions {
 // rows; one page holds this many, and a taller command says which rows are
 // shown (`… lines a–b of n`) — the height is capped honestly, never by a
 // silent cut.
+/** @internal */
 export const APPROVAL_COMMAND_PAGE_LINES = 8;
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
@@ -102,6 +104,7 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 // wrap). The unit is the grapheme cluster (a combining or emoji ZWJ sequence
 // is one unit) measured with pi-tui's own width; a unit wider than the room
 // still gets a row of its own — nothing is skipped.
+/** @internal */
 export function wrapByColumns(line: string, room: number): string[] {
   const rows: string[] = [];
   let row = '';

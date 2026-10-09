@@ -277,6 +277,7 @@ export function validateClasses(input: unknown): PermissionClasses {
   };
 }
 
+/** @internal */
 export class PolicyValidationError extends Error {
   constructor(message: string) {
     super(message);

@@ -6,6 +6,7 @@
 // the binary never reads a repo-relative path to find a preset.
 
 // The built-in role names.
+/** @internal */
 export const BUILTIN_ROLE_NAMES = [
   'planner',
   'implementer',

@@ -452,6 +452,7 @@ function bootRefusalError(refusal: BootRefusal): unknown {
 // bucket has no provider/model identity, so it is labelled `tool:<name>`
 // exactly as `kubic cost` labels it. The bar reads only the counters; the
 // names keep the row shape honest.
+/** @internal */
 export function statusRowsFromSessionUsage(
   rows: readonly SessionUsageRow[],
 ): StatusUsageRow[] {
@@ -470,8 +471,10 @@ export function statusRowsFromSessionUsage(
 
 // How long one read of the session summaries serves the palette
 // and `/resume` (a summary parses a whole session file).
+/** @internal */
 export const SESSION_SUMMARY_TTL_MS = 30_000;
 
+/** @internal */
 export function cachedSummaries(
   read: (exclude?: string) => Promise<readonly SessionSummary[]>,
   now: () => number = Date.now,
@@ -505,8 +508,10 @@ export function cachedSummaries(
 // visit (gitignore rules honoured, node_modules/.git skipped, bounded),
 // workspace-relative. Cached for a short window so a burst of keystrokes
 // walks once; a failed walk lists nothing.
+/** @internal */
 export const FILE_LIST_TTL_MS = 2000;
 
+/** @internal */
 export function workspaceFileLister(
   env: { readonly fs: FileSystem },
   now: () => number = Date.now,

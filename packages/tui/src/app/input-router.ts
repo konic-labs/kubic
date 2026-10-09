@@ -40,6 +40,7 @@ const isCancelKey = (action: KeyAction | undefined): boolean =>
   action === 'app.interrupt';
 
 // The routes, in precedence order.
+/** @internal */
 export const INPUT_ROUTES: readonly InputRoute[] = [
   // A Kitty-class terminal reports key releases (and repeats) as their own
   // events, and this router runs before pi-tui's focused-path release

@@ -20,6 +20,7 @@ const PROVENANCE = {
 } as const;
 
 /** The header facts from `git status --porcelain=v2 -z -b` output. */
+/** @internal */
 export function workspaceFromStatus(root: string, out: string): TuiWorkspace {
   const status = parsePorcelainStatus(out);
   const changed = new Set([

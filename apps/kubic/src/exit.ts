@@ -18,11 +18,13 @@ const FLUSH_FALLBACK_MS = 1_500;
 
 type StreamError = Error & { code?: string };
 
+/** @internal */
 export interface FlushableStream {
   write: (chunk: string, callback: () => void) => boolean;
   on: (event: 'error', listener: (error: StreamError) => void) => unknown;
 }
 
+/** @internal */
 export interface ExitIo {
   stdout: FlushableStream;
   stderr: FlushableStream;
@@ -31,6 +33,7 @@ export interface ExitIo {
   schedule?: (fn: () => void, ms: number) => { unref: () => void };
 }
 
+/** @internal */
 export function exitAfterFlush(code: number, io: ExitIo): void {
   io.setExitCode?.(code);
   let done = false;

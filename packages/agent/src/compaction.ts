@@ -33,6 +33,7 @@ export const DEFAULT_RESERVE_TOKENS = 16384;
 // window at or below the reserve (an 8192-token local model vs the 16384
 // default) puts the threshold at or below zero and every turn compacts.
 // Pi has no equivalent clamp; this is Kubic policy.
+/** @internal */
 export const MAX_RESERVE_FRACTION = 0.25;
 
 export function effectiveReserveTokens(
@@ -55,6 +56,7 @@ export const KEEP_RECENT_TOKENS = 20000;
 // same transcript and count toward the threshold: on an 8k window they take
 // about 2.8k of the 6.1k blocking threshold, so a larger share would leave no
 // room for the next exchange after a compaction.
+/** @internal */
 export const MAX_KEEP_RECENT_FRACTION = 0.25;
 
 /**
@@ -67,6 +69,7 @@ export const MAX_KEEP_RECENT_FRACTION = 0.25;
  * it beside the system entry. An unknown window keeps the configured figure,
  * as the reserve does.
  */
+/** @internal */
 export function effectiveKeepRecentTokens(
   contextWindow: number,
   keepRecentTokens: number = KEEP_RECENT_TOKENS,
@@ -85,6 +88,7 @@ export function effectiveKeepRecentTokens(
 // prompt section plus the 18 default tool declarations (about 2800 tokens).
 // The room estimate below and `kubic doctor` use it; a test pins it to the
 // real boot, so a prompt or tool-set change moves the figure with it.
+/** @internal */
 export const SYSTEM_ENTRY_ESTIMATE = 2822;
 
 // A planning figure for one summary, in estimated tokens. Pi's own budget for a
@@ -113,6 +117,7 @@ export function roomAfterCompaction(
 // The user's `/compact` keeps about this much recent context verbatim (or the
 // effective window, when that is smaller), cut at a message boundary. The user
 // asked for a compaction, so the kept window is deliberately small.
+/** @internal */
 export const MANUAL_KEEP_RECENT_TOKENS = 2000;
 
 /**
@@ -155,6 +160,7 @@ export function createManualKeepScope(): ManualKeepScope {
 // trigger — the behaviour the lane had before the Pi 1.0 migration — and
 // so a session that ends early never pays for a summary nobody needed. A
 // caller that wants the head start can still pass an explicit value.
+/** @internal */
 export const BACKGROUND_TOKENS = 0;
 
 export interface CompactionSettingsOptions {
@@ -218,6 +224,7 @@ class CompactionError extends Error {
   }
 }
 
+/** @internal */
 export interface CompactPromptInput {
   focus?: string;
   extraSections?: string[];
@@ -227,6 +234,7 @@ export interface CompactPromptInput {
 // the summary prompt; empty focus builds the instruction-free prompt. Pi's own
 // summarization prompt already defines the summary's sections, so the line only
 // names the ones a session has.
+/** @internal */
 export function buildCompactPrompt(input: CompactPromptInput): string {
   const sections = [
     'Summarize this session for compaction: goal, decisions, open work, next steps.',

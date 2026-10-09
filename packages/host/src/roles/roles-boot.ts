@@ -46,6 +46,7 @@ function isAbsentDir(error: unknown, dir: string): boolean {
   return path === undefined || path === dir;
 }
 
+/** @internal */
 export class RoleBootError extends Error {
   constructor(message: string) {
     super(message);
@@ -101,6 +102,7 @@ export interface RolesDirInput {
 // or a project document the workspace overrides both with.
 type RoleSource = 'builtin' | 'global' | 'repo';
 
+/** @internal */
 export interface LoadedRoles {
   docs: ParsedRoleDoc[];
   // The markdown behind each doc, keyed by role name — the repo file's text
@@ -193,6 +195,7 @@ function listSourceDir(
 // mistaken for "no roles configured". A refusal is NOT fatal here
 // — the set is reported so doctor can fail it; the lane boot is where a
 // refused role stops a run.
+/** @internal */
 export function loadRoles(input: RolesDirInput): LoadedRoles {
   const root = input.projectRoot ?? input.cwd;
   const dir = `${root}/${ROLES_DIR}`;

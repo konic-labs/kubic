@@ -37,15 +37,19 @@ export const RUNTIME_EXCLUDE_ENTRIES = [
 // Managed-block markers. A later run replaces the block in place instead
 // of appending a duplicate, so repeated runs are idempotent and a rule
 // set that changes re-syncs.
+/** @internal */
 export const RUNTIME_EXCLUDE_BEGIN =
   '# kubic runtime state — local, never committed';
+/** @internal */
 export const RUNTIME_EXCLUDE_END = '# end kubic runtime state';
 
+/** @internal */
 export interface RuntimeExcludeText {
   text: string;
   changed: boolean;
 }
 
+/** @internal */
 export class RuntimeExcludeError extends Error {
   constructor(message: string) {
     super(message);
@@ -120,6 +124,7 @@ function renderBlock(entries: readonly string[]): string {
 // Unrelated entries above and below the block survive. An opening marker
 // with no closing marker is treated as a truncated block — ours to repair,
 // so it is re-rendered through the end of the file.
+/** @internal */
 export function applyRuntimeExcludeBlock(
   existing: string,
   entries: readonly string[] = RUNTIME_EXCLUDE_ENTRIES,

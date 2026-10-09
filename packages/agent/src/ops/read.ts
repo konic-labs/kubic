@@ -27,6 +27,7 @@ const READ_MAX_BYTES = 8 * 1024 * 1024;
 // notice names it with a bash continuation; otherwise the last kept line sets
 // the `more: offset=` hint. Fields are only ADDED — nothing renamed, so
 // existing consumers keep the same shape.
+/** @internal */
 export const READ_RESULT_MAX_BYTES = 50 * 1024;
 
 // Why the first chunk sniffed as binary: a NUL codepoint (the
@@ -166,6 +167,7 @@ function clipOutputLines(
   };
 }
 
+/** @internal */
 export function validateReadArgs(raw: unknown): ReadArgs {
   if (!isRecord(raw))
     throw new OpError('invalid_args', 'read args must be an object');
@@ -338,6 +340,7 @@ function readWindowed(
 // A directory or a permission refusal gets its own code, a cwd-confinement
 // escape is the caller's argument, and anything else propagates unchanged
 // so a regression surfaces as a fault instead of a phantom missing file.
+/** @internal */
 export function readFailure(err: unknown, path: string): unknown {
   const code = (err as { code?: unknown } | null)?.code;
   if (code === 'ENOENT' || code === 'ENOTDIR') {

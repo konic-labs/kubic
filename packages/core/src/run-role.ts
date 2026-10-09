@@ -9,6 +9,7 @@ import { truncateVisible } from './cli/width.js';
 export const DEFAULT_RUN_ROLE = 'default';
 
 /** Columns a role name takes in a heading or a tree row. */
+/** @internal */
 export const RUN_ROLE_COLUMNS = 20;
 
 /** The label a run's role takes in a heading or a tree row. */

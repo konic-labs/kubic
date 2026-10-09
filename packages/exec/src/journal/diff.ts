@@ -194,6 +194,7 @@ export const DEFAULT_MAX_CONTENT_BYTES = 64 * 1024;
 // Clip one side of a change to `maxBytes` UTF-8 bytes (0 = unlimited). The
 // clipped text ends with a named marker line so a consumer never mistakes
 // the bound for the whole file.
+/** @internal */
 export function clipContent(
   text: string | null,
   maxBytes: number,

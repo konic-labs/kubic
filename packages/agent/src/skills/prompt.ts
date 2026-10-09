@@ -30,6 +30,7 @@ export function formatSkillsForSystemPrompt(skills: LoadedSkill[]): string {
 // Explicit call surface: the only way to run a disableModelInvocation
 // skill. Unknown names throw — explicit calls are deliberate, never
 // mid-task resolution (see resolveTaskSkillRefs).
+/** @internal */
 export function invokeSkill(skills: LoadedSkill[], name: string): string {
   const hit = skills.find((skill) => skill.name === name);
   if (hit === undefined) throw new Error(`unknown skill '${name}'`);

@@ -26,13 +26,13 @@ import {
   it,
   vi,
 } from 'vitest';
+import { ROOT_HELP } from './cli/root-help.js';
 import type { CliConfigResult } from './config/load.js';
 import { CONFIG_CONSUMING_COMMANDS, loadCliConfig } from './config/load.js';
 import {
   type DispatchDeps,
   type DispatchRunners,
   dispatchCommand,
-  ROOT_HELP,
 } from './dispatch.js';
 import { createProdRunners } from './prod-runners.js';
 

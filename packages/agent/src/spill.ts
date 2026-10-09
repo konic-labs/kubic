@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { createNodeFileBridge, type FileBridge } from '@kubic/exec/file-bridge';
 
 /** The subdirectory of a session that holds its spill files. */
+/** @internal */
 export const SPILL_DIR_NAME = 'spill';
 
 /**

@@ -246,6 +246,7 @@ function toolSelectionRefusal(
 // context). Undefined when neither is set, so the lane assembles its prompt
 // unchanged — the cache-stable prefix is never rewritten by an empty
 // composition.
+/** @internal */
 export function composePromptSections(
   systemPromptSection: string | undefined,
   skillsBlock: string | undefined,

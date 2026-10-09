@@ -12,6 +12,7 @@
 // `signal:regression` when a baseline run at the base revision exists.
 import type { ExecutionEnv } from '@kubic/exec/env';
 
+/** @internal */
 export const VERIFY_GATES = ['tests', 'build', 'lint', 'typecheck'] as const;
 type VerifyGate = (typeof VERIFY_GATES)[number];
 type GateVerdict = 'pass' | 'fail';
@@ -21,6 +22,7 @@ export type VerifyCommands = Partial<Record<VerifyGate, string>>;
 
 // A gate command's bound when config sets none: a whole test suite is
 // allowed to take minutes, never forever.
+/** @internal */
 export const DEFAULT_VERIFY_TIMEOUT_MS = 10 * 60 * 1000;
 
 // Output is only needed to know the command ran; keep the cap small.

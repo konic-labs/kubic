@@ -137,6 +137,7 @@ export function mapLaneOutcomeToFailure(
 // summary — a failure's wording must not flip a fixed code.
 // `failed` reads its code from the result's own `failure`;
 // `timeout`/`cancelled` have no failure code.
+/** @internal */
 export function failureForTerminus(
   terminus: RunTerminusKind,
 ): ClassifiedFailure | undefined {

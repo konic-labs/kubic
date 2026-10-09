@@ -33,6 +33,7 @@ const IMAGE_MIME_TYPES = [
   'image/gif',
 ] as const;
 
+/** @internal */
 export type SupportedImageMimeType = (typeof IMAGE_MIME_TYPES)[number];
 
 // The largest image Kubic attaches (decoded bytes). The providers' own
@@ -50,6 +51,7 @@ function startsWith(bytes: Uint8Array, prefix: readonly number[]): boolean {
 
 // Magic-byte sniffing, not the extension: a mislabelled file must not be
 // sent as an image the provider then rejects mid-turn.
+/** @internal */
 export function detectImageMime(
   bytes: Uint8Array,
 ): SupportedImageMimeType | undefined {
@@ -116,6 +118,7 @@ export function formatImageBytes(bytes: number): string {
 
 // The one-row fallback on a terminal without an image protocol. Kept in one
 // place so the transcript and the pending echo agree.
+/** @internal */
 export function attachmentPlaceholder(image: {
   filename?: string;
   mimeType: string;
@@ -212,12 +215,14 @@ const INLINE_IMAGE =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: the OSC/BEL/ST framing is the point
   /\u001b\]1337;File=([^:]*?):([A-Za-z0-9+/=\s]+?)(?:\u0007|\u001b\\)/;
 
+/** @internal */
 export interface PastedImage {
   readonly filename: string;
   /** base64 payload, undecoded. */
   readonly base64: string;
 }
 
+/** @internal */
 export function parseInlineImageSequence(
   data: string,
 ): PastedImage | undefined {
@@ -242,6 +247,7 @@ const INLINE_IMAGE_PREFIX = '\u001b]1337;File=';
 // The most characters a sequence can hold before its payload would not
 // fit under IMAGE_MAX_BYTES: base64's 4/3 expansion plus framing slack. A
 // partial sequence beyond this is dropped rather than buffered.
+/** @internal */
 export const INLINE_IMAGE_MAX_CHARS =
   Math.ceil((IMAGE_MAX_BYTES * 4) / 3) + 1024;
 

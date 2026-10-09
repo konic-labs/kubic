@@ -165,6 +165,7 @@ export const KEY_ACTIONS = {
 
 export type KeyAction = keyof typeof KEY_ACTIONS;
 
+/** @internal */
 export const KEY_ACTION_IDS: ReadonlyArray<KeyAction> = Object.keys(
   KEY_ACTIONS,
 ) as KeyAction[];
@@ -199,6 +200,7 @@ export class KeybindingsError extends Error {
  * both the registry's keys and every parsed key id go through this before
  * they are compared. `undefined` for a malformed id.
  */
+/** @internal */
 export function canonicalKey(id: string): string | undefined {
   const parts = id.trim().toLowerCase().split('+');
   const key = parts.pop();

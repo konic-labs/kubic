@@ -10,12 +10,10 @@ import type { KubicLaneEvent, LaneEventSink } from '@kubic/agent/lane/events';
 import { bootFauxLane, fauxToolUse } from '@kubic/agent/lane/test-harness';
 import { fauxAssistantMessage, fauxToolCall } from '@kubic/agent/pi-boundary';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  enableFullAccess,
-  FileApprovalStore,
-  installPolicy,
-} from './approvals.js';
-import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
+import { auditLedgerDirFor, readAuditLedger } from '../policy/audit-ledger.js';
+import { enableFullAccess } from './full-access.js';
+import { installPolicy } from './install.js';
+import { FileApprovalStore } from './stores.js';
 
 const made: string[] = [];
 

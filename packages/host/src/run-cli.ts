@@ -33,7 +33,7 @@ import {
   INTERRUPT_EXIT_CODES,
   isInterruptSignal,
 } from '@kubic/core/cli/exit-codes';
-import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
+import { TIMEOUT_REASON_MARKER } from './approvals/timeout.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 
 export type RunTerminusKind =

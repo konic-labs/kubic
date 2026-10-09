@@ -346,7 +346,7 @@ Verification adds the commands' run time to every `kubic run`.
 ### `autoApprove` capabilities
 
 `autoApprove` entries name capabilities — the strings `detectTriggers`
-(`packages/host/src/approvals.ts`) raises on tool calls. The known set
+(`packages/host/src/approvals/triggers.ts`) raises on tool calls. The known set
 (`CAPABILITIES`):
 
 | Capability | Raised by |

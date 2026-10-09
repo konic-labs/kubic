@@ -1,10 +1,7 @@
 // The change an edit or write ask would make: the approval
 // card's diff preview, computed against the file on disk.
 import { describe, expect, it } from 'vitest';
-import {
-  APPROVAL_PREVIEW_MAX_BYTES,
-  approvalPreview,
-} from './approval-preview.js';
+import { APPROVAL_PREVIEW_MAX_BYTES, approvalPreview } from './preview.js';
 
 function files(contents: Record<string, string>) {
   return {

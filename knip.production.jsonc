@@ -15,10 +15,11 @@
   // mkfifo is a POSIX utility, not a dependency (see knip.jsonc).
   "ignoreBinaries": ["mkfifo"],
 
-  // The nine boundary seams are tagged @internal where they are re-exported
-  // (pi-boundary.ts, tui-boundary.ts). knip ignores @internal exports in
-  // production mode only, so the default gate still checks them. No other
-  // export in those files is exempt.
+  // Exports tagged @internal exist for tests only: the nine Pi and TUI seams
+  // where they are re-exported (pi-boundary.ts, tui-boundary.ts), and the
+  // approval detectors the composition-root tests drive
+  // (packages/host/src/approvals/index.ts). knip ignores @internal exports in
+  // production mode only, so the default gate still checks them.
 
   "workspaces": {
     ".": {

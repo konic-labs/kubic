@@ -36,7 +36,7 @@
 // become approval asks instead of slipping through silently — but the
 // detection is still literal-pattern: python/node/npm exfiltration, quoted
 // or backslash-obfuscated verbs, and whitespace tricks around redirect
-// targets stay unenforceable, documented as such in host/approvals.ts.
+// targets stay unenforceable, documented as such in the host approvals/triggers.ts.
 import { createHash } from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
@@ -443,7 +443,7 @@ export function redactReason(value: string): string {
 // Approval summaries, block reasons, the trajectory and the audit ledger all
 // pass through this redactor, so it composes the shared @kubic/core shape
 // table on top of the inline rules. It is deliberately at least as strong as
-// the host's display redactor (approval-display.ts): the display one keeps
+// the host's display redactor (approvals/display.ts): the display one keeps
 // prose readable because the operator must see what will run, this one may
 // over-redact because what it writes is persisted.
 const REDACTED = '[REDACTED]';

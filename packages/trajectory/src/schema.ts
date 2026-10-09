@@ -7,7 +7,7 @@
 //   Provenance/ExecutionEnv in packages/exec/src/env.ts,
 //   ResultStatus in packages/agent/src/lane/settle.ts,
 //   FileChange diffs in packages/exec/src/journal-diff.ts,
-//   ApprovalPolicy/verdicts in packages/host/src/approvals.ts,
+//   ApprovalPolicy/verdicts in packages/host/src/approvals/policy.ts,
 //   KubicUsageRow in packages/agent/src/usage.ts,
 //   FAILURE_CODES in packages/agent/src/lane/failures.ts.
 // This package imports none of them (dep-lint: trajectory sits below the

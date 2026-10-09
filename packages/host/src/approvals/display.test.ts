@@ -11,13 +11,10 @@ import {
   approvalCommandText,
   SUMMARY_COMMAND_LIMIT,
   summarizeCommand,
-} from './approval-display.js';
-import {
-  type ApprovalRequest,
-  approvalKey,
-  installPolicy,
-  summarizeRequest,
-} from './approvals.js';
+} from './display.js';
+import { installPolicy } from './install.js';
+import type { ApprovalRequest } from './request.js';
+import { approvalKey, summarizeRequest } from './request.js';
 
 const made: string[] = [];
 

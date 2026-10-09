@@ -83,7 +83,7 @@ path under `src/` without its extension.
 
 ### `@kubic/host` (44)
 
-`approval-timeout`, `approvals`, `config/config`, `config/config-cli`, `config/config-doctor`, `config/model-key-audit`, `config/runtime`, `config/secrets`, `config/trust-store`, `doctor`, `doctor-full-access`, `faux-provider`, `git-cli`, `journal-cli`, `limits/doctor-limits`, `limits/no-isolation-notice`, `models-cli`, `ops/cost/cost-cli`, `ops/cost/session-cost`, `policy/audit`, `policy/audit-cli`, `policy/audit-ledger`, `policy/enterprise`, `policy/policy-cli`, `presentation/projector`, `project-root`, `provider-key-hints`, `replay/replay`, `replay/run-prod`, `roles/resolver`, `roles/roles-boot`, `run-cli`, `run-spans`, `session-summaries`, `sessions-cli`, `sessions-prune`, `setup-cli`, `skills-boot`, `skills-cli`, `spans`, `test-support/audit-fixtures`, `trajectory/run-trajectory`, `trust-cli`, `verify/verifier`
+`approvals`, `config/config`, `config/config-cli`, `config/config-doctor`, `config/model-key-audit`, `config/runtime`, `config/secrets`, `config/trust-store`, `doctor`, `doctor-full-access`, `faux-provider`, `git-cli`, `journal-cli`, `limits/doctor-limits`, `limits/no-isolation-notice`, `models-cli`, `ops/cost/cost-cli`, `ops/cost/session-cost`, `policy/audit`, `policy/audit-cli`, `policy/audit-ledger`, `policy/enterprise`, `policy/policy-cli`, `presentation/projector`, `project-root`, `provider-key-hints`, `replay/replay`, `replay/run-prod`, `roles/resolver`, `roles/roles-boot`, `run-cli`, `run-spans`, `session-summaries`, `sessions-cli`, `sessions-prune`, `setup-cli`, `skills-boot`, `skills-cli`, `spans`, `test-support/audit-fixtures`, `trajectory/run-trajectory`, `trust-cli`, `verify/verifier`
 
 ### `@kubic/trajectory` (2)
 

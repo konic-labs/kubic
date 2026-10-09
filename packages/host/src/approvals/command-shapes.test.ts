@@ -7,11 +7,8 @@
 
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import { describe, expect, it } from 'vitest';
-import {
-  type Capability,
-  detectTriggers,
-  triggerContextFor,
-} from './approvals.js';
+import type { Capability } from './policy.js';
+import { detectTriggers, triggerContextFor } from './triggers.js';
 
 const ctx = triggerContextFor(DEFAULT_PERMISSIONS, '/work', '/home/u');
 

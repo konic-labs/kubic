@@ -33,7 +33,10 @@ import { formatJson } from '@kubic/core/cli/output';
 import { renderTable } from '@kubic/core/cli/table';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { stripUnsafeCharacters } from '@kubic/exec/runtime-exclude';
-import { enableSessionFullAccess, FileApprovalStore } from './approvals.js';
+import {
+  enableSessionFullAccess,
+  FileApprovalStore,
+} from './approvals/index.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';
 import {

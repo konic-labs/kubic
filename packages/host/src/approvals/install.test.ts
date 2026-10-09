@@ -18,11 +18,9 @@ import {
 import { DEFAULT_PERMISSIONS, toolsForClasses } from '@kubic/agent/permissions';
 import { FakeExecutionEnv } from '@kubic/exec/env';
 import { afterAll, describe, expect, it } from 'vitest';
-import {
-  type InstalledPolicy,
-  installedPolicyPosture,
-  installPolicy,
-} from './approvals.js';
+import { installPolicy } from './install.js';
+import type { InstalledPolicy } from './installed-policy.js';
+import { installedPolicyPosture } from './installed-policy.js';
 
 const lanes: FauxLane[] = [];
 

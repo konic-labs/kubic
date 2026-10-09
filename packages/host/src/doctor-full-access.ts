@@ -14,7 +14,7 @@ import {
 } from '@kubic/agent/lane/session-store';
 import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { FileApprovalStore } from './approvals.js';
+import { FileApprovalStore } from './approvals/index.js';
 
 export interface FullAccessSession {
   sessionId: string;

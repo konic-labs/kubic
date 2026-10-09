@@ -754,9 +754,9 @@ describe('destructive/confine matchers (unit)', () => {
     // and never expand `~` or `$VAR`, so for a TOOL path these tokens are
     // literal workspace entries (`/work/~/.bashrc`) — confinePath is right to
     // leave them unrewritten. Shell targets are different: bash expands
-    // them, so the bash outside-write detector (host approvals.ts) treats a
-    // `~`/`$VAR` prefix as outside, fail-closed — pinned in
-    // approvals-detectors.test.ts.
+    // them, so the host's bash outside-write detector (approvals/triggers.ts)
+    // treats a `~`/`$VAR` prefix as outside, fail-closed — pinned in
+    // approvals/detectors.test.ts.
     expect(confinePath('/work', '~/.bashrc')).toEqual({
       confined: '/work/~/.bashrc',
       rewritten: false,

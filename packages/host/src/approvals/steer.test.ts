@@ -16,14 +16,12 @@ import {
 import { fauxAssistantMessage, fauxToolCall } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  ALLOW_TURN_EDITS,
-  type ApprovalRequest,
-  type ApprovalVerdict,
-  type InstalledPolicy,
-  installPolicy,
-} from './approvals.js';
-import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
+import { auditLedgerDirFor, readAuditLedger } from '../policy/audit-ledger.js';
+import { installPolicy } from './install.js';
+import type { InstalledPolicy } from './installed-policy.js';
+import type { ApprovalVerdict } from './policy.js';
+import { ALLOW_TURN_EDITS } from './policy.js';
+import type { ApprovalRequest } from './request.js';
 
 const made: string[] = [];
 

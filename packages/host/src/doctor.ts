@@ -3,7 +3,7 @@
 // only — every probe is injected (faux-only, zero network): the command
 // never dials a provider, it reports what the injected probers say.
 // Provider shapes mirror packages/agent/src/models-config.ts read-only; policy
-// validation reuses host/approvals.ts. File access, if ever needed,
+// validation reuses approvals/policy.ts. File access, if ever needed,
 // goes through the exec FileBridge — this module never imports node:fs.
 
 import {
@@ -30,7 +30,7 @@ import {
   alwaysAskAutoApprove,
   CAPABILITIES,
   validatePolicy,
-} from './approvals.js';
+} from './approvals/index.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import type { FullAccessSession } from './doctor-full-access.js';
 import { renderDoctorGrouped } from './doctor-render.js';
@@ -169,7 +169,7 @@ export interface DoctorDeps extends CliIo {
   probeStatePermissions?: () => StatePermissionProbe | undefined;
 }
 
-// The installed posture, described once in host/approvals.ts. Host owns the
+// The installed posture, described once in approvals/installed-policy.ts. Host owns the
 // derivation (it is the module that also owns the approval service); doctor
 // only renders it, which is why this import is type-only plus a structural
 // re-declaration here — the value comes in through `installedPolicy`.

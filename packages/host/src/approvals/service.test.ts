@@ -9,19 +9,15 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  type ApprovalRequest,
-  ApprovalService,
-  approvalKey,
-  detectTriggers,
-  enableFullAccess,
-  FileApprovalStore,
-  installPolicy,
-  MemoryApprovalStore,
-  summarizeRequest,
-  type TriggerContext,
-  validatePolicy,
-} from './approvals.js';
+import { enableFullAccess } from './full-access.js';
+import { installPolicy } from './install.js';
+import { validatePolicy } from './policy.js';
+import type { ApprovalRequest } from './request.js';
+import { approvalKey, summarizeRequest } from './request.js';
+import { ApprovalService } from './service.js';
+import { FileApprovalStore, MemoryApprovalStore } from './stores.js';
+import type { TriggerContext } from './triggers.js';
+import { detectTriggers } from './triggers.js';
 
 const made: string[] = [];
 

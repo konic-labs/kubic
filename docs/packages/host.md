@@ -14,9 +14,7 @@ no isolation — docs and code must never imply otherwise.
 
 | Module | Owns |
 | --- | --- |
-| `approvals.ts` | `CAPABILITIES`, `ApprovalPolicy`, `validatePolicy`, `detectTriggers`, `approvalKey`, `summarizeRequest`, `ApprovalStore` (`MemoryApprovalStore`, `FileApprovalStore`), `ApprovalService`, `controlPlaneRefusal`, the full-access posture (`enableFullAccess`, `enableSessionFullAccess`, …) and `installPolicy` |
-| `approvals-credentials.ts` | The credential-path detector behind the `credentials` permission class |
-| `approval-display.ts`, `approval-preview.ts` | What an approval dialog shows: the command display and the change an edit or write would make |
+| `approvals/` | The approval system, entry `approvals/index.ts`: `installPolicy` (`install.ts`) and its input and posture (`installed-policy.ts`), capabilities and `validatePolicy` (`policy.ts`), requests and keys (`request.ts`), the stores (`stores.ts`), the decider service (`service.ts`), the full-access posture (`full-access.ts`), the trigger detectors (`triggers.ts`) over the shell lexer, git, `cd` and glob helpers (`shell/`), control-plane refusal (`control-plane.ts`), the credential-path detector (`credentials.ts`) and what a dialog shows (`display.ts`, `preview.ts`) |
 | `config/config.ts` | `CONFIG_LAYERS`, `KubicConfig` and its section types, `parseTomlConfig`, `mergeLayered`, the per-key checks, `GITIGNORE_REQUIRED_ENTRIES`, `checkGitignoreSplit` |
 | `config/runtime.ts` | `loadRuntimeConfig` — the load the binary actually runs on — plus `effectiveConfigView`, `renderEffectiveConfig`, `RUNTIME_KEY_EFFECTS`, `RUNTIME_ENV_OVERRIDES` |
 | `config/config-cli.ts`, `config/config-doctor.ts` | `kubic config [--json]` and doctor's config check |
@@ -74,7 +72,7 @@ A tool span whose call never settled before the run ended is closed by
 `endRun` (`error=run ended before the call settled`) instead of being
 serialized with `endMs: null`.
 
-### Approvals (`approvals.ts`)
+### Approvals (`approvals/`)
 
 `CAPABILITIES` (9): `network`, `credentials`, `git-push`,
 `destructive-shell`, `install`, `deploy`, `outside-write`,

@@ -8,12 +8,10 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  type ApprovalVerdict,
-  FileApprovalStore,
-  installPolicy,
-} from './approvals.js';
-import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
+import { auditLedgerDir, readAuditLedger } from '../policy/audit-ledger.js';
+import { installPolicy } from './install.js';
+import type { ApprovalVerdict } from './policy.js';
+import { FileApprovalStore } from './stores.js';
 
 const made: string[] = [];
 

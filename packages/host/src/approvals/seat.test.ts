@@ -8,11 +8,9 @@
 import { bootFauxLane, fauxToolUse } from '@kubic/agent/lane/test-harness';
 import { fauxAssistantMessage, fauxToolCall } from '@kubic/agent/pi-boundary';
 import { describe, expect, it } from 'vitest';
-import {
-  type ApprovalVerdict,
-  installPolicy,
-  NO_ANSWER_SURFACE_REASON,
-} from './approvals.js';
+import { installPolicy } from './install.js';
+import { NO_ANSWER_SURFACE_REASON } from './installed-policy.js';
+import type { ApprovalVerdict } from './policy.js';
 
 // The seat as the TUI supplies it: an ask that resolves with the user's
 // decision. `undefined` models "nobody answered" (the seat was not attached).

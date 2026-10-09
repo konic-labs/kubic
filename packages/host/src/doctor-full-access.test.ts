@@ -15,7 +15,7 @@ import {
 import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FileApprovalStore } from './approvals.js';
+import { FileApprovalStore } from './approvals/index.js';
 import {
   describeFullAccessSession,
   listFullAccessSessions,

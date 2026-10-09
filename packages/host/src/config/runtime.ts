@@ -26,7 +26,7 @@ import {
 } from '@kubic/agent/permissions';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
 import type { FileBridge } from '@kubic/exec/file-bridge';
-import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
+import { alwaysAskAutoApprove, validatePolicy } from '../approvals/index.js';
 import {
   type EffectivePolicy,
   layerPolicyFromConfig,

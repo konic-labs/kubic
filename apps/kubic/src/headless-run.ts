@@ -92,13 +92,13 @@ import {
   type RunReconciliation,
 } from '@kubic/exec/journal-reconcile';
 import { createSecretCommandRunner } from '@kubic/exec/secret-runner';
-import { TIMEOUT_REASON_MARKER } from '@kubic/host/approval-timeout';
 import {
   type ApprovalConfig,
   enableSessionFullAccess,
   fullAccessInForceWarning,
   type InstalledPolicy,
   installPolicy,
+  TIMEOUT_REASON_MARKER,
 } from '@kubic/host/approvals';
 import { createLedgerModelKeyResolver } from '@kubic/host/config/model-key-audit';
 import type {

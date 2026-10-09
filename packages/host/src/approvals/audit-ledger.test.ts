@@ -18,15 +18,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
 import { afterEach, describe, expect, it } from 'vitest';
-import { installPolicy } from './approvals.js';
-import { runAuditCommand } from './policy/audit-cli.js';
+import { runAuditCommand } from '../policy/audit-cli.js';
 import {
   AUDIT_LEDGER_FILE,
   auditLedgerDir,
   auditLedgerDirFor,
   readAuditLedger,
   resolveRepoRuntimeRoot,
-} from './policy/audit-ledger.js';
+} from '../policy/audit-ledger.js';
+import { installPolicy } from './install.js';
 
 const made: string[] = [];
 const chmodded: string[] = [];

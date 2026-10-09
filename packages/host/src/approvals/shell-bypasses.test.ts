@@ -1,12 +1,10 @@
-// Adversarial review of the detector fixes (approvals.ts): the
-// first cut let `cd` tracking REPLACE the path as typed, so a literal
-// `.kubic/journal` write stopped being refused whenever a `cd` that does not
-// really change the directory at the write came before it. Each block below
-// was written. The rule they pin: classify BOTH the token as typed
+// Bypass attempts around the shell detectors. A literal `.kubic/journal` write
+// stays refused even after a `cd` that does not really change the directory
+// at the write. The rule pinned here: classify BOTH the token as typed
 // (against the workspace) AND the cd-tracked resolution, and raise if EITHER
 // is control-plane (or, for outside-write, outside) — phantom, conditional,
 // subshell, quoted or echoed `cd`s can then only over-trigger, never hide a
-// write. Production classifiers (as approvals-bypasses.test.ts); no network.
+// write. Production classifiers; no network.
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: `${HOME}` here is bash syntax under test, not a template literal
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,15 +15,13 @@ import {
   isNetworkCommand,
 } from '@kubic/agent/lane/interceptors';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  controlPlaneRefusal,
-  detectTriggers,
-  enableFullAccess,
-  FileApprovalStore,
-  installPolicy,
-  KUBIC_STATE_WRITE,
-  type TriggerContext,
-} from './approvals.js';
+import { controlPlaneRefusal } from './control-plane.js';
+import { enableFullAccess } from './full-access.js';
+import { installPolicy } from './install.js';
+import { KUBIC_STATE_WRITE } from './policy.js';
+import { FileApprovalStore } from './stores.js';
+import type { TriggerContext } from './triggers.js';
+import { detectTriggers } from './triggers.js';
 
 const WS = '/work';
 const HOME = '/home/tester';

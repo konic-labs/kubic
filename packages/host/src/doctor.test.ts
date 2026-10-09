@@ -5,7 +5,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FileApprovalStore, installedPolicyPosture } from './approvals.js';
+import {
+  FileApprovalStore,
+  installedPolicyPosture,
+} from './approvals/index.js';
 import type { ContextRoomProbe, DoctorDeps } from './doctor.js';
 import { runDoctorCommand } from './doctor.js';
 import { assembleModels, providerProbesOf } from './models-cli.js';

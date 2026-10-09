@@ -23,16 +23,12 @@ import {
 } from '@kubic/agent/lane/interceptors';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  ApprovalService,
-  CAPABILITIES,
-  detectTriggers,
-  installPolicy,
-  type TriggerContext,
-  triggerContextFor,
-  validatePolicy,
-} from './approvals.js';
-import { parseTomlConfig } from './config/config.js';
+import { parseTomlConfig } from '../config/config.js';
+import { installPolicy } from './install.js';
+import { CAPABILITIES, validatePolicy } from './policy.js';
+import { ApprovalService } from './service.js';
+import type { TriggerContext } from './triggers.js';
+import { detectTriggers, triggerContextFor } from './triggers.js';
 
 const made: string[] = [];
 

@@ -5,7 +5,7 @@
 // timeout→deny helpers. The approval itself renders as the inline card
 // (approval-card.ts).
 // Presentation only: mirrors the host decider semantics
-// (packages/host/src/approvals.ts) structurally without importing it —
+// (packages/host/src/approvals/) structurally without importing it —
 // dep-lint forbids tui → host. Pi is touched ONLY through
 // ./tui-boundary.js. No node:fs in prod src (I/O confinement).
 

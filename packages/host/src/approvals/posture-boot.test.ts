@@ -9,12 +9,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  enableSessionFullAccess,
-  FileApprovalStore,
-  installPolicy,
-} from './approvals.js';
-import { auditLedgerDir, readAuditLedger } from './policy/audit-ledger.js';
+import { auditLedgerDir, readAuditLedger } from '../policy/audit-ledger.js';
+import { enableSessionFullAccess } from './full-access.js';
+import { installPolicy } from './install.js';
+import { FileApprovalStore } from './stores.js';
 
 const made: string[] = [];
 

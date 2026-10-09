@@ -28,14 +28,12 @@ import {
   Type,
 } from '@kubic/agent/pi-boundary';
 import { afterEach, describe, expect, it } from 'vitest';
-import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
-import {
-  type ApprovalRequest,
-  type ApprovalVerdict,
-  approvalKey,
-  FileApprovalStore,
-  installPolicy,
-} from './approvals.js';
+import { installPolicy } from './install.js';
+import type { ApprovalVerdict } from './policy.js';
+import type { ApprovalRequest } from './request.js';
+import { approvalKey } from './request.js';
+import { FileApprovalStore } from './stores.js';
+import { TIMEOUT_REASON_MARKER } from './timeout.js';
 
 const COMMAND = 'rm -rf /tmp/x';
 

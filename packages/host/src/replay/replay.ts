@@ -55,7 +55,7 @@ import {
   type TrajectoryExport,
   TrajectorySchemaError,
 } from '@kubic/trajectory/schema';
-import type { ApprovalConfig } from '../approvals.js';
+import type { ApprovalConfig } from '../approvals/index.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from '../roles/resolver.js';
 

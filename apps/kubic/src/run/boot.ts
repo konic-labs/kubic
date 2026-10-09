@@ -9,6 +9,7 @@ import {
   runStartAudit,
 } from '@kubic/host/audit';
 import { MAX_RUN_TIMEOUT_MS, runSpanHooks } from '@kubic/host/run';
+import { offeredSkillNames } from '@kubic/host/skills';
 import { type BootRefusal, SessionBoot } from '../session/bootstrap.js';
 import type { RunGuard } from './guard.js';
 import type { HeadlessRunOptions } from './options.js';
@@ -211,8 +212,7 @@ function captureBoot(boot: SessionBoot, capture: RunCapture): void {
     capture.model = { provider: model.provider, id: model.id };
   }
   if (boot.env !== undefined) capture.cwd = boot.env.cwd;
-  if (boot.skills !== undefined) {
-    capture.skills = boot.skills.skills.map((skill) => skill.name);
-  }
+  if (boot.skills !== undefined)
+    capture.skills = offeredSkillNames(boot.skills);
   if (boot.thinkingLevel !== undefined) capture.thinking = boot.thinkingLevel;
 }

@@ -150,7 +150,7 @@ export interface BootedLoopInputs {
   readonly root: string;
   readonly id: string;
   readonly cwd: string;
-  // The loaded skill names, for the trajectory's resources.
+  // The offered skill names, for the trajectory's resources.
   readonly skillNames: readonly string[];
   // Transcript warnings the loop drains (the screen owns the terminal).
   readonly transcriptNotices: string[];

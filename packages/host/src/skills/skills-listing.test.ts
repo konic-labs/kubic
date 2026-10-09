@@ -10,6 +10,7 @@ import {
   type BootSkills,
   bootSkills,
   describeSkillSkips,
+  offeredSkillNames,
   skillsDoctorProbe,
   skillsDoctorSummary,
   summarizeSkills,
@@ -224,6 +225,41 @@ describe('bootSkills passes discovery skips through', () => {
         source: 'project',
         status: 'excluded',
         reason: expect.stringContaining('untrusted'),
+      },
+    ]);
+  });
+});
+
+describe('offeredSkillNames', () => {
+  it('names the skills the run offered: neither withheld nor hidden', () => {
+    // `deploy` is withheld by the role gate and `quiet` hides itself from
+    // the model: a trajectory's resources name only `rev`.
+    expect(offeredSkillNames(booted())).toEqual(['rev']);
+  });
+});
+
+describe('an explicit --skill in the listing', () => {
+  it('lists a --skill path as a visible row of source cli', () => {
+    const cwd = tmpRoot('kubic-skills-cli-');
+    const dir = join(cwd, 'extra', 'lint');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'SKILL.md'),
+      '---\nname: lint\ndescription: Lint rules\n---\n\nBody.\n',
+    );
+    const result = bootSkills({
+      bridge: createNodeFileBridge(cwd),
+      cwd,
+      homeDir: tmpRoot('kubic-skills-home-'),
+      trusted: false,
+      cliSkills: ['./extra/lint'],
+    });
+    expect(summarizeSkills(result)).toEqual([
+      {
+        name: 'lint',
+        source: 'cli',
+        path: `${cwd}/extra/lint/SKILL.md`,
+        status: 'visible',
       },
     ]);
   });

@@ -228,6 +228,17 @@ export interface SkillRow {
   reason?: string;
 }
 
+// The skills a run offered the model, for its trajectory's resources: the
+// gate-passed set without the hidden (`disableModelInvocation`) ones. A
+// withheld or hidden skill was loaded but never offered, so naming it would
+// misreport what the run could see.
+export function offeredSkillNames(booted: BootSkills): string[] {
+  const hidden = new Set(booted.hidden);
+  return booted.invocable
+    .filter((skill) => !hidden.has(skill.name))
+    .map((skill) => skill.name);
+}
+
 export function summarizeSkills(booted: BootSkills): SkillRow[] {
   const withheldByName = new Map(
     booted.withheld.map((entry) => [entry.name, entry.reason]),

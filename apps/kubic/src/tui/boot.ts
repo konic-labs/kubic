@@ -38,7 +38,7 @@ import {
   type SessionUsageRow,
   summarizeProjectSessions,
 } from '@kubic/host/sessions';
-import { describeSkillSkips } from '@kubic/host/skills';
+import { describeSkillSkips, offeredSkillNames } from '@kubic/host/skills';
 import type { StatusUsageRow } from '@kubic/tui/status-bar';
 import { type BootRefusal, SessionBoot } from '../session/bootstrap.js';
 import { bootedLoop, contextLimitsOf, liveModelOf } from './lane-loop.js';
@@ -318,8 +318,9 @@ async function describeBoot(
       root: boot.root,
       id,
       cwd: env.cwd,
-      // The loaded skill names, for the trajectory's resources.
-      skillNames: (boot.skills?.skills ?? []).map((skill) => skill.name),
+      // The offered skill names, for the trajectory's resources.
+      skillNames:
+        boot.skills === undefined ? [] : offeredSkillNames(boot.skills),
       transcriptNotices: notices.transcript,
     }),
   };

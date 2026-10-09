@@ -2,6 +2,7 @@
 export {
   bootSkills,
   describeSkillSkips,
+  offeredSkillNames,
   skillsDoctorProbe,
 } from './skills-boot.js';
 export type { SkillsCommandOptions } from './skills-cli.js';

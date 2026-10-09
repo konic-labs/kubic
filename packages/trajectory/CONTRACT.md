@@ -15,7 +15,8 @@ Breaking changes mint major 2.
 
 `schema_version`, `task` (`taskId`, `objective`, `role`), `identity`
 (`sessionId`, `agentId`), `model` (+`escalations`: `reason`/`at`/`fromModel`/
-`toModel`/`thinking`), `prompt` (`text`), `resources` (`skills`), `actions`
+`toModel`/`thinking`), `prompt` (`text`), `resources` (`skills`: the skills the run offered the
+model, never a withheld or hidden one), `actions`
 (+args), `observations` (truncated), `state` (`phase`), `provenance`
 (`sessionId`/`agentId`/`pid`/`worktree`/`model`), `environment` (USED
 snapshot, `capturedFrom: 'used'`), `worktree` (+`baseRevision`, `branch`),

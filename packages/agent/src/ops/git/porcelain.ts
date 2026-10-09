@@ -146,14 +146,17 @@ export interface GitSubmodule {
 }
 
 // One `git submodule status` line: a flag char, the sha, the path, and an
-// optional describe suffix. `+` checked out at a different commit,
-// `-` uninitialized, `U` conflicted, anything else clean.
+// optional ` (<describe>)` suffix, which git prints only for a clean or
+// moved submodule. `+` checked out at a different commit, `-`
+// uninitialized, `U` conflicted, anything else clean. Git never quotes the
+// path, so it is everything between the sha and the suffix, spaces included.
 export function parseSubmoduleStatus(out: string): GitSubmodule[] {
   const rows: GitSubmodule[] = [];
   for (const line of out.split('\n')) {
     if (line === '') continue;
     const flag = line[0] ?? ' ';
-    const path = (line.slice(1).trim().split(/\s+/)[1] ?? '').trim();
+    let path = line.slice(1).replace(/^[0-9a-f]+ /, '');
+    if (flag === ' ' || flag === '+') path = path.replace(/ \([^()]*\)$/, '');
     if (path === '') continue;
     rows.push({
       path,
@@ -181,7 +184,9 @@ export interface GitWorktreeRow {
 
 // One `git worktree list --porcelain` block per worktree: `worktree <path>`,
 // `HEAD <sha>`, then `branch <ref>` or `detached` or `bare`. Blocks are
-// blank-line separated; paths are never quoted in this format.
+// blank-line separated; paths are never quoted in this format, so a path is
+// the rest of its line, spaces included (only a newline inside a path, which
+// needs `-z`, cannot be read).
 export function parseWorktreeList(out: string): GitWorktreeRow[] {
   const rows: GitWorktreeRow[] = [];
   for (const block of out.split('\n\n')) {

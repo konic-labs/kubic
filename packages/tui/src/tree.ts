@@ -1,16 +1,13 @@
-// TreeView: always-visible one-node tree.
-// Tree always visible one node with live tool calls; one-node +
-// collapsing; TreeView; click expand/collapse, wheel
-// chains; glyphs ✓/●/◌ with the head row's $cost in/out tokens: the head row
-// and its tool children. Tool rows carry their args + outcome and the ✗ error
-// glyph; calls are grouped per turn (run-start closes a group) and truncation
-// is measured in columns.
+// The agent tree: one row for the run, with its tool calls as children. The
+// head row carries the status glyph (✓ ● ◌) and the run's cost and tokens; a
+// tool row carries its argument summary and outcome, and ✗ when the call
+// failed. Calls are grouped per turn, earlier turns fold to one line each, and
+// truncation is measured in columns. A click toggles the tree; the wheel
+// passes through to the transcript underneath.
 //
-// The lane feed accepts the agent's KubicLaneEvent shape structurally
-// (packages/agent/src/lane/events.ts) WITHOUT importing it: the tui
-// package must never import host/agent implementation (dep-lint), so
-// only the fields the tree reads are typed here. `usage` rows sum into the
-// head row; `fault` events are ignored.
+// The tree reads only `TreeLaneSnapshot`, which the host projector folds from
+// the lane: the tui package never imports agent or host code (dep-lint), so
+// the fields it reads are typed here.
 
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import {
@@ -35,8 +32,7 @@ export function statusGlyph(status: RunStatus): string {
   return '◌';
 }
 
-// A finished call that failed gets its own glyph — ✓ on an error
-// was the bug. The colour is applied at render time (styleTreeLine), so the
+// A finished call that failed gets its own glyph, never ✓. The colour is applied at render time (styleTreeLine), so the
 // glyph stays distinct with NO_COLOR too.
 /** @internal */
 export function toolGlyph(state: ToolCallState, error = false): string {
@@ -113,10 +109,9 @@ function previousDurationMs(state: TreeState): number {
   return state.previousTurns.reduce((sum, turn) => sum + turn.durationMs, 0);
 }
 
-// The tree renders the replicated presentation state the
-// host projector folds — there is ONE lane input (the snapshot below), not a
-// second event-driven path beside it. The summarizers stay here, so the state
-// never carries a display string.
+// The tree's one lane input: the replicated presentation state the host
+// projector folds. The summarizers stay here, so the state never carries a
+// display string.
 /** @internal */
 export interface TreeToolSnapshot {
   readonly toolCallId: string;
@@ -142,8 +137,7 @@ export function applyTreeSnapshot(
   state: TreeState,
   lane: TreeLaneSnapshot,
 ): void {
-  // A new turn (the session goes back to running) closes the previous group, the
-  // same boundary the run-start event draws in the event-driven path.
+  // A new turn (the session goes back to running) closes the previous group.
   if (
     lane.status === 'running' &&
     state.status !== 'running' &&

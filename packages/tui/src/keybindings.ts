@@ -1,11 +1,9 @@
-// The Kubic keybinding registry ("never hardcode key
-// strings", "KeybindingsManager tracks definitions, conflicts, and user
-// overrides"). Every key the app claims ahead of the editor — the global
-// toggles, the open panel's navigation and the approval decisions — is an
-// ACTION here with its default keys; the input path asks the registry which
-// action a key id is bound to, so a user override in
-// `~/.kubic/keybindings.json` rebinds the action everywhere at once (the
-// dispatch, the key hints, the approval surface).
+// The Kubic keybinding registry: no view hardcodes a key string. Every key
+// the app claims ahead of the editor (the global toggles, the open panel's
+// navigation and the approval decisions) is an ACTION here with its default
+// keys; the input path asks the registry which action a key id is bound to,
+// so a user override in `~/.kubic/keybindings.json` rebinds the action
+// everywhere at once (the dispatch, the key hints, the approval surface).
 //
 // Pi's own KeybindingsManager is not used: the tui seam exposes no registry
 // writer and Pi's ids name the editor's actions, not Kubic's. This module is

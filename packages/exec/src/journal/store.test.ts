@@ -184,8 +184,8 @@ describe('readAfter delta bases', () => {
 
   it('legacy unattributed entries without the flag keep reconstructing from the empty base', () => {
     // A pre-schema entry: same data as a reconcile large-file find, but
-    // written before deltaBaseEmpty existed. Correct-by-construction today
-    // (reconcile is the only writer of that shape) and must stay so.
+    // written before deltaBaseEmpty existed. Correct by construction
+    // (reconcile is the only writer of that shape), and it must stay so.
     const dir = tempDir();
     const delta = encodeDelta('', big);
     const deltaHash = sha256Hex(delta);

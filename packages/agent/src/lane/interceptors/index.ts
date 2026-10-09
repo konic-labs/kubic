@@ -24,14 +24,15 @@
 //     change nothing at the tool layer (documented, not silent): there is
 //     no network tool to remove, and shell:true can still curl. The flag
 //     is consumed by approval triggers.
-//   git/credentials — NO tool-layer enforcement today (no git/credential tools
-//   exist yet; git arrives with). The flags are stored
-//     validated config consumed by approval triggers, never
+//   git — the class decides whether the git tools are offered at all
+//     (toolsForClasses); no interceptor narrows them further.
+//   credentials — no tool-layer enforcement: there is no credential tool.
+//     The level is validated config consumed by approval triggers, never
 //     silently dropped.
 // The destructive matcher is a literal-pattern heuristic, not a sandbox:
 // it sees the command string only, so $CMD indirection, backslash escapes,
-// and eval-obfuscation bypass THIS guard (stated, not silent). Since issue
-// The trigger layer raises on the cheap shapes this guard misses — a
+// and eval-obfuscation bypass THIS guard (stated, not silent). The trigger
+// layer raises on the cheap shapes this guard misses — a
 // destructive/network verb inside $(…)/backticks/eval and `sudo` anywhere
 // become approval asks instead of slipping through silently — but the
 // detection is still literal-pattern: python/node/npm exfiltration, quoted

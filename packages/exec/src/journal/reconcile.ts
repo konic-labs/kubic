@@ -65,8 +65,8 @@ export interface RunReconciliation {
   readonly baseline: Baseline;
   /**
    * Boot-time index blob OIDs for stat-clean tracked files
-   * (null outside git repos — the sweep then records today's hash-only
-   * shape). Re-captured with every rebaseline, so a new turn's pre-images
+   * (null outside git repos: the sweep then records hash-only entries).
+   * Re-captured with every rebaseline, so a new turn's pre-images
    * are the workspace as it is now, never a stale index.
    */
   readonly gitBaseline: GitBaseline | null;

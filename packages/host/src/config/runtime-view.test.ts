@@ -292,9 +292,9 @@ describe('effective config view', () => {
   });
 
   it('reports the highest-precedence contributing layer for split compaction keys', () => {
-    // autoCompact from project, reserveTokens from global: the old
-    // first-set-key rule named 'project' (autoCompact sorts first in key
-    // order); the provenance must name 'global' — the
+    // autoCompact from project, reserveTokens from global: a first-set-key
+    // rule would name 'project' (autoCompact sorts first in key order); the
+    // provenance must name 'global' — the
     // highest-precedence layer that contributed a key.
     const runtime = load(
       {
@@ -574,9 +574,8 @@ describe('effective config view', () => {
   });
 
   it('names no issue in any key-effect annotation', () => {
-    // The annotations are decisions or named follow-ups. A closed-issue
-    // pointer is exactly what this table must never carry again, so the pin
-    // is stronger than the gate: no issue number at all.
+    // The annotations reach `kubic config` and the configuration docs, so
+    // they state decisions in words and never point at an issue number.
     for (const [key, entry] of Object.entries(RUNTIME_KEY_EFFECTS)) {
       expect(effectTextOf(entry), key).not.toMatch(/#\d+/);
     }
@@ -598,7 +597,7 @@ describe('effective config view', () => {
     expect(rendered).toContain('ui.theme = "[redacted-secret]"');
   });
 
-  // The acceptance criterion's own bar: a .kubic/config.toml value must
+  // The bar: a .kubic/config.toml value must
   // measurably change a live behaviour, not merely parse. This drives the
   // real lane (through the shared faux harness factory) with the
   // classes the config produced and asserts the lane's own allowlist — the

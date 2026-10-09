@@ -300,7 +300,7 @@ describe('the displayed command never hides a non-secret word', () => {
 });
 
 // What the summary line and the persisted/logged text
-// show keeps the OLD broad redaction (`redactSecrets`, like block reasons —
+// show use the broad redaction (`redactSecrets`, like block reasons —
 // approvals.ts says so): only the dialog's own `command` field uses the
 // narrower display redactor. Broad over-redaction is the safe direction for
 // text that leaves the screen.

@@ -96,7 +96,7 @@ const BARE_BEARER = /\bbearer[ \t]+/gi;
 // A user flag whose operand has the `user:password` shape (curl's `-u` /
 // `--user`, its proxy twin `-U` / `--proxy-user`). The colon is required, so
 // an ordinary `-u` (`cp -u a b`, `sort -u names`) stays readable; the short
-// forms may be attached (`-uadmin:hunter2`, review of).
+// forms may be attached (`-uadmin:hunter2`).
 const USER_FLAG =
   /(?:^|[\s"'])(?:-u|-U)(?:[=\s]\s*)?|(?:^|[\s"'])(?:--user|--proxy-user)[=\s]\s*"?/gi;
 

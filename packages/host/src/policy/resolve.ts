@@ -180,8 +180,8 @@ function effectivePolicyOf(merge: Merge): EffectivePolicy {
 //   filesystem_policy = "workspace-only" → filesystem.level = 'workspace-write'
 // The engine names are accepted in config too, so either vocabulary loads.
 // `[[audit]]` is deliberately not translated: the engine's AuditSinkSpec has
-// no level field and the syslog sink is a named follow-up, so the config
-// keeps the parsed table for that work while this bridge stays honest.
+// no level field, so the audit sinks (`audit/sinks.ts`) read the parsed table
+// directly.
 const NETWORK_POLICY_MODES: Record<string, NetworkMode> = {
   proxy: 'allowlist',
   none: 'none',

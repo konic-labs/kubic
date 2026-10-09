@@ -37,8 +37,8 @@ import {
 import { OperationKillRegistry } from './abort.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 
-// Types come from the boundary's functions instead of new re-exports: the
-// Pi 1.0 surface is CODEOWNERS-gated and a sibling issue edits it too.
+// Types come from the boundary's functions instead of new re-exports, which
+// keeps the Pi seam no wider than production needs.
 type Models = ReturnType<typeof createModels>;
 type Registry = ReturnType<typeof createRegistry>;
 type Faux = ReturnType<typeof fauxProvider>;
@@ -449,7 +449,7 @@ describe('Kubic tools on the pi-durable harness', () => {
     const stored = deferred();
     const setup = chat();
     let runs = 0;
-    // A probe, not a Kubic op: no shipped op memoizes today, and none of the
+    // A probe, not a Kubic op: no shipped op memoizes, and none of the
     // ops that RERUN touch a memo (every never-replay op is `unsafe`, which
     // pi-durable never re-enters). This pins the store the adapter routes
     // `ToolInvocation.getMemo`/`setMemo`/`memoOnce` to: durable per task,

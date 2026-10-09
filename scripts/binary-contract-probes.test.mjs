@@ -398,8 +398,8 @@ describe('binary contract provider-less run probe', () => {
     assert.match(result.problems[0], /does not point at session/);
   });
 
-  // The trajectory ref is the written file, never the old
-  // `trajectory:<id>` string that resolved to nothing.
+  // The trajectory ref is the written file, never a `trajectory:<id>`
+  // string that resolves to nothing.
   it("fails when the trajectory ref is not that session's trajectory.json", () => {
     for (const ref of [
       `trajectory:${SESSION}`,

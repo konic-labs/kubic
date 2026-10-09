@@ -176,8 +176,8 @@ describe('sweep content bound', () => {
 
   it('never stores a lossy decode: binary content is hash-only, never mangled text', () => {
     // Invalid UTF-8 plus a NUL: `readTextFile` decodes this to U+FFFD-
-    // mangled text, and the old sweep stored that mangled string as the
-    // after-blob. The guard is exact: the decode is lossless iff the bytes
+    // mangled text, which must never be stored as the after-blob. The guard
+    // is exact: the decode is lossless iff the bytes
     // are exactly the utf-8 re-encoding of the decoded string.
     const binary = Buffer.from([
       0x61, 0x62, 0xff, 0xfe, 0x00, 0x63, 0x80, 0x81,
@@ -227,7 +227,7 @@ describe('sweep content bound', () => {
     expect(store.entries()).toHaveLength(1);
   });
 
-  it('renders a hash-only entry as a size-only change and logs it as today', () => {
+  it('renders a hash-only entry as a size-only change and logs it', () => {
     const size = MAX_SWEEP_CONTENT_BYTES + 1024 * 1024;
     const root = tmpRoot();
     writeFileSync(join(root, 'big.bin'), 'a'.repeat(size));

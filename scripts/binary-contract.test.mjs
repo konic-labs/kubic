@@ -378,7 +378,7 @@ describe('binary contract root help probes', () => {
     }
   });
 
-  it('fails when -h alone drifts (exit 2 from an old unknown-flag path)', () => {
+  it('fails when -h alone drifts (exit 2 from an unknown-flag path)', () => {
     const result = contractWith({
       shortHelp: { code: 2, stdout: '', stderr: '', error: null },
     });
@@ -542,7 +542,7 @@ describe('binary contract failure probes', () => {
 });
 
 describe('binary contract unknown-command probe', () => {
-  it('fails when an unknown command exits 1 (the old posture)', () => {
+  it('fails when an unknown command exits 1 instead of 2', () => {
     const result = contractWith({ unknown: { ...unknownOut(), code: 1 } });
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /exited 1 \(expected 2/);

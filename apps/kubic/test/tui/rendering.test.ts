@@ -1,6 +1,6 @@
-// TUI polish: Konic palette, transcript tool blocks, streaming echo,
-// working indicator, header, compact tree. Headless snapshots of pure
-// render functions only (no terminal, no network).
+// TUI rendering: the palette, transcript tool blocks, the streaming echo,
+// the working indicator, the header and the compact tree. Headless snapshots
+// of pure render functions only (no terminal, no network).
 
 import { renderHeader } from '@kubic/tui/chrome';
 import { formatTurnClock, renderWorkingLine } from '@kubic/tui/editor-frame';

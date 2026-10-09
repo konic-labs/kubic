@@ -267,8 +267,8 @@ export function buildRunEnvelope(
 // Live progress for a `kubic run` on
 // an interactive terminal. The composition root builds the sink (stderr,
 // spinner, kit rendering); the runner feeds it lane facts; the command
-// hands it the settled result for the receipt. Absent means today's plain
-// text everywhere (pipes, files, CI, `--json`).
+// hands it the settled result for the receipt. Absent means plain text
+// everywhere (pipes, files, CI, `--json`).
 export interface RunProgressSink {
   /**
    * The lane booted: heading and (when `notice`) the one-line no-isolation notice.

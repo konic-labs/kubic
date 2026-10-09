@@ -251,7 +251,8 @@ describe('corrupt journal content', () => {
   }
 
   it('a torn delta blob marks the change corrupt instead of crashing diffEntries', () => {
-    // Today this throws an uncaught SyntaxError out of applyDelta.
+    // applyDelta throws a SyntaxError on the torn blob; diffEntries must
+    // catch it.
     const changes = diffEntries(tornDeltaStore().store, {});
     expect(changes).toHaveLength(1);
     expect(changes[0]?.corrupt).toBe(true);

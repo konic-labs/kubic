@@ -136,10 +136,9 @@ export const editOperation: Operation<EditArgs, EditResult> = {
   replay: 'never',
   validateArgs: validateEditArgs,
   execute: async (_inv: ToolInvocation, args: EditArgs, ctx: OpContext) => {
-    // Size guard first: stat, refuse non-files as not_found
-    // (today's behavior), and refuse oversized files with a named
-    // `file_too_large` OpError naming the size — BEFORE any content
-    // allocation. The journal stays untouched on refusal.
+    // Size guard first: stat, refuse non-files as not_found, and refuse
+    // oversized files with a `file_too_large` OpError naming the size,
+    // BEFORE any content allocation. The journal stays untouched on refusal.
     let size = 0;
     try {
       const info = ctx.env.fs.stat(args.path);

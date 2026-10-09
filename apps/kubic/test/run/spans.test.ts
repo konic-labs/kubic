@@ -203,7 +203,7 @@ describe('live run emits lane/tool spans', () => {
       console.error = original;
     }
     // The prod default is stderr: a live `kubic run --debug` must not need
-    // the composition root to pass a sink (main.ts is owned by another issue).
+    // the composition root to pass a sink.
     expect(written.join('\n')).toMatch(/\[tool\] in read call=/);
     expect(written.join('\n')).toMatch(/\[agent\] lane drive start/);
   });

@@ -232,7 +232,7 @@ describe('faux smoke checker', () => {
 });
 
 describe('faux smoke checker: run-produced trajectories', () => {
-  it('names a trajectory ref that resolves to nothing (the old trajectory:<id> string)', () => {
+  it('names a trajectory ref that resolves to nothing (a trajectory:<id> string)', () => {
     const { problems } = smoke({
       [`run -p ${TOOL_PROMPT} --json|faux`]: {
         code: 0,

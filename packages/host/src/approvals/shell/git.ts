@@ -15,10 +15,10 @@ import { nextPlainToken, nextShellToken } from './lexer.js';
 // (`echo "git push later"`) raises too: the literal scan cannot see
 // quotes, and an over-trigger is an ask, never a silent grant.
 //
-// The option run is walked token by token, never by one regex: the old
-// repeated alternation (`--namespace` as an option OR as the previous
-// option's argument) backtracked exponentially — 34 repeats stalled a real
-// `kubic run` for 14 s, and this scan runs before EVERY bash call. Walking is
+// The option run is walked token by token, never by one regex: a repeated
+// alternation (`--namespace` as an option OR as the previous option's
+// argument) backtracks exponentially (34 repeats stall for seconds), and this
+// scan runs before EVERY bash call. Walking is
 // a two-state automaton (expecting an option-or-verb / expecting an option
 // argument) and the states already explored at a token are remembered across
 // every `git` occurrence, so the whole scan is linear in the command.

@@ -1,7 +1,6 @@
-// Kubic colour tokens (/README.md "Colour tokens").
-// One set of semantic roles for every terminal surface. A palette assigns a
-// colour value to each role; `style.ts` turns roles into escape sequences for
-// the terminal's colour depth.
+// Kubic colour tokens: one set of semantic roles for every terminal
+// surface. A palette assigns a colour value to each role; `style.ts` turns
+// roles into escape sequences for the terminal's colour depth.
 //
 // A colour value is one of:
 //   '#rrggbb'  — an exact colour, downgraded to 256/16 colours as needed;

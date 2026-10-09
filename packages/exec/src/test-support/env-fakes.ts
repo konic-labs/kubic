@@ -1,14 +1,15 @@
+// Test doubles for the execution seam: an in-memory checkpoint store, and
+// `argvKey`, the exact-argv key the fake shell's scripts match on.
+
 import type { CheckpointStore, ProcessSnapshot } from '../env/index.js';
-// Durable recovery checkpoints: at most every
-// CHECKPOINT_INTERVAL_MS and only when the encoded snapshot changed.
-// Clock is injectable so throttle behavior is unit-testable.
+
+// Recovery checkpoints, kept at most every CHECKPOINT_INTERVAL_MS and only
+// when the encoded snapshot changed. The clock is injectable so the throttle
+// is unit-testable.
 //
-// Honest limit: this store is the seam, not a wired product
-// path — no production caller supplies one to SpawnOptions today, so a
-// `kubic run` invocation persists no checkpoint and
-// nothing resumes from one. The in-memory store is what the exec/lane
-// tests drive; crash recovery for a tool call is the harness's own
-// pending-progress snapshot.
+// The store is a seam with no production caller: `kubic run` persists no
+// checkpoint and nothing resumes from one. Crash recovery for a tool call is
+// the harness's own pending-progress snapshot.
 export class MemoryCheckpointStore implements CheckpointStore {
   private readonly snapshots = new Map<string, ProcessSnapshot>();
   private readonly lastWrite = new Map<
@@ -48,12 +49,11 @@ export class MemoryCheckpointStore implements CheckpointStore {
   }
 }
 
-// Script key for an exact argv array: JSON serialization
-// distinguishes `['commit', '-m', 'work in progress']` (one message
-// element) from `['commit', '-m', 'work', 'in', 'progress']` (split),
-// which the legacy `${cmd} ${args.join(' ')}` keys conflate. Tests
-// asserting exact argv build their script maps with this; plain joined
-// strings keep resolving as a legacy fallback.
+// Script key for an exact argv array: JSON serialization distinguishes
+// `['commit', '-m', 'work in progress']` (one message element) from
+// `['commit', '-m', 'work', 'in', 'progress']` (split), which a joined
+// `${cmd} ${args.join(' ')}` key conflates. Tests asserting exact argv build
+// their script maps with this; plain joined strings still resolve.
 export function argvKey(cmd: string, ...args: string[]): string {
   return JSON.stringify([cmd, ...args]);
 }

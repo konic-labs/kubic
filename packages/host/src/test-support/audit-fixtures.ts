@@ -1,5 +1,8 @@
+// An example audit record: a fixture for tests, in the shape `kubic audit`
+// prints.
+
 import { AUDIT_RECORD_VERSION, type OrgAuditRecord } from '../audit/index.js';
-// An example record: a fixture for tests and the shape `kubic audit` prints.
+
 export const EXAMPLE_AUDIT_RECORD: OrgAuditRecord = {
   version: AUDIT_RECORD_VERSION,
   who: 'ege@example.com',

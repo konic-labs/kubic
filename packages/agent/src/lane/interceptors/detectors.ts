@@ -149,7 +149,7 @@ const NETWORK_PATTERNS = [
 
 // Literal-pattern heuristic with the same stated scope as the destructive
 // matcher: python/node/npm/pip/git/openssl exfiltration bypasses
-// network:none today. The verbs above cover the interactive-transfer
+// network:none. The verbs above cover the interactive-transfer
 // layer; everything else is approvals' problem.
 
 export function isNetworkCommand(command: string): boolean {

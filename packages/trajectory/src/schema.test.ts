@@ -405,7 +405,7 @@ describe('trajectory 1.0 sections', () => {
     expect(parseTrajectoryExportJSON(JSON.stringify(once))).toEqual(once);
   });
 
-  it('reads an export an earlier build wrote at schema 1.3, keeping the keys 1.0 no longer defines', () => {
+  it('reads a schema 1.3 export, keeping the keys 1.0 does not define', () => {
     const record = validExport();
     const parsed = parseTrajectoryExport({
       ...record,

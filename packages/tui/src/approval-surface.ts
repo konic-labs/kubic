@@ -1,6 +1,4 @@
-// ApprovalSurface: the TUI's answer seat for the host's approval asks. This is
-// the module that turns approval-view.ts from a dead component into the surface
-// the installed policy needs.
+// ApprovalSurface: the TUI's answer seat for the host's approval asks.
 //
 // The host installs the approval ask on the run path
 // (packages/host/src/approvals/install.ts). The headless runner has no TTY, so

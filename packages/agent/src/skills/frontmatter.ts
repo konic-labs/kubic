@@ -47,7 +47,7 @@ function isBlockContinuation(line: string, keyIndent: number): boolean {
 
 // A `- item` block sequence under an empty-valued key.
 // Returns undefined when the continuation holds no list items, so plain
-// indented text still reads as an empty value (fail-open, as before).
+// indented text still reads as an empty value (fail-open).
 function collectBlockSequence(
   fmLines: string[],
   from: number,

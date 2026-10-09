@@ -14,7 +14,7 @@
 // changed or deleted, and only under a byte bound (a `cat-file -s` size
 // pre-check first). Only files clean against the index at baseline qualify:
 // restoring a committed version over uncommitted work would destroy it, so
-// dirty tracked files keep today's non-reversible reporting.
+// dirty tracked files stay reported as non-reversible.
 //
 // Fail-open throughout: any git failure (non-repo, missing binary, odd
 // output) reads as "no git information" and the sweep behaves exactly as
@@ -151,8 +151,8 @@ export function captureGitBaseline(
     if (info.mode === '160000' || info.mode === '120000') continue;
     if (!OID_PATTERN.test(info.oid)) continue;
     // The stat-clean check: anything `status` names differs from the index
-    // (worktree edit, staged change, unmerged) and must keep today's
-    // non-reversible reporting.
+    // (worktree edit, staged change, unmerged) and stays reported as
+    // non-reversible.
     if (dirty.has(path)) continue;
     out[path] = info.oid;
   }

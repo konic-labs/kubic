@@ -245,7 +245,7 @@ describe('FakeExecutionEnv argv keys + strict default + byte fs', () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it('legacy joined keys still resolve', async () => {
+  it('joined-string script keys resolve too', async () => {
     const env = new FakeExecutionEnv(
       { 'git status': { exitCode: 0, stdout: 's', stderr: '' } },
       { allowUnscripted: true },

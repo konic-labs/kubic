@@ -347,7 +347,7 @@ describe('privilege escalation + indirection', () => {
     ).toEqual(['outside-write', 'privilege-escalation']);
   });
 
-  it('keeps plain git commands trigger-free (regression battery)', () => {
+  it('keeps plain git commands trigger-free', () => {
     const ctx = triggerContext();
     expect(detectTriggers('bash', { command: 'git status' }, ctx)).toEqual([]);
     expect(

@@ -78,8 +78,8 @@ describe('nested .gitignore in the baseline walk', () => {
   it('excludes a nested-ignored subtree from the baseline', () => {
     const root = workspace();
     const baseline = captureBaseline(root);
-    // The failing assertion today: the root-only walk hashes the nested build
-    // output and baselines it.
+    // A walk that read only the root .gitignore would hash the nested build
+    // output and baseline it.
     expect(baseline['packages/foo/build/out.js']).toBeUndefined();
     expect(baseline['packages/foo/build']).toBeUndefined();
     expect(Object.keys(baseline).sort()).toEqual([

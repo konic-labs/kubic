@@ -180,7 +180,7 @@ describe('an absent roles directory is not an error', () => {
     expect(loaded.sources.planner).toBe('repo');
     expect(loaded.texts.planner).toContain('Renamed but declared.');
     expect(loaded.resolved.map((r) => r.name)).toContain('planner');
-    // No `planner.md` exists: the old re-derivation read it and threw.
+    // No `planner.md` exists, so a probe that re-read the file would throw.
     const checks = rolesDoctorProbe({
       cwd: root,
       bridge: createNodeFileBridge(root),

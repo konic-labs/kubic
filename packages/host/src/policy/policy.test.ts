@@ -33,8 +33,8 @@ logging_policy = "full-audit"
     expect(layer.tools?.deny).toEqual(['network_fetch']);
     expect(layer.models?.allowed).toEqual(['claude-sonnet-4-6', 'local/*']);
     expect(layer.models?.providers).toEqual(['anthropic', 'local']);
-    // 's 'proxy' is the engine's allowlist mode; proxy enforcement itself
-    // is a named follow-up, so the shape is what travels here.
+    // 'proxy' is the engine's allowlist mode; Kubic has no proxy
+    // enforcement, so the shape is what travels here.
     expect(layer.network?.mode).toBe('allowlist');
     expect(layer.network?.domains).toEqual([
       'registry.npmjs.org',

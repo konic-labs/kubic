@@ -76,8 +76,8 @@ export class BlobStore {
       // A blob under its own name is not proof of integrity. A
       // crash on a delayed-allocation filesystem can land the rename and
       // lose the data, leaving a zero-length or torn file at the address;
-      // the old short-circuit then reused that file forever, so every later
-      // entry read as corrupt. Size first (one stat — catches the truncated
+      // trusting the name would reuse that file forever, so every later
+      // entry would read as corrupt. Size first (one stat — catches the truncated
       // crash shape without reading), then the content hash; a blob that
       // fails either check is rewritten from the bytes in hand.
       if (this.isIntact(bridge, path, hash, content)) {

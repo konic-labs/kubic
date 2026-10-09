@@ -1,12 +1,9 @@
-// Follow-end transcript fed by LaneSnapshot coarse cells.
-// Follow-end pinned + manual scroll preserved; text+tool/output
-// interleaved inspectable; immediate deltas, one markdown rebuild per
-// entry; streaming via replicated LaneSnapshot. Images and diff
-// rendering are out of scope.
-//
-// The ScrollView owns follow state (follow:'end', primary nearest,
-// overscroll chain); this module owns the document: delta appends rebuild
-// the single Markdown child exactly once per entry and never clear it.
+// The transcript: the session's committed lane entries as cells (prompts,
+// prose, tool cards, thinking, compactions and per-turn receipts), followed by
+// the draft of the message still streaming. The ScrollView owns scrolling (it
+// follows the end until the user scrolls away); this module owns the
+// document. Each cell's markdown and finished rows are cached while its text,
+// width and theme are unchanged, so a steady frame parses nothing.
 
 import type { LaneImagePart } from '@kubic/core/presentation';
 import { FOCUS_EDGE, PROSE } from '@kubic/core/ui/glyphs';
@@ -953,8 +950,8 @@ export interface TranscriptView {
   scrollUp(lines: number): void;
   rePin(): void;
   render(width: number): string[];
-  // TUI polish: the welcome block at the top of the document, the prompt
-  // echoed before the lane commits it, and the expand-all toggle.
+  // The welcome block at the top of the document, the prompt echoed before
+  // the lane commits it, and the expand-all toggle.
   setWelcome(
     lines: ReadonlyArray<string> | ((width: number) => string[]),
   ): void;

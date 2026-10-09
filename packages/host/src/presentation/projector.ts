@@ -150,7 +150,7 @@ export class PresentationProjector {
               }),
         });
         // The snapshot's `usage` is the session's cumulative `pi.usage`
-        // ledger (the same value seeds the bar from) and every other
+        // ledger (the value the status bar is seeded from) and every other
         // field of this branch is REPLACE — adding it would double the
         // totals on the watch's overflow rebase.
         this.current = {

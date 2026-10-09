@@ -179,9 +179,8 @@ export function processStartTimeOf(pid: number): number | undefined {
  * generation and every loser sees EEXIST. Returns `true` when this call's
  * payload landed, `false` when an occupant is already there (left
  * untouched). The temp name is dropped either way, so no litter survives.
- * A temp-name collision (EEXIST on the exclusive create —
- * vanishingly rare, but raw-thrown before) retries under a fresh name
- * instead of throwing. LOCAL FILESYSTEM ONLY, like every lock read here.
+ * A temp-name collision (EEXIST on the exclusive create, vanishingly rare)
+ * retries under a fresh name instead of throwing. LOCAL FILESYSTEM ONLY, like every lock read here.
  */
 export function claimLockLink(lockPath: string, payload: string): boolean {
   const dir = dirname(lockPath);

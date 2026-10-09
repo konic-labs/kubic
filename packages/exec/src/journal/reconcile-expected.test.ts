@@ -248,7 +248,7 @@ describe('reconcile expected state', () => {
     ).toEqual(['create:dist', 'delete:dist/out.js']);
   });
 
-  it('keeps the old rule for baseline paths: a regular file replaced by a link the walk skips is a delete', () => {
+  it('a baseline path replaced by a link the walk skips is a delete', () => {
     // The still-exists guard is for paths ONLY a tool journaled; a boot
     // baseline key that the sweep walk does not see is journaled.
     const root = tempDir('ws-reconcile-l-');

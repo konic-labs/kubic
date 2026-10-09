@@ -19,15 +19,15 @@ const PI_DEPS = [
 ];
 // Only the tui boundary imports pi-tui, so the tui manifest declares it.
 const TUI_PI_DEPS = ['@earendil-works/pi-tui'];
-// Not imported: Pi 1.0's pi-agent-core has no harness, and nothing imports
-// pi-protocol / pi-telemetry directly.
-const REMOVED_PI_DEPS = [
+// Pi packages Kubic does not import: Pi 1.0's pi-agent-core has no harness,
+// and nothing imports pi-protocol or pi-telemetry directly.
+const UNUSED_PI_DEPS = [
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-protocol',
   '@earendil-works/pi-telemetry',
 ];
-// Gone from the lockfile entirely — nothing depends on them transitively.
-const GONE_FROM_LOCK = [
+// Absent from the lockfile: nothing depends on them, even transitively.
+const ABSENT_FROM_LOCK = [
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-protocol',
 ];
@@ -78,7 +78,7 @@ function duplicatePiCopies(lock) {
 }
 
 describe('pi pinning + boundary', () => {
-  it('agent and tui pin their Pi deps exactly and drop the removed three', () => {
+  it('agent and tui pin their Pi deps exactly and declare no unused Pi package', () => {
     const pkg = JSON.parse(
       readFileSync(join(ROOT, 'packages', 'agent', 'package.json'), 'utf8'),
     );
@@ -104,11 +104,11 @@ describe('pi pinning + boundary', () => {
         `${dep} must be pinned to ${PI_VERSION} in the tui manifest`,
       );
     }
-    for (const dep of REMOVED_PI_DEPS) {
+    for (const dep of UNUSED_PI_DEPS) {
       assert.equal(
         pkg.dependencies?.[dep],
         undefined,
-        `${dep} must be gone from the agent manifest`,
+        `${dep} must not be declared by the agent manifest`,
       );
     }
   });
@@ -224,7 +224,7 @@ describe('pi pinning + boundary', () => {
     assert.deepEqual(duplicatePiCopies({}), []);
   });
 
-  it('lockfile pins every copy of the Pi deps and drops the removed two', () => {
+  it('lockfile pins every copy of the Pi deps and holds no unused one', () => {
     const lock = JSON.parse(
       readFileSync(join(ROOT, 'package-lock.json'), 'utf8'),
     );
@@ -245,12 +245,12 @@ describe('pi pinning + boundary', () => {
         );
       }
     }
-    for (const dep of GONE_FROM_LOCK) {
+    for (const dep of ABSENT_FROM_LOCK) {
       const suffix = `/node_modules/${dep}`;
       const copies = Object.keys(pkgs).filter(
         (path) => path === `node_modules/${dep}` || path.endsWith(suffix),
       );
-      assert.deepEqual(copies, [], `${dep} must be gone from the lockfile`);
+      assert.deepEqual(copies, [], `${dep} must not be in the lockfile`);
     }
   });
 });

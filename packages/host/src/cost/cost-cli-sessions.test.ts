@@ -143,9 +143,9 @@ describe('kubic cost lock-free reads', () => {
     attached.calls.length = 0;
     const rows = await loadSessionCostRows(root);
     expect(rows.length).toBeGreaterThan(0);
-    // The old attach+release path held each session's lock while reading
-    // it, so a concurrent `kubic run --session` refused with
-    // SessionLockError. The lock-free path never attaches at all.
+    // Attaching would hold each session's lock while reading it, so a
+    // concurrent `kubic run --session` would refuse with SessionLockError.
+    // The lock-free path never attaches at all.
     expect(attached.calls).toEqual([]);
     const holder = await attachSession(store, session.id, BACKGROUND_CONTEXT);
     try {

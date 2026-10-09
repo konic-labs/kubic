@@ -270,9 +270,9 @@ export function sanitizeLaneText(text: string): string {
 }
 
 // A progress bar redraws its line with `\r`: a terminal shows what came
-// after the last return, so that is what the transcript shows. (The old
-// sanitiser deleted the return and glued the frames together.) This runs
-// AFTER the sequence sweep and before tabs, so no return reaches a frame.
+// after the last return, so that is what the transcript shows (deleting the
+// returns instead would glue the frames together). This runs AFTER the
+// sequence sweep and before tabs, so no return reaches a frame.
 function collapseCarriageReturns(text: string): string {
   if (!text.includes('\r')) return text;
   return text

@@ -199,8 +199,7 @@ describe('prod wiring deps shapes', () => {
 
   it('eval --task drives the live suite runner', async () => {
     // The built-in suite's fixture runs through the lane with the faux
-    // provider, so --task produces a scored record instead of the old
-    // "live suite execution is not available" refusal.
+    // provider, so --task produces a scored record rather than a refusal.
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
     const workspace = mkdtempSync(join(tmpdir(), 'kubic-dispatch-eval-'));
     try {

@@ -50,9 +50,8 @@ export interface BaselineOptions {
   previous?: Baseline;
   /**
    * Boot-time index blob OIDs for stat-clean tracked files
-   * (see `journal-git.ts` `captureGitBaseline`). Absent or null outside git
-   * repositories (fail-open) — the sweep then records exactly today's
-   * hash-only shape. Carried on the walk options so the run lifecycle can
+   * (see `git.ts` `captureGitBaseline`). Absent or null outside git
+   * repositories (fail-open): the sweep then records hash-only entries. Carried on the walk options so the run lifecycle can
    * pass it through; `captureBaseline` itself ignores it.
    */
   gitBaseline?: GitBaseline | null;

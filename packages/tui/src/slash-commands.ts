@@ -44,10 +44,8 @@ export interface SlashCommandSpec {
   readonly argumentHint?: string;
 }
 
-// The shipped command set. `/model`, `/thinking` and `/compact` ship from
-// their own issues and are listed here because they
-// exist: a palette that hides working capabilities is worse than one that
-// names them.
+// The shipped command set. Every working command is listed: a palette that
+// hides working capabilities is worse than one that names them.
 export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   {
     name: 'help',

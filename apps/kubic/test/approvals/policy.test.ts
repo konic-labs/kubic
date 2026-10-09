@@ -80,7 +80,7 @@ describe('prod run path: destructive call', () => {
       },
     );
     // The recorded reason names the missing surface and REFUSING — nothing
-    // timed out. The status (the machine-readable half of) must say denied.
+    // timed out. The status (the machine-readable half) must say denied.
     expect(result.terminus).toBe('approval_denied');
     expect(mapTerminusToExitCode(result.terminus)).toBe(4);
     // The message is unchanged by the relabel: the same refusal sentence,

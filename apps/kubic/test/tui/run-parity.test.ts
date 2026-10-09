@@ -500,7 +500,7 @@ describe('the TUI footer names the lane failure', () => {
     expect(outcome.detail).toBe(
       'the provider deferred the response and it never arrived',
     );
-    // The TUI HAS a TTY — the old message lied about the cause.
+    // The TUI has a TTY, so a message blaming one would misstate the cause.
     expect(outcome.detail).not.toContain('TTY');
   });
 

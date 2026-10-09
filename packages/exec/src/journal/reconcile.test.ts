@@ -245,7 +245,8 @@ describe('git pre-images for sweep entries', () => {
     const baseline = captureBaseline(root);
     // A stale or filter-mangled OID: the object store answers, but with
     // bytes that are not what the baseline saw. Inventing them as the
-    // pre-image would restore the wrong content — keep today's shape.
+    // pre-image would restore the wrong content, so the entry stays
+    // hash-only.
     const git: GitBaseline = { 'tracked.ts': OID };
     const { run } = fakeGit({ [OID]: Buffer.from('something else\n', 'utf8') });
     writeFileSync(join(root, 'tracked.ts'), 'after\n');

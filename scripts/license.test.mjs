@@ -94,8 +94,7 @@ describe('LICENSE', () => {
     const root = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
     const direct = Object.keys(root.dependencies ?? {});
     // Floor, not an exact count: the CLI stack is commander (+ extra-typings),
-    // consola and @clack/prompts since colour moved to Kubic's own style
-    // engine and tables to the output kit.
+    // consola and @clack/prompts; colour and tables are Kubic's own.
     assert.ok(direct.length >= 4, `expected the CLI stack, saw ${direct}`);
     for (const dep of direct) {
       assert.ok(text.includes(`\`${dep}\``), `NOTICE.md must list ${dep}`);

@@ -232,7 +232,7 @@ function reportStyle(json: boolean): { theme: CliTheme; fancy: boolean } {
 // projection the lane consumes, from the ONE config load. Exported so
 // the wiring is tested through the same builder the runner calls — a test
 // that hand-spreads these keys stays green when the production spread is
-// dropped (the defect class of).
+// dropped.
 /** @internal */
 export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
   const enterprisePolicy = runtimePolicy(cliConfig);

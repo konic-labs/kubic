@@ -293,7 +293,7 @@ describe('journal CLI corrupt content', () => {
   }
 
   it('diff prints the corrupt marker and exits 0 over a torn delta blob', async () => {
-    // Today: uncaught SyntaxError kills `kubic diff` with a raw stack.
+    // A torn blob must not kill `kubic diff` with a raw stack.
     const { journalDir, root } = seedTornDelta();
     const lines: string[] = [];
     const code = (

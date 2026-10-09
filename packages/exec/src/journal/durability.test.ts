@@ -4,8 +4,9 @@
 //
 //   - Index appends fsync before `append()` returns: a crash/power loss cannot
 //     truncate the last index line in the window the journal
-//     itself declared safe. The bridge grows an opt-in `appendDurably`;
-//     production takes it, test doubles without it keep the old seam.
+//     itself declared safe. The bridge's `appendDurably` is optional:
+//     production has it, and a test double without it falls back to a
+//     plain append.
 //   - Blob writes are tmp+rename: content-addressed blobs are never exposed
 //     half-written under their real name (readBlob would serve the torn bytes
 //     as content hash check rejects them).
@@ -108,7 +109,7 @@ describe('journal durability', () => {
     expect(store.entries()).toHaveLength(1);
   });
 
-  it('a bridge double without appendDurably keeps appending (old seam)', () => {
+  it('a bridge double without appendDurably falls back to a plain append', () => {
     hooks.withoutAppendDurably = true;
     try {
       const store = new FileJournalStore(tempDir('journal-durable-'));

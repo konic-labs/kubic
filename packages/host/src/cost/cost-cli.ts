@@ -355,8 +355,8 @@ export async function readSessionRunUsage(
 }
 
 // Presentation over the grouped rows: the group column
-// names the `--by` level, then the model, and the separate
-// in/out/cacheRead/cacheWrite counters the old combined-tokens column hid.
+// names the `--by` level, then the model, then separate
+// in/out/cacheRead/cacheWrite counters.
 // The kit table only on a coloured terminal, plain aligned text otherwise.
 // Model values are model-authored, so the display strips control characters
 // (the stored rows keep them raw, exactly like `sessions attach`).

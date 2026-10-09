@@ -131,7 +131,7 @@ describe('doctor probes run once and --skip clears aggregates', () => {
     ).not.toBe('fail');
   });
 
-  it('the refused config still exits 1 without --skip (regression)', async () => {
+  it('the refused config still exits 1 without --skip', async () => {
     const { code, checks } = await report(
       refusedConfigDeps(() => undefined),
       [],

@@ -185,7 +185,7 @@ describe('git-push detector is linear-time', () => {
     expect(ms).toBeLessThan(PUSH_TIMEOUT_MS);
   });
 
-  it('a long chain that never reaches push fails fast too (the old backtracking case)', () => {
+  it('a long chain that never reaches push fails fast too (no backtracking)', () => {
     const chain = '--namespace '.repeat(200);
     const { found, ms } = timed(`git ${chain}pull origin main`);
     expect(found).not.toContain('git-push');
@@ -237,17 +237,17 @@ describe('git-push detector is linear-time', () => {
   // Reference oracle: the regex the detector shipped with. It is exponential
   // only on long chains, so a seeded sweep of short token sequences pins that
   // the linear rewrite recognises EXACTLY the same commands.
-  const OLD_GLOBALS = String.raw`(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S+|\s+\S+)|--[a-z][a-z-]*|-[pP]))*`;
-  const OLD_PUSH = new RegExp(
-    String.raw`(^|[|;&\s(])git${OLD_GLOBALS}\s+push\b`,
+  const REFERENCE_GLOBALS = String.raw`(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S+|\s+\S+)|--[a-z][a-z-]*|-[pP]))*`;
+  const REFERENCE_PUSH = new RegExp(
+    String.raw`(^|[|;&\s(])git${REFERENCE_GLOBALS}\s+push\b`,
     'i',
   );
-  const OLD_REMOTE = new RegExp(
-    String.raw`(^|[|;&\s(])git${OLD_GLOBALS}\s+remote\s+(add|set-url|remove|rename)\b`,
+  const REFERENCE_REMOTE = new RegExp(
+    String.raw`(^|[|;&\s(])git${REFERENCE_GLOBALS}\s+remote\s+(add|set-url|remove|rename)\b`,
     'i',
   );
 
-  it('recognises exactly what the original regex recognised (seeded differential)', () => {
+  it('recognises exactly what the reference regex recognised (seeded differential)', () => {
     const vocabulary = [
       'push',
       'push-x',
@@ -292,7 +292,8 @@ describe('git-push detector is linear-time', () => {
         words.push(vocabulary[next(vocabulary.length)] ?? 'a');
       }
       const command = words.join(' ');
-      const expected = OLD_PUSH.test(command) || OLD_REMOTE.test(command);
+      const expected =
+        REFERENCE_PUSH.test(command) || REFERENCE_REMOTE.test(command);
       if (expected) recognised += 1;
       expect(triggers(command).includes('git-push'), command).toBe(expected);
     }

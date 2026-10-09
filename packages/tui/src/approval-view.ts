@@ -1,6 +1,6 @@
 // The approval contract the TUI shares: the
 // request and decision shapes, the decision keys (defaults, overrides,
-// conflict and hygiene checks, the arming timings of), the overlay
+// conflict and hygiene checks, the arming timings), the overlay
 // options the question and confirm dialogs use, and the memoOnce /
 // timeout→deny helpers. The approval itself renders as the inline card
 // (approval-card.ts).

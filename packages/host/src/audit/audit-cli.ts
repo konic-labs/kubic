@@ -48,10 +48,9 @@ export interface AuditCommandDeps {
 
 const PLAIN = createCliTheme('none');
 
-// Prod listed-secret inventory. Audit persistence is not wired
-// yet, so this returns no values today; when persistence lands, return the
-// inventory here — runAuditCommand already consults loadSecrets, so the
-// prod path cannot forget it.
+// The production listed-secret inventory. Nothing persists one, so it is
+// empty; runAuditCommand already consults loadSecrets, so an inventory
+// returned here reaches the report with no other change.
 export function loadProdAuditSecrets(): readonly string[] {
   return [];
 }

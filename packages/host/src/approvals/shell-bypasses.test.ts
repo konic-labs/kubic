@@ -238,14 +238,14 @@ describe('git-push survives quotes, escapes and bangs', () => {
   });
 });
 
-describe('git-push only ever widens (the original regex is a lower bound)', () => {
-  const OLD_GLOBALS = String.raw`(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S+|\s+\S+)|--[a-z][a-z-]*|-[pP]))*`;
-  const OLD_PUSH = new RegExp(
-    String.raw`(^|[|;&\s(])git${OLD_GLOBALS}\s+push\b`,
+describe('git-push only ever widens (the reference regex is a lower bound)', () => {
+  const REFERENCE_GLOBALS = String.raw`(?:\s+(?:-[cC]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)(?:=\S+|\s+\S+)|--[a-z][a-z-]*|-[pP]))*`;
+  const REFERENCE_PUSH = new RegExp(
+    String.raw`(^|[|;&\s(])git${REFERENCE_GLOBALS}\s+push\b`,
     'i',
   );
-  const OLD_REMOTE = new RegExp(
-    String.raw`(^|[|;&\s(])git${OLD_GLOBALS}\s+remote\s+(add|set-url|remove|rename)\b`,
+  const REFERENCE_REMOTE = new RegExp(
+    String.raw`(^|[|;&\s(])git${REFERENCE_GLOBALS}\s+remote\s+(add|set-url|remove|rename)\b`,
     'i',
   );
   const vocabulary = [
@@ -294,12 +294,13 @@ describe('git-push only ever widens (the original regex is a lower bound)', () =
   ];
   const joiners = [' ', ' ', ' ', '', '\t', '\n'];
 
-  // The quote-aware tokenizer changed what "a word" is, so the old regex is
-  // the fail-open oracle: every command it flagged must STILL be flagged
-  // (raising more is the safe direction). There is no allow-list — the walk
-  // runs the old whitespace tokenization alongside the quote-aware one.
+  // The quote-aware tokenizer decides what "a word" is, so the
+  // whitespace-tokenizing reference regex is the fail-open oracle: every
+  // command it flags must be flagged (raising more is the safe direction).
+  // There is no allow-list: the walk runs whitespace tokenization alongside
+  // the quote-aware one.
   it.each([0x2f6e2b1, 0x1b873593, 0x9e3779b1, 0x85ebca6b, 0xc2b2ae35])(
-    'never loses a push the original flagged (seed %i)',
+    'never loses a push the reference regex flagged (seed %i)',
     (initial) => {
       let seed = initial;
       const next = (bound: number): number => {
@@ -318,11 +319,12 @@ describe('git-push only ever widens (the original regex is a lower bound)', () =
         for (const word of words) {
           command += word + (joiners[next(joiners.length)] ?? ' ');
         }
-        const original = OLD_PUSH.test(command) || OLD_REMOTE.test(command);
+        const reference =
+          REFERENCE_PUSH.test(command) || REFERENCE_REMOTE.test(command);
         const now = triggers(command, { isDestructive: () => false }).includes(
           'git-push',
         );
-        if (original) {
+        if (reference) {
           flagged += 1;
           expect(now, JSON.stringify(command)).toBe(true);
         } else if (now) {

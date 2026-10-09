@@ -396,7 +396,7 @@ describe('lane projections reach the live path', () => {
     ).toBe(0);
     expect(named.join('\n')).toContain('note.txt');
 
-    // Unset: the lane is 'root' — byte-identical to today.
+    // Unset: the lane is 'root'.
     const bare = loadRuntimeConfig({
       bridge: createNodeFileBridge(workspace),
       home: '/nonexistent-home',

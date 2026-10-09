@@ -47,7 +47,7 @@ const URL_USERINFO = /([a-z][a-z0-9+.-]{1,20}:\/\/)[^/\s@:]+:[^/\s@]+@/gi;
 
 // A user flag whose operand has the `user:password` shape: curl's `-u` /
 // `--user` and its proxy twin `-U` / `--proxy-user`. The short forms may be
-// attached (`-uadmin:hunter2`, review of); the long forms need `=` or a
+// attached (`-uadmin:hunter2`); the long forms need `=` or a
 // space. The colon is required, so an unrelated `-u` (`cp -u a b`,
 // `sort -u names`) is left alone.
 const USER_FLAG_CREDENTIAL =

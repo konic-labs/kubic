@@ -185,9 +185,9 @@ async function driveTurn(
       {
         requestId,
         context: guard.context,
-        // Headless keeps today's refusal: a run that somehow finds the
-        // conversation busy fails by name instead of queueing behind a
-        // turn nobody is watching.
+        // Headless refuses: a run that somehow finds the conversation busy
+        // fails by name instead of queueing behind a turn nobody is
+        // watching.
         whenBusy: 'reject',
         onRetryDecision: (decision) => {
           const text = overflowRecoveryNotice(decision);

@@ -1,11 +1,9 @@
 // The installed-policy SOURCE is the config layer's own record:
 // the posture `doctor` prints and the posture the lane installs must name the
 // same origin, and neither may claim "config" for a directory that configured
-// nothing. This exists because the first implementation inferred `source` from
-// the shape of the classes object — and a config-less install still yields
-// DEFAULT_PERMISSIONS, so the real binary printed `source=config` in an empty
-// directory. Measured against /tmp/k86 with no config: PASS policy:installed
-// said source=config; that was the bug this test now pins shut.
+// nothing. The source cannot be inferred from the shape of the classes
+// object: a config-less install still yields DEFAULT_PERMISSIONS, so an
+// inference would print `source=config` in an empty directory.
 //
 // Faux provider only: zero network, zero paid tokens.
 

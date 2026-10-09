@@ -196,7 +196,7 @@ describe('run-scoped reconciliation lifecycle', () => {
   // a baseline over a workspace holding one wedges the run at boot forever —
   // not even a test timeout fires, because the block is synchronous. The walk
   // must treat a special file as "not journalable" and keep going.
-  it('does not block on a named pipe in the workspace (regression)', () => {
+  it('does not block on a named pipe in the workspace', () => {
     const root = tempDir('ws-fifo-');
     writeFileSync(join(root, 'keep.txt'), 'v1\n');
     execFileSync('mkfifo', [join(root, 'pipe')]);
@@ -217,7 +217,7 @@ describe('run-scoped reconciliation lifecycle', () => {
   // resolves to a stored blob, and the sweep sets `beforeHash` from the
   // baseline. When an earlier tool entry in the same run already stored that
   // pre-image, undo CAN restore it — and must, rather than refusing.
-  it('reports a sweep entry reversible when a pre-image was stored earlier (regression)', () => {
+  it('reports a sweep entry reversible when a pre-image was stored earlier', () => {
     const root = tempDir('ws-preimage-');
     writeFileSync(join(root, 'f.txt'), 'v1-boot\n');
     const store = journalStore();

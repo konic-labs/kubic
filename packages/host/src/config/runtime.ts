@@ -536,7 +536,7 @@ function loadLayers(
         // Refused pre-trust, before the file is read. Named by path
         // so the operator knows exactly which layer is waiting on trust,
         // and with the remedies named: the durable grant or the
-        // per-invocation env opt-in, never a bare issue number.
+        // per-invocation env opt-in.
         throw new ProjectUntrustedError(
           `project-local config refused pre-trust: ${path} — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation`,
         );

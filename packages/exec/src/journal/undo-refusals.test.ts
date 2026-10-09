@@ -313,7 +313,7 @@ describe('undo refuses to record a lossy pre-undo copy', () => {
     expect(record?.beforeHash).toBe(sha256HexOfBytes(binary));
     // `bytesDelta` counts the bytes that were actually there: the 4-byte
     // binary pre-image against the 3-byte restored text (an omitted pre-image
-    // is not "0 bytes before" — review of).
+    // is not "0 bytes before").
     expect(record?.bytesDelta).toBe(
       Buffer.byteLength('v1\n', 'utf8') - binary.length,
     );

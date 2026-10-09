@@ -52,7 +52,7 @@ export interface SetupDeps extends CliIo {
   readonly ui: () => Promise<SetupUi>;
   /** Usable providers (a key is configured), testing provider excluded. */
   readonly providers: readonly SetupProviderChoice[];
-  /** The model a run would use today (`provider/id`), preselected. */
+  /** The model a run would use now (`provider/id`), preselected. */
   readonly current?: string;
   /** A frozen enterprise `[model]` (`provider/id`): no model question. */
   readonly enterpriseModel?: string;

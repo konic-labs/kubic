@@ -158,7 +158,7 @@ describe('kubic tui prompt loop', () => {
         // The model runs only after the lane ADMITTED the prompt, so waiting
         // here proves the abort below takes the in-flight path (admitted,
         // operationId set) rather than the latched pre-admission path — the
-        // two have different catches and only the former was the bug.
+        // two have different catches, and this test pins the former.
         admitted();
         await gated;
         return fauxAssistantMessage('done');

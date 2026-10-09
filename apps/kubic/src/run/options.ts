@@ -50,8 +50,8 @@ export interface HeadlessRunOptions {
   // session. Absent means off (interactive), never assumed.
   autonomous?: boolean;
   // Live progress on an interactive terminal (heading, compact
-  // no-isolation notice, one line per tool call). Absent: today's stderr warning
-  // block and no progress output.
+  // no-isolation notice, one line per tool call). Absent: the full stderr
+  // warning block and no progress output.
   progress?: RunProgressSink;
 }
 

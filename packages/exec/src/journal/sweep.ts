@@ -96,8 +96,8 @@ function regularFileStillThere(
 // object store is content-addressed, so the bytes are exactly the boot
 // content — but only a pre-image matching the boot baseline hash may be
 // journaled as one. A mismatch (a racy index update between the OID capture
-// and the walk, clean/smudge filters, CRLF checkout) keeps today's hash-only
-// shape rather than restoring the wrong content. Binary content (a lossy
+// and the walk, clean/smudge filters, CRLF checkout) stays hash-only rather
+// than restoring the wrong content. Binary content (a lossy
 // utf-8 decode) and pre-images above the sweep content bound are likewise
 // hash-only — the same bound the after-side obeys on the run's exit path.
 function gitBeforeContent(
@@ -215,7 +215,7 @@ interface SweepFind {
 function record(sweep: Sweep, input: SweepFind): void {
   // The sweep's byte delta, computed when both sides are
   // known — a create grows from absent (0), a delete shrinks to it, and a
-  // write is the difference. Unknown stays 0, exactly today's shape.
+  // write is the difference. Unknown stays 0.
   const beforeLen =
     input.before === null
       ? input.op === 'create'
@@ -342,8 +342,8 @@ function recordDeletes(sweep: Sweep, current: Baseline): void {
     // A path only a tool journaled (not in the boot baseline) is absent from
     // `current` whenever the walk skips it — gitignored, `.git/`, `.kubic/` —
     // while the regular file is still on disk: no delete happened, so none is
-    // recorded. Replaced by a directory or a link it
-    // IS a delete. Baseline keys keep the old rule.
+    // recorded. Replaced by a directory or a link, it IS a delete. A
+    // baseline key the walk does not see is always a delete.
     if (
       baseline[relPath] === undefined &&
       regularFileStillThere(sweep.bridge, sweep.root, relPath)

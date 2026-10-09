@@ -4,14 +4,14 @@
 
 import { createCliTheme } from '@kubic/core/cli/theme';
 import { REDACTED_SECRET } from '@kubic/core/secret-shapes';
+import { describe, expect, it } from 'vitest';
 import {
   type EffectivePolicy,
   isToolAllowed,
   policyWithInstalledAllowlist,
   resolveEffectivePolicy,
   runPolicyCommand,
-} from '@kubic/host/policy';
-import { describe, expect, it } from 'vitest';
+} from './index.js';
 
 // stdout (`lines`) and stderr (`errs`) captured separately.
 function capture() {

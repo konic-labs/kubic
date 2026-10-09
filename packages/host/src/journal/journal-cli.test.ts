@@ -25,13 +25,13 @@ import {
   createGitSandbox,
   disposeAllGitSandboxes,
 } from '@kubic/exec/test-support/git-sandbox';
-import { auditLedgerDirFor, readAuditLedger } from '@kubic/host/audit';
+import { afterEach, describe, expect, it } from 'vitest';
+import { auditLedgerDirFor, readAuditLedger } from '../audit/index.js';
 import {
   colorizeDiffLine,
   type JournalRequest,
   runJournalCommand,
-} from '@kubic/host/journal';
-import { afterEach, describe, expect, it } from 'vitest';
+} from './index.js';
 
 const made: string[] = [];
 

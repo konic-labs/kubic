@@ -7,15 +7,15 @@ import {
   containsSecretShape,
   REDACTED_SECRET,
 } from '@kubic/core/secret-shapes';
+import { describe, expect, it } from 'vitest';
+import { EXAMPLE_AUDIT_RECORD } from '../test-support/audit-fixtures.js';
 import {
   AUDIT_FIELDS,
   fullAccessEnabledAudit,
   type OrgAuditRecord,
   runAuditCommand,
   undoRestoreAudit,
-} from '@kubic/host/audit';
-import { EXAMPLE_AUDIT_RECORD } from '@kubic/host/test-support/audit-fixtures';
-import { describe, expect, it } from 'vitest';
+} from './index.js';
 
 // Shape-matching but inert (FAUX marker, never a live key): exercises the
 // redaction path the way secret-shapes.test.ts does.

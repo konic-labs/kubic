@@ -14,14 +14,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { type DoctorDeps, runDoctorCommand } from '@kubic/host/doctor';
+import { afterEach, describe, expect, it } from 'vitest';
+import { type DoctorDeps, runDoctorCommand } from '../doctor/index.js';
 import {
   type EffectivePolicy,
   resolveEffectivePolicy,
-} from '@kubic/host/policy';
-import type { RoleLayerInput } from '@kubic/host/roles';
-import { rolesDoctorProbe } from '@kubic/host/roles';
-import { afterEach, describe, expect, it } from 'vitest';
+} from '../policy/index.js';
+import type { RoleLayerInput } from './index.js';
+import { rolesDoctorProbe } from './index.js';
 
 const roots: string[] = [];
 

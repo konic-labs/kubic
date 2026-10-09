@@ -5,15 +5,15 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildTrajectoryExport } from '@kubic/trajectory/export';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type ReplayCommandDeps,
   type ReplayCommandOptions,
   type ReplayRunResult,
   runReplayCommand,
-} from '@kubic/host/replay';
-import { buildTrajectoryExport } from '@kubic/trajectory/export';
-import type { TrajectoryExport } from '@kubic/trajectory/schema';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+} from './index.js';
 
 const roots: string[] = [];
 

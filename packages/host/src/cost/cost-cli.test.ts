@@ -34,16 +34,16 @@ import {
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { REDACTED_SECRET } from '@kubic/core/secret-shapes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FAUX_PROVIDER_ID } from '../models/index.js';
+import { readSessionUsage, totalSessionUsage } from '../sessions/index.js';
 import {
   loadSessionCostRows,
   readSessionRunUsage,
   runCostCommand,
   summarizeSessionCost,
   toCostJson,
-} from '@kubic/host/cost';
-import { FAUX_PROVIDER_ID } from '@kubic/host/models';
-import { readSessionUsage, totalSessionUsage } from '@kubic/host/sessions';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+} from './index.js';
 
 const attached = vi.hoisted(() => ({
   calls: [] as Array<readonly unknown[]>,

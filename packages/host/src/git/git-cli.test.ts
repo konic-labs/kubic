@@ -17,9 +17,9 @@ import {
   createGitSandbox,
   disposeAllGitSandboxes,
 } from '@kubic/exec/test-support/git-sandbox';
-import { detectTriggers } from '@kubic/host/approvals';
-import { GIT_NOT_A_REPO, runGitCommand } from '@kubic/host/git';
 import { afterEach, describe, expect, it } from 'vitest';
+import { detectTriggers } from '../approvals/index.js';
+import { GIT_NOT_A_REPO, runGitCommand } from './index.js';
 
 const made: string[] = [];
 

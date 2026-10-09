@@ -65,9 +65,11 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 
 | Script | Why it exists |
 | --- | --- |
-| `build.mjs` | Bundles Kubic's own code into `dist/kubic.js` with esbuild. Third-party packages stay external, and a bare import that no manifest declares fails the build. |
+| `build.mjs` | Bundles Kubic's own code into `dist/kubic.js` with esbuild. Third-party packages stay external, and a bare import the root manifest does not declare fails the build. |
 | `binary-contract.mjs` | Runs the built binary: only the shipped artifact proves its exit codes, its startup output and the purity of its `--json` output. |
 | `faux-smoke.mjs` | Drives the built binary through a whole faux-provider run with a tool call. |
+| `release-stage.mjs` | Stages the npm package in `release/` (`npm run release:stage`): the bundle, a manifest generated from the root one, and a shrinkwrap resolved from the tested lockfile; then packs it. The root manifest stays private. |
+| `pack-install-contract.mjs` | Proves the packed release (`npm run release:contract`): its file list, a tarball install that runs, and a registry install that honours the shrinkwrap within the size budget. |
 | `dep-lint.mjs` | The import rules: package direction, no relative import across packages, test fixtures in tests only, `node:fs`/`node:child_process` only in `exec`, the two Pi boundary files, a host concern folder reached through its `index.ts`, and one argv parser. It reads `vi.mock` specifiers as imports too. dependency-cruiser, the standard tool, cannot parse TypeScript 7 sources. |
 | `check-pinned-deps.mjs` | Every dependency in every manifest is one exact version, no manifest has `overrides` (npm ignores them when someone installs kubic), and every workspace dependency is declared by the root manifest with the same version. `.npmrc` sets `save-exact=true` for new installs; the check catches a hand edit. |
 | `check-docs-links.mjs` | Every relative link in `docs/` resolves, with no dependency to install. |
@@ -205,7 +207,10 @@ than history, no tracker references) are in
 A push runs the `test` job: `npm run check` first (once, on Node 22: the
 gates do not depend on the Node version), then the suite (with coverage on
 the Node 22 leg), the build and `npm run test:binary`. It runs on Node 22 (the lowest supported) on every ref and on
-Node 22 and 24 on `main`. A newer push cancels the older run of the same
+Node 22 and 24 on `main`. After it, the `pack-contract` job stages, packs,
+installs and runs the npm package on Linux and macOS with Node 22.19.0 and
+24 (`npm run release:stage`, then `npm run release:contract`; its registry
+install uses the network). A newer push cancels the older run of the same
 ref; `main` is keyed by commit and never cancelled. Workflow permissions
 are read-only.
 

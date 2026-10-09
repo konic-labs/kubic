@@ -48,3 +48,30 @@ jobs:
       # Hermetic: HOME is a temp dir, no provider, no network.
       - run: npm run build
       - run: npm run test:binary
+
+  # The npm package a user installs: staged from the root build with its
+  # shrinkwrap, packed, installed into an empty prefix and run, then installed
+  # through a loopback registry that honours the shrinkwrap
+  # (scripts/pack-install-contract.mjs; that install uses the network).
+  pack-contract:
+    name: pack contract (${{ matrix.os }}, node ${{ matrix.node }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # The lowest supported Node and the newest LTS. The registry install
+        # is engine-strict, so the 22.19.0 leg proves no locked package needs
+        # a newer Node.
+        node: ['22.19.0', '24']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run release:stage
+      - run: npm run release:contract

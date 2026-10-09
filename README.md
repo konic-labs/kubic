@@ -72,6 +72,18 @@ for the details.
 
 Prerequisites: Node >= 22.19 (`node --version`).
 
+From npm, once Kubic is published there, install it globally or run it
+without installing:
+
+```bash
+npm install -g kubic
+kubic --version
+npx kubic --version
+```
+
+The package carries an `npm-shrinkwrap.json`, so an install gets the
+dependency versions Kubic was tested with.
+
 From a fresh clone, run these commands from the repository root:
 
 ```bash

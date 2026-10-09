@@ -7,12 +7,12 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   ProjectTrustStore,
   projectTrustStorePath,
-} from '../../../packages/host/src/config/trust-store.js';
-import { runTrustCommand } from '../../../packages/host/src/trust-cli.js';
+} from '@kubic/host/config/trust-store';
+import { runTrustCommand } from '@kubic/host/trust-cli';
+import { afterEach, describe, expect, it } from 'vitest';
 import { loadCliConfig } from './config-runtime.js';
 
 const made: string[] = [];

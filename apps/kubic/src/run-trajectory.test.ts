@@ -11,15 +11,15 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runExportCommand } from '../../../packages/eval/src/export-cli.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+import { runExportCommand } from '@kubic/eval/export-cli';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   AUDIT_LEDGER_FILE,
   auditLedgerDirFor,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { runReplayCommand } from '../../../packages/host/src/replay/replay.js';
-import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
+} from '@kubic/host/policy/audit-ledger';
+import { runReplayCommand } from '@kubic/host/replay/replay';
+import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 import {
   persistRunTrajectory,

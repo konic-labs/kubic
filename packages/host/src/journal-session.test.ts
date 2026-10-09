@@ -4,9 +4,9 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { CliUsageError } from '@kubic/core/cli/exit-codes';
+import { FileJournalStore } from '@kubic/exec/journal';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CliUsageError } from '../../core/src/cli/exit-codes.js';
-import { FileJournalStore } from '../../exec/src/journal.js';
 import { runJournalCommand } from './journal-cli.js';
 
 const made: string[] = [];

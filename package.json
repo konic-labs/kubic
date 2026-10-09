@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "postinstall": "node scripts/patch-vitest-runner.mjs",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/build.mjs",
     "kubic": "node ./bin/kubic.js",
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
     "lint": "biome ci .",
@@ -39,6 +39,7 @@
     "@stryker-mutator/tap-runner": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "26.6.2",
+    "esbuild": "0.28.2",
     "knip": "6.38.0",
     "typescript": "7.0.2",
     "vitest": "5.0.3"

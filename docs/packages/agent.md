@@ -65,7 +65,7 @@ Child output is capped at two independent layers, both keeping the **tail**
   `BashResult` — the model knows it saw a slice. The registry's
   never-replay memoization stores the clipped result, so retries are
   consistent.
-| `index.ts` | Pointer | No barrel — import per-module paths |
+| `index.ts` | Pointer | No barrel — import a module by its subpath, `@kubic/agent/<subpath>` |
 
 ### Find/grep walk bounds
 

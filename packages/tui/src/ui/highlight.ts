@@ -9,7 +9,7 @@
 // language or on any parse error, a block is plain fg1 — highlighting never
 // throws into a render.
 
-import type { Style, UiTheme } from '../../../core/src/ui/style.js';
+import type { Style, UiTheme } from '@kubic/core/ui/style';
 
 /** Blocks past either bound render plain. */
 export const HIGHLIGHT_MAX_LINES = 2000;

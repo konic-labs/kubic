@@ -3,5 +3,71 @@
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./env": {
+      "source": "./src/env.ts",
+      "default": "./src/env.ts"
+    },
+    "./file-bridge": {
+      "source": "./src/file-bridge.ts",
+      "default": "./src/file-bridge.ts"
+    },
+    "./git-clean": {
+      "source": "./src/git-clean.ts",
+      "default": "./src/git-clean.ts"
+    },
+    "./ignore": {
+      "source": "./src/ignore.ts",
+      "default": "./src/ignore.ts"
+    },
+    "./journal": {
+      "source": "./src/journal.ts",
+      "default": "./src/journal.ts"
+    },
+    "./journal-diff": {
+      "source": "./src/journal-diff.ts",
+      "default": "./src/journal-diff.ts"
+    },
+    "./journal-reconcile": {
+      "source": "./src/journal-reconcile.ts",
+      "default": "./src/journal-reconcile.ts"
+    },
+    "./journal-status": {
+      "source": "./src/journal-status.ts",
+      "default": "./src/journal-status.ts"
+    },
+    "./journal-undo": {
+      "source": "./src/journal-undo.ts",
+      "default": "./src/journal-undo.ts"
+    },
+    "./lock-file": {
+      "source": "./src/lock-file.ts",
+      "default": "./src/lock-file.ts"
+    },
+    "./read-roots": {
+      "source": "./src/read-roots.ts",
+      "default": "./src/read-roots.ts"
+    },
+    "./runtime-exclude": {
+      "source": "./src/runtime-exclude.ts",
+      "default": "./src/runtime-exclude.ts"
+    },
+    "./secret-runner": {
+      "source": "./src/secret-runner.ts",
+      "default": "./src/secret-runner.ts"
+    },
+    "./stdin": {
+      "source": "./src/stdin.ts",
+      "default": "./src/stdin.ts"
+    },
+    "./test-support/env-fakes": {
+      "source": "./src/test-support/env-fakes.ts",
+      "default": "./src/test-support/env-fakes.ts"
+    },
+    "./test-support/git-sandbox": {
+      "source": "./src/test-support/git-sandbox.ts",
+      "default": "./src/test-support/git-sandbox.ts"
+    }
+  }
 }

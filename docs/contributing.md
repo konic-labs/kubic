@@ -12,7 +12,7 @@ Node >= 22.19 is the only requirement:
 
 ```sh
 npm ci
-npm run build                # tsc -> gitignored dist/
+npm run build                # esbuild bundle -> gitignored dist/kubic.js
 ./bin/kubic.js --version
 ```
 
@@ -24,9 +24,9 @@ pins), installed from npm like every other dependency.
 CI runs these commands in this order; run them locally first:
 
 ```sh
-npm run typecheck
+npm run typecheck            # tsc --noEmit: typecheck only, no emit
 npm run lint                  # biome ci — exact CI parity
-npm run lint:deps             # package dependency direction
+npm run lint:deps             # package dependency direction, no relative cross-package imports
 npm run lint:dead             # knip: unused files, exports, dependencies, types
 npm run lint:dead:prod        # knip, production code only: test imports count as no use
 npm run check:pi              # exact pins on every dependency
@@ -60,6 +60,11 @@ files, exports, types and dependencies, and unlisted or unresolved imports.
   utility to make a named pipe. It is a system tool, not a dependency.
 - `ignoreExportsUsedInFile` is off: an export that only its own module uses is
   reported, so it must be module-private.
+- `includeEntryExports` is on for the package and app workspaces (`knip.jsonc`)
+  and in `knip.production.jsonc`. Each package's exports map makes its modules
+  entry files for knip, and this setting keeps an export that nothing uses
+  reported. knip may print an informational `Unused tag` hint for a boundary
+  seam; a hint does not fail the gate.
 
 The default gate does **not** report an export that only tests import, and it
 does not report a source file that only tests reach. The production gate does
@@ -112,7 +117,9 @@ those is test restructuring for a later change; this gate does not report them.
 - **Exact pins** — no `^` / `~` on any dependency (`npm run check:pi`).
 - **Dependency direction** — packages import "downward" only, and the TUI
   never imports `host` / `agent` implementation; contracts come from
-  `core` (`npm run lint:deps`, see the [package map](packages/README.md)).
+  `core`. A package imports another as `@kubic/<pkg>/<subpath>`, a subpath its
+  exports map lists; a relative path into another package fails
+  `npm run lint:deps` (see the [package import rule](packages/README.md)).
 - **The Pi boundary** — only `packages/agent/src/pi-boundary.ts` and
   `packages/tui/src/tui-boundary.ts` import `@earendil-works/*`. Every
   re-export carries a `JUSTIFICATION:` block naming the seam, its users

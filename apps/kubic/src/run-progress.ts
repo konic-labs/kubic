@@ -13,27 +13,24 @@ import {
   nextActions,
   receipt,
   statusMark,
-} from '../../../packages/core/src/cli/kit.js';
+} from '@kubic/core/cli/kit';
 import {
   createSpinner,
   type SpinnerOptions,
   type SpinnerStream,
-} from '../../../packages/core/src/cli/spinner.js';
-import type { CliTheme } from '../../../packages/core/src/cli/theme.js';
+} from '@kubic/core/cli/spinner';
+import type { CliTheme } from '@kubic/core/cli/theme';
 import {
   padVisible,
   truncateVisible,
   visibleWidth,
-} from '../../../packages/core/src/cli/width.js';
-import { runRoleLabel } from '../../../packages/core/src/run-role.js';
-import type {
-  HeadlessRunResult,
-  RunProgressSink,
-} from '../../../packages/host/src/run-cli.js';
+} from '@kubic/core/cli/width';
+import { runRoleLabel } from '@kubic/core/run-role';
+import type { HeadlessRunResult, RunProgressSink } from '@kubic/host/run-cli';
 import {
   summarizeToolArguments,
   summarizeToolOutcome,
-} from '../../../packages/tui/src/lane-cells.js';
+} from '@kubic/tui/lane-cells';
 
 export interface RunProgressStream extends SpinnerStream {
   readonly columns?: number;

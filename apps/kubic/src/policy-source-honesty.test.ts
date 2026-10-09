@@ -9,18 +9,18 @@
 //
 // Faux provider only: zero network, zero paid tokens.
 
-import { describe, expect, it } from 'vitest';
-import { DEFAULT_PERMISSIONS } from '../../../packages/agent/src/permissions.js';
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import {
   detectTriggers,
   installPolicy,
   triggerContextFor,
-} from '../../../packages/host/src/approvals.js';
+} from '@kubic/host/approvals';
 import {
   loadRuntimeConfig,
   type RuntimeConfig,
-} from '../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
+} from '@kubic/host/config/runtime';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { describe, expect, it } from 'vitest';
 import { type CliConfigResult, installedPolicyDeps } from './config-runtime.js';
 
 // The shape the composition root hands the projection: the load's own result

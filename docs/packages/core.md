@@ -24,7 +24,7 @@ classifiers and the license constants. It imports nothing internal —
 | `cli/output.ts` | `formatJson`, `outputModeFor` — the `--json` rule |
 | `cli/kit.ts`, `cli/table.ts`, `cli/spinner.ts`, `cli/prompt.ts`, `cli/theme.ts`, `cli/width.ts` | The CLI output kit: headings, status marks, receipts, tables, a TTY-only spinner, prompts that never run non-interactively, the CLI theme and display-width helpers |
 | `ui/tokens.ts`, `ui/color.ts`, `ui/style.ts`, `ui/glyphs.ts`, `ui/theme-file.ts` | The design tokens shared by the TUI and the CLI: colour roles and palettes, colour-depth detection, the style engine, glyphs and JSON theme files |
-| `index.ts` | No barrel — import per-module paths |
+| `index.ts` | No barrel — import a module by its subpath, `@kubic/core/<subpath>` |
 
 ## Contracts
 

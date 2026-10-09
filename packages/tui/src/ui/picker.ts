@@ -6,7 +6,7 @@
 // row under its own rule (the model picker's thinking row). The query filters
 // with Pi's fuzzyMatch. Pure: state in, state or lines out.
 
-import type { UiTheme } from '../../../core/src/ui/style.js';
+import type { UiTheme } from '@kubic/core/ui/style';
 import { fuzzyMatch, visibleWidth } from '../tui-boundary.js';
 import { exactWidth, leftRight } from './line.js';
 import { sectionLabel } from './marks.js';

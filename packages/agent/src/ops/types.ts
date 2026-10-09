@@ -7,8 +7,8 @@ import type {
   CheckpointStore,
   ExecutionEnv,
   ProcessSnapshot,
-} from '../../../exec/src/env.js';
-import type { FileJournalStore } from '../../../exec/src/journal.js';
+} from '@kubic/exec/env';
+import type { FileJournalStore } from '@kubic/exec/journal';
 import type { SpillSink } from '../spill.js';
 
 export type JsonValue =

@@ -1,9 +1,10 @@
 // The first screen:
 // the wordmark, a five-line preflight, the start keys and the recent
 // sessions — and the no-key block printed before exit 6.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import {
   type PreflightInfo,
   renderNoKeyPreflight,

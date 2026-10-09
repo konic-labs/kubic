@@ -15,10 +15,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { loadRuntimeConfig } from '@kubic/host/config/runtime';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
-import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { createProdRunners } from './prod-runners.js';

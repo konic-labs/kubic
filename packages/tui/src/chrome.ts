@@ -8,8 +8,8 @@
 // project name is cut last. The brand never drops, and neither does
 // `approvals OFF`: full access must stay unmissable.
 
-import { BRANCH, BRAND } from '../../core/src/ui/glyphs.js';
-import type { UiTheme } from '../../core/src/ui/style.js';
+import { BRANCH, BRAND } from '@kubic/core/ui/glyphs';
+import type { UiTheme } from '@kubic/core/ui/style';
 import type { KeyAction, KeyRegistry } from './keybindings.js';
 import { visibleWidth } from './tui-boundary.js';
 import type { KeyHint } from './ui/key-hints.js';

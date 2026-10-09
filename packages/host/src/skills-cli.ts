@@ -8,15 +8,15 @@
 // 0 even when skills were skipped (a skip is reported, not a failure); a
 // `--role` that refuses to resolve fails closed with its named reason.
 
-import type { PermissionClasses } from '../../agent/src/permissions.js';
-import { DEFAULT_PERMISSIONS } from '../../agent/src/permissions.js';
+import type { PermissionClasses } from '@kubic/agent/permissions';
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
-} from '../../core/src/cli/exit-codes.js';
-import { formatJson } from '../../core/src/cli/output.js';
-import { renderTable } from '../../core/src/cli/table.js';
+} from '@kubic/core/cli/exit-codes';
+import { formatJson } from '@kubic/core/cli/output';
+import { renderTable } from '@kubic/core/cli/table';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import { effectiveRoleClasses } from './roles/resolver.js';
 import type { BootSkillOptions } from './skills-boot.js';

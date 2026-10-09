@@ -2,12 +2,13 @@
 // roles). The schema, the named validation errors, the
 // built-in palettes and the colour-level downgrade of a custom hex colour.
 // Pure: text in, palette/theme out — the file read is the composition root's.
-import { afterEach, describe, expect, it } from 'vitest';
+
 import {
   DARK_PALETTE,
   LIGHT_PALETTE,
   TERMINAL_PALETTE,
-} from '../../core/src/ui/tokens.js';
+} from '@kubic/core/ui/tokens';
+import { afterEach, describe, expect, it } from 'vitest';
 import { editorTheme } from './editor-view.js';
 import { StatusBar } from './status-bar.js';
 import {

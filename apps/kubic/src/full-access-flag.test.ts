@@ -17,32 +17,29 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { createLineLogger } from '../../../packages/core/src/cli/logger.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { createLineLogger } from '@kubic/core/cli/logger';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   enableSessionFullAccess,
   FileApprovalStore,
   FULL_ACCESS_FLAG,
   installPolicy,
-} from '../../../packages/host/src/approvals.js';
+} from '@kubic/host/approvals';
 import {
   auditLedgerDir,
   readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import {
-  buildRunEnvelope,
-  mapTerminusToExitCode,
-} from '../../../packages/host/src/run-cli.js';
-import { runSessionsCommand } from '../../../packages/host/src/sessions-cli.js';
+} from '@kubic/host/policy/audit-ledger';
+import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { runSessionsCommand } from '@kubic/host/sessions-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { loadCliConfig } from './config-runtime.js';
 import { dispatchCommand } from './dispatch.js';

@@ -8,23 +8,20 @@
 // path `kubic diff/undo` keeps working without git); 2 a usage error
 // (thrown as CliUsageError).
 
-import {
-  createInvocation,
-  MemoryMemoStore,
-} from '../../agent/src/ops/memos.js';
-import { callOperation } from '../../agent/src/ops/registry.js';
-import type { OpContext } from '../../agent/src/ops/types.js';
+import { createInvocation, MemoryMemoStore } from '@kubic/agent/ops/memos';
+import { callOperation } from '@kubic/agent/ops/registry';
+import type { OpContext } from '@kubic/agent/ops/types';
 import {
   CliExitError,
   CliUsageError,
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
-} from '../../core/src/cli/exit-codes.js';
-import { formatJson } from '../../core/src/cli/output.js';
-import { renderTable } from '../../core/src/cli/table.js';
-import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
-import type { ExecutionEnv } from '../../exec/src/env.js';
+} from '@kubic/core/cli/exit-codes';
+import { formatJson } from '@kubic/core/cli/output';
+import { renderTable } from '@kubic/core/cli/table';
+import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
+import type { ExecutionEnv } from '@kubic/exec/env';
 
 export interface GitCommandDeps {
   env: ExecutionEnv;

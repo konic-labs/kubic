@@ -5,8 +5,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterAll, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { BASH_RESULT_MAX_CHARS } from './bash.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';

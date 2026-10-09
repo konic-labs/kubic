@@ -11,8 +11,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FakeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,

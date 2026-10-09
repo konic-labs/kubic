@@ -22,15 +22,15 @@ import {
   EXIT_OK,
   EXIT_USAGE,
   type ExitCode,
-} from '../../core/src/cli/exit-codes.js';
-import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
-import { formatJson } from '../../core/src/cli/output.js';
-import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
+} from '@kubic/core/cli/exit-codes';
+import { type CliLogger, createLineLogger } from '@kubic/core/cli/logger';
+import { formatJson } from '@kubic/core/cli/output';
+import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
   TrajectorySchemaError,
-} from '../../trajectory/src/schema.js';
+} from '@kubic/trajectory/schema';
 import { buildCodingRecord, validateCodingRecord } from './rl/coding.js';
 import {
   DATASET_TYPES,

@@ -6,20 +6,20 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   AUDIT_LEDGER_FILE,
   auditLedgerDirFor,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { bootScreen } from '../../../packages/tui/src/screen.js';
-import { createTuiApp } from '../../../packages/tui/src/tui-app.js';
+} from '@kubic/host/policy/audit-ledger';
+import { bootScreen } from '@kubic/tui/screen';
+import { createTuiApp } from '@kubic/tui/tui-app';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeTerminal, terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane, runTuiCommand, TuiTurnRunner } from './tui-run.js';
 

@@ -7,11 +7,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   createSession,
   openSessionStore,
-} from '../../agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   AssistantEntry,
   BACKGROUND_CONTEXT,
@@ -23,9 +22,10 @@ import {
   GenerationTask,
   Harness,
   ToolResultEntry,
-} from '../../agent/src/pi-boundary.js';
-import { createLineLogger } from '../../core/src/cli/logger.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/agent/pi-boundary';
+import { createLineLogger } from '@kubic/core/cli/logger';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { afterEach, describe, expect, it } from 'vitest';
 import { auditLedgerDirFor, readAuditLedger } from './policy/audit-ledger.js';
 import { runSessionsCommand } from './sessions-cli.js';
 

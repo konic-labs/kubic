@@ -14,13 +14,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   type ExecutionEnv,
   NodeExecutionEnv,
   ROOT_PROVENANCE,
-} from '../../../exec/src/env.js';
-import type { FileJournalStore } from '../../../exec/src/journal.js';
+} from '@kubic/exec/env';
+import type { FileJournalStore } from '@kubic/exec/journal';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { editOperation } from './edit.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import type { OpContext, ToolInvocation } from './types.js';

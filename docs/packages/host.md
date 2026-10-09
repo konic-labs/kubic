@@ -37,7 +37,7 @@ no isolation — docs and code must never imply otherwise.
 | `verify/verifier.ts` | The `[verify]` gates (tests, build, lint, typecheck) run after `kubic run` settles; their results become the trajectory's `signal:<gate>` labels |
 | `run-cli.ts`, `sessions-cli.ts`, `sessions-prune.ts`, `session-read.ts`, `session-summaries.ts`, `journal-cli.ts`, `models-cli.ts`, `models-render.ts`, `git-cli.ts`, `trust-cli.ts`, `setup-cli.ts` | The command implementations |
 | `cli-io.ts`, `faux-provider.ts`, `project-root.ts`, `provider-key-hints.ts` | Shared command seams, the `KUBIC_PROVIDER=faux` testing provider, project-root discovery and provider key hints |
-| `index.ts` | No barrel — import per-module paths |
+| `index.ts` | No barrel — import a module by its subpath, `@kubic/host/<subpath>` |
 
 ## Contracts
 

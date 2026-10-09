@@ -13,9 +13,9 @@
 // for one. Autocomplete rows Pi renders below its bottom rule stay below the
 // box, aligned with the text.
 
-import { formatTokens } from '../../core/src/cli/kit.js';
-import { FRAME_LIGHT, RETURN_KEY } from '../../core/src/ui/glyphs.js';
-import type { UiTheme } from '../../core/src/ui/style.js';
+import { formatTokens } from '@kubic/core/cli/kit';
+import { FRAME_LIGHT, RETURN_KEY } from '@kubic/core/ui/glyphs';
+import type { UiTheme } from '@kubic/core/ui/style';
 import { spinnerFrame } from './theme.js';
 import { visibleWidth } from './tui-boundary.js';
 import { fitLine, leftRight } from './ui/line.js';

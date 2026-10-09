@@ -18,9 +18,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { runJournalCommand } from '@kubic/host/journal-cli';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
 import { loadCliConfig, sessionRetentionDays } from './config-runtime.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;

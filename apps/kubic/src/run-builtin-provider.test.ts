@@ -6,13 +6,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fauxAssistantMessage, fauxProvider } from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { assembleModels } from '@kubic/host/models-cli';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { assembleModels } from '../../../packages/host/src/models-cli.js';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];

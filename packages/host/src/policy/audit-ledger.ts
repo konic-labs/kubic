@@ -8,9 +8,9 @@
 // File access goes through the exec FileBridge (I/O confinement).
 
 import { basename, dirname, join, resolve } from 'node:path';
-import type { RunMode } from '../../../agent/src/permissions.js';
-import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
-import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
+import type { RunMode } from '@kubic/agent/permissions';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { AuditTableConfig } from '../config/config.js';
 import { matchableSecrets } from '../config/secrets.js';
 import {

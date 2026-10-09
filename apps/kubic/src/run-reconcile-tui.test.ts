@@ -15,16 +15,16 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { runJournalCommand } from '@kubic/host/journal-cli';
+import { afterEach, describe, expect, it } from 'vitest';
 import { bootTuiLane } from './tui-run.js';
 
 const made: string[] = [];

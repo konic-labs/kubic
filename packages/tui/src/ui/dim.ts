@@ -4,7 +4,7 @@
 // thing in colour. The last row — the key hints — stays lit: it names the
 // overlay's keys.
 
-import type { UiTheme } from '../../../core/src/ui/style.js';
+import type { UiTheme } from '@kubic/core/ui/style';
 
 // Order matters: string sequences (OSC links, APC markers such as Pi's
 // cursor marker, DCS/SOS/PM) may contain ESC and `[`, so they go first,

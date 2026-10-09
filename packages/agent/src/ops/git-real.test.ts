@@ -15,13 +15,13 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { NodeExecutionEnv } from '../../../exec/src/env.js';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
   type GitSandbox,
-} from '../../../exec/src/test-support/git-sandbox.js';
+} from '@kubic/exec/test-support/git-sandbox';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import {
   callOperation,

@@ -4,8 +4,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import {
   BASH_DEFAULT_TIMEOUT_SEC,
   BASH_MAX_TIMEOUT_SEC,

@@ -8,27 +8,27 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EXIT_OK } from '../../../packages/core/src/cli/exit-codes.js';
-import { makeExport } from '../../../packages/eval/src/test-support/fixtures.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
+import { EXIT_OK } from '@kubic/core/cli/exit-codes';
+import { makeExport } from '@kubic/eval/test-support/fixtures';
+import { FileJournalStore } from '@kubic/exec/journal';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
-} from '../../../packages/exec/src/test-support/git-sandbox.js';
-import { installedPolicyPosture } from '../../../packages/host/src/approvals.js';
+} from '@kubic/exec/test-support/git-sandbox';
+import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
   NO_PROJECT_TRUST,
   ProjectTrustStore,
   projectTrustStorePath,
-} from '../../../packages/host/src/config/trust-store.js';
+} from '@kubic/host/config/trust-store';
 import {
   appendToLedger,
   auditLedgerDir,
   decisionAudit,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { defaultSessionsRoot } from '../../../packages/host/src/sessions-cli.js';
-import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
+} from '@kubic/host/policy/audit-ledger';
+import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
+import { buildTrajectoryExport } from '@kubic/trajectory/export';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CliConfigResult } from './config-runtime.js';
 import { loadCliConfig } from './config-runtime.js';
 import { createProdRunners, prodTuiDeps } from './prod-runners.js';

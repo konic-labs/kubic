@@ -7,29 +7,26 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   attachSession,
   createSession,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   entriesToTranscript,
   readSessionEntries,
-} from '../../../packages/agent/src/lane/transcript.js';
+} from '@kubic/agent/lane/transcript';
 import {
   BACKGROUND_CONTEXT,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import {
-  buildRunEnvelope,
-  mapTerminusToExitCode,
-} from '../../../packages/host/src/run-cli.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane } from './tui-run.js';
 

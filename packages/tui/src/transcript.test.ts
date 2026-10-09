@@ -3,10 +3,11 @@
 // No VirtualTerminal exists in Pi 0.85.1: headless snapshots render the
 // ScrollView root directly (Component.render is pure) and assert document
 // text plus follow/pinned offsets across batches.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import { buildLayoutRoot } from './layout.js';
 import { bootScreen } from './screen.js';
 import { createTuiTheme, setTuiTheme } from './theme.js';

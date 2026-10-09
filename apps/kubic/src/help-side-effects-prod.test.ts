@@ -11,12 +11,12 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
+import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
-} from '../../../packages/exec/src/test-support/git-sandbox.js';
+} from '@kubic/exec/test-support/git-sandbox';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadCliConfig } from './config-runtime.js';
 import { dispatchCommand } from './dispatch.js';
 import { createProdRunners } from './prod-runners.js';

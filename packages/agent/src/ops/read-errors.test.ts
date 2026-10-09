@@ -13,8 +13,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeExecutionEnv } from '../../../exec/src/env.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { readFailure, readOperation, validateReadArgs } from './read.js';
 import type { OpContext, ToolInvocation } from './types.js';

@@ -5,7 +5,7 @@
 
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { inspectStoredWork } from '../../agent/src/lane/pending.js';
+import { inspectStoredWork } from '@kubic/agent/lane/pending';
 import {
   attachSession,
   createSession,
@@ -15,24 +15,24 @@ import {
   SessionAttachError,
   SessionForkError,
   SessionLockError,
-} from '../../agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   entriesToTranscript,
   readSessionEntries,
   type TranscriptItem,
-} from '../../agent/src/lane/transcript.js';
-import { BACKGROUND_CONTEXT } from '../../agent/src/pi-boundary.js';
+} from '@kubic/agent/lane/transcript';
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
   EXIT_USAGE,
   type ExitCode,
-} from '../../core/src/cli/exit-codes.js';
-import { formatJson } from '../../core/src/cli/output.js';
-import { renderTable } from '../../core/src/cli/table.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
-import { stripUnsafeCharacters } from '../../exec/src/runtime-exclude.js';
+} from '@kubic/core/cli/exit-codes';
+import { formatJson } from '@kubic/core/cli/output';
+import { renderTable } from '@kubic/core/cli/table';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { stripUnsafeCharacters } from '@kubic/exec/runtime-exclude';
 import { enableSessionFullAccess, FileApprovalStore } from './approvals.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 import { SESSION_ID_PATTERN } from './run-cli.js';

@@ -7,10 +7,10 @@
 import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promptKey } from '../../../packages/core/src/cli/prompt.js';
-import { themeFor } from '../../../packages/core/src/cli/theme.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { ensureRuntimeExcludeRules } from '../../../packages/exec/src/runtime-exclude.js';
+import { promptKey } from '@kubic/core/cli/prompt';
+import { themeFor } from '@kubic/core/cli/theme';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
 import {
   loadCliConfig,
   resolveInteractiveProjectTrust,
@@ -28,8 +28,8 @@ import {
 // License identity: the version is the one in the manifest named kubic, the
 // repo root's package.json (apps/kubic is @kubic/cli, so the walk skips its
 // manifest). Walk up from this module to that manifest: the src layout and the
-// dist layout (dist/apps/kubic/src/main.js, which has no manifest of its own)
-// both reach it. The license half of the line is owned by core/license.ts.
+// bundle (dist/kubic.js, which has no manifest of its own) both reach it. The
+// license half of the line is owned by core/license.ts.
 function cliVersion(): string {
   // File access goes through the exec FileBridge (I/O confinement):
   // the composition root never imports node:fs directly.

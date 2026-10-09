@@ -7,15 +7,15 @@
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_PERMISSIONS } from '../../../packages/agent/src/permissions.js';
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { mapTerminusToExitCode } from '../../../packages/host/src/run-cli.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane } from './tui-run.js';
 

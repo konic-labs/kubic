@@ -8,7 +8,7 @@
 // — the envelope still says exactly why the re-execution did not
 // complete. A throwing lane maps to failed (never a rejection past the
 // CLI), and an empty objective is refused before the lane is touched.
-import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import type {
   ReplayRunRequest,
   ReplayRunResult,

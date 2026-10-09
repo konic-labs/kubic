@@ -6,8 +6,8 @@
 // theme (unit tests) gets a colourless logger that writes to `out`, so its
 // lines stay capturable in one array.
 
-import { type CliLogger, createLineLogger } from '../../core/src/cli/logger.js';
-import { type CliTheme, createCliTheme } from '../../core/src/cli/theme.js';
+import { type CliLogger, createLineLogger } from '@kubic/core/cli/logger';
+import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
 
 export type Diagnostics = Pick<
   CliLogger,

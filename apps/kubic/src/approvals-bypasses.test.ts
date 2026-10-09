@@ -11,21 +11,20 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
-} from '../../../packages/agent/src/lane/interceptors.js';
-import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+} from '@kubic/agent/lane/interceptors';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   type ApprovalRequest,
   ApprovalService,
@@ -38,15 +37,16 @@ import {
   NO_ANSWER_SURFACE_REASON,
   type TriggerContext,
   validatePolicy,
-} from '../../../packages/host/src/approvals.js';
+} from '@kubic/host/approvals';
 import {
   effectiveConfigView,
   loadRuntimeConfig,
   renderEffectiveConfig,
-} from '../../../packages/host/src/config/runtime.js';
-import type { DoctorDeps } from '../../../packages/host/src/doctor.js';
-import { runDoctorCommand } from '../../../packages/host/src/doctor.js';
-import { policyEnforceabilityCheck } from '../../../packages/host/src/limits/doctor-limits.js';
+} from '@kubic/host/config/runtime';
+import type { DoctorDeps } from '@kubic/host/doctor';
+import { runDoctorCommand } from '@kubic/host/doctor';
+import { policyEnforceabilityCheck } from '@kubic/host/limits/doctor-limits';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const WS = '/work';

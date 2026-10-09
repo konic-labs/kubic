@@ -10,14 +10,15 @@
 // `npm run lint:deps`).
 //
 // Fake timers only, fakes only — no network, no paid tokens, no temp files.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+
 import {
   type ApprovalRequest,
   ApprovalService,
   MemoryApprovalStore,
   validatePolicy,
-} from '../../../packages/host/src/approvals.js';
-import { createApprovalSurface } from '../../../packages/tui/src/approval-surface.js';
+} from '@kubic/host/approvals';
+import { createApprovalSurface } from '@kubic/tui/approval-surface';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => {
   vi.useRealTimers();

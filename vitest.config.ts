@@ -1,6 +1,11 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    // `@kubic/<pkg>/<subpath>` resolves through the package's `source` export
+    // condition to src/*.ts, the same files the typecheck and the bundle read.
+    conditions: ['source'],
+  },
   test: {
     // `apps/*/src` is collected too: the composition root's
     // dispatch seam is a testable surface, not a silently-unrun directory.

@@ -1,5 +1,5 @@
+import { parseTrajectoryExport } from '@kubic/trajectory/schema';
 import { describe, expect, it } from 'vitest';
-import { parseTrajectoryExport } from '../../trajectory/src/schema.js';
 import { EvalRunnerError, runEvalTask, runEvalTrajectory } from './runner.js';
 import type { EvalSignals } from './signals.js';
 import { makeExport } from './test-support/fixtures.js';

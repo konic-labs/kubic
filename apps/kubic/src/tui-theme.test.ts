@@ -4,19 +4,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createModels, fauxProvider } from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { createTuiTheme, ThemeError, tuiTheme } from '@kubic/tui/theme';
+import type { Terminal } from '@kubic/tui/tui-boundary';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  createModels,
-  fauxProvider,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import {
-  createTuiTheme,
-  ThemeError,
-  tuiTheme,
-} from '../../../packages/tui/src/theme.js';
-import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,

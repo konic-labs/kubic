@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ensureRuntimeExcludeRules,
   RUNTIME_EXCLUDE_ENTRIES,
-} from '../packages/exec/src/runtime-exclude.ts';
+} from '@kubic/exec/runtime-exclude';
 
 // The rule checker (`checkGitignoreSplit`) runs on
 // a production path — `loadCliConfig` → `checkWorkspaceIgnoreSplit` on every

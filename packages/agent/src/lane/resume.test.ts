@@ -5,8 +5,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
 import { BACKGROUND_CONTEXT, fauxAssistantMessage } from '../pi-boundary.js';
 import { settlePending } from './pending.js';
 import { attachSession, openSessionStore } from './session-store.js';

@@ -16,36 +16,33 @@
 // module never imports node:fs.
 
 import { homedir } from 'node:os';
-import type { LaneCompactionOptions } from '../../../packages/agent/src/lane/boot.js';
+import type { LaneCompactionOptions } from '@kubic/agent/lane/boot';
 import {
   ModelSelectError,
   type ModelSelection,
   selectModel,
-} from '../../../packages/agent/src/model-select.js';
-import type { PermissionClasses } from '../../../packages/agent/src/permissions.js';
-import type { MutableModels } from '../../../packages/agent/src/pi-boundary.js';
+} from '@kubic/agent/model-select';
+import type { PermissionClasses } from '@kubic/agent/permissions';
+import type { MutableModels } from '@kubic/agent/pi-boundary';
 import type {
   ModelStreamTuning,
   StreamTuningTables,
-} from '../../../packages/agent/src/stream-options.js';
-import {
-  EXIT_FAILED,
-  type ExitCode,
-} from '../../../packages/core/src/cli/exit-codes.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import type { JournalRetention } from '../../../packages/exec/src/journal.js';
-import { gitSync } from '../../../packages/exec/src/runtime-exclude.js';
-import type { ApprovalConfig } from '../../../packages/host/src/approvals.js';
-import type { RoleModelEntry } from '../../../packages/host/src/config/config.js';
+} from '@kubic/agent/stream-options';
+import { EXIT_FAILED, type ExitCode } from '@kubic/core/cli/exit-codes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import type { JournalRetention } from '@kubic/exec/journal';
+import { gitSync } from '@kubic/exec/runtime-exclude';
+import type { ApprovalConfig } from '@kubic/host/approvals';
+import type { RoleModelEntry } from '@kubic/host/config/config';
 import {
   CONFIG_LAYERS,
   checkModelStreamTuning,
-} from '../../../packages/host/src/config/config.js';
+} from '@kubic/host/config/config';
 import {
   buildConfigDoctorInput,
   configDoctorProbe,
-} from '../../../packages/host/src/config/config-doctor.js';
-import type { RuntimeEscalation } from '../../../packages/host/src/config/runtime.js';
+} from '@kubic/host/config/config-doctor';
+import type { RuntimeEscalation } from '@kubic/host/config/runtime';
 import {
   checkWorkspaceIgnoreSplit,
   compactionSummaryLine,
@@ -54,7 +51,7 @@ import {
   type RuntimeConfig,
   type RuntimeThinking,
   type RuntimeVerify,
-} from '../../../packages/host/src/config/runtime.js';
+} from '@kubic/host/config/runtime';
 import {
   NO_PROJECT_TRUST,
   type ProjectTrustCheck,
@@ -63,27 +60,18 @@ import {
   projectTrustCheck,
   projectTrustReport,
   projectTrustStorePath,
-} from '../../../packages/host/src/config/trust-store.js';
-import type { DepProbe } from '../../../packages/host/src/doctor.js';
-import {
-  FAUX_MODEL_ID,
-  FAUX_PROVIDER_ID,
-} from '../../../packages/host/src/faux-provider.js';
+} from '@kubic/host/config/trust-store';
+import type { DepProbe } from '@kubic/host/doctor';
+import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from '@kubic/host/faux-provider';
 import {
   type EffectivePolicy,
   hasModelPolicy,
   isModelAllowed,
   isProviderAllowed,
-} from '../../../packages/host/src/policy/enterprise.js';
-import { findProjectRoot } from '../../../packages/host/src/project-root.js';
-import type {
-  RoleLayerInput,
-  RoleLayerSpec,
-} from '../../../packages/host/src/roles/resolver.js';
-import {
-  roleModelAllowed,
-  roleModelEntry,
-} from '../../../packages/host/src/roles/resolver.js';
+} from '@kubic/host/policy/enterprise';
+import { findProjectRoot } from '@kubic/host/project-root';
+import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles/resolver';
+import { roleModelAllowed, roleModelEntry } from '@kubic/host/roles/resolver';
 import {
   roleModelSelection,
   selectionOrigin,

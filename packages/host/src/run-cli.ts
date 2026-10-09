@@ -12,13 +12,13 @@ import {
   type ClassifiedFailure,
   classifyFailure,
   type RetryDecision,
-} from '../../agent/src/lane/failures.js';
-import type { OperationErrorLike } from '../../agent/src/lane/settle.js';
+} from '@kubic/agent/lane/failures';
+import type { OperationErrorLike } from '@kubic/agent/lane/settle';
 import {
   type LaneTerminalStatus,
   settleTerminalStatus,
-} from '../../agent/src/lane/settle.js';
-import type { RunMode } from '../../agent/src/permissions.js';
+} from '@kubic/agent/lane/settle';
+import type { RunMode } from '@kubic/agent/permissions';
 import {
   type CommandResult,
   EXIT_APPROVAL,
@@ -32,7 +32,7 @@ import {
   type ExitCode,
   INTERRUPT_EXIT_CODES,
   isInterruptSignal,
-} from '../../core/src/cli/exit-codes.js';
+} from '@kubic/core/cli/exit-codes';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
 
@@ -378,7 +378,7 @@ export interface RunCommandOptions {
 
 // A value the command refuses (exit 2). The message is the whole reason;
 // the parser layer adds which flag carried it.
-export class RunArgumentError extends Error {
+class RunArgumentError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'RunArgumentError';

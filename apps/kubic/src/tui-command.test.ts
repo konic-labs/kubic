@@ -6,9 +6,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tuiTheme } from '@kubic/tui/theme';
+import type { Terminal } from '@kubic/tui/tui-boundary';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { tuiTheme } from '../../../packages/tui/src/theme.js';
-import type { Terminal } from '../../../packages/tui/src/tui-boundary.js';
 import { fakeTerminal as sharedFakeTerminal } from '../../../test/fake-terminal.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
 

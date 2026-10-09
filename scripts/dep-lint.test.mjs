@@ -291,6 +291,7 @@ describe('dep-lint', () => {
     const violations = checkTree(dir);
     assert.deepEqual(violations, [
       {
+        kind: 'edge',
         from: 'core',
         to: 'exec',
         file: join('packages', 'core', 'src', 'session.ts'),
@@ -475,6 +476,93 @@ describe('dep-lint', () => {
   it('allows the agent lane to import its permission module', () => {
     const dir = fixtureTree({
       'packages/agent/src/lane/policy.ts': `import type { PermissionClasses } from '../../policy.js';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('flags a relative import into another package, even on an allowed edge', () => {
+    const dir = fixtureTree({
+      'packages/host/src/config.ts': `import { c } from '../../core/src/cli/kit.js';\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir).map((v) => `${v.kind}:${v.from}->${v.to}`),
+      ['relative:host->core'],
+    );
+  });
+
+  it('flags the composition root reaching a package by a relative path', () => {
+    const dir = fixtureTree({
+      'packages/core/src/index.ts': `export const core = 1;\n`,
+      'apps/kubic/src/main.ts': `import { p } from '../../../packages/core/src/cli/prompt.js';\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir).map((v) => `${v.kind}:${v.from}->${v.to}`),
+      ['relative:kubic->core'],
+    );
+  });
+
+  it('flags a relative vitest mock path into another package', () => {
+    const dir = fixtureTree({
+      'packages/host/src/models.test.ts': `vi.mock('../../agent/src/tools.js', () => ({}));\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir).map((v) => `${v.kind}:${v.from}->${v.to}`),
+      ['relative:host->agent'],
+    );
+  });
+
+  it('reads the app manifest name @kubic/cli as the composition root', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/views.ts': `import { m } from '@kubic/cli/main';\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir).map((v) => `${v.kind}:${v.from}->${v.to}`),
+      ['edge:tui->kubic'],
+    );
+  });
+
+  it('flags root test code reaching a package by a relative path', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/index.ts': `export const tui = 1;\n`,
+      'test/fake-terminal.ts': `import type { Terminal } from '../packages/tui/src/tui-boundary.js';\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir).map((v) => `${v.kind}:${v.from}->${v.to}`),
+      ['relative:root->tui'],
+    );
+  });
+
+  it('flags a repo script reaching a package by a relative path', () => {
+    const dir = fixtureTree({
+      'packages/exec/src/index.ts': `export const exec = 1;\n`,
+      'scripts/runtime-check.mjs': `import { x } from '../packages/exec/src/runtime-exclude.ts';\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir).map((v) => `${v.kind}:${v.from}->${v.to}`),
+      ['relative:root->exec'],
+    );
+  });
+
+  it('lets root test code import a package by name', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/index.ts': `export const tui = 1;\n`,
+      'test/fake-terminal.ts': `import type { Terminal } from '@kubic/tui/tui-boundary';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('lets a package test import the root test fixtures by relative path', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/screen.test.ts': `import { fake } from '../../../test/fake-terminal.js';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('leaves scripts test files alone: their fixtures are source text', () => {
+    const dir = fixtureTree({
+      'packages/exec/src/index.ts': `export const exec = 1;\n`,
+      'scripts/dep-fixture.test.mjs':
+        "const src = `import { x } from '../packages/exec/src/a.js';`;\n",
     });
     assert.deepEqual(checkTree(dir), []);
   });

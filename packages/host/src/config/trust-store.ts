@@ -28,7 +28,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import {
   createNodeFileBridge,
   updateFileLocked,
-} from '../../../exec/src/file-bridge.js';
+} from '@kubic/exec/file-bridge';
 import { RUNTIME_ENV_OVERRIDES } from './runtime.js';
 
 // A recorded decision: true (trusted), false (declined), or null (no

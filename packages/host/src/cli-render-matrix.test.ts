@@ -3,17 +3,18 @@
 // every palette (dark, light, terminal) × colour level (truecolor, 256, 16,
 // none). A line fits the columns it was given, carries no escape at depth none
 // and closes every style it opens.
-import { describe, expect, it } from 'vitest';
-import { createCliTheme } from '../../core/src/cli/theme.js';
-import { visibleWidth } from '../../core/src/cli/width.js';
-import type { ColorLevel } from '../../core/src/ui/color.js';
-import { openStyles } from '../../core/src/ui/style.js';
+
+import { createCliTheme } from '@kubic/core/cli/theme';
+import { visibleWidth } from '@kubic/core/cli/width';
+import type { ColorLevel } from '@kubic/core/ui/color';
+import { openStyles } from '@kubic/core/ui/style';
 import {
   DARK_PALETTE,
   LIGHT_PALETTE,
   type Palette,
   TERMINAL_PALETTE,
-} from '../../core/src/ui/tokens.js';
+} from '@kubic/core/ui/tokens';
+import { describe, expect, it } from 'vitest';
 import type { DoctorCheck } from './doctor.js';
 import { renderDoctorGrouped } from './doctor-render.js';
 import { type CatalogProvider, renderModelsCatalog } from './models-render.js';

@@ -8,14 +8,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import type { ExitCode } from '../../../../packages/core/src/cli/exit-codes.js';
-import { FileJournalStore } from '../../../../packages/exec/src/journal.js';
-import type { GitRequest } from '../../../../packages/host/src/git-cli.js';
+import type { ExitCode } from '@kubic/core/cli/exit-codes';
+import { FileJournalStore } from '@kubic/exec/journal';
+import type { GitRequest } from '@kubic/host/git-cli';
 import {
   type JournalRequest,
   runJournalCommand,
-} from '../../../../packages/host/src/journal-cli.js';
+} from '@kubic/host/journal-cli';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
 import type { CliConfigResult } from '../config-runtime.js';

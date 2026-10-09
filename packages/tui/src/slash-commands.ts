@@ -13,7 +13,7 @@
 // the only layer that can reach the lane, the journal and the sessions
 // store).
 
-import type { PresentationCommand } from '../../core/src/presentation.js';
+import type { PresentationCommand } from '@kubic/core/presentation';
 import type { KeyAction } from './keybindings.js';
 import type {
   AutocompleteItem,

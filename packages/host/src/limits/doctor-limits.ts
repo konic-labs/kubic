@@ -14,7 +14,7 @@ import {
   EXIT_OK,
   EXIT_PROVIDER,
   type ExitCode,
-} from '../../../core/src/cli/exit-codes.js';
+} from '@kubic/core/cli/exit-codes';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals.js';
 import { mcpRefusalMessage } from '../config/stances.js';
 import type { DoctorCheck } from '../doctor.js';

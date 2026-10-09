@@ -10,14 +10,15 @@
 // The panel rows render at >= 100 columns on purpose: the top row is hidden
 // below NARROW_COLUMNS, so a "the sequence is absent" assertion at a narrow
 // width would be vacuous.
+
+import type {
+  KubicPresentationState,
+  LaneSnapshot,
+} from '@kubic/core/presentation';
 import { describe, expect, it } from 'vitest';
 // One shared fake Terminal: the panel's ScrollView is laid out
 // only by the live alt-screen, so its scrolling is asserted on real frames.
 import { fakeTerminal } from '../../../test/fake-terminal.js';
-import type {
-  KubicPresentationState,
-  LaneSnapshot,
-} from '../../core/src/presentation.js';
 import { bootScreen } from './screen.js';
 import type { JournalChangeLike } from './tui-app.js';
 import { createTuiApp } from './tui-app.js';

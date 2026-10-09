@@ -33,7 +33,7 @@ TUI-side analogue of the agent Pi boundary.
 | `palette-view.ts` | `PaletteViewOptions`, `PaletteView` (the ^P overlay: Pi's `Input` for the query, `ui/palette.ts` for the rest) |
 | `journal-view.ts` | `JournalFilter`, `filterJournalChanges`, `renderJournalLines`, `JournalViewOptions`, `JournalView` |
 | `views.ts`, `components.ts` | Pointer | View assembly lives in `layout.ts` / `*-view.ts` / `tui-app.ts`; no shared or aggregated module |
-| `index.ts` | Pointer | No barrel — import per-module paths (`tui-boundary.js` seam + views); `tui/` stays presentation-only |
+| `index.ts` | Pointer | No barrel — import a module by its subpath, `@kubic/tui/<subpath>` (`tui-boundary` seam + views); `tui/` stays presentation-only |
 
 ## UI kit (`packages/tui/src/ui`)
 

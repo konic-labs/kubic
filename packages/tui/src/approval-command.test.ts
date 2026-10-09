@@ -3,9 +3,10 @@
 // taller one pages with an explicit `… lines a–b of n` marker — never a
 // silent cut — and a terminal too short to show it cannot approve it.
 // Headless renders only.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import {
   APPROVAL_COMMAND_PAGE_LINES,
   type ApprovalCardOptions,

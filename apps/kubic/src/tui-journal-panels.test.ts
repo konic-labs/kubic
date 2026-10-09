@@ -15,17 +15,17 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { FileJournalStore } from '../../../packages/exec/src/journal.js';
-import { runJournalCommand } from '../../../packages/host/src/journal-cli.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { FileJournalStore } from '@kubic/exec/journal';
+import { runJournalCommand } from '@kubic/host/journal-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,

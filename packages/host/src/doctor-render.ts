@@ -10,13 +10,13 @@ import {
   hintLine,
   sectionLabel,
   statusMark,
-} from '../../core/src/cli/kit.js';
-import type { CliTheme } from '../../core/src/cli/theme.js';
+} from '@kubic/core/cli/kit';
+import type { CliTheme } from '@kubic/core/cli/theme';
 import {
   truncateVisible,
   visibleWidth,
   wrapVisible,
-} from '../../core/src/cli/width.js';
+} from '@kubic/core/cli/width';
 import type { DoctorCheck } from './doctor.js';
 
 const LABEL_WIDTH = 12;

@@ -11,7 +11,7 @@
 // module never touches node:fs directly. Never imports agent impl.
 
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { RUNTIME_EXCLUDE_ENTRIES } from '../../../exec/src/runtime-exclude.js';
+import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
 import { assertNoMcpConfig, McpUnsupportedError } from './stances.js';
 
 export const CONFIG_LAYERS = [

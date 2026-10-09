@@ -4,8 +4,9 @@
 // policy lists; and the destructive-shell arms cover force pushes, `find -delete`
 // and the working-tree-discarding git forms. The table uses the PRODUCTION context
 // (triggerContextFor), so a green run proves what `kubic run` classifies.
+
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PERMISSIONS } from '../../agent/src/permissions.js';
 import {
   type Capability,
   detectTriggers,

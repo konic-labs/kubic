@@ -12,8 +12,8 @@
 // `[kubic: N leading chars dropped — full output: <path>]` notice becomes a
 // `truncated` marker, with the path in the expanded card's footer.
 
-import { FAIL, OK, TOOL, WARN } from '../../core/src/ui/glyphs.js';
-import type { Style, UiTheme } from '../../core/src/ui/style.js';
+import { FAIL, OK, TOOL, WARN } from '@kubic/core/ui/glyphs';
+import type { Style, UiTheme } from '@kubic/core/ui/style';
 import { spinnerFrame } from './theme.js';
 import type { CellDisplay } from './transcript.js';
 import { visibleWidth } from './tui-boundary.js';

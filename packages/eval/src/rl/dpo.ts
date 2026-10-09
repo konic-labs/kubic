@@ -5,7 +5,7 @@
 // validation re-enforces the same policy on hand-crafted records: the
 // boundary must be within (same worktree + same task role), env failures
 // never validate, and the verifier must prefer chosen over rejected.
-import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import {
   buildPreferencePair,
   type ExcludedPair,

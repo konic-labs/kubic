@@ -9,7 +9,7 @@ import {
   isTrajectoryFailureCode,
   type TrajectoryExport,
   type TrajectoryFailureCode,
-} from '../../../trajectory/src/schema.js';
+} from '@kubic/trajectory/schema';
 
 // Failure codes (agent-owned spelling, pinned in trajectory schema).
 export type { TrajectoryFailureCode };

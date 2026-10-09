@@ -1,8 +1,9 @@
 // The one-row header and the key-hint sets. Pure renders: plain text at
 // depth none reads like the design.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import {
   formatClock,
   type HeaderInfo,

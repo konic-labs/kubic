@@ -11,19 +11,16 @@
 // handler's semantics, so a secret-shaped value is redacted before it is
 // echoed and replay/export/eval keep their `--json` error envelopes.
 
-import type { CommandResult } from '../../../../packages/core/src/cli/exit-codes.js';
-import {
-  EVAL_DEFAULT_MODEL,
-  type EvalOptions,
-} from '../../../../packages/eval/src/cli.js';
+import type { CommandResult } from '@kubic/core/cli/exit-codes';
+import { EVAL_DEFAULT_MODEL, type EvalOptions } from '@kubic/eval/cli';
 import {
   DATASET_TYPES,
   type ExportCommandOptions,
-} from '../../../../packages/eval/src/export-cli.js';
-import type { CostOptions } from '../../../../packages/host/src/ops/cost/cost-cli.js';
-import type { AuditOptions } from '../../../../packages/host/src/policy/audit-cli.js';
-import type { PolicyOptions } from '../../../../packages/host/src/policy/policy-cli.js';
-import type { ReplayCommandOptions } from '../../../../packages/host/src/replay/replay.js';
+} from '@kubic/eval/export-cli';
+import type { CostOptions } from '@kubic/host/ops/cost/cost-cli';
+import type { AuditOptions } from '@kubic/host/policy/audit-cli';
+import type { PolicyOptions } from '@kubic/host/policy/policy-cli';
+import type { ReplayCommandOptions } from '@kubic/host/replay/replay';
 import type { CommandRegistrar, KubicProgram } from '../cli/context.js';
 import type { CliConfigResult } from '../config-runtime.js';
 

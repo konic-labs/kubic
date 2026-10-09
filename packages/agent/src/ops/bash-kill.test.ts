@@ -3,8 +3,8 @@
 // the lane's OperationKillRegistry. The TUI reuses one registry for the whole
 // session, so a handle per completed call is an unbounded leak.
 
+import { FakeExecutionEnv } from '@kubic/exec/env';
 import { describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
 import { OperationKillRegistry } from '../lane/abort.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';

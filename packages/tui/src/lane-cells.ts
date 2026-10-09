@@ -10,7 +10,7 @@
 // entry id plus the part index, so a re-render replaces cells instead of
 // duplicating them.
 
-import type { LaneImagePart } from '../../core/src/presentation.js';
+import type { LaneImagePart } from '@kubic/core/presentation';
 import { imagePartOf } from './attachments.js';
 import type {
   CellDisplay,

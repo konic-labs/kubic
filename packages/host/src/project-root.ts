@@ -11,7 +11,7 @@
 // (home really is a repository). An unreadable path reads as "no marker",
 // never fatal — the layer read itself fails closed with its named error.
 import { dirname, join, resolve } from 'node:path';
-import type { FileBridge } from '../../exec/src/file-bridge.js';
+import type { FileBridge } from '@kubic/exec/file-bridge';
 
 function hasMarker(
   bridge: Pick<FileBridge, 'exists'>,

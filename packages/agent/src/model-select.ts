@@ -9,7 +9,7 @@
 // + `pi.agent`, never a sidecar — attach restores it from
 // the storage.
 
-import { suggest } from '../../core/src/suggest.js';
+import { suggest } from '@kubic/core/suggest';
 import { isThinkingLevel, THINKING_LEVELS } from './models-config.js';
 import {
   clampThinkingLevel,

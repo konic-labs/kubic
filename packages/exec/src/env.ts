@@ -33,7 +33,7 @@ import {
 import { constants as osConstants } from 'node:os';
 import { dirname, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { isSecretEnvKey } from '../../core/src/secret-keys.js';
+import { isSecretEnvKey } from '@kubic/core/secret-keys';
 
 export interface Provenance {
   sessionId: string;

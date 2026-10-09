@@ -21,17 +21,22 @@
       "entry": ["scripts/*.mjs", "test/*.ts"],
       "project": ["**/*.ts", "**/*.mjs"]
     },
-    // Packages are internal and have no entry point. Their tests are the
-    // entries, so a symbol that only a test imports counts as used.
+    // Packages are internal. Their tests are the entries, so a symbol that
+    // only a test imports counts as used. Each package's exports map names
+    // the modules other packages import, and knip reads those targets as
+    // entry files: includeEntryExports keeps an export that nothing uses
+    // reported anyway.
     "packages/*": {
       "entry": ["**/*.test.ts"],
-      "project": ["**/*.ts"]
+      "project": ["**/*.ts"],
+      "includeEntryExports": true
     },
     // The app's entry is its composition root. Its tests are entries, as for
     // the packages.
     "apps/kubic": {
       "entry": ["src/main.ts", "**/*.test.ts"],
-      "project": ["**/*.ts"]
+      "project": ["**/*.ts"],
+      "includeEntryExports": true
     }
   }
 }

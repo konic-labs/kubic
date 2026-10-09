@@ -22,9 +22,9 @@
 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
-import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
-import type { FileJournalStore } from '../../../exec/src/journal.js';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import type { FileJournalStore } from '@kubic/exec/journal';
 import {
   BACKGROUND_CONTEXT,
   type Context,

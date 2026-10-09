@@ -11,12 +11,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
-} from '../../agent/src/lane/interceptors.js';
+} from '@kubic/agent/lane/interceptors';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   controlPlaneRefusal,
   detectTriggers,

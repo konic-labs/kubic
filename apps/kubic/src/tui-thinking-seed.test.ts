@@ -5,13 +5,13 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane, runTuiCommand, type TuiLaneBoot } from './tui-run.js';
 

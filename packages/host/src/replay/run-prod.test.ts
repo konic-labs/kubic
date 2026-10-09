@@ -1,9 +1,10 @@
 // Prod replay re-execution runner: re-runs the recorded
 // objective through the lane and maps the settled terminus into replay's
 // Subset.
+
+import { buildTrajectoryExport } from '@kubic/trajectory/export';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { describe, expect, it } from 'vitest';
-import { buildTrajectoryExport } from '../../../trajectory/src/export.js';
-import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
 import type { ReplayRunRequest } from './replay.js';
 import { createProdReplayRun } from './run-prod.js';
 

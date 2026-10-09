@@ -3,8 +3,8 @@
 // that parseTrajectoryExport accepts out. Entry shapes are the ones the
 // real lane stores (assistant toolCall parts, toolResult messages,
 // per-request usage on assistant messages).
-import { describe, expect, it } from 'vitest';
-import { readConversationEntries } from '../../../agent/src/lane/transcript.js';
+
+import { readConversationEntries } from '@kubic/agent/lane/transcript';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -14,10 +14,11 @@ import {
   fauxToolCall,
   Harness,
   MemoryStorage,
-} from '../../../agent/src/pi-boundary.js';
-import { toolSpawnEnv } from '../../../exec/src/env.js';
-import type { FileChange } from '../../../exec/src/journal-diff.js';
-import { parseTrajectoryExport } from '../../../trajectory/src/schema.js';
+} from '@kubic/agent/pi-boundary';
+import { toolSpawnEnv } from '@kubic/exec/env';
+import type { FileChange } from '@kubic/exec/journal-diff';
+import { parseTrajectoryExport } from '@kubic/trajectory/schema';
+import { describe, expect, it } from 'vitest';
 import type { OrgAuditRecord } from '../policy/audit.js';
 import {
   assembleRunTrajectory,

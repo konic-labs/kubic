@@ -3,11 +3,12 @@
 // Headless snapshots only (no VirtualTerminal in Pi 0.85.1): the root
 // VStack renders pure, like renderLayout in layout.test.ts. Faux-only,
 // zero network.
-import { describe, expect, it, vi } from 'vitest';
+
 import type {
   KubicPresentationState,
   LaneSnapshot,
-} from '../../core/src/presentation.js';
+} from '@kubic/core/presentation';
+import { describe, expect, it, vi } from 'vitest';
 import { createApprovalSurface } from './approval-surface.js';
 import type {
   ApprovalOverlayTui,

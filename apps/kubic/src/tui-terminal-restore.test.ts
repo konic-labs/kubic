@@ -11,14 +11,14 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { OperationKillRegistry } from '../../../packages/agent/src/lane/abort.js';
+import type { OperationKillRegistry } from '@kubic/agent/lane/abort';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   bootTuiLane,

@@ -5,11 +5,8 @@
 // palette, a 16-colour surface) the line is only fitted, never padded, so
 // plain snapshots carry no trailing spaces.
 
-import {
-  reassertBackground,
-  type UiTheme,
-} from '../../../core/src/ui/style.js';
-import type { TokenRole } from '../../../core/src/ui/tokens.js';
+import { reassertBackground, type UiTheme } from '@kubic/core/ui/style';
+import type { TokenRole } from '@kubic/core/ui/tokens';
 import { exactWidth, fitLine } from './line.js';
 
 export function fillLine(

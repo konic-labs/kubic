@@ -15,27 +15,27 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fauxToolUse } from '../../../../packages/agent/src/lane/test-harness.js';
-import { DEFAULT_PERMISSIONS } from '../../../../packages/agent/src/permissions.js';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from '../../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../../packages/exec/src/file-bridge.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   FileJournalStore,
   JournalEntryTooLargeError,
-} from '../../../../packages/exec/src/journal.js';
+} from '@kubic/exec/journal';
 import {
   loadRuntimeConfig,
   type RuntimeConfig,
-} from '../../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../../packages/host/src/config/trust-store.js';
-import { runJournalCommand } from '../../../../packages/host/src/journal-cli.js';
+} from '@kubic/host/config/runtime';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { runJournalCommand } from '@kubic/host/journal-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runtimeLaneDeps, runtimeRunDeps } from '../config-runtime.js';
 import { runHeadlessPrompt } from '../headless-run.js';
 

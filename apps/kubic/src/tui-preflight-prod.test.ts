@@ -1,9 +1,10 @@
 // The first screen on the real `kubic tui` path:
 // the preflight from the boot's facts, the recent sessions read after the
 // screen opens, and the no-key block printed before exit 6.
+
+import { NoModelAvailableError } from '@kubic/agent/model-select';
+import { EXIT_PROVIDER } from '@kubic/core/cli/exit-codes';
 import { describe, expect, it } from 'vitest';
-import { NoModelAvailableError } from '../../../packages/agent/src/model-select.js';
-import { EXIT_PROVIDER } from '../../../packages/core/src/cli/exit-codes.js';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runTuiCommand } from './tui-run.js';
 

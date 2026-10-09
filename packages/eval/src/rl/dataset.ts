@@ -13,12 +13,12 @@
 // second pass loads one group at a time and appends each record as it is
 // built. Peak memory is one group, not the dataset.
 import { join } from 'node:path';
-import type { ExitCode } from '../../../core/src/cli/exit-codes.js';
-import { formatJson } from '../../../core/src/cli/output.js';
+import type { ExitCode } from '@kubic/core/cli/exit-codes';
+import { formatJson } from '@kubic/core/cli/output';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
-} from '../../../trajectory/src/schema.js';
+} from '@kubic/trajectory/schema';
 import { buildCodingRecord } from './coding.js';
 import { buildDpoRecord } from './dpo.js';
 import { buildGrpoGroup } from './grpo.js';

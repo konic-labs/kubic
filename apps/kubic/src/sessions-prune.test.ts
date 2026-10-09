@@ -16,14 +16,14 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { effectiveConfigView } from '../../../packages/host/src/config/runtime.js';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { effectiveConfigView } from '@kubic/host/config/runtime';
 import {
   runSessionsCommand,
   type SessionsInvocation,
-} from '../../../packages/host/src/sessions-cli.js';
-import { planSessionPrune } from '../../../packages/host/src/sessions-prune.js';
+} from '@kubic/host/sessions-cli';
+import { planSessionPrune } from '@kubic/host/sessions-prune';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadCliConfig, sessionRetentionDays } from './config-runtime.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;

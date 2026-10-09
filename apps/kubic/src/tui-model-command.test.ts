@@ -2,9 +2,10 @@
 // submit path routes on these three outcomes, so what counts as a command —
 // and what is still a prompt for the lane — is pinned here, not inferred
 // from the prod test.
+
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
+import type { TuiApp } from '@kubic/tui/tui-app';
 import { describe, expect, it } from 'vitest';
-import { BACKGROUND_CONTEXT } from '../../../packages/agent/src/pi-boundary.js';
-import type { TuiApp } from '../../../packages/tui/src/tui-app.js';
 import {
   parseEscalateCommand,
   parseModelCommand,

@@ -6,7 +6,7 @@
 // tagged exclusion record, so audits keep env failures out of capability
 // training without losing the evidence. Pairs carry refs only — never
 // transcripts or file contents.
-import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { checkFailureCategory, checkProvenance, checkVerifier } from './sft.js';
 import {
   extractProvenance,

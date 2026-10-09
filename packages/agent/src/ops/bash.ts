@@ -4,11 +4,7 @@
 // snapshots. replay:"never" — execution is an effect; the registry memo
 // gate additionally refuses re-invocation under the same invocation id.
 
-import type {
-  ProcessHandle,
-  Provenance,
-  ShellResult,
-} from '../../../exec/src/env.js';
+import type { ProcessHandle, Provenance, ShellResult } from '@kubic/exec/env';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
 

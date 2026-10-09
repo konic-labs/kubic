@@ -6,21 +6,15 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  NodeExecutionEnv,
-  toolSpawnEnv,
-} from '../../../packages/exec/src/env.js';
-import {
-  FAUX_MODEL_ID,
-  FAUX_PROVIDER_ID,
-} from '../../../packages/host/src/faux-provider.js';
-import { runRunCommand } from '../../../packages/host/src/run-cli.js';
-import { trajectoryResultFor } from '../../../packages/host/src/trajectory/run-trajectory.js';
+import { NodeExecutionEnv, toolSpawnEnv } from '@kubic/exec/env';
+import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from '@kubic/host/faux-provider';
+import { runRunCommand } from '@kubic/host/run-cli';
+import { trajectoryResultFor } from '@kubic/host/trajectory/run-trajectory';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
-} from '../../../packages/trajectory/src/schema.js';
+} from '@kubic/trajectory/schema';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];

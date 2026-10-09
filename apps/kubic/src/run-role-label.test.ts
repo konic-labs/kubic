@@ -6,14 +6,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
+} from '@kubic/agent/pi-boundary';
+import { createCliTheme } from '@kubic/core/cli/theme';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { createRunProgress } from './run-progress.js';

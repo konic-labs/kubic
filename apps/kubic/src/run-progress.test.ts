@@ -1,8 +1,8 @@
 // `kubic run` live progress on an interactive terminal.
 import { stripVTControlCharacters } from 'node:util';
+import { createCliTheme } from '@kubic/core/cli/theme';
+import type { HeadlessRunResult } from '@kubic/host/run-cli';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
-import type { HeadlessRunResult } from '../../../packages/host/src/run-cli.js';
 import { countDiffLines, createRunProgress } from './run-progress.js';
 
 // What a terminal ends up showing: the settled lines (each `\n`-terminated

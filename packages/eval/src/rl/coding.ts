@@ -3,7 +3,7 @@
 // reference-verifier verdict. Refs only: diffRefs are changed
 // paths, hunkCounts are per-file hunk counts — hunk contents and file
 // contents never enter the record.
-import type { TrajectoryExport } from '../../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { checkFailureCategory, checkProvenance, checkVerifier } from './sft.js';
 import {
   extractProvenance,

@@ -11,8 +11,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { CliUsageError } from '@kubic/core/cli/exit-codes';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CliUsageError } from '../../core/src/cli/exit-codes.js';
 import {
   ProjectTrustStore,
   projectTrustStorePath,

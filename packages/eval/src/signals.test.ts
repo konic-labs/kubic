@@ -1,5 +1,5 @@
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { describe, expect, it } from 'vitest';
-import type { TrajectoryExport } from '../../trajectory/src/schema.js';
 import { computeSignals, gatesPass, patchQuality } from './signals.js';
 
 function trajectory(

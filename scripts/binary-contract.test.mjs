@@ -326,7 +326,7 @@ describe('binary contract', () => {
   it('fails when the build output is missing', () => {
     const result = contractWith({}, { distPresent: false });
     assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /dist\/apps\/kubic\/src\/main\.js/);
+    assert.match(result.problems[0], /dist\/kubic\.js/);
     assert.match(result.problems[0], /npm run build/);
   });
 
@@ -647,9 +647,7 @@ describe('kubic launcher source contract', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/\/\/[^\n]*/g, '');
     const guardAt = code.indexOf('nodeVersionSupported(process.versions.node)');
-    const importAt = code.indexOf(
-      "await import('../dist/apps/kubic/src/main.js')",
-    );
+    const importAt = code.indexOf("await import('../dist/kubic.js')");
     assert.ok(
       guardAt !== -1,
       'bin/kubic.js must call nodeVersionSupported(process.versions.node)',

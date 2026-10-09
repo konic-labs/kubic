@@ -4,5 +4,6 @@
   "private": true,
   "license": "MIT",
   "type": "module",
+  "exports": {},
   "description": "Kubic CLI composition root (wires host + tui)"
 }

@@ -10,12 +10,12 @@ import {
   DEFAULT_RESERVE_TOKENS,
   KEEP_RECENT_TOKENS,
   roomAfterCompaction,
-} from '../../agent/src/compaction.js';
+} from '@kubic/agent/compaction';
 import {
   describeUnsupported,
   effectiveCredentialLevel,
   effectiveNetworkLevel,
-} from '../../agent/src/permissions.js';
+} from '@kubic/agent/permissions';
 // License identity: constants only, no file access —
 // this module never imports node:fs, and the static LICENSE/package.json
 // correspondence is guarded by scripts/license.test.mjs.
@@ -23,9 +23,9 @@ import {
   type CommandResult,
   EXIT_OK,
   EXIT_USAGE,
-} from '../../core/src/cli/exit-codes.js';
-import { formatJson } from '../../core/src/cli/output.js';
-import { formatLicenseDetail } from '../../core/src/license.js';
+} from '@kubic/core/cli/exit-codes';
+import { formatJson } from '@kubic/core/cli/output';
+import { formatLicenseDetail } from '@kubic/core/license';
 import {
   alwaysAskAutoApprove,
   CAPABILITIES,

@@ -8,7 +8,7 @@
 // protocol sequence; everywhere else one text placeholder row names the file
 // and its size, so an attachment is never invisible.
 
-import type { LaneImagePart } from '../../core/src/presentation.js';
+import type { LaneImagePart } from '@kubic/core/presentation';
 import type { TuiTheme } from './theme.js';
 import type { Component } from './tui-boundary.js';
 import { getCapabilities, Image, truncateToWidth } from './tui-boundary.js';

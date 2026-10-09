@@ -27,7 +27,7 @@
 //     explicit-call only — Pi-compatible escape hatch for agent-invoked
 //     helpers; the camelCase spelling stays as an alias)
 
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
+import type { FileBridge } from '@kubic/exec/file-bridge';
 import { type PermissionClasses, toolsForClasses } from '../permissions.js';
 
 export type SkillSource = 'user' | 'project' | 'package' | 'settings' | 'cli';

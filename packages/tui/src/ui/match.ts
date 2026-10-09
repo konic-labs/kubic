@@ -8,7 +8,7 @@
 // a lower→upper case change) when the rest of the query can still match
 // after it, else the earliest position at all.
 
-import type { Style } from '../../../core/src/ui/style.js';
+import type { Style } from '@kubic/core/ui/style';
 
 function isWordStart(text: string, index: number): boolean {
   if (index === 0) return true;

@@ -1,9 +1,5 @@
+import type { ProcessHandle, Shell, ShellResult } from '@kubic/exec/env';
 import { describe, expect, it } from 'vitest';
-import type {
-  ProcessHandle,
-  Shell,
-  ShellResult,
-} from '../../../packages/exec/src/env.js';
 import { readTuiWorkspace, workspaceFromStatus } from './tui-workspace.js';
 
 const STATUS_OUT = [

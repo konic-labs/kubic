@@ -45,8 +45,8 @@
 import type {
   KubicPresentationState,
   LaneImagePart,
-} from '../../core/src/presentation.js';
-import { DEFAULT_RUN_ROLE } from '../../core/src/run-role.js';
+} from '@kubic/core/presentation';
+import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import {
   type ApprovalCardOptions,
   renderApprovalCard,

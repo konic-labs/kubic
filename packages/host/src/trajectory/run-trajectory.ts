@@ -14,25 +14,22 @@
 
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { classifyFailure } from '../../../agent/src/lane/failures.js';
+import { classifyFailure } from '@kubic/agent/lane/failures';
 import {
   classifyHarnessError,
   type OperationErrorLike,
-} from '../../../agent/src/lane/settle.js';
+} from '@kubic/agent/lane/settle';
 import {
   entriesToTranscript,
   type TranscriptItem,
-} from '../../../agent/src/lane/transcript.js';
-import type { EntryRecord } from '../../../agent/src/pi-boundary.js';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
-import {
-  type FileChange,
-  unifiedHunks,
-} from '../../../exec/src/journal-diff.js';
+} from '@kubic/agent/lane/transcript';
+import type { EntryRecord } from '@kubic/agent/pi-boundary';
+import type { FileBridge } from '@kubic/exec/file-bridge';
+import { type FileChange, unifiedHunks } from '@kubic/exec/journal-diff';
 import {
   buildTrajectoryExport,
   type RawObservation,
-} from '../../../trajectory/src/export.js';
+} from '@kubic/trajectory/export';
 import type {
   JsonValue,
   TrajectoryAction,
@@ -44,7 +41,7 @@ import type {
   TrajectoryResult,
   TrajectoryResultStatus,
   TrajectoryUsage,
-} from '../../../trajectory/src/schema.js';
+} from '@kubic/trajectory/schema';
 import type { OrgAuditRecord } from '../policy/audit.js';
 import type { RunTerminusKind } from '../run-cli.js';
 

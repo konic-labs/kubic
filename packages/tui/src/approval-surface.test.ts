@@ -5,9 +5,10 @@
 // width (the established pattern in layout.test.ts / tree.test.ts) and the
 // surface is exercised with plain strings. The card on the live alt-screen is
 // asserted on the composition path.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import { renderApprovalCard } from './approval-card.js';
 import {
   APPROVAL_CANCELLED_REASON,

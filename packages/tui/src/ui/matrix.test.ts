@@ -4,19 +4,16 @@
 // hyperlink) it opens before it ends, and a surface that paints a background
 // must paint it edge to edge. Failures are collected, so one run names them
 // all.
-import { afterAll, describe, expect, it } from 'vitest';
-import type { ColorLevel } from '../../../core/src/ui/color.js';
-import {
-  createUiTheme,
-  openStyles,
-  type UiTheme,
-} from '../../../core/src/ui/style.js';
+
+import type { ColorLevel } from '@kubic/core/ui/color';
+import { createUiTheme, openStyles, type UiTheme } from '@kubic/core/ui/style';
 import {
   DARK_PALETTE,
   LIGHT_PALETTE,
   type Palette,
   TERMINAL_PALETTE,
-} from '../../../core/src/ui/tokens.js';
+} from '@kubic/core/ui/tokens';
+import { afterAll, describe, expect, it } from 'vitest';
 import { renderApprovalCard } from '../approval-card.js';
 import { APPROVAL_DEFAULT_KEYS } from '../approval-view.js';
 import { BlockViewer } from '../block-viewer.js';

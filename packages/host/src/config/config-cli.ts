@@ -13,9 +13,9 @@ import {
   type CommandResult,
   EXIT_FAILED,
   EXIT_OK,
-} from '../../../core/src/cli/exit-codes.js';
-import { formatJson } from '../../../core/src/cli/output.js';
-import { redactSecretShapes } from '../../../core/src/secret-shapes.js';
+} from '@kubic/core/cli/exit-codes';
+import { formatJson } from '@kubic/core/cli/output';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
 import { type CliIo, diagnosticsOf } from '../cli-io.js';
 import {
   effectiveConfigView,

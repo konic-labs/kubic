@@ -1,8 +1,9 @@
 // The TUI kit primitives. Pure renders: plain text at
 // depth none (readable snapshots), plus SGR checks at truecolor.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../../core/src/ui/tokens.js';
 import { visibleWidth } from '../tui-boundary.js';
 import { frameInnerWidth, frameLines } from './frame.js';
 import { renderKeyHintRow } from './key-hints.js';

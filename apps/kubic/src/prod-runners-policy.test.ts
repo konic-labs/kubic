@@ -17,18 +17,18 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { disposeAllGitSandboxes } from '../../../packages/exec/src/test-support/git-sandbox.js';
-import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
-import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
+import { loadRuntimeConfig } from '@kubic/host/config/runtime';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { buildTrajectoryExport } from '@kubic/trajectory/export';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type CliConfigResult,
   runtimeApprovalDeps,

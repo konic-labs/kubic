@@ -11,12 +11,11 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   attachSession,
   createSession,
   openSessionStore,
-} from '../../../../../packages/agent/src/lane/session-store.js';
+} from '@kubic/agent/lane/session-store';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -31,26 +30,23 @@ import {
   type Storage,
   Type,
   UsageDoc,
-} from '../../../../../packages/agent/src/pi-boundary.js';
-import {
-  EXIT_FAILED,
-  EXIT_OK,
-  EXIT_USAGE,
-} from '../../../../../packages/core/src/cli/exit-codes.js';
-import { REDACTED_SECRET } from '../../../../../packages/core/src/secret-shapes.js';
-import { createNodeFileBridge } from '../../../../../packages/exec/src/file-bridge.js';
-import { FAUX_PROVIDER_ID } from '../../../../../packages/host/src/faux-provider.js';
+} from '@kubic/agent/pi-boundary';
+import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
+import { REDACTED_SECRET } from '@kubic/core/secret-shapes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FAUX_PROVIDER_ID } from '@kubic/host/faux-provider';
 import {
   loadSessionCostRows,
   readSessionRunUsage,
   readSessionUsage,
   runCostCommand,
   totalSessionUsage,
-} from '../../../../../packages/host/src/ops/cost/cost-cli.js';
+} from '@kubic/host/ops/cost/cost-cli';
 import {
   summarizeSessionCost,
   toCostJson,
-} from '../../../../../packages/host/src/ops/cost/session-cost.js';
+} from '@kubic/host/ops/cost/session-cost';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const attached = vi.hoisted(() => ({
   calls: [] as Array<readonly unknown[]>,
@@ -60,26 +56,21 @@ const attached = vi.hoisted(() => ({
   lockScript: [] as Array<{ pid: number; startedAt?: number } | undefined>,
 }));
 
-vi.mock(
-  '../../../../../packages/agent/src/lane/session-store.js',
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import('../../../../../packages/agent/src/lane/session-store.js')
-      >();
-    return {
-      ...actual,
-      attachSession: (...args: Parameters<typeof actual.attachSession>) => {
-        attached.calls.push(args);
-        return actual.attachSession(...args);
-      },
-      sessionLockIsLive: (sessionDir: string) => {
-        if (attached.lockScript.length > 0) return attached.lockScript.shift();
-        return actual.sessionLockIsLive(sessionDir);
-      },
-    };
-  },
-);
+vi.mock('@kubic/agent/lane/session-store', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@kubic/agent/lane/session-store')>();
+  return {
+    ...actual,
+    attachSession: (...args: Parameters<typeof actual.attachSession>) => {
+      attached.calls.push(args);
+      return actual.attachSession(...args);
+    },
+    sessionLockIsLive: (sessionDir: string) => {
+      if (attached.lockScript.length > 0) return attached.lockScript.shift();
+      return actual.sessionLockIsLive(sessionDir);
+    },
+  };
+});
 
 const ROWS = [
   {

@@ -11,20 +11,20 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
-import { ModelSelectError } from '../../../packages/agent/src/model-select.js';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
+import { ModelSelectError } from '@kubic/agent/model-select';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { disposeAllGitSandboxes } from '../../../packages/exec/src/test-support/git-sandbox.js';
-import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
+import { loadRuntimeConfig } from '@kubic/host/config/runtime';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {
   type CliConfigResult,

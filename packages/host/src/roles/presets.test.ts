@@ -8,8 +8,9 @@
 // `false`, `workspace`, `full`; the read-only shell level is the shipped
 // spelling of reviewer/planner `shell: true`; the level itself is the closed
 // allowlist).
+
+import type { PermissionClasses } from '@kubic/agent/permissions';
 import { describe, expect, it } from 'vitest';
-import type { PermissionClasses } from '../../../agent/src/permissions.js';
 import { BUILTIN_ROLE_NAMES, BUILTIN_ROLE_PRESETS } from './builtin-presets.js';
 import {
   type ParsedRoleDoc,

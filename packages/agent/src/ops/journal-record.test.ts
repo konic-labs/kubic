@@ -2,9 +2,9 @@
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FileJournalStore } from '@kubic/exec/journal';
 import { afterAll, describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
-import { FileJournalStore } from '../../../exec/src/journal.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';

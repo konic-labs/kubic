@@ -5,9 +5,9 @@
 // `conversation.submit(...)` → `submission.wait(...)`, and durable
 // retry/backoff belongs to the harness (lane/turn.ts owns the turn glue).
 
-import type { ExecutionEnv } from '../../../exec/src/env.js';
-import type { FileJournalStore } from '../../../exec/src/journal.js';
-import { withReadRoots } from '../../../exec/src/read-roots.js';
+import type { ExecutionEnv } from '@kubic/exec/env';
+import type { FileJournalStore } from '@kubic/exec/journal';
+import { withReadRoots } from '@kubic/exec/read-roots';
 import {
   compactionSettings,
   createManualKeepScope,

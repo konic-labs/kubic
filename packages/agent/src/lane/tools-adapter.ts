@@ -42,8 +42,8 @@ import type {
   CheckpointStore,
   ExecutionEnv,
   ProcessSnapshot,
-} from '../../../exec/src/env.js';
-import type { FileJournalStore } from '../../../exec/src/journal.js';
+} from '@kubic/exec/env';
+import type { FileJournalStore } from '@kubic/exec/journal';
 import { BASH_RESULT_MAX_CHARS, type BashResult } from '../ops/bash.js';
 import type { ToolDisplay } from '../ops/display-diff.js';
 import type { GrepResult } from '../ops/grep.js';

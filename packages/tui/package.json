@@ -4,6 +4,84 @@
   "private": true,
   "license": "MIT",
   "type": "module",
+  "exports": {
+    "./approval-surface": {
+      "source": "./src/approval-surface.ts",
+      "default": "./src/approval-surface.ts"
+    },
+    "./attachments": {
+      "source": "./src/attachments.ts",
+      "default": "./src/attachments.ts"
+    },
+    "./chrome": {
+      "source": "./src/chrome.ts",
+      "default": "./src/chrome.ts"
+    },
+    "./editor-frame": {
+      "source": "./src/editor-frame.ts",
+      "default": "./src/editor-frame.ts"
+    },
+    "./keybindings": {
+      "source": "./src/keybindings.ts",
+      "default": "./src/keybindings.ts"
+    },
+    "./lane-cells": {
+      "source": "./src/lane-cells.ts",
+      "default": "./src/lane-cells.ts"
+    },
+    "./layout": {
+      "source": "./src/layout.ts",
+      "default": "./src/layout.ts"
+    },
+    "./preflight": {
+      "source": "./src/preflight.ts",
+      "default": "./src/preflight.ts"
+    },
+    "./screen": {
+      "source": "./src/screen.ts",
+      "default": "./src/screen.ts"
+    },
+    "./slash-commands": {
+      "source": "./src/slash-commands.ts",
+      "default": "./src/slash-commands.ts"
+    },
+    "./status-bar": {
+      "source": "./src/status-bar.ts",
+      "default": "./src/status-bar.ts"
+    },
+    "./theme": {
+      "source": "./src/theme.ts",
+      "default": "./src/theme.ts"
+    },
+    "./transcript": {
+      "source": "./src/transcript.ts",
+      "default": "./src/transcript.ts"
+    },
+    "./tree": {
+      "source": "./src/tree.ts",
+      "default": "./src/tree.ts"
+    },
+    "./tui-app": {
+      "source": "./src/tui-app.ts",
+      "default": "./src/tui-app.ts"
+    },
+    "./tui-boundary": {
+      "source": "./src/tui-boundary.ts",
+      "default": "./src/tui-boundary.ts"
+    },
+    "./ui/clipboard": {
+      "source": "./src/ui/clipboard.ts",
+      "default": "./src/ui/clipboard.ts"
+    },
+    "./ui/highlight": {
+      "source": "./src/ui/highlight.ts",
+      "default": "./src/ui/highlight.ts"
+    },
+    "./ui/palette": {
+      "source": "./src/ui/palette.ts",
+      "default": "./src/ui/palette.ts"
+    }
+  },
   "dependencies": {
     "@earendil-works/pi-tui": "1.0.2"
   }

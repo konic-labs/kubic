@@ -3,5 +3,39 @@
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./cli": {
+      "source": "./src/cli.ts",
+      "default": "./src/cli.ts"
+    },
+    "./export-cli": {
+      "source": "./src/export-cli.ts",
+      "default": "./src/export-cli.ts"
+    },
+    "./rl/preference": {
+      "source": "./src/rl/preference.ts",
+      "default": "./src/rl/preference.ts"
+    },
+    "./rl/verifier": {
+      "source": "./src/rl/verifier.ts",
+      "default": "./src/rl/verifier.ts"
+    },
+    "./runner": {
+      "source": "./src/runner.ts",
+      "default": "./src/runner.ts"
+    },
+    "./signals": {
+      "source": "./src/signals.ts",
+      "default": "./src/signals.ts"
+    },
+    "./suites": {
+      "source": "./src/suites.ts",
+      "default": "./src/suites.ts"
+    },
+    "./test-support/fixtures": {
+      "source": "./src/test-support/fixtures.ts",
+      "default": "./src/test-support/fixtures.ts"
+    }
+  }
 }

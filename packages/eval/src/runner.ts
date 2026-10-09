@@ -10,8 +10,8 @@
 // trajectory path, an invalid determinism tier) is a fail-closed
 // EvalRunnerError (exit 2), never a stored record.
 
-import type { TrajectoryExport } from '../../trajectory/src/schema.js';
-import { parseTrajectoryExport } from '../../trajectory/src/schema.js';
+import type { TrajectoryExport } from '@kubic/trajectory/schema';
+import { parseTrajectoryExport } from '@kubic/trajectory/schema';
 import {
   type EvalDeterminism,
   type EvalRecord,

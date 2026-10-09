@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // `kubic` executable: committed wrapper so the command works
-// without a global install. The real entry is the tsc build output —
-// run `npm run build` first (see the README install section).
+// without a global install. The real entry is the bundled build output,
+// dist/kubic.js (scripts/build.mjs) — run `npm run build` first (see the
+// README install section).
 //
 // Node guard BEFORE any top-level await: on a runtime below
 // 22.19 the dynamic import below is a raw parser SyntaxError — the guard
@@ -17,8 +18,15 @@ if (!nodeVersionSupported(process.versions.node)) {
   process.exit(1);
 }
 
+// dist/kubic.js ships its source map (dist/kubic.js.map). Only a debug run
+// prints stacks (KUBIC_DEBUG=1), so only that run maps them back to the
+// TypeScript sources; enabling the maps costs startup time on every other run.
+if (process.env.KUBIC_DEBUG === '1') {
+  process.setSourceMapsEnabled(true);
+}
+
 try {
-  await import('../dist/apps/kubic/src/main.js');
+  await import('../dist/kubic.js');
 } catch (error) {
   if (
     error !== null &&

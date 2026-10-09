@@ -1,9 +1,10 @@
 // The ^P palette in the app: the
 // command, model, session and file rows, what ⏎ does for each, Esc, the
 // palette's own hint row and the dimmed screen behind it.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import { createApprovalSurface } from './approval-surface.js';
 import type {
   ApprovalOverlayOptions,

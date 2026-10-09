@@ -83,7 +83,7 @@ npm run build
 The last command prints `kubic 0.0.0 (license: MIT)` and exits 0. Equivalent
 invocations: `npx kubic --version` (the `bin` entry, no install needed),
 `npm run kubic -- --version` (the same binary through npm), and
-`node dist/apps/kubic/src/main.js --version` (the build output directly).
+`node dist/kubic.js --version` (the bundled build output directly).
 
 On a fresh clone with no provider configured, `./bin/kubic.js doctor` exits 6 and
 prints `doctor: 16 pass, 6 warn, 1 fail, 0 skip`. Its one failure is
@@ -93,7 +93,9 @@ honest limits and the detection-only policy note. See
 in your environment, `./bin/kubic.js setup` saves a default model to
 `~/.kubic/config.toml`; see [`docs/cli/commands.md`](docs/cli/commands.md#kubic-setup).
 
-`dist/` is gitignored `tsc` output (`tsconfig.build.json`); rebuilding is
+`dist/` is gitignored build output: `npm run build` bundles the CLI into one
+file, `dist/kubic.js`, with esbuild (`scripts/build.mjs`). Third-party packages
+stay external, so the bundle carries only Kubic's own code. Rebuilding is
 byte-equivalent.
 
 ## Where things are

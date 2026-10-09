@@ -15,12 +15,12 @@
 // also scopes a nested `.gitignore` to its own subtree (the stack frame
 // carries the rules; a sibling never sees them).
 
-import type { FileSystem, StatInfo } from '../../../exec/src/env.js';
+import type { FileSystem, StatInfo } from '@kubic/exec/env';
 import {
   type IgnoreRule,
   isIgnored,
   parseIgnoreFile,
-} from '../../../exec/src/ignore.js';
+} from '@kubic/exec/ignore';
 
 export const WALK_MAX_DEPTH = 100;
 export const WALK_MAX_ENTRIES = 10_000;

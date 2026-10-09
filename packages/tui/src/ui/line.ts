@@ -1,7 +1,7 @@
 // Line fitting for the TUI kit. Cells, never string
 // length: widths come from Pi's grapheme-aware helpers through the boundary.
 
-import { openStyles } from '../../../core/src/ui/style.js';
+import { openStyles } from '@kubic/core/ui/style';
 import {
   truncateToWidth,
   visibleWidth,

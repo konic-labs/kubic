@@ -16,13 +16,13 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
-} from '../../agent/src/lane/interceptors.js';
-import { DEFAULT_PERMISSIONS } from '../../agent/src/permissions.js';
+} from '@kubic/agent/lane/interceptors';
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   ApprovalService,
   CAPABILITIES,

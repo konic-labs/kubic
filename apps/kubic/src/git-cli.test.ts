@@ -2,35 +2,23 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import {
-  createInvocation,
-  MemoryMemoStore,
-} from '../../../packages/agent/src/ops/memos.js';
-import { callOperation } from '../../../packages/agent/src/ops/registry.js';
-import {
-  CliExitError,
-  CliUsageError,
-} from '../../../packages/core/src/cli/exit-codes.js';
-import { createCliTheme } from '../../../packages/core/src/cli/theme.js';
-import {
-  FakeExecutionEnv,
-  NodeExecutionEnv,
-} from '../../../packages/exec/src/env.js';
+import { createInvocation, MemoryMemoStore } from '@kubic/agent/ops/memos';
+import { callOperation } from '@kubic/agent/ops/registry';
+import { CliExitError, CliUsageError } from '@kubic/core/cli/exit-codes';
+import { createCliTheme } from '@kubic/core/cli/theme';
+import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
 import {
   captureBaseline,
   FileJournalStore,
   reconcile,
-} from '../../../packages/exec/src/journal.js';
+} from '@kubic/exec/journal';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
-} from '../../../packages/exec/src/test-support/git-sandbox.js';
-import { detectTriggers } from '../../../packages/host/src/approvals.js';
-import {
-  GIT_NOT_A_REPO,
-  runGitCommand,
-} from '../../../packages/host/src/git-cli.js';
+} from '@kubic/exec/test-support/git-sandbox';
+import { detectTriggers } from '@kubic/host/approvals';
+import { GIT_NOT_A_REPO, runGitCommand } from '@kubic/host/git-cli';
+import { afterEach, describe, expect, it } from 'vitest';
 
 const made: string[] = [];
 

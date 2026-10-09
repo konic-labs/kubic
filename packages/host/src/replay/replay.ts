@@ -34,8 +34,8 @@
 // go through the exec FileBridge (I/O confinement).
 
 import { createHash } from 'node:crypto';
-import type { LaneCompactionOptions } from '../../../agent/src/lane/boot.js';
-import type { PermissionClasses } from '../../../agent/src/permissions.js';
+import type { LaneCompactionOptions } from '@kubic/agent/lane/boot';
+import type { PermissionClasses } from '@kubic/agent/permissions';
 import {
   type CommandResult,
   EXIT_FAILED,
@@ -44,20 +44,17 @@ import {
   EXIT_USAGE,
   EXIT_WORKSPACE,
   type ExitCode,
-} from '../../../core/src/cli/exit-codes.js';
-import {
-  type CliLogger,
-  createLineLogger,
-} from '../../../core/src/cli/logger.js';
-import { formatJson } from '../../../core/src/cli/output.js';
-import { type CliTheme, createCliTheme } from '../../../core/src/cli/theme.js';
-import { createNodeFileBridge } from '../../../exec/src/file-bridge.js';
-import type { JournalRetention } from '../../../exec/src/journal.js';
+} from '@kubic/core/cli/exit-codes';
+import { type CliLogger, createLineLogger } from '@kubic/core/cli/logger';
+import { formatJson } from '@kubic/core/cli/output';
+import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import type { JournalRetention } from '@kubic/exec/journal';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,
   TrajectorySchemaError,
-} from '../../../trajectory/src/schema.js';
+} from '@kubic/trajectory/schema';
 import type { ApprovalConfig } from '../approvals.js';
 import type { EffectivePolicy } from '../policy/enterprise.js';
 import type { RoleLayerInput } from '../roles/resolver.js';

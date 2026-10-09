@@ -3,9 +3,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import type { FileBridge } from '@kubic/exec/file-bridge';
 import { describe, expect, it } from 'vitest';
-import { FakeExecutionEnv } from '../../../exec/src/env.js';
-import type { FileBridge } from '../../../exec/src/file-bridge.js';
 import { DEFAULT_PERMISSIONS } from '../permissions.js';
 import type { LoadedSkill } from './skills.js';
 import {

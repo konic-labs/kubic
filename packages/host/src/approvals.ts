@@ -12,21 +12,21 @@ import type {
   ApprovalAskVerdict,
   ApprovalCall,
   PolicyInterceptorOptions,
-} from '../../agent/src/lane/interceptors.js';
+} from '@kubic/agent/lane/interceptors';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
   redactReason,
-} from '../../agent/src/lane/interceptors.js';
-import type { ToolContribution } from '../../agent/src/lane/wrap.js';
-import { withTelemetry } from '../../agent/src/lane/wrap.js';
-import type { ToolDisplay } from '../../agent/src/ops/display-diff.js';
+} from '@kubic/agent/lane/interceptors';
+import type { ToolContribution } from '@kubic/agent/lane/wrap';
+import { withTelemetry } from '@kubic/agent/lane/wrap';
+import type { ToolDisplay } from '@kubic/agent/ops/display-diff';
 import type {
   CredentialLevel,
   PermissionClasses,
   UnsupportedLevel,
-} from '../../agent/src/permissions.js';
+} from '@kubic/agent/permissions';
 import {
   checkAgreement,
   checkExpressible,
@@ -34,9 +34,9 @@ import {
   effectiveNetworkLevel,
   toolsForClasses,
   validateClasses,
-} from '../../agent/src/permissions.js';
-import { redactSecretShapes } from '../../core/src/secret-shapes.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/agent/permissions';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { approvalCommandText, summarizeCommand } from './approval-display.js';
 import { approvalPreview } from './approval-preview.js';
 import { TIMEOUT_REASON_MARKER } from './approval-timeout.js';

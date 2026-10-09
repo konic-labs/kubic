@@ -6,8 +6,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { type FileSystem, NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type FileSystem, NodeExecutionEnv } from '../../../exec/src/env.js';
 import {
   GREP_MAX_FILE_BYTES,
   GREP_MAX_LINE_LENGTH,

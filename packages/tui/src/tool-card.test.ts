@@ -1,9 +1,10 @@
 // Tool cards. Pure renders at
 // depth none read like the design; the bash record and the exec truncation
 // notice never reach the collapsed card.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import { spinnerFrame } from './theme.js';
 import {
   formatToolDuration,

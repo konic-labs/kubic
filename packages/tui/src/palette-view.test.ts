@@ -1,8 +1,9 @@
 // The ^P palette's overlay view: the query through
 // Pi's Input, navigation and the row actions through the palette state.
+
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
-import { createUiTheme } from '../../core/src/ui/style.js';
-import { DARK_PALETTE } from '../../core/src/ui/tokens.js';
 import { PaletteView } from './palette-view.js';
 import type { PaletteItem } from './ui/palette.js';
 

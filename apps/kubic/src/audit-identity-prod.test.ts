@@ -8,12 +8,11 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createSession,
   openSessionStore,
-} from '../../../packages/agent/src/lane/session-store.js';
-import { fauxToolUse } from '../../../packages/agent/src/lane/test-harness.js';
+} from '@kubic/agent/lane/session-store';
+import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -21,15 +20,16 @@ import {
   fauxProvider,
   fauxToolCall,
   type MutableModels,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { NodeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { createNodeFileBridge } from '../../../packages/exec/src/file-bridge.js';
-import { installPolicy } from '../../../packages/host/src/approvals.js';
+} from '@kubic/agent/pi-boundary';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { installPolicy } from '@kubic/host/approvals';
 import {
   auditLedgerDir,
   readAuditLedger,
-} from '../../../packages/host/src/policy/audit-ledger.js';
-import { parseTrajectoryExportJSON } from '../../../packages/trajectory/src/schema.js';
+} from '@kubic/host/policy/audit-ledger';
+import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';

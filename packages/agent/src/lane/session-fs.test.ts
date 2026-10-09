@@ -6,11 +6,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createNodeFileBridge, type FileBridge } from '@kubic/exec/file-bridge';
 import { afterAll, describe, expect, it } from 'vitest';
-import {
-  createNodeFileBridge,
-  type FileBridge,
-} from '../../../exec/src/file-bridge.js';
 import {
   BACKGROUND_CONTEXT,
   JsonlStorage,

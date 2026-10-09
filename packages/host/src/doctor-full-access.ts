@@ -11,9 +11,9 @@ import {
   openSessionStore,
   sessionLockIsLive,
   sessionsTouchingWorkspace,
-} from '../../agent/src/lane/session-store.js';
-import { BACKGROUND_CONTEXT } from '../../agent/src/pi-boundary.js';
-import { createNodeFileBridge } from '../../exec/src/file-bridge.js';
+} from '@kubic/agent/lane/session-store';
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileApprovalStore } from './approvals.js';
 
 export interface FullAccessSession {

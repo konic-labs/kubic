@@ -12,15 +12,15 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
   type GitSandbox,
-} from '../../../packages/exec/src/test-support/git-sandbox.js';
-import { loadRuntimeConfig } from '../../../packages/host/src/config/runtime.js';
-import { NO_PROJECT_TRUST } from '../../../packages/host/src/config/trust-store.js';
-import { buildTrajectoryExport } from '../../../packages/trajectory/src/export.js';
+} from '@kubic/exec/test-support/git-sandbox';
+import { loadRuntimeConfig } from '@kubic/host/config/runtime';
+import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { buildTrajectoryExport } from '@kubic/trajectory/export';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliConfigResult } from './config-runtime.js';
 import { createProdRunners } from './prod-runners.js';
 

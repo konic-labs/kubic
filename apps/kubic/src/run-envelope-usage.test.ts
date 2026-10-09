@@ -7,16 +7,16 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from '../../../packages/agent/src/pi-boundary.js';
-import { FakeExecutionEnv } from '../../../packages/exec/src/env.js';
-import { loadSessionCostRows } from '../../../packages/host/src/ops/cost/cost-cli.js';
-import { buildRunEnvelope } from '../../../packages/host/src/run-cli.js';
+} from '@kubic/agent/pi-boundary';
+import { FakeExecutionEnv } from '@kubic/exec/env';
+import { loadSessionCostRows } from '@kubic/host/ops/cost/cost-cli';
+import { buildRunEnvelope } from '@kubic/host/run-cli';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 
 const made: string[] = [];

@@ -3,8 +3,8 @@
 // folded behind the command that expands them, and the providers without a key
 // summarised on one line.
 
-import { renderTable } from '../../core/src/cli/table.js';
-import type { CliTheme } from '../../core/src/cli/theme.js';
+import { renderTable } from '@kubic/core/cli/table';
+import type { CliTheme } from '@kubic/core/cli/theme';
 
 interface CatalogModel {
   readonly id: string;

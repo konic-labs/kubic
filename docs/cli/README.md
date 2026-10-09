@@ -29,7 +29,7 @@ A fresh clone plus Node >= 22.19 is enough for a working `kubic` binary
 (the launcher enforces that floor and names it when refused) — the exact
 commands live in the
 [README install section](../../README.md#install). `npm run build` emits
-runnable JS to gitignored `dist/` (tsc via `tsconfig.build.json`, no
+runnable JS to gitignored `dist/kubic.js` (esbuild via `scripts/build.mjs`, no
 hand-rolled flags); `./bin/kubic.js` is the committed executable over that
 output. All command examples below assume the built binary (`./bin/kubic.js
 …`, equivalently `npm run kubic -- …`). Rebuilding is byte-equivalent.

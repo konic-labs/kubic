@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
 import {
   CliExitError,
   CliUsageError,
   type ExitCode,
-} from '../../../../packages/core/src/cli/exit-codes.js';
+} from '@kubic/core/cli/exit-codes';
+import { describe, expect, it } from 'vitest';
 import { registerAnalysisCommands } from '../commands/analysis.js';
 import { registerJournalCommands } from '../commands/journal.js';
 import { registerSessionCommands } from '../commands/session.js';

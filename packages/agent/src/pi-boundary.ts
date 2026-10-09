@@ -200,8 +200,9 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#Harness, createRegistry,
 //     defineExtension
-// used by: packages/agent/src/lane/boot.ts (the lane boots with a
-//     per-process registry holding the Kubic extension)
+//   used by: packages/agent/src/lane/boot.ts and lane/boot-steps.ts (the
+//     lane boots with a per-process registry holding the policy, span and
+//     Kubic extensions)
 //   why Pi has no alternative: the durable harness IS the execution engine
 //     — Harness.open over a Storage owns conversations, durable
 //     tasks, resume and the registry of tools/sections/hooks.

@@ -1,5 +1,6 @@
-// Root lane: one pi-durable Harness + its root conversation, in-process
-// (ported to the Pi 1.0 durable harness).
+// The lane: one pi-durable Harness over a session and the conversation the
+// session runs (the root, or a fork's own), in-process. The boot's steps are
+// in boot-steps.ts.
 // Zero IPC on the path — the harness, the conversation, and the Kubic tools
 // all live in this process. Kubic adds no loop: a turn is
 // `conversation.submit(...)` → `submission.wait(...)`, and durable
@@ -50,6 +51,15 @@ import {
 import { createSessionSpillSink } from '../spill.js';
 import { OperationKillRegistry } from './abort.js';
 import {
+  activateLaneTools,
+  defaultModelId,
+  installPolicyExtensions,
+  laneThinkingLevel,
+  laneToolSet,
+  reconcileStoredModel,
+  toolContextFor,
+} from './boot-steps.js';
+import {
   type PolicyInterceptorOptions,
   policyInterceptorHooks,
 } from './interceptors/index.js';
@@ -62,7 +72,7 @@ import {
   laneConversationIdOf,
   type SessionHandle,
 } from './session-store/index.js';
-import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
+import { kubicToolsToPiTools } from './tools-adapter.js';
 import {
   composeTools,
   type ToolContribution,
@@ -117,10 +127,6 @@ export function assemblePrompt(input: PromptInput): string {
       : { extraSections: input.extraSections }),
   };
   return assembleSystemPrompt(full);
-}
-
-function defaultModelId(model: { provider: string; id: string }): string {
-  return `${model.provider}/${model.id}`;
 }
 
 interface LanePolicyOptions {
@@ -279,26 +285,6 @@ export interface LaneBootOptions {
   settings?: Omit<HarnessSettings, 'compaction' | 'extensions'>;
 }
 
-function resolveStoredModel(
-  models: LaneBootOptions['models'],
-  stored: { provider: string; modelId: string },
-): Model<string> {
-  const id = `${stored.provider}/${stored.modelId}`;
-  const hint = '(pin a model to switch this session)';
-  if (models.getProvider(stored.provider) === undefined) {
-    throw new ModelSelectError(
-      `session model '${id}' is unavailable: provider '${stored.provider}' is not registered ${hint}`,
-    );
-  }
-  const model = models.getModel(stored.provider, stored.modelId);
-  if (model === undefined) {
-    throw new ModelSelectError(
-      `session model '${id}' is unavailable: model '${stored.modelId}' is not registered on provider '${stored.provider}' ${hint}`,
-    );
-  }
-  return model as Model<string>;
-}
-
 export interface Lane {
   harness: Harness;
   conversation: Conversation;
@@ -385,76 +371,11 @@ export async function escalateLaneModel(
 export async function bootLane(options: LaneBootOptions): Promise<Lane> {
   const context = options.context ?? BACKGROUND_CONTEXT;
   const kills = new OperationKillRegistry();
-  const toolContext: KubicToolContext = {
-    env:
-      options.skillReadRoots === undefined
-        ? options.env
-        : withReadRoots(options.env, options.skillReadRoots),
-    sessionId: options.sessionId,
-    agentId: options.agentId,
-    kills,
-    ...(options.journal === undefined ? {} : { journal: options.journal }),
-    // The interactive turn supplier rides the tool context so
-    // every intercepted write/edit samples the live turn at call time.
-    ...(options.currentTurn === undefined
-      ? {}
-      : { currentTurn: options.currentTurn }),
-    // Clipped bash output spills into the session directory, so
-    // it is pruned with the session and never lands in the workspace.
-    spill: createSessionSpillSink(options.session.dir),
-  };
-  const baseTools = kubicToolsToPiTools(toolContext);
-  // Intersection: the tools the
-  // conversation offers and the tools the prompt advertises are ONE set —
-  // base tools, narrowed by the permission classes when declared, by the
-  // role allowlist when declared, and by the enterprise tool policy when
-  // configured. A role or an enterprise deny can only narrow what the
-  // classes allow, never widen it. Computed before the prompt is assembled
-  // so the `tools:` line names exactly what the conversation offers: the
-  // model must be told the truth about its own tool set, and the
-  // value is fixed for the boot, so the prompt-cache prefix is still
-  // byte-stable across turns.
-  const classAllowed =
-    options.policy?.classes === undefined
-      ? undefined
-      : toolsForClasses(validateClasses({ ...options.policy.classes }));
-  const enterpriseGate = options.policy?.toolAllowed;
-  const baseNames = baseTools.map((tool) => tool.name);
-  const registeredNames = new Set(baseNames);
-  if (options.toolSelection !== undefined && options.noTools === true) {
-    throw new PolicyRefusedError(
-      '--tools and --no-tools are mutually exclusive',
-    );
-  }
-  let roleNames = options.toolAllowlist ?? baseNames;
-  if (options.toolSelection !== undefined) {
-    const selected = new Set(options.toolSelection);
-    roleNames = roleNames.filter((tool) => selected.has(tool));
-  }
-  if (options.noTools === true) roleNames = [];
-  let effectiveToolNames =
-    classAllowed === undefined
-      ? [...roleNames]
-      : roleNames.filter((tool) => classAllowed.includes(tool));
-  if (enterpriseGate !== undefined) {
-    effectiveToolNames = effectiveToolNames.filter((tool) =>
-      enterpriseGate(tool),
-    );
-  }
-  // A name the registry does not offer is not offered to the model either:
-  // the prompt line and the configured tool set stay one set even when a
-  // role names a tool this build does not carry.
-  effectiveToolNames = effectiveToolNames.filter((tool) =>
-    registeredNames.has(tool),
+  const baseTools = kubicToolsToPiTools(toolContextFor(options, kills));
+  const tools = laneToolSet(
+    options,
+    baseTools.map((tool) => tool.name),
   );
-  // Without a role or enterprise gate, applyToolPolicy already installs the
-  // class-derived allowlist; only the two narrowing paths need their own
-  // activation (and their set can never exceed the class-derived one).
-  const mustActivateTools =
-    options.toolAllowlist !== undefined ||
-    options.toolSelection !== undefined ||
-    options.noTools === true ||
-    enterpriseGate !== undefined;
 
   // Compaction: reserveTokens is a live getter over the window of the
   // conversation's CURRENT model. It reads the attached `pi.agent` document
@@ -514,35 +435,8 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
     }),
   };
 
-  // Registry install order = hook order: policy before spans, and the
-  // Kubic extension (tools + prompt) last. Nothing here is stored;
-  // conversations store extension names only, so a reopen re-installs them.
   const registry = createRegistry();
-  if (options.policy?.interceptors !== undefined) {
-    registry.install(
-      defineExtension({
-        name: 'kubic.policy',
-        hooks: policyInterceptorHooks({
-          ...options.policy.interceptors,
-          ...(options.skillReadRoots === undefined
-            ? {}
-            : {
-                readRoots: [
-                  ...(options.policy.interceptors.readRoots ?? []),
-                  ...options.skillReadRoots,
-                ],
-              }),
-        }),
-      }),
-    );
-  }
-  const spanHooks = options.policy?.spanHooks?.();
-  if (spanHooks !== undefined && spanHooks.length > 0) {
-    registry.install(
-      defineExtension({ name: 'kubic.spans', hooks: [...spanHooks] }),
-    );
-  }
-
+  installPolicyExtensions(registry, options);
   const harness = await Harness.open(
     // Adopt, never take `storage` directly: the handle must know a
     // harness owns the storage, or its `release()` would close the storage
@@ -569,62 +463,17 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
   // disposed by close(). `value` is the committed state, so a configure from
   // any caller (this module, the TUI, a headless switch) moves the reserve.
   agentState = await harness.documentState(AgentDoc, conversation.id, context);
-  // Reconcile the stored conversation model with the selection
-  // BEFORE the extension fixes the system prompt and the reserve.
-  const selectedId = defaultModelId(options.model);
   const storedAgent = await harness.snapshot(
     AgentDoc,
     conversation.id,
     context,
   );
-  const stored = storedAgent?.model;
-  const storedId =
-    stored === undefined
-      ? undefined
-      : defaultModelId({
-          provider: stored.provider,
-          id: stored.modelId,
-        });
-  const storedRefused =
-    stored !== undefined &&
-    options.policy?.modelAllowed?.(stored.provider, stored.modelId) === false;
-  const keep =
-    stored !== undefined &&
-    storedId !== selectedId &&
-    options.modelPolicy !== 'selected' &&
-    !storedRefused
-      ? stored
-      : undefined;
-  const differs = storedId !== undefined && storedId !== selectedId;
-  const switchToSelected = differs && keep === undefined;
-  const effectiveModel =
-    keep === undefined
-      ? options.model
-      : resolveStoredModel(options.models, keep);
+  const reconciled = reconcileStoredModel(options, storedAgent?.model);
+  const effectiveModel = reconciled.model;
   const effectiveId = defaultModelId(effectiveModel);
   currentModelId = effectiveId;
 
-  const promptText =
-    options.systemPrompt ??
-    assemblePrompt({
-      cwd: options.env.cwd,
-      toolNames: effectiveToolNames,
-      metadata: {
-        agent: options.agentId,
-        lane: LANE_NAME,
-        model: effectiveId,
-      },
-      // Role prompt: the document's own text replaces
-      // the constant; absent, the constant stands.
-      ...(options.rolePrompt === undefined ? {} : { role: options.rolePrompt }),
-      // Context blocks appended as suffix sections: the
-      // role/cwd/tools/meta prefix stays byte-stable for the prompt
-      // cache, and a caller with no blocks assembles the same bytes
-      // it always did.
-      ...((options.promptSections ?? []).length === 0
-        ? {}
-        : { extraSections: [...(options.promptSections ?? [])] }),
-    });
+  const promptText = lanePromptText(options, tools.names, effectiveId);
   registry.install(
     defineExtension({
       name: 'kubic',
@@ -633,83 +482,33 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
     }),
   );
 
-  // Resolve the thinking request against the session's
-  // stored level and clamp it to the EFFECTIVE model (the rule above
-  // may keep the session's own model, so clamping to the selection would
-  // answer for the wrong model). A clamp is never silent.
-  const resolvedThinking = resolveThinkingLevel(effectiveModel, {
-    ...(options.thinking === undefined ? {} : options.thinking),
-    // The explicit level is the same level as `override`, and wins over
-    // it: one variable, two spellings, no silent double application.
-    ...(options.thinkingLevel === undefined
-      ? {}
-      : {
-          override: {
-            level: options.thinkingLevel,
-            source: 'override',
-          },
-        }),
-    persisted: storedAgent?.thinkingLevel ?? null,
-  });
-  if (resolvedThinking.notice !== undefined) {
-    (options.onThinkingNotice ?? options.onModelNotice)?.(
-      resolvedThinking.notice,
-    );
-  }
+  const thinking = laneThinkingLevel(
+    options,
+    effectiveModel,
+    storedAgent?.thinkingLevel,
+  );
   // Model and thinking level are one durable agent change; unset fields
   // keep their stored value (a resumed session keeps its stored level).
-  // The offered tools follow below (class policy, then role narrowing).
   await conversation.configure(
     {
       model: { provider: effectiveModel.provider, modelId: effectiveModel.id },
-      ...(resolvedThinking.source === 'default'
+      ...(thinking.source === 'default'
         ? {}
-        : { thinkingLevel: resolvedThinking.level }),
+        : { thinkingLevel: thinking.level }),
     },
     context,
   );
-  if (switchToSelected) {
-    // An explicit selection is an explicit model change: applied
-    // to the restored conversation (and persisted) and announced.
-    options.onModelNotice?.(
-      `model: session model '${storedId}' switched to '${selectedId}' (${
-        storedRefused && options.modelPolicy !== 'selected'
-          ? 'enterprise policy'
-          : 'explicit selection'
-      })`,
-    );
-  } else if (differs) {
-    options.onModelNotice?.(
-      `model: session keeps its own model '${storedId}' (selected default '${selectedId}' not applied; pin a model to switch)`,
-    );
+  if (reconciled.notice !== undefined) {
+    options.onModelNotice?.(reconciled.notice);
   }
-  if (options.policy?.classes !== undefined) {
-    await applyToolPolicy(
-      registry,
-      conversation,
-      options.policy.classes,
-      context,
-    );
-  }
-  // Role narrowing: the role's resolved tool set is the
-  // NARROWER of the two allowlists — applied after the class-derived one,
-  // so a role can never widen what the permission classes permit. An empty
-  // set is the noTools case (the conversation offers nothing). A tool outside
-  // the role's set is absent from the offer; offer-time absence is what this
-  // pins.
-  if (mustActivateTools) {
-    await conversation.configure(
-      { tools: toolsForNames(registry, effectiveToolNames) },
-      context,
-    );
-  } else if (classAllowed === undefined && storedAgent?.tools !== undefined) {
-    // The stored filter is durable (configure writes it), so a session booted
-    // with a role/enterprise narrowing would otherwise keep it while this
-    // boot's prompt advertises the full intersection. Clearing it makes the
-    // offered set total on every boot; the prompt's `tools:` line is the same
-    // set by construction.
-    await conversation.configure({ tools: null }, context);
-  }
+  await activateLaneTools(
+    registry,
+    conversation,
+    options,
+    tools,
+    storedAgent?.tools,
+    context,
+  );
 
   const lane: Lane = {
     harness,
@@ -734,4 +533,35 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
   };
   laneRef = lane;
   return lane;
+}
+
+// The lane's system prompt: the caller's own text, else the assembled one
+// over the offered tool set and the effective model.
+function lanePromptText(
+  options: LaneBootOptions,
+  toolNames: string[],
+  effectiveId: string,
+): string {
+  return (
+    options.systemPrompt ??
+    assemblePrompt({
+      cwd: options.env.cwd,
+      toolNames,
+      metadata: {
+        agent: options.agentId,
+        lane: LANE_NAME,
+        model: effectiveId,
+      },
+      // Role prompt: the document's own text replaces
+      // the constant; absent, the constant stands.
+      ...(options.rolePrompt === undefined ? {} : { role: options.rolePrompt }),
+      // Context blocks appended as suffix sections: the
+      // role/cwd/tools/meta prefix stays byte-stable for the prompt
+      // cache, and a caller with no blocks assembles the same bytes
+      // it always did.
+      ...((options.promptSections ?? []).length === 0
+        ? {}
+        : { extraSections: [...(options.promptSections ?? [])] }),
+    })
+  );
 }

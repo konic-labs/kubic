@@ -385,6 +385,57 @@ describe('kubic tui parses the parity flags', () => {
     expect(condition()).toBe(true);
   }
 
+  it('runs a --role turn behind the alt screen on the role lane', async () => {
+    const cwd = tmpRoot('tui-roles-cwd-');
+    writeRole(
+      cwd,
+      'reviewer',
+      'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
+      'You are the reviewer. Report findings.',
+    );
+    const captured: string[] = [];
+    const models = fauxModels(['findings reported'], captured);
+    const sessionsRoot = tmpRoot('tui-roles-sessions-');
+    const fake = fakeTerminal();
+    const pending = runTuiCommand(
+      { role: 'reviewer' },
+      {
+        out: () => {},
+        createTerminal: () => fake.terminal,
+        colorLevel: 'none',
+        // The real lane boot, as the prod deps run it, on the faux model.
+        bootLane: (sessionId, _answer, options) =>
+          bootTuiLane(sessionId, {
+            sessionsRoot,
+            models,
+            env: new FakeExecutionEnv({}),
+            ...(options?.role === undefined ? {} : { role: options.role }),
+            roles: { cwd, trusted: true },
+          }),
+      },
+    );
+    await waitFor(() => fake.counts.started === 1);
+    // One key at a time: a multi-character feed reads as a paste.
+    for (const ch of 'review this') fake.feed(ch);
+    fake.feed('\r');
+    for (
+      let i = 0;
+      i < 1000 && !fake.frame.includes('findings reported');
+      i++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    expect(fake.frame).toContain('findings reported');
+    // The turn the screen ran went out under the role's own prompt.
+    expect(captured.at(-1)).toContain('You are the reviewer. Report findings.');
+    expect(captured.at(-1)).not.toContain(
+      'You are a coding agent working in a terminal.',
+    );
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect((await pending).exitCode).toBe(0);
+  });
+
   it('passes --role, --skill and --no-skills to the boot', async () => {
     const lines: string[] = [];
     const fake = fakeTerminal();

@@ -14,10 +14,8 @@ import {
   spinnerFrame,
   tuiTheme,
 } from '@kubic/tui/theme';
-import {
-  createTranscriptView,
-  TOOL_OUTPUT_PREVIEW_LINES,
-} from '@kubic/tui/transcript';
+import { createTranscriptView } from '@kubic/tui/transcript';
+import { TOOL_OUTPUT_PREVIEW_LINES } from '@kubic/tui/transcript-entry';
 import {
   applyTreeSnapshot,
   createTreeState,

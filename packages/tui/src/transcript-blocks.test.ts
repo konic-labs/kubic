@@ -4,7 +4,8 @@
 // block's edge and a per-block expand.
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTuiTheme, setTuiTheme } from './theme.js';
-import { createTranscriptView, type TranscriptEntry } from './transcript.js';
+import { createTranscriptView } from './transcript.js';
+import type { TranscriptEntry } from './transcript-entry.js';
 
 afterEach(() => {
   setTuiTheme(createTuiTheme('none'));

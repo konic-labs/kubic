@@ -15,7 +15,7 @@
 import { FAIL, OK, TOOL, WARN } from '@kubic/core/ui/glyphs';
 import type { Style, UiTheme } from '@kubic/core/ui/style';
 import { spinnerFrame } from './theme.js';
-import type { CellDisplay } from './transcript.js';
+import type { CellDisplay } from './transcript-entry.js';
 import { visibleWidth } from './tui-boundary.js';
 import {
   type DiffRow,

@@ -9,11 +9,9 @@ import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { buildLayoutRoot } from './layout.js';
 import { bootScreen } from './screen.js';
 import { createTuiTheme, setTuiTheme } from './theme.js';
-import {
-  createTranscriptView,
-  QUEUED_LABEL,
-  TOOL_OUTPUT_PREVIEW_LINES,
-} from './transcript.js';
+import { createTranscriptView } from './transcript.js';
+import { TOOL_OUTPUT_PREVIEW_LINES } from './transcript-entry.js';
+import { QUEUED_LABEL } from './transcript-text.js';
 import { Text, visibleWidth } from './tui-boundary.js';
 
 afterEach(() => {

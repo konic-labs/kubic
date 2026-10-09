@@ -19,7 +19,7 @@ import type {
   ToolCallState,
   TranscriptEntry,
   TurnReceipt,
-} from '../transcript.js';
+} from '../transcript-entry.js';
 import { applyTreeSnapshot } from '../tree.js';
 import type { JournalChangeLike } from '../view-panel.js';
 import type { AppCore } from './core.js';

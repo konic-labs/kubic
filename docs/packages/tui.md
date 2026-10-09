@@ -21,6 +21,7 @@ and [keys](../cli/tui-keys.md) pages.
 | `@kubic/tui/layout` | The layout root: header, tree, transcript, panel, notice, editor, status line and key-hint row |
 | `@kubic/tui/screen` | The alt-screen lifecycle |
 | `@kubic/tui/transcript` | The transcript: committed lane entries as cells, plus the streaming draft |
+| `@kubic/tui/transcript-entry` | The transcript's vocabulary: entries, blocks, receipts and the deltas a lane streams |
 | `@kubic/tui/lane-cells` | Committed lane entries to cells, with every model-supplied text sanitised |
 | `@kubic/tui/lane-text` | The sanitiser: model and tool text made safe for the terminal |
 | `@kubic/tui/tree` | The agent tree: the run row and its tool calls, grouped per turn |

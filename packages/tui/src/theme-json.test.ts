@@ -21,7 +21,7 @@ import {
   ThemeError,
   tuiTheme,
 } from './theme.js';
-import { markdownThemeFor } from './transcript.js';
+import { markdownThemeFor } from './transcript-text.js';
 
 const V1 = JSON.stringify({
   name: 'solarized',

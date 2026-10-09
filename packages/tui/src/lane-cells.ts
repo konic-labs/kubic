@@ -17,7 +17,7 @@ import type {
   CellDisplay,
   TranscriptEntry,
   TranscriptEntryKind,
-} from './transcript.js';
+} from './transcript-entry.js';
 
 // Entry shapes are structural on purpose: the tui package must never import
 // agent/host implementation (dep-lint), so only the fields read here are

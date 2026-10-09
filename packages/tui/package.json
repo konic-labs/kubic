@@ -61,6 +61,10 @@
       "source": "./src/transcript.ts",
       "default": "./src/transcript.ts"
     },
+    "./transcript-entry": {
+      "source": "./src/transcript-entry.ts",
+      "default": "./src/transcript-entry.ts"
+    },
     "./tree": {
       "source": "./src/tree.ts",
       "default": "./src/tree.ts"

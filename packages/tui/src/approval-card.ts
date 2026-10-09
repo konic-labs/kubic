@@ -12,7 +12,7 @@
 import type { UiTheme } from '@kubic/core/ui/style';
 import type { ApprovalAction, ApprovalViewRequest } from './approval-view.js';
 import { keyCap } from './chrome.js';
-import type { CellDisplay } from './transcript.js';
+import type { CellDisplay } from './transcript-entry.js';
 import { visibleWidth } from './tui-boundary.js';
 import {
   type DiffRow,

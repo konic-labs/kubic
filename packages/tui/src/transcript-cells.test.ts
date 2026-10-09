@@ -8,11 +8,8 @@ import { createUiTheme } from '@kubic/core/ui/style';
 import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTuiTheme, setTuiTheme } from './theme.js';
-import {
-  createTranscriptView,
-  formatPromptTime,
-  renderReceipt,
-} from './transcript.js';
+import { createTranscriptView } from './transcript.js';
+import { formatPromptTime, renderReceipt } from './transcript-text.js';
 import {
   resetCapabilitiesCache,
   setCapabilities,

@@ -9,7 +9,7 @@
 // dep-lint forbids tui → host. Pi is touched ONLY through
 // ./tui-boundary.js. No node:fs in prod src (I/O confinement).
 
-import type { CellDisplay } from './transcript.js';
+import type { CellDisplay } from './transcript-entry.js';
 import type { Component } from './tui-boundary.js';
 import { matchesKey } from './tui-boundary.js';
 

@@ -3129,9 +3129,10 @@ export type TuiModelCommand =
   | { kind: 'invalid'; message: string };
 
 export function parseModelCommand(prompt: string): TuiModelCommand | undefined {
-  if (prompt !== '/model' && !prompt.startsWith('/model ')) return undefined;
+  const trimmed = prompt.trim();
+  if (trimmed !== '/model' && !trimmed.startsWith('/model ')) return undefined;
   const argument =
-    prompt === '/model' ? '' : prompt.slice('/model '.length).trim();
+    trimmed === '/model' ? '' : trimmed.slice('/model '.length).trim();
   if (argument === '') return { kind: 'pick' };
   try {
     return { kind: 'switch', selection: parseModelFlag(argument) };
@@ -3156,10 +3157,11 @@ export type TuiEscalateCommand =
 export function parseEscalateCommand(
   prompt: string,
 ): TuiEscalateCommand | undefined {
-  if (prompt !== '/escalate' && !prompt.startsWith('/escalate '))
+  const trimmed = prompt.trim();
+  if (trimmed !== '/escalate' && !trimmed.startsWith('/escalate '))
     return undefined;
   const argument =
-    prompt === '/escalate' ? '' : prompt.slice('/escalate '.length).trim();
+    trimmed === '/escalate' ? '' : trimmed.slice('/escalate '.length).trim();
   if (argument === '') {
     return {
       kind: 'invalid',
@@ -3210,11 +3212,12 @@ export type TuiThinkingCommand =
 export function parseThinkingCommand(
   prompt: string,
 ): TuiThinkingCommand | undefined {
-  if (prompt !== '/thinking' && !prompt.startsWith('/thinking ')) {
+  const trimmed = prompt.trim();
+  if (trimmed !== '/thinking' && !trimmed.startsWith('/thinking ')) {
     return undefined;
   }
   const argument =
-    prompt === '/thinking' ? '' : prompt.slice('/thinking '.length).trim();
+    trimmed === '/thinking' ? '' : trimmed.slice('/thinking '.length).trim();
   if (argument === '') return { kind: 'pick' };
   if (!isThinkingLevel(argument)) {
     return {
@@ -4913,6 +4916,12 @@ export async function runTuiCommand(
             shutdown();
             return 'accepted';
           }
+          case 'skill': {
+            // The space form (`/skill <name>`) is the colon form mistyped.
+            app.setEditorFooter(SKILL_COMMAND_USAGE);
+            if (!stopped) screen?.render();
+            return 'refused';
+          }
           case 'image': {
             // `/image <path>` attaches one image to the
             // next prompt. The registry owns discovery (palette,
@@ -5614,8 +5623,9 @@ export async function runTuiCommand(
         }
         // `/escalate <ref> [reason]` climbs the same
         // ladder as `/model` — the busy guard matches, since the climb is
-        // a conversation.configure too.
-        const escalateCommand = parseEscalateCommand(prompt);
+        // a conversation.configure too. Skipped for an expanded skill.
+        const escalateCommand =
+          skillCommand !== undefined ? undefined : parseEscalateCommand(prompt);
         if (escalateCommand !== undefined) {
           if (busy) {
             app.setEditorFooter(

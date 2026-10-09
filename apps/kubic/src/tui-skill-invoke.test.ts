@@ -194,8 +194,10 @@ describe('kubic tui /skill: over a stub lane', () => {
             model: 'faux/test',
             loop,
             skillInvocation: {
-              names: ['hidden'],
+              names: ['hidden', 'slashy'],
               invoke: (name: string, instructions?: string) => {
+                // A skill whose body opens like a command.
+                if (name === 'slashy') return '/escalate faux/other because';
                 if (name !== 'hidden')
                   throw new Error(`unknown skill '${name}'`);
                 const extra = instructions?.trim() ?? '';
@@ -236,6 +238,35 @@ describe('kubic tui /skill: over a stub lane', () => {
 
     // A refused submit keeps the draft, and the first Ctrl-C clears it —
     // only the double press after it quits.
+    fake.feed('\x03');
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect((await exit).exitCode).toBe(0);
+  });
+
+  it('sends an expanded skill as a prompt even when it opens like a command', async () => {
+    const { fake, exit, admitted } = startStubSkillSession();
+    await waitFor(() => fake.counts.started === 1);
+
+    for (const ch of '/skill:slashy') fake.feed(ch);
+    fake.feed('\r');
+    await waitFor(() => admitted.length === 1);
+    expect(admitted[0]).toBe('/escalate faux/other because');
+
+    fake.feed('\x03');
+    fake.feed('\x03');
+    expect((await exit).exitCode).toBe(0);
+  });
+
+  it('reports the usage for the space form, /skill <name>', async () => {
+    const { fake, exit, admitted } = startStubSkillSession();
+    await waitFor(() => fake.counts.started === 1);
+
+    for (const ch of '/skill hidden do x') fake.feed(ch);
+    fake.feed('\r');
+    await waitForText(fake, 'usage: /skill:<name>');
+    expect(admitted).toEqual([]);
+
     fake.feed('\x03');
     fake.feed('\x03');
     fake.feed('\x03');

@@ -426,7 +426,7 @@ interrupted run`) from the first render, together with the prompt the dead
 process had already admitted (`— interrupted prompt: <text>`) when there
 was one.
 
-**Explicit skill invocation.** `/skill:<name> [instructions]` expands the booted skill of that name into the submitted turn — its full content followed by the instructions — including skills hidden from the model (`disableModelInvocation`); the hidden skill stays out of the system prompt either way. An unknown name (including a withheld one: role gate, trust gate) is refused in the footer (`skill: unknown skill '<name>'`) and nothing is sent. The colon form only: a bare `/skill` reports the usage (`usage: /skill:<name> [instructions]`). Per-skill rows complete in the editor but never join `/help` or the palette.
+**Explicit skill invocation.** `/skill:<name> [instructions]` expands the booted skill of that name into the submitted turn — its full content followed by the instructions — including skills hidden from the model (`disableModelInvocation`); the hidden skill stays out of the system prompt either way. An unknown name (including a withheld one: role gate, trust gate) is refused in the footer (`skill: unknown skill '<name>'`) and nothing is sent. The colon form only: a bare `/skill`, or the space form `/skill <name>`, reports the usage (`usage: /skill:<name> [instructions]`). An expanded skill is always a prompt, even when its content opens like a slash command. Per-skill rows complete in the editor but never join `/help` or the palette.
 
 **Prompt images.** `/image <path>` attaches one image
 to the next submitted prompt — `png`, `jpeg`, `webp` or `gif`, up to 5 MB,

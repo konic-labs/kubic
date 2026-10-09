@@ -36,6 +36,20 @@ describe('parseModelCommand', () => {
     expect(parseModelCommand('/models')).toBeUndefined();
     expect(parseModelCommand('/model=alt/m1')).toBeUndefined();
   });
+
+  it('reads the command from the trimmed draft, like every other command', () => {
+    expect(parseModelCommand('  /model alt/m1 ')).toEqual({
+      kind: 'switch',
+      selection: { provider: 'alt', id: 'm1' },
+    });
+    expect(parseThinkingCommand(' /thinking high')).toEqual({
+      kind: 'switch',
+      level: 'high',
+    });
+    expect(parseEscalateCommand('\t/escalate local/b')).toMatchObject({
+      kind: 'switch',
+    });
+  });
 });
 
 describe('TuiTurnRunner model switch', () => {

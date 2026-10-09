@@ -244,6 +244,41 @@ describe('request options', () => {
   });
 });
 
+describe('millisecond keys stay within what a timer can hold', () => {
+  // Node clamps a timer delay past 2147483647 ms to 1 ms, so a bound past it
+  // would fire at once instead of waiting.
+  const tooLong = [
+    ['[model]\ntimeoutMs = 2147483648\n', 'model', 'timeoutMs'],
+    ['[model]\nmaxRetryDelayMs = 2147483648\n', 'model', 'maxRetryDelayMs'],
+    ['[roles.r]\ntimeoutMs = 2147483648\n', 'roles.r', 'timeoutMs'],
+    ['[verify]\ntimeoutMs = 2147483648\n', 'verify', 'timeoutMs'],
+    ['[approvals]\nmaxPendingMs = 2147483648\n', 'approvals', 'maxPendingMs'],
+  ] as const;
+
+  it.each(tooLong)('refuses %j by name', (text, path, key) => {
+    expect(() => parseTomlConfig(text)).toThrow(
+      `'${path}': '${key}' must be at most 2147483647 milliseconds (about 24.8 days)`,
+    );
+  });
+
+  it('accepts the longest delay a timer can hold', () => {
+    for (const [text] of tooLong) {
+      expect(() =>
+        parseTomlConfig(text.replace('2147483648', '2147483647')),
+      ).not.toThrow();
+    }
+  });
+
+  it('refuses an approval wait that is not a number', () => {
+    expect(() => parseTomlConfig('[approvals]\nmaxPendingMs = inf\n')).toThrow(
+      /cannot parse value inf/,
+    );
+    expect(() =>
+      parseTomlConfig('[approvals]\nmaxPendingMs = "forever"\n'),
+    ).toThrow("'approvals': 'maxPendingMs' must be a non-negative number");
+  });
+});
+
 describe('[policy] + [[audit]]', () => {
   it('parses the documented example verbatim, keys normalized for the policy engine', () => {
     const parsed = parseTomlConfig(POLICY_EXAMPLE);

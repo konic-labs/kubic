@@ -593,6 +593,20 @@ function optBoolean(
   return value;
 }
 
+// The longest delay a timer can hold. Node clamps a longer one (an
+// infinite one included) to 1 ms, so a configured bound past it would fire
+// at once instead of waiting: every key that feeds a timer is refused past
+// it, by name.
+const MAX_TIMER_MS = 2_147_483_647;
+
+function checkTimerMs(keyPath: string, key: string, value: number): void {
+  if (value > MAX_TIMER_MS) {
+    throw new ConfigError(
+      `'${keyPath}': '${key}' must be at most ${MAX_TIMER_MS} milliseconds (about 24.8 days)`,
+    );
+  }
+}
+
 function optNumber(
   record: Record<string, unknown>,
   key: string,
@@ -727,6 +741,7 @@ export function checkModelStreamTuning(
         `'${keyPath}': 'timeoutMs' must be a positive integer of milliseconds`,
       );
     }
+    checkTimerMs(keyPath, 'timeoutMs', timeoutMs);
     out.timeoutMs = timeoutMs;
   }
   for (const key of ['maxRetries', 'maxRetryDelayMs'] as const) {
@@ -737,6 +752,7 @@ export function checkModelStreamTuning(
         `'${keyPath}': '${key}' must be a non-negative integer`,
       );
     }
+    if (key === 'maxRetryDelayMs') checkTimerMs(keyPath, key, value);
     out[key] = value;
   }
   const cacheRetention = record.cacheRetention;
@@ -940,6 +956,7 @@ export function checkVerifyConfig(
         `'${keyPath}': 'timeoutMs' must be a positive integer of milliseconds`,
       );
     }
+    checkTimerMs(keyPath, 'timeoutMs', timeoutMs);
     parsed.timeoutMs = timeoutMs;
   }
   return parsed;
@@ -1169,6 +1186,9 @@ function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
       );
     }
     const maxPendingMs = optNumber(approvals, 'maxPendingMs', 'approvals');
+    if (maxPendingMs !== undefined) {
+      checkTimerMs('approvals', 'maxPendingMs', maxPendingMs);
+    }
     const autoApprove = optStringArray(approvals, 'autoApprove', 'approvals');
     const sessionScoped = optBoolean(approvals, 'sessionScoped', 'approvals');
     const requireJustification = optBoolean(

@@ -25,7 +25,7 @@ import {
 } from '@kubic/agent/lane/transcript';
 import type { EntryRecord } from '@kubic/agent/pi-boundary';
 import type { FileBridge } from '@kubic/exec/file-bridge';
-import { type FileChange, unifiedHunks } from '@kubic/exec/journal-diff';
+import { type FileChange, unifiedHunks } from '@kubic/exec/journal';
 import {
   buildTrajectoryExport,
   type RawObservation,

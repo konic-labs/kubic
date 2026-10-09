@@ -16,7 +16,7 @@ import {
   MemoryStorage,
 } from '@kubic/agent/pi-boundary';
 import { toolSpawnEnv } from '@kubic/exec/env';
-import type { FileChange } from '@kubic/exec/journal-diff';
+import type { FileChange } from '@kubic/exec/journal';
 import { parseTrajectoryExport } from '@kubic/trajectory/schema';
 import { describe, expect, it } from 'vitest';
 import type { OrgAuditRecord } from '../audit/index.js';

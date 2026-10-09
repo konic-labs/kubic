@@ -15,11 +15,7 @@ escapes, not a sandbox boundary.
 | Module | Exports |
 | --- | --- |
 | `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `FakeSpawnCall`, `FakeOptions`, `MAX_CHILD_OUTPUT_BYTES`, `toolSpawnEnv` (every spawned child gets the allowlisted env, secrets dropped) |
-| `journal.ts` | `JournalOp`, `JournalEntryInput`, `JournalEntry`, `JournalRetention`, `RetentionPolicy`, `FileJournalStore`, `JournalEntryTooLargeError`, `Baseline`, `BaselineOptions`, `UNREADABLE_HASH`, `ReconcileContext`, `RestoreResult`, `HASH_CHUNK_BYTES`, `HASH_NOTICE_BYTES`, `MAX_SWEEP_CONTENT_BYTES`, `sha256Hex`, `sha256HexOfFile`, `sha256HexOfBytes`, `encodeDelta`, `applyDelta`, `captureBaseline`, `saveBaseline`, `restoreEntry`, `removeCreatedEntry`, `isUndoableCreate`, `reconcile`, `journalMutationLockPath` |
-| `journal-diff.ts` | `FileChange`, `DiffFilter`, `diffEntries`, `unifiedHunks`, `renderDiff` |
-| `journal-status.ts` | `JournalStatus`, `journalStatus` |
-| `journal-undo.ts` | `UndoScope`, `UndoPlan`, `UndoOptions`, `UndoResult`, `planUndo`, `applyUndo` |
-| `journal-reconcile.ts` | `RunReconciliationOptions`, `RunReconciliation` (`baseline`, `baselinePath`, `sweep()`, `rebaseline(turn)`: re-capture the baseline and the run start for a new interactive turn), `beginReconciliation` |
+| `journal/` | The change journal, entry `journal/index.ts`: the store over index lines and content-addressed blobs (`store.ts`), entry types (`types.ts`), hashing and deltas (`hash.ts`, `delta.ts`), the boot baseline and end-of-run sweep (`baseline.ts`, `sweep.ts`, `reconcile.ts`), restore and undo (`restore.ts`, `undo.ts`), diff and status (`diff.ts`, `status.ts`) and git HEAD state (`git.ts`) |
 | `ignore.ts` | `IgnoreRule`, `parseIgnoreFile`, `isIgnored` — the shared `.gitignore`-subset matcher: the journal baseline walk and the agent's find/grep walk cannot disagree on what is ignored |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock |
@@ -74,7 +70,7 @@ also accepts a path spelled through the workspace root's own `realpath`
 can hand back a target it resolved through a link without tripping the
 guardrail.
 
-### Journal (`journal.ts`, `journal-diff.ts`)
+### Journal (`journal/`)
 
 `JournalOp` is `'write' \| 'edit' \| 'create' \| 'delete' \| 'rename'`.
 `LARGE_FILE_BYTES` is 64 KiB; `HASH_CHUNK_BYTES` and
@@ -86,7 +82,7 @@ guardrail.
 | `JournalEntry` | `path`, `op`, `beforeHash: string \| null`, `afterHash: string \| null`, `deltaHash: string \| null`, `bytesDelta: number`, `sessionId`, `source: tool \| sweep \| undo`, `toolCallId: string \| null`, `timestamp: number`, `unattributed?: boolean`, `turn?: number`, `afterOmitted?: boolean`, `afterBytes?: number` |
 | `JournalRetention` | `maxBytes?: number`, `maxAgeMs?: number`, `durable?: boolean` (default `true`) — `maxBytes` is the whole store (index + blobs) and is what `[journal] maxBytes` threads into |
 | `UndoResult` | `restored: string[]`, `skipped: string[]`, `skippedDetails: { path, reason }[]`, `warnings: string[]` — a step whose inverse record cannot fit the store's bound is skipped with `too large to record: …` and a warning naming the bound, before the file is touched |
-| `FileChange` (`journal-diff.ts`) | `path`, `op: JournalOp`, `source` (`tool` \| `sweep` \| `undo`), `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `corrupt: boolean`, `afterOmitted: boolean`, `afterBytes?: number`, `contentTruncated?: boolean` |
+| `FileChange` (`journal/diff.ts`) | `path`, `op: JournalOp`, `source` (`tool` \| `sweep` \| `undo`), `toolCallId: string \| null`, `sessionId`, `timestamp: number`, `unattributed: boolean`, `reversible: boolean`, `before: string \| null`, `after: string \| null`, `corrupt: boolean`, `afterOmitted: boolean`, `afterBytes?: number`, `contentTruncated?: boolean` |
 | `DiffFilter` | `path?: string`, `agent?: string` |
 
 One `FileChange` per path (earliest before, latest after, latest

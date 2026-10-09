@@ -6,7 +6,7 @@
 // Shape ownership (read-only — this package never modifies them):
 //   Provenance/ExecutionEnv in packages/exec/src/env.ts,
 //   ResultStatus in packages/agent/src/lane/settle.ts,
-//   FileChange diffs in packages/exec/src/journal-diff.ts,
+//   FileChange diffs in packages/exec/src/journal/diff.ts,
 //   ApprovalPolicy/verdicts in packages/host/src/approvals/policy.ts,
 //   KubicUsageRow in packages/agent/src/usage.ts,
 //   FAILURE_CODES in packages/agent/src/lane/failures.ts.

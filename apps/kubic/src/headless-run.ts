@@ -87,11 +87,12 @@ import type { ExecutionEnv } from '@kubic/exec/env';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { gitHeadOf, withDetachedCheckout } from '@kubic/exec/git-clean';
-import { FileJournalStore, type JournalRetention } from '@kubic/exec/journal';
 import {
   beginReconciliation,
+  FileJournalStore,
+  type JournalRetention,
   type RunReconciliation,
-} from '@kubic/exec/journal-reconcile';
+} from '@kubic/exec/journal';
 import { createSecretCommandRunner } from '@kubic/exec/secret-runner';
 import {
   type ApprovalConfig,

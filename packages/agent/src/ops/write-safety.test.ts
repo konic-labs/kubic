@@ -18,13 +18,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type FileSystem, NodeExecutionEnv } from '@kubic/exec/env';
 import {
+  applyUndo,
   captureBaseline,
+  diffEntries,
   FileJournalStore,
+  journalStatus,
+  planUndo,
   reconcile,
 } from '@kubic/exec/journal';
-import { diffEntries } from '@kubic/exec/journal-diff';
-import { journalStatus } from '@kubic/exec/journal-status';
-import { applyUndo, planUndo } from '@kubic/exec/journal-undo';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PREIMAGE_CHUNK_BYTES, PREIMAGE_MAX_BYTES } from './atomic-file.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';

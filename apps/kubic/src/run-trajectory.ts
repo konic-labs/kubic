@@ -10,8 +10,11 @@ import { SESSION_ID_PATTERN } from '@kubic/agent/lane/session-store';
 import { toolSpawnEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { gitHeadOf } from '@kubic/exec/git-clean';
-import { FileJournalStore } from '@kubic/exec/journal';
-import { diffEntries, type FileChange } from '@kubic/exec/journal-diff';
+import {
+  diffEntries,
+  type FileChange,
+  FileJournalStore,
+} from '@kubic/exec/journal';
 import type { OrgAuditRecord } from '@kubic/host/audit';
 import {
   AUDIT_LEDGER_FILE,

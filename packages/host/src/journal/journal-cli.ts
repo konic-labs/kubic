@@ -38,20 +38,20 @@ import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { gitHeadOf } from '@kubic/exec/git-clean';
-import { FileJournalStore, type JournalEntry } from '@kubic/exec/journal';
 import {
+  applyUndo,
   clipChangeContent,
   DEFAULT_MAX_CONTENT_BYTES,
   diffEntries,
+  FileJournalStore,
+  formatHeadMove,
+  type JournalEntry,
+  journalStatus,
+  planUndo,
+  reconciliationSummary,
   renderDiff,
   renderDiffStat,
-} from '@kubic/exec/journal-diff';
-import {
-  formatHeadMove,
-  journalStatus,
-  reconciliationSummary,
-} from '@kubic/exec/journal-status';
-import { applyUndo, planUndo } from '@kubic/exec/journal-undo';
+} from '@kubic/exec/journal';
 import {
   appendToLedger,
   auditLedgerDirFor,

@@ -27,7 +27,7 @@ import type { Component } from './tui-boundary.js';
 export type PanelMode = 'closed' | 'diff' | 'journal';
 
 // Structural journal-row shape: the fields the panels read, mirroring exec's
-// FileChange (packages/exec/src/journal-diff.ts) WITHOUT importing it — the
+// FileChange (packages/exec/src/journal/diff.ts) WITHOUT importing it — the
 // tui package must never import exec/agent/host implementation (dep-lint).
 // `before`/`after` are nullable exactly like FileChange's.
 export interface JournalChangeLike {

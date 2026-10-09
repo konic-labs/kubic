@@ -22,24 +22,8 @@
       "default": "./src/ignore.ts"
     },
     "./journal": {
-      "source": "./src/journal.ts",
-      "default": "./src/journal.ts"
-    },
-    "./journal-diff": {
-      "source": "./src/journal-diff.ts",
-      "default": "./src/journal-diff.ts"
-    },
-    "./journal-reconcile": {
-      "source": "./src/journal-reconcile.ts",
-      "default": "./src/journal-reconcile.ts"
-    },
-    "./journal-status": {
-      "source": "./src/journal-status.ts",
-      "default": "./src/journal-status.ts"
-    },
-    "./journal-undo": {
-      "source": "./src/journal-undo.ts",
-      "default": "./src/journal-undo.ts"
+      "source": "./src/journal/index.ts",
+      "default": "./src/journal/index.ts"
     },
     "./lock-file": {
       "source": "./src/lock-file.ts",

@@ -121,13 +121,15 @@ import { DEFAULT_RUN_ROLE, runRoleLabel } from '@kubic/core/run-role';
 import { type FileSystem, NodeExecutionEnv } from '@kubic/exec/env';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { FileJournalStore, type JournalRetention } from '@kubic/exec/journal';
-import { diffEntries } from '@kubic/exec/journal-diff';
 import {
+  applyUndo,
   beginReconciliation,
+  diffEntries,
+  FileJournalStore,
+  type JournalRetention,
+  planUndo,
   type RunReconciliation,
-} from '@kubic/exec/journal-reconcile';
-import { applyUndo, planUndo } from '@kubic/exec/journal-undo';
+} from '@kubic/exec/journal';
 import { createSecretCommandRunner } from '@kubic/exec/secret-runner';
 import {
   type ApprovalConfig,

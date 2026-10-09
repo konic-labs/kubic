@@ -24,9 +24,8 @@ const mockState = vi.hoisted(() => ({ closeShouldReject: false }));
 // beginReconciliation is wrapped (sweep still logs; the real module is
 // untouched for every other suite — file-local mock).
 const guardEvents = vi.hoisted(() => ({ events: [] as string[] }));
-vi.mock('@kubic/exec/journal-reconcile', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('@kubic/exec/journal-reconcile')>();
+vi.mock('@kubic/exec/journal', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@kubic/exec/journal')>();
   return {
     ...actual,
     beginReconciliation: vi.fn(() => ({

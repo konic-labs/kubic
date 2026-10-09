@@ -4,7 +4,7 @@
 // scrolling, so there is no per-view Component wrapper left here.
 //
 // Structural DiffFileChange mirrors exec FileChange
-// (packages/exec/src/journal-diff.ts) WITHOUT importing it: the tui
+// (packages/exec/src/journal/diff.ts) WITHOUT importing it: the tui
 // package must never import exec/host/agent implementation (dep-lint),
 // so only the fields this view reads are typed here. unifiedHunks is a copy
 // of exec's unifiedHunks (the TUI cannot import it); the per-file block below

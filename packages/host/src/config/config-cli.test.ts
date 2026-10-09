@@ -7,7 +7,7 @@ import { EXIT_FAILED, EXIT_OK } from '@kubic/core/cli/exit-codes';
 import { describe, expect, it } from 'vitest';
 import { resolveEffectivePolicy } from '../policy/index.js';
 import { runConfigCommand } from './config-cli.js';
-import type { RuntimeConfig } from './runtime.js';
+import type { RuntimeConfig } from './runtime-types.js';
 
 function runtime(): RuntimeConfig {
   return {

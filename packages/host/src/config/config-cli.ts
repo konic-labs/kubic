@@ -17,11 +17,8 @@ import {
 import { formatJson } from '@kubic/core/cli/output';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
 import { type CliIo, diagnosticsOf } from '../cli/index.js';
-import {
-  effectiveConfigView,
-  type RuntimeConfig,
-  renderEffectiveConfig,
-} from './runtime.js';
+import type { RuntimeConfig } from './runtime-types.js';
+import { effectiveConfigView, renderEffectiveConfig } from './runtime-view.js';
 
 export interface ConfigCommandDeps extends CliIo {
   // One load, injected by the composition root: the CLI never re-derives

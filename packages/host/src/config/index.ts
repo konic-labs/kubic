@@ -15,20 +15,19 @@ export {
 export type { ConfigCommandOptions } from './config-cli.js';
 export { runConfigCommand } from './config-cli.js';
 export { buildConfigDoctorInput, configDoctorProbe } from './config-doctor.js';
+export { checkWorkspaceIgnoreSplit } from './ignore-split.js';
+export { loadRuntimeConfig, MS_PER_DAY } from './runtime.js';
 export type {
   RuntimeConfig,
   RuntimeEscalation,
   RuntimeThinking,
   RuntimeVerify,
-} from './runtime.js';
+} from './runtime-types.js';
 export {
-  checkWorkspaceIgnoreSplit,
   compactionSummaryLine,
   effectiveConfigView,
-  loadRuntimeConfig,
-  MS_PER_DAY,
   /** @internal */ renderEffectiveConfig,
-} from './runtime.js';
+} from './runtime-view.js';
 export type {
   SetupCommandOptions,
   SetupDeps,

@@ -19,16 +19,16 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fakeBridge } from '../test-support/config-bridge.js';
 import { ProjectUntrustedError } from './errors.js';
+import { loadRuntimeConfig } from './runtime.js';
+import { RUNTIME_ENV_OVERRIDES } from './runtime-env.js';
+import type { RuntimeConfigInputs } from './runtime-types.js';
 import {
   effectiveConfigView,
   keyEffectFor,
-  loadRuntimeConfig,
-  RUNTIME_ENV_OVERRIDES,
   RUNTIME_KEY_EFFECTS,
-  type RuntimeConfigInputs,
   renderEffectiveConfig,
   runtimeKeyDisposition,
-} from './runtime.js';
+} from './runtime-view.js';
 
 const HOME = '/home/u';
 

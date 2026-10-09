@@ -8,16 +8,16 @@ import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { fakeBridge } from '../test-support/config-bridge.js';
 import { ConfigError, ProjectUntrustedError } from './errors.js';
+import { loadRuntimeConfig } from './runtime.js';
+import { RUNTIME_ENV_OVERRIDES } from './runtime-env.js';
+import type { RuntimeConfigInputs } from './runtime-types.js';
 import {
   compactionSummaryLine,
   effectiveConfigView,
   keyEffectFor,
-  loadRuntimeConfig,
-  RUNTIME_ENV_OVERRIDES,
   RUNTIME_KEY_EFFECTS,
-  type RuntimeConfigInputs,
   runtimeKeyDisposition,
-} from './runtime.js';
+} from './runtime-view.js';
 
 const HOME = '/home/u';
 

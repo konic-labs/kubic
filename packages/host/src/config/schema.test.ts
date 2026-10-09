@@ -2,7 +2,7 @@
 // runtime row, and parses its own example.
 import { describe, expect, it } from 'vitest';
 import { parseTomlConfig } from './config.js';
-import { keyEffectFor } from './runtime.js';
+import { keyEffectFor } from './runtime-view.js';
 import { CONFIG_SECTIONS, type ConfigKey } from './schema.js';
 
 // Every key, by the name the docs and the runtime rows use.

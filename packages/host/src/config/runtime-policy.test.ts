@@ -27,15 +27,15 @@ import {
   isToolAllowedByEnterprise,
 } from '../policy/index.js';
 import { fakeBridge } from '../test-support/config-bridge.js';
+import { checkWorkspaceIgnoreSplit } from './ignore-split.js';
+import { loadRuntimeConfig } from './runtime.js';
+import type { RuntimeConfigInputs } from './runtime-types.js';
 import {
-  checkWorkspaceIgnoreSplit,
   effectiveConfigView,
   keyEffectFor,
-  loadRuntimeConfig,
   RUNTIME_KEY_EFFECTS,
-  type RuntimeConfigInputs,
   runtimeKeyDisposition,
-} from './runtime.js';
+} from './runtime-view.js';
 
 const HOME = '/home/u';
 

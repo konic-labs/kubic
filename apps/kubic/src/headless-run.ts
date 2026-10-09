@@ -8,14 +8,9 @@
 // parent-linked to the last existing entry under a random id (E4).
 
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { abortLane, forgetLaneKills } from '@kubic/agent/lane/abort';
-import {
-  bootLane,
-  type Lane,
-  type LaneCompactionOptions,
-} from '@kubic/agent/lane/boot';
+import type { Lane, LaneCompactionOptions } from '@kubic/agent/lane/boot';
 import {
   type KubicLaneEvent,
   subscribeLaneEvents,
@@ -32,13 +27,8 @@ import {
   settlePending,
 } from '@kubic/agent/lane/pending';
 import {
-  attachSession,
-  createSession,
   laneConversationIdOf,
-  openSessionStore,
-  SESSION_ID_PATTERN,
   type SessionHandle,
-  sessionsTouchingWorkspace,
 } from '@kubic/agent/lane/session-store';
 import {
   entriesToTranscript,
@@ -53,19 +43,8 @@ import {
   turnAbort,
   turnLaneRecord,
 } from '@kubic/agent/lane/turn';
-import {
-  ModelSelectError,
-  type ModelSelection,
-  type selectModel,
-} from '@kubic/agent/model-select';
-import { OPERATIONS } from '@kubic/agent/ops/registry';
-import {
-  checkAgreement,
-  DEFAULT_PERMISSIONS,
-  type PermissionClasses,
-  type RunMode,
-  validateClasses,
-} from '@kubic/agent/permissions';
+import type { ModelSelection } from '@kubic/agent/model-select';
+import type { PermissionClasses, RunMode } from '@kubic/agent/permissions';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -78,61 +57,28 @@ import {
   withCancel,
 } from '@kubic/agent/pi-boundary';
 import { expandSkillInvocation } from '@kubic/agent/skills';
-import {
-  resolveStreamOptions,
-  type StreamTuningTables,
-} from '@kubic/agent/stream-options';
+import type { StreamTuningTables } from '@kubic/agent/stream-options';
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import type { ExecutionEnv } from '@kubic/exec/env';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { gitHeadOf, withDetachedCheckout } from '@kubic/exec/git-clean';
-import {
-  beginReconciliation,
-  FileJournalStore,
-  type JournalRetention,
-  type RunReconciliation,
-} from '@kubic/exec/journal';
-import { createSecretCommandRunner } from '@kubic/exec/secret-runner';
+import type { JournalRetention } from '@kubic/exec/journal';
 import {
   type ApprovalConfig,
-  enableSessionFullAccess,
   fullAccessInForceWarning,
   type InstalledPolicy,
-  installPolicy,
   TIMEOUT_REASON_MARKER,
 } from '@kubic/host/approvals';
 import {
   appendToLedger,
   auditLedgerDirFor,
-  createLedgerModelKeyResolver,
-  resolveRunBaseRevision,
   runStartAudit,
 } from '@kubic/host/audit';
-import { findProjectRoot } from '@kubic/host/cli';
 import type { RuntimeThinking, RuntimeVerify } from '@kubic/host/config';
 import { readSessionRunUsage } from '@kubic/host/cost';
 import { emitNoIsolationNotice, shouldEmitNotice } from '@kubic/host/doctor';
-import {
-  assembleModels,
-  FAUX_NOTICE,
-  invalidProviderMessage,
-  providerOverrideFromEnv,
-} from '@kubic/host/models';
-import {
-  type EffectivePolicy,
-  hasModelPolicy,
-  hasToolPolicy,
-  isModelAllowed,
-  isToolAllowedByEnterprise,
-} from '@kubic/host/policy';
-import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles';
-import {
-  effectiveRoleClasses,
-  rolePromptFor,
-  type SelectedRole,
-  selectRole,
-} from '@kubic/host/roles';
+import type { EffectivePolicy } from '@kubic/host/policy';
+import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink, RunOutcome, RunProgressSink } from '@kubic/host/run';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
@@ -153,19 +99,12 @@ import {
 } from '@kubic/host/run';
 import {
   matchableSecrets,
-  redactBridgeWrites,
   redactingSink,
   redactSecretValues,
 } from '@kubic/host/secret-refs';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
-import { bootSkills } from '@kubic/host/skills';
-import {
-  resolveRoleThinking,
-  roleModelScope,
-  selectBootModel,
-} from './config-runtime.js';
-import { hasExplicitModelSelection } from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
+import { type BootRefusal, SessionBoot } from './session/bootstrap.js';
 
 export interface HeadlessRunOptions {
   sessionId?: string;
@@ -461,23 +400,6 @@ function storeFailure(
 export const NO_ASSISTANT_TEXT_SUMMARY =
   '(no assistant text — the run settled without output)';
 
-// The lane's appended prompt sections, shared by the headless
-// and interactive boots: the `[agent] systemPromptFile` text first (the
-// user's own instructions), the skills block second (discovered context).
-// Undefined when neither is set, so the lane assembles its prompt
-// unchanged — the cache-stable prefix is never rewritten by an empty
-// composition.
-export function composePromptSections(
-  systemPromptSection: string | undefined,
-  skillsBlock: string | undefined,
-): string[] | undefined {
-  const sections = [
-    ...(systemPromptSection === undefined ? [] : [systemPromptSection]),
-    ...(skillsBlock === undefined ? [] : [skillsBlock]),
-  ];
-  return sections.length === 0 ? undefined : sections;
-}
-
 // Final assistant text of the settled run for the result summary. A run
 // that left no assistant text yields undefined; the caller reports the
 // named non-answer (NO_ASSISTANT_TEXT_SUMMARY) instead of the prompt.
@@ -557,23 +479,6 @@ async function captureEntries(
 // on a task that ignores cancellation (a provider that never settles its
 // stream), so the run always reports its own result.
 const LANE_ABORT_BOUND_MS = 2_000;
-
-// Waits for `work` for at most `ms`; undefined when the bound elapses. The
-// promise is observed either way, so a late rejection is never unhandled.
-async function settledWithin<T>(
-  work: Promise<T>,
-  ms: number,
-): Promise<T | undefined> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const bound = new Promise<undefined>((resolve) => {
-    timer = setTimeout(() => resolve(undefined), ms);
-  });
-  try {
-    return await Promise.race([work.catch(() => undefined), bound]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
 
 // Best-effort conversation abort + kill drain on the divert paths (a guard
 // or an interrupt abandoned a live turn): the durable stop is stated against
@@ -966,82 +871,11 @@ async function runHeadlessPromptImpl(
   },
   capture: RunCapture,
 ): Promise<HeadlessRunResult> {
-  // Defense-in-depth with run-cli's --session check: direct callers bypass
-  // the CLI, so reject path-unsafe ids here (exit-2-bound usage terminus)
-  // before any store attach or path join can see them.
-  if (
-    options.sessionId !== undefined &&
-    !SESSION_ID_PATTERN.test(options.sessionId)
-  ) {
-    const invalid = `invalid --session id ${JSON.stringify(options.sessionId)} (use [A-Za-z0-9_-])`;
-    return finished('unassigned', 'usage', invalid, invalid);
-  }
-  // Guard overrides are validated before any store or lane exists: an
-  // invalid bound fails closed with the usage terminus (exit 2) and never
-  // boots a lane. Unset bounds fall through to the CLI default below.
-  if (
-    options.timeoutMs !== undefined &&
-    (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)
-  ) {
-    const invalid = `invalid timeoutMs ${JSON.stringify(options.timeoutMs)} (need a positive integer of milliseconds)`;
-    return finished('unassigned', 'usage', invalid, invalid);
-  }
-  // Same ceiling as the CLI (defense-in-depth for direct callers): above
-  // 2^31-1 ms setTimeout clamps to 1 ms, which would fire the "bound"
-  // immediately and misreport a timeout.
-  if (
-    options.timeoutMs !== undefined &&
-    options.timeoutMs > MAX_RUN_TIMEOUT_MS
-  ) {
-    const invalid = `invalid timeoutMs ${JSON.stringify(options.timeoutMs)} (max ${MAX_RUN_TIMEOUT_MS})`;
-    return finished('unassigned', 'usage', invalid, invalid);
-  }
-  if (
-    options.maxTurns !== undefined &&
-    (!Number.isInteger(options.maxTurns) || options.maxTurns <= 0)
-  ) {
-    const invalid = `invalid maxTurns ${JSON.stringify(options.maxTurns)} (need a positive integer of turns)`;
-    return finished('unassigned', 'usage', invalid, invalid);
-  }
-  // The turn prompt `--invoke-skill` expands to.
-  // Assigned after the skills boot below; every downstream prompt use
-  // reads this, never the raw parameter.
-  let effectivePrompt = prompt;
-  // The per-invocation tool selection is
-  // validated before any lane boots — mutual exclusion, unknown names and
-  // the agreement with the permission classes all fail closed as the
-  // usage terminus (exit 2), never a silently narrowed run.
-  if (options.tools !== undefined && options.noTools === true) {
-    const invalid = '--tools and --no-tools are mutually exclusive';
-    return finished('unassigned', 'usage', invalid, invalid);
-  }
-  if (options.tools !== undefined) {
-    const known = Object.keys(OPERATIONS).sort();
-    const unknown = options.tools.find((tool) => !known.includes(tool));
-    if (unknown !== undefined) {
-      const invalid = `unknown tool ${JSON.stringify(unknown)} (known tools: ${known.join(', ')})`;
-      return finished('unassigned', 'usage', invalid, invalid);
-    }
-    const agreement = checkAgreement(
-      validateClasses({ ...(deps.policyClasses ?? DEFAULT_PERMISSIONS) }),
-      [...options.tools],
-    );
-    if (!agreement.agree) {
-      return finished(
-        'unassigned',
-        'usage',
-        agreement.reason,
-        agreement.reason,
-      );
-    }
-  }
-  const root = deps.sessionsRoot ?? defaultSessionsRoot();
   const context = deps.context ?? BACKGROUND_CONTEXT;
   // Debug channel: `--debug` routes the span lines AND the run's
   // diagnostics (extension receipt, reconcile/overlap notices, skill-load
   // reports, drain failures) to one sink. An injected deps.debug still wins;
-  // without either, the diagnostics are off — the prod `kubic run` wires
-  // only the flag, so these lines were unreachable before.
+  // without either, the diagnostics are off.
   const debugSink: DebugSink | undefined =
     options.debug === true
       ? (deps.debugSink ?? ((line: string) => console.error(line)))
@@ -1061,59 +895,163 @@ async function runHeadlessPromptImpl(
     rawDebug === undefined
       ? undefined
       : redactingSink(rawDebug, () => capture.liveSecrets());
+  const warnLine =
+    deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
+  // Operator notices: a model switched or kept at boot, a pending
+  // operation's settlement, an overflow recovery.
+  const notice = deps.notice ?? ((line: string) => console.error(line));
+  // The turn prompt `--invoke-skill` expands to. Every downstream prompt
+  // use reads this, never the raw parameter.
+  let effectivePrompt = prompt;
   // Spans on the live path: the run, its lane accept/drive
   // steps and every harness tool call are recorded on the SpanRecorder
-  // and persisted to <root>/<id>/spans.jsonl when the run settles. The
-  // recorder is created before the store so a store failure still leaves a
-  // (run-only) trace behind.
+  // and persisted to <root>/<id>/spans.jsonl when the run settles.
   const spans = new RunSpans(Date.now, debugSink);
   const runSpan = spans.startRun();
-  // Every session write goes through the one bridge, so it is the choke
-  // point for scrubbing the live provider keys out of the session JSONL and
-  // the span artifact: a provider echoing a rejected key in its
-  // error body must not persist it.
-  const bridge = redactBridgeWrites(createNodeFileBridge(root), () =>
-    capture.liveSecrets(),
+  // Set by the first signal. The boot checks it before each expensive step
+  // (and the run before the turn), so a pre-turn Ctrl-C cancels the boot
+  // instead of letting it run on unseen.
+  let interruptedBy: string | undefined;
+  const boot = new SessionBoot(
+    {
+      command: 'run',
+      context,
+      ...(options.sessionId === undefined
+        ? {}
+        : { sessionId: options.sessionId }),
+      // The run's mode is always recorded — explicit `--autonomous` or off
+      // by default.
+      sessionMode: options.autonomous === true ? 'autonomous' : 'interactive',
+      ...(options.role === undefined ? {} : { role: options.role }),
+      ...(options.tools === undefined ? {} : { tools: options.tools }),
+      ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
+      ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
+      ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
+      ...(options.dangerouslySkipApprovals === undefined
+        ? {}
+        : { dangerouslySkipApprovals: options.dangerouslySkipApprovals }),
+      // The tool spans, installed after policy so a blocked call never
+      // opens one.
+      spanHooks: () => runSpanHooks(spans),
+      cancelled: () => interruptedBy !== undefined,
+      onPolicyInstalled: (booted) => recordRunStart(booted),
+      onSkillsBooted: (booted) => {
+        // `--invoke-skill` expands against the invocable set (admitted +
+        // gate-passed, hidden included, withheld excluded) — the skill
+        // content runs as the turn prompt with the operator's prompt as
+        // instructions. An unknown name fails the run with the named error
+        // (exit 1, like a refused --role): the invocation IS the run.
+        if (options.invokeSkill !== undefined) {
+          try {
+            effectivePrompt = expandSkillInvocation(
+              booted.skills?.invocable ?? [],
+              options.invokeSkill,
+              prompt,
+            );
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            return { kind: 'failed', message };
+          }
+        }
+        const loaded = booted.skills?.skills ?? [];
+        if (loaded.length > 0) {
+          debug?.(
+            `skills: ${loaded.length} loaded (${loaded
+              .map((skill) => `${skill.name}@${skill.source}`)
+              .join(', ')})`,
+          );
+        }
+        return undefined;
+      },
+    },
+    {
+      sessionsRoot: deps.sessionsRoot,
+      env: deps.env,
+      classes: deps.policyClasses,
+      policySource: deps.policySource,
+      approvals: deps.approvals,
+      policy: deps.policy,
+      models: deps.models,
+      modelsCwd: deps.modelsCwd,
+      model: deps.model,
+      streamTuning: deps.streamTuning,
+      thinking: deps.thinking,
+      compaction: deps.compaction,
+      agentId: deps.agentId,
+      journalRetention: deps.journalRetention,
+      reconcileOutOfScope: deps.reconcileOutOfScope,
+      systemPromptSection: deps.systemPromptSection,
+      modelPolicy: deps.modelPolicy,
+      trustProject: deps.trustProject,
+      skills: deps.skills,
+      roles: deps.roles,
+    },
+    {
+      ...(debug === undefined ? {} : { debug }),
+      warn: warnLine,
+      fauxNotice: warnLine,
+      modelNotice: notice,
+      // An unresolvable explicit --skill warns on stderr — never only on
+      // the debug channel — so a typo cannot read as loaded.
+      skillsWarn: warnLine,
+      skillsLog: (line) => debug?.(`skills: ${line}`),
+    },
   );
-  const store = openSessionStore(root, bridge);
-  let session: SessionHandle;
-  try {
-    session =
-      options.sessionId === undefined
-        ? await createSession(
-            store,
-            {
-              cwd: deps.env?.cwd ?? process.cwd(),
-              // The run's mode is always recorded —
-              // explicit `--autonomous` or off by default.
-              mode: options.autonomous === true ? 'autonomous' : 'interactive',
-            },
-            context,
-          )
-        : await attachSession(store, options.sessionId, context);
-  } catch (error) {
-    return storeFailure(options.sessionId, error);
+  capture.liveSecrets = () => boot.liveSecrets();
+  // The run's start names the mode in the ledger — a fresh session only (a
+  // resume continues the recorded run) — and a run on a full-access session
+  // is never silent: the grant's own warning when this run enabled it,
+  // otherwise the named in-force warning, on stderr so stdout stays
+  // consumable. Best-effort: a dead ledger never fails the run.
+  function recordRunStart(booted: SessionBoot): void {
+    const installed = booted.installed;
+    const env = booted.env;
+    if (installed === undefined || env === undefined) return;
+    report.posture = installed.posture.fullAccess ? 'full-access' : 'approvals';
+    if (options.sessionId === undefined) {
+      appendToLedger(
+        auditLedgerDirFor(env.cwd),
+        runStartAudit({
+          sessionId: booted.id,
+          command: 'kubic run',
+          runMode: options.autonomous === true ? 'autonomous' : 'interactive',
+          workspace: env.cwd,
+          posture: report.posture,
+          autonomous: options.autonomous === true,
+          base: booted.base ?? 'unknown',
+        }),
+        (message) => debug?.(`audit: run start not recorded: ${message}`),
+      );
+    }
+    if (installed.posture.fullAccess) {
+      warnLine(booted.fullAccessWarning ?? fullAccessInForceWarning(booted.id));
+    }
   }
+  // Defense-in-depth with run-cli's checks: direct callers bypass the CLI,
+  // so a path-unsafe session id, an invalid guard bound or a contradictory
+  // tool selection fails closed with the usage terminus (exit 2) before any
+  // store or lane exists.
+  const invalid =
+    usageRefusal(boot.validateSessionId()) ??
+    guardBoundsRefusal(options) ??
+    usageRefusal(boot.validateTools());
+  if (invalid !== undefined) {
+    return finished('unassigned', 'usage', invalid, invalid);
+  }
+  const opened = await boot.open();
+  if (opened?.kind === 'store')
+    return storeFailure(options.sessionId, opened.error);
+  const session = boot.session as SessionHandle;
   const id = session.id;
   capture.sessionId = id;
-  capture.sessionsRoot = root;
+  capture.sessionsRoot = boot.root;
   // The result and envelope name the session's recorded
   // mode — a resumed or attached session keeps the creating run's mode.
   // A pre record (no mode) falls back to this invocation's flag.
   report.mode =
     session.meta.mode ??
     (options.autonomous === true ? 'autonomous' : 'interactive');
-  // The [session] debug line names the session.
-  debug?.(`[session] id=${id}`);
-  // Declared outside the try so the `finally` sweep below can reach it:
-  // assigned once the lane's env (the workspace root) exists.
-  let reconciliation: RunReconciliation | undefined;
-  // The installed policy's end-of-session posture check.
-  let settlePolicy: (() => void) | undefined;
-  // The booted lane is hoisted so every exit path can stop the
-  // in-flight turn — a guard firing mid-turn must not abandon the tool
-  // processes it interrupted.
-  let lane: Lane | undefined;
   // Set when a guard or an interrupt abandoned a live turn: the finally then
   // states the durable conversation abort (plus the kill drain) instead of
   // dropping handles for work that is still running.
@@ -1139,7 +1077,6 @@ async function runHeadlessPromptImpl(
   // Counted from the committed usage events: one per assistant
   // response, the turn unit `--max-turns` bounds.
   let turns = 0;
-
   // The run's guard timer: armed with the wall-clock bound once
   // the session exists, cleared on every exit path.
   let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -1151,10 +1088,6 @@ async function runHeadlessPromptImpl(
   // once, so a second Ctrl-C force-quits through the default handler.
   const signals = deps.signals ?? process;
   let signalsAttached = false;
-  // Set by the first signal. Boot checks it before each expensive step (and
-  // before the turn), so a pre-turn Ctrl-C cancels the boot instead of
-  // letting it run on unseen.
-  let interruptedBy: string | undefined;
   const detachSignals = (): void => {
     if (!signalsAttached) return;
     signalsAttached = false;
@@ -1163,6 +1096,7 @@ async function runHeadlessPromptImpl(
   function onSignal(signal: string): void {
     detachSignals();
     interruptedBy ??= signal;
+    const lane = boot.lane;
     if (lane !== undefined) {
       for (const kill of lane.kills.drain(String(lane.conversation.id))) {
         try {
@@ -1184,12 +1118,12 @@ async function runHeadlessPromptImpl(
     const message = new InterruptedError(interruptedBy).message;
     return finished(id, 'cancelled', message, message, interruptedBy);
   };
-  // The span artifact is the durable half of criterion 1: written on every
-  // exit path (success or mapped failure) next to the session journal.
+  // The span artifact is written on every exit path (success or mapped
+  // failure) next to the session journal.
   const flushSpans = (): void => {
     spans.endRun(runSpan);
     try {
-      bridge.appendFile(
+      boot.bridge.appendFile(
         join(id, 'spans.jsonl'),
         serializeSpanArtifact(spans.trace(), runSpan, id),
       );
@@ -1213,630 +1147,36 @@ async function runHeadlessPromptImpl(
   try {
     // Attached inside the try: the finally below always detaches them.
     attachSignals();
-    bridge.createDir(join(id, 'journal'));
     // The wall clock starts with the run's own work (the pending settlement
-    // and the turn), not with the boot: a slow boot is not a slow turn. The
-    // prompt entry is written by `submit` itself, so there is no
-    // pre-boot prompt write to fail here.
+    // and the turn), not with the session open.
     const boundMs = options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
     deadline = setTimeout(
       () => tripGuard(new WallClockError(boundMs)),
       boundMs,
     );
-    const afterBound = bootInterrupted();
-    if (afterBound !== undefined) return afterBound;
-    // Role selection (adds the config layers):
-    // `--role` loads the role document and derives ALL THREE halves of the
-    // lane boot from it — the prompt text (the document's `## Prompt`), the
-    // tool allowlist (the resolved set), and the model default (a layer's
-    // `[roles.<name>].model` pin). It resolves BEFORE the model selection so
-    // the pin can act as the selection default. All four refusals are
-    // fail-closed with a named reason: an unknown role, a contradictory
-    // document, a document with no instructions, and a parse failure.
-    // Nothing is invented, and an absent --role leaves the lane boot
-    // byte-identical.
-    let role: { resolved: ResolvedRole; prompt: string } | undefined;
-    // The resolved role document's `skills` list for
-    // the skill gate — hoisted because `selected` lives in the branch.
-    let roleDocSkills: string[] | undefined;
-    // Enterprise gates: one local view of the resolved
-    // policy, so the role resolution, the model selection and the lane tool
-    // set all read the same object.
-    const enterprisePolicy = deps.modelPolicy;
-    const toolGate =
-      enterprisePolicy !== undefined && hasToolPolicy(enterprisePolicy)
-        ? (tool: string): boolean =>
-            isToolAllowedByEnterprise(enterprisePolicy, tool)
-        : undefined;
-    // The stored model of a resumed session is gated too: the
-    // selection is checked at boot, the stored one only by this closure.
-    const modelGate =
-      enterprisePolicy !== undefined && hasModelPolicy(enterprisePolicy)
-        ? (provider: string, modelId: string): boolean =>
-            isModelAllowed(enterprisePolicy, provider, modelId)
-        : undefined;
-    if (options.role !== undefined) {
-      const rolesBridge = createNodeFileBridge(
-        deps.roles?.cwd ?? process.cwd(),
-      );
-      const rolesCwd = deps.roles?.cwd ?? process.cwd();
-      // Role documents resolve at the project root, so
-      // `--role` from a subdirectory finds `<root>/.kubic/roles/*.md`.
-      const rolesRoot = findProjectRoot(rolesBridge, rolesCwd, homedir());
-      let selected: SelectedRole;
-      try {
-        selected = selectRole({
-          bridge: rolesBridge,
-          cwd: rolesCwd,
-          role: options.role,
-          projectRoot: rolesRoot,
-          ...(deps.roles?.layers === undefined
-            ? {}
-            : { layers: deps.roles.layers }),
-          // An untrusted root's documents are
-          // withheld — `--role` naming one refuses with the trust message.
-          ...(deps.roles?.trusted === undefined
-            ? {}
-            : { trusted: deps.roles.trusted }),
-          ...(deps.roles?.trustProject === undefined
-            ? {}
-            : { trustProject: deps.roles.trustProject }),
-          // The global `~/.kubic/roles` layer under the
-          // project documents — absent means no global source.
-          ...(deps.roles?.homeDir === undefined
-            ? {}
-            : { home: deps.roles.homeDir }),
-          // Enterprise policy: a role document declaring a
-          // denied tool is refused here, by name, before the lane boots.
-          ...(enterprisePolicy === undefined
-            ? {}
-            : { toolPolicy: enterprisePolicy }),
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return finished(id, 'failed', message, message);
-      }
-      let promptText: string;
-      try {
-        // The prompt comes from the winning document: a repo
-        // override's text, or the preset embedded in the binary.
-        promptText = rolePromptFor(selected.doc, selected.markdown);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return finished(id, 'failed', message, message);
-      }
-      debug?.(
-        `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
-      );
-      role = { resolved: selected.resolved, prompt: promptText };
-      roleDocSkills = selected.doc.skills;
-      capture.role = selected.resolved.name;
-    } else {
-      // The stock run resolves no role document — the
-      // [policy] line still names the default role it runs as.
-      debug?.(`[policy] role=${DEFAULT_RUN_ROLE} (default)`);
-    }
-    // A refused models.json is a config error the user must see: it goes
-    // to the warning channel unconditionally; a successful load is a
-    // receipt for the debug channel only.
-    let models: MutableModels;
-    // The implicit pick only considers customs and built-ins
-    // whose auth is configured — a keyless built-in is never picked.
-    let fallbackProviders: readonly string[] | undefined;
-    if (deps.models === undefined) {
-      // Request-time provider keys: a models.json key is
-      // resolved per request and each use lands in the ledger of the
-      // run's workspace.
-      let identityWords: string[] | undefined;
-      const keyResolver = createLedgerModelKeyResolver({
-        workspace: deps.env?.cwd ?? process.cwd(),
-        role: role?.resolved.name ?? 'root',
-        sessionId: () => id,
-        onError: (message) =>
-          debug?.(`[session] credential use not audited: ${message}`),
-        // A dummy key that IS its provider's name (LM Studio's `lm-studio`)
-        // is identity, not a secret: the catalog's provider and
-        // model ids are read once assembled — a line emitted before that
-        // (the models receipts) has nothing to exempt yet.
-        identity: () => {
-          if (identityWords !== undefined) return identityWords;
-          const catalog = models as MutableModels | undefined;
-          if (catalog === undefined) return [];
-          identityWords = catalogIdentity(catalog);
-          return identityWords;
-        },
-        // `!command` secret refs execute in the run's
-        // workspace through the production runner — rerun per request.
-        runCommand: createSecretCommandRunner({
-          cwd: deps.env?.cwd ?? process.cwd(),
-        }),
-      });
-      capture.liveSecrets = keyResolver.live;
-      const modelsEnv = Object.fromEntries(
-        Object.entries(process.env).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined,
-        ),
-      );
-      const assembled = await assembleModels(
-        deps.modelsCwd ?? process.cwd(),
-        modelsEnv,
-        {
-          resolveApiKey: keyResolver.resolve,
-          ...(deps.trustProject === undefined
-            ? {}
-            : { projectTrust: deps.trustProject }),
-        },
-      );
-      for (const note of assembled.notes) {
-        if (note.startsWith('models.json ignored')) {
-          (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
-            note,
-          );
-        } else {
-          debug?.(note);
-        }
-      }
-      models = assembled.models;
-      fallbackProviders = assembled.fallbackProviders;
-    } else {
-      models = deps.models;
-    }
-    // The faux testing provider (`KUBIC_PROVIDER=faux`): registered by
-    // assembleModels and pinned here, so it is the model that answers —
-    // announced on the warning channel before the first turn (never
-    // silent). Any other KUBIC_PROVIDER value is refused by name.
-    const providerOverride = providerOverrideFromEnv(process.env);
-    if (providerOverride.kind === 'invalid') {
-      const message = invalidProviderMessage(providerOverride.value);
-      return finished(id, 'provider_probe_failed', message, message);
-    }
-    const fauxPinned =
-      providerOverride.kind === 'faux' && deps.models === undefined;
-    if (fauxPinned) {
-      (deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`)))(
-        FAUX_NOTICE,
-      );
-    }
-    let model: ReturnType<typeof selectModel>;
+    let refused: BootRefusal | undefined;
     try {
-      // An explicit pin (replay re-execution at the declared model, or the
-      // `[model]`/env/cli pin runtimeModelPin projects) wins over default
-      // selection; the role layer's own `provider/id` pin is
-      // the next default, and `kubic run` with neither takes the first
-      // usable provider (customs first; never a keyless built-in). The
-      // Enterprise policy gates the explicit/role
-      // selection and the implicit provider pool the same way on this
-      // path and on `kubic tui`.
-      model = selectBootModel({
-        models,
-        fauxPinned,
-        pin: deps.model,
-        roleModel: role?.resolved.model,
-        fallbackProviders,
-        policy: enterprisePolicy,
-        // The role's allowed set gates the
-        // explicit/role selection and the implicit pick alike.
-        roleScope: roleModelScope(role?.resolved),
-      });
-    } catch (error) {
-      if (error instanceof ModelSelectError) {
-        return finished(
-          id,
-          'provider_probe_failed',
-          error.message,
-          error.message,
-        );
-      }
-      throw error;
+      refused = await boot.boot();
+    } finally {
+      // What the boot settled is the trajectory's, whichever step stopped.
+      captureBoot(boot, capture);
     }
-    capture.model = { provider: model.provider, id: model.id };
-    const env = deps.env ?? new NodeExecutionEnv(process.cwd());
-    capture.cwd = env.cwd;
-    // Installed policy: the composition root derives
-    // the classes and interceptor options the lane runs on, ONCE, from the
-    // same function doctor reads (host/approvals.installPolicy). Config-
-    // sourced classes replace the documented DEFAULT_PERMISSIONS; the
-    // destructive/network/confine guards and the approval ask are installed
-    // either way, so a run with no config is not a run with no policy.
-    // The workspace root is explicit — the lane cannot invent one.
-    const warnLine =
-      deps.warn ?? ((line: string) => process.stderr.write(`${line}\n`));
-    // The explicit flag enables full access for THIS
-    // session through the one host enable path (posture.json + one audit row +
-    // the shared warning) BEFORE the policy is installed, so the lane boots
-    // under the posture the user asked for.
-    const fullAccessGrant =
-      options.dangerouslySkipApprovals === true
-        ? enableSessionFullAccess({
-            sessionDir: join(root, id),
-            sessionId: id,
-            command: 'run',
-            workspace: env.cwd,
-            onAuditError: (message) =>
-              debug?.(`audit: ledger append failed: ${message}`),
-          })
-        : undefined;
-    // The `provider/id` the audit rows name: seeded with the
-    // selection and re-pointed at the model the lane REPORTS once the boot
-    // has applied the stored-model rule — the policy is installed before the
-    // lane exists, so it reads this at record time instead of freezing the
-    // pre-boot pick.
-    let liveModelRef = `${model.provider}/${model.id}`;
-    // Audit identity: the base revision this run started
-    // from — `git rev-parse HEAD` captured once here, `none` outside git.
-    // The policy is installed before the lane boots, so the revision is
-    // resolved now and carried on the install.
-    const runBase = await resolveRunBaseRevision(env.cwd, (cmd, args) =>
-      env.shell
-        .spawn(cmd, args, {
-          provenance: {
-            sessionId: id,
-            agentId: deps.agentId ?? 'root',
-            toolCallId: 'run:base-revision',
-            turnId: 0,
-            operation: 'run',
-          },
-        })
-        .wait(),
-    );
-    // The thinking level the lane runs: re-pointed at the
-    // conversation's agent document once the boot has applied the stored
-    // level — read at record time, like the model.
-    let liveThinkingRef: string | undefined;
-    const installed =
-      deps.policy ??
-      installPolicy({
-        workspace: env.cwd,
-        // The lane enforces the most restrictive
-        // merge of the config classes and the role's — a role declaring
-        // `network: none` runs under it even when config allows full.
-        // No role means the config (or the lane default).
-        ...((): { classes?: PermissionClasses; requires?: string[] } => {
-          const grantClasses = role?.resolved.classes;
-          const requires = role?.resolved.requires;
-          if (grantClasses === undefined)
-            return {
-              ...(deps.policyClasses === undefined
-                ? {}
-                : { classes: deps.policyClasses }),
-              ...(requires === undefined ? {} : { requires }),
-            };
-          return {
-            classes: effectiveRoleClasses(
-              { ...DEFAULT_PERMISSIONS, ...deps.policyClasses },
-              grantClasses,
-            ),
-            ...(requires === undefined ? {} : { requires }),
-          };
-        })(),
-        // The layer's own record, so the posture's `source` is the same
-        // answer doctor prints — never inferred from the object's shape.
-        source: deps.policySource ?? 'default',
-        // The configured approval policy, never the defaults.
-        ...(deps.approvals ?? {}),
-        sessionDir: join(root, id),
-        // The session root in use is refused control-plane state.
-        sessionsRoot: root,
-        // Audit identity for the ledger record of each resolved ask.
-        sessionId: id,
-        model: () => liveModelRef,
-        // The thinking level at record time, and the base
-        // revision captured above.
-        thinking: () => liveThinkingRef,
-        base: runBase,
-      });
-    report.posture = installed.posture.fullAccess ? 'full-access' : 'approvals';
-    settlePolicy = installed.settle;
-    // The run's start names the mode in the
-    // ledger — a fresh session only (a resume continues the recorded run).
-    // Best-effort: a dead ledger never fails the run.
-    if (options.sessionId === undefined) {
-      const runMode =
-        options.autonomous === true ? 'autonomous' : 'interactive';
-      appendToLedger(
-        auditLedgerDirFor(env.cwd),
-        runStartAudit({
-          sessionId: id,
-          command: 'kubic run',
-          runMode,
-          workspace: env.cwd,
-          posture: report.posture,
-          autonomous: options.autonomous === true,
-          // Review (low): the resolved base was in scope
-          // (`runBase`, passed to installPolicy above) while the row
-          // hardcoded `unknown`.
-          base: runBase,
-        }),
-        (message) => debug?.(`audit: run start not recorded: ${message}`),
+    if (refused !== undefined) {
+      if (refused.kind === 'cancelled') {
+        return bootInterrupted() ?? finished(id, 'cancelled', 'cancelled');
+      }
+      const message =
+        refused.kind === 'store' ? String(refused.error) : refused.message;
+      return finished(
+        id,
+        refused.kind === 'provider' ? 'provider_probe_failed' : 'failed',
+        message,
+        message,
       );
     }
-    // A headless run on a full-access session is never silent:
-    // the grant's own warning when this run enabled it, otherwise the named
-    // in-force warning — on stderr, so stdout stays consumable.
-    if (installed.posture.fullAccess) {
-      warnLine(fullAccessGrant?.warning ?? fullAccessInForceWarning(id));
-    }
-    const journal = new FileJournalStore(
-      join(root, id, 'journal'),
-      deps.journalRetention ?? {},
-    );
-    // Baseline: captured ONCE, before
-    // the first turn, as a metadata walk (hashes only, no blobs) that skips
-    // `.git/`, `.kubic/` and `.gitignore` hits on its own. A capture failure
-    // is not a run failure — the sweep then simply has no baseline to
-    // compare against.
-    try {
-      reconciliation = beginReconciliation({
-        store: journal,
-        root: env.cwd,
-        runId: id,
-        sessionId: id,
-        // Review follow-up: a very large file (or a bridge without ranged
-        // reads) is named on the existing debug channel rather than silently
-        // costing its size at boot.
-        onNotice: (detail: string) => debug?.(`reconcile: ${detail}`),
-        ...(deps.reconcileOutOfScope === undefined
-          ? {}
-          : { outOfScope: deps.reconcileOutOfScope }),
-      });
-    } catch (error) {
-      debug?.(
-        `reconcile: baseline capture failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    // Repo-level overlap warning (blind spot): two
-    // DIFFERENT sessions in one workspace are legal — this is a warning on
-    // the debug channel, never a block. But each run sweeps against its own
-    // boot baseline, so a live sibling's in-progress changes land in this
-    // run's journal as unattributed, non-reversible entries. The store can
-    // show a session, not its liveness, so the line says "may be live" and
-    // names the sibling ids. A probe failure is a receipt, not a run
-    // failure — the same posture as the baseline capture above.
-    try {
-      const touching = await sessionsTouchingWorkspace(store, env.cwd, context);
-      const others = touching.filter((sessionId) => sessionId !== id);
-      if (others.length > 0) {
-        debug?.(
-          `reconcile: another run may be live in this workspace — its in-progress changes will be recorded as unattributed (sessions: ${others.join(', ')})`,
-        );
-      }
-    } catch (error) {
-      debug?.(
-        `reconcile: overlap probe failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    // The installed policy's tool wrappers; the harness is
-    // destructured too so the tool-span hooks can attach.
-    const contributions = [...installed.contributions];
-    // Skills on the live path: discovery runs at boot
-    // through the real FileBridge, the project roots stay gated behind the
-    // documented trust opt-in, and the model-visible blocks are appended to
-    // the assembled system prompt as a suffix section. A refusal here is
-    // not fatal by design (skills are context, never a gate) — the loader
-    // reports unreadable skills on the debug channel and continues.
-    const trustProject = deps.trustProject ?? deps.skills?.trustProject;
-    const skills = bootSkills({
-      bridge,
-      cwd: deps.skills?.cwd ?? process.cwd(),
-      homeDir: deps.skills?.homeDir ?? homedir(),
-      trusted:
-        deps.skills?.trusted ??
-        (process.env.KUBIC_TRUST_PROJECT === '1' ||
-          process.env.KUBIC_TRUST_PROJECT === 'true'),
-      ...(trustProject === undefined ? {} : { trustProject }),
-      ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
-      ...(options.skills === undefined ? {} : { cliSkills: options.skills }),
-      // The config `skills` projection loads with
-      // source 'settings'.
-      ...(deps.skills?.settingsSkills === undefined
-        ? {}
-        : { settingsSkills: deps.skills.settingsSkills }),
-      // The injected set depends on the resolved
-      // role and the installed classes.
-      ...(role?.resolved.name === undefined
-        ? {}
-        : { role: role.resolved.name }),
-      ...(roleDocSkills === undefined ? {} : { roleSkills: roleDocSkills }),
-      classes: installed.classes,
-      // An unresolvable explicit --skill warns on stderr —
-      // never only on the debug channel — so a typo cannot read as loaded.
-      warn: warnLine,
-      log: (line) => debug?.(`skills: ${line}`),
-    });
-    capture.skills = skills.skills.map((skill) => skill.name);
-    // `--invoke-skill` expands against the invocable
-    // set (admitted + gate-passed, hidden included, withheld excluded) —
-    // the skill content runs as the turn prompt with the operator's prompt
-    // as instructions. An unknown name fails the run with the named error
-    // (exit 1, like a refused --role): the invocation IS the run, so
-    // fail-open would run the raw prompt as if the skill existed.
-    let invokedPrompt = prompt;
-    if (options.invokeSkill !== undefined) {
-      try {
-        invokedPrompt = expandSkillInvocation(
-          skills.invocable,
-          options.invokeSkill,
-          prompt,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return finished(id, 'failed', message, message);
-      }
-      effectivePrompt = invokedPrompt;
-    }
-    if (skills.skills.length > 0) {
-      debug?.(
-        `skills: ${skills.skills.length} loaded (${skills.skills
-          .map((skill) => `${skill.name}@${skill.source}`)
-          .join(', ')})`,
-      );
-    }
-    const beforeBoot = bootInterrupted();
-    if (beforeBoot !== undefined) return beforeBoot;
-    // A pin (the faux pin, the `[model]`/env pin, or
-    // the role's model) is an explicit selection and switches a resumed
-    // session whose stored model differs; the default pick never does —
-    // the session keeps its own model. Either way it is named on stderr.
-    const notice = deps.notice ?? ((line: string) => console.error(line));
-    const explicitModel = hasExplicitModelSelection({
-      fauxPinned,
-      pin: deps.model,
-      roleModel: role?.resolved.model,
-    });
-    // Request options: the merged `[model]` tuning with
-    // the run's role layered over it becomes this lane's `settings.stream`.
-    const streamRoleName = options.role;
-    const stream = resolveStreamOptions(
-      deps.streamTuning?.model,
-      streamRoleName === undefined
-        ? undefined
-        : deps.streamTuning?.roles?.[streamRoleName],
-    );
-    // The lane's thinking request. A per-run source
-    // (cli `--thinking` / env `KUBIC_MODEL_THINKING`, enterprise-frozen
-    // included) is the override and beats the session's stored level; a
-    // file-layer source is the config default the stored level and the
-    // role default beat. The lane reads the stored level itself and clamps
-    // to the effective model — the notice channel stays the model's (a
-    // clamp names the model, the request, and the level applied).
-    const requestThinking = deps.thinking;
-    // A matching set entry's thinking wins over the flat role default —
-    // resolved against the SELECTED model.
-    const roleThinking = resolveRoleThinking(
-      role?.resolved,
-      model.provider,
-      model.id,
-    );
-    const laneThinking =
-      requestThinking === undefined && roleThinking === undefined
-        ? undefined
-        : {
-            ...(requestThinking === undefined
-              ? {}
-              : requestThinking.source === 'cli' ||
-                  requestThinking.source === 'env' ||
-                  requestThinking.source === 'enterprise'
-                ? {
-                    override: {
-                      level: requestThinking.level,
-                      source: requestThinking.source,
-                    },
-                  }
-                : {
-                    config: {
-                      level: requestThinking.level,
-                      source: requestThinking.source,
-                    },
-                  }),
-            ...(roleThinking === undefined ? {} : { role: roleThinking }),
-          };
-    // The session id pins the boot model for
-    // the task — escalation is the only path off it (the headless lane
-    // climbs only via the single auto trigger; explicit switches are a
-    // TUI affordance).
-    try {
-      lane = await bootLane({
-        session,
-        models,
-        model,
-        modelPolicy: explicitModel ? 'selected' : 'stored',
-        onModelNotice: notice,
-        ...(laneThinking === undefined ? {} : { thinking: laneThinking }),
-        taskId: id,
-        env,
-        sessionId: id,
-        agentId: resolveRunAgentId(deps.agentId),
-        journal,
-        // An untuned run omits `stream` — the
-        // provider defaults stand, never an invented Kubic one.
-        ...(stream === undefined ? {} : { settings: { stream } }),
-        // [agent] systemPromptFile: the configured file text
-        // lands ahead of the skills block — the user's own instructions
-        // first, discovered context second. Shared with the TUI boot.
-        ...(() => {
-          const sections = composePromptSections(
-            deps.systemPromptSection,
-            skills.block,
-          );
-          return sections === undefined ? {} : { promptSections: sections };
-        })(),
-        // The advertised skills outside the cwd stay readable.
-        ...(skills.readRoots.length === 0
-          ? {}
-          : { skillReadRoots: skills.readRoots }),
-        // The role document's resolved set narrows the lane (absence, not
-        // approval).
-        ...(role === undefined
-          ? {}
-          : {
-              rolePrompt: role.prompt,
-              ...(role.resolved.tools.length === 0
-                ? {}
-                : { toolAllowlist: role.resolved.tools }),
-            }),
-        // The explicit CLI selection narrows whatever the role granted: the
-        // lane intersects it (never widens).
-        ...(options.noTools === true ? { noTools: true } : {}),
-        ...(options.tools === undefined
-          ? {}
-          : { toolSelection: [...options.tools] }),
-        // The configured compaction policy reaches the
-        // lane boot — absent means the own defaults.
-        ...(deps.compaction === undefined
-          ? {}
-          : { compaction: deps.compaction }),
-        // One policy object carrying every mechanism: the
-        // classes come from the config layer when it supplies them and from
-        // the documented safe default otherwise, the interceptors are always
-        // installed, and the hook factory registers the tool spans
-        // (`kubic.spans`, after policy).
-        policy: {
-          classes: installed.classes,
-          interceptors: installed.interceptors,
-          ...(contributions.length === 0 ? {} : { contributions }),
-          // The tool spans, installed after policy so a
-          // blocked call never opens one (the ordering rule).
-          spanHooks: () => runSpanHooks(spans),
-          // Enterprise tool gate: the same predicate drives
-          // the active tool set and the prompt tools line.
-          ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
-          ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
-        },
-      });
-    } catch (error) {
-      // A stored session model that is not registered
-      // is the same terminus as an unknown selection: exit 6, named.
-      if (error instanceof ModelSelectError) {
-        return finished(
-          id,
-          'provider_probe_failed',
-          error.message,
-          error.message,
-        );
-      }
-      throw error;
-    }
-    // The boot reconciled the selection with the session's stored model: the
-    // trajectory and the audit rows name what the lane reports, the same source
-    // as the envelope and the usage rows.
-    const running = await liveModel(lane, context);
-    if (running !== undefined) {
-      capture.model = { provider: running.provider, id: running.id };
-      liveModelRef = `${running.provider}/${running.id}`;
-    }
-    // The thinking level the lane actually runs (pi-durable
-    // defaults an unset level to `off`, the same answer `/thinking`
-    // reports) — the audit rows name this, not the pre-boot pick.
-    liveThinkingRef =
-      (await lane.conversation.agent(context)).thinkingLevel ?? 'off';
-    // What the lane booted with (post-clamp), read
-    // from the committed agent doc — the same source the envelope reports.
-    // Unset stays unset: the trajectory omits the key rather than
-    // inventing a level the lane never committed.
-    const bootedThinking = (await lane.conversation.agent(context))
-      .thinkingLevel;
-    if (bootedThinking !== undefined) capture.thinking = bootedThinking;
-    report.model = await liveModelId(lane, context);
+    const lane = boot.lane as Lane;
+    const installed = boot.installed as InstalledPolicy;
+    report.model = boot.liveModel === undefined ? undefined : boot.liveModelRef;
     options.progress?.begin({
       ...(report.model === undefined ? {} : { model: report.model }),
       ...(capture.role === undefined ? {} : { role: capture.role }),
@@ -1854,22 +1194,20 @@ async function runHeadlessPromptImpl(
         const activity = laneActivityDebugLine(event);
         if (activity !== undefined) debug?.(activity);
         if (event.type === 'tool-start') {
-          const start = {
+          options.progress?.toolStart({
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             args: event.args,
-          };
-          options.progress?.toolStart(start);
+          });
           return;
         }
         if (event.type === 'tool-end') {
-          const end = {
+          options.progress?.toolEnd({
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             isError: event.isError,
             ...(event.entry === undefined ? {} : { entry: event.entry }),
-          };
-          options.progress?.toolEnd(end);
+          });
           return;
         }
         if (event.type !== 'usage') return;
@@ -1934,9 +1272,9 @@ async function runHeadlessPromptImpl(
         abandoned = true;
         return stoppedResult(id, stopped, capture);
       }
-      // One stable request id per invocation (README "Persist and Resume"): a
-      // re-submit inside this run finds the same submission instead of
-      // prompting twice, while a fresh invocation is a fresh prompt.
+      // One stable request id per invocation: a re-submit inside this run
+      // finds the same submission instead of prompting twice, while a fresh
+      // invocation is a fresh prompt.
       const requestId = `kubic-run:${randomUUID()}`;
       let outcome: TurnOutcome;
       // The overflow-recovery decision, when the lane
@@ -1999,18 +1337,16 @@ async function runHeadlessPromptImpl(
       // Exit 4 covers the whole approval terminus; the STATUS is
       // the honest half. A denial whose reason carries the timeout marker is
       // a bound that elapsed, everything else is a refusal — a script can
-      // tell "the operator said no" from "nobody answered in time". The
-      // timeout latch has not yet put a structured `code` on
-      // RecordedApprovalDeny, so classification keys off the one
-      // TIMEOUT_REASON_MARKER string (the same one classifyVerdict uses)
-      // rather than a private regex that could drift from the producers.
+      // tell "the operator said no" from "nobody answered in time".
+      // Classification keys off the one TIMEOUT_REASON_MARKER string (the
+      // same one classifyVerdict uses) rather than a private regex that could
+      // drift from the producers.
       const denials = installed.denials();
       if (denials.length > 0) {
         const named = denials
           .map((denial) => `${denial.capability} (${denial.toolName})`)
           .join(', ');
-        // Classification reads the first recorded denial's reason (the same
-        // first-denial convention as before).
+        // Classification reads the first recorded denial's reason.
         const first = denials[0]?.reason ?? '';
         const message = `approval refused: ${named} — ${first}`;
         const terminus = first.includes(TIMEOUT_REASON_MARKER)
@@ -2056,6 +1392,7 @@ async function runHeadlessPromptImpl(
     // plain completion); a completed or failed turn forgets its (dead) kill
     // handles. Failures only reach the debug channel: the mapped result
     // and the sweep both stand.
+    const lane = boot.lane;
     if (lane !== undefined) {
       if (abandoned) {
         await abortAbandonedLane(lane, (message) =>
@@ -2068,88 +1405,89 @@ async function runHeadlessPromptImpl(
     // In-flight work is dead: a later signal takes the default path again.
     detachSignals();
     if (deadline !== undefined) clearTimeout(deadline);
-    // The end-of-run sweep — after the last
-    // turn, on every exit path (completed, guard exhaustion, deferred wait,
-    // malformed outcome, an unexpected throw). Runs BEFORE the session close
-    // so a close failure cannot skip it, and never changes the mapped
-    // result: a sweep failure is reported on the debug receipt only.
-    try {
-      reconciliation?.sweep();
-    } catch (error) {
-      try {
-        debug?.(
-          `reconcile: sweep failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      } catch {
-        // A throwing debug sink must not mask the mapped result either.
-      }
-    }
-    flushSpans();
-    // A posture.json written after the last ask is restored to
-    // the boot posture (and recorded) before the session closes.
-    try {
-      settlePolicy?.();
-    } catch {
-      // Best-effort: the mapped result stands.
-    }
-    // The prompt guarantee first: a run that never admitted the
-    // prompt still gets its one durable entry, and the transcript decides —
-    // never a second copy for a prompt that is already carried. Done before
-    // the capture below so the trajectory carries the fallback write.
-    try {
-      await ensurePromptDurable(
-        lane,
-        session,
-        effectivePrompt,
-        context,
-        (message) => guardedReport(debug, message),
-      );
-    } catch (error) {
-      guardedReport(
-        debug,
-        `session: prompt not persisted: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    // The trajectory's entries, read while the session is
-    // still open through the shared transcript adapter; a read
-    // failure leaves the trajectory without actions, never the run without
-    // its result.
-    capture.entries = await captureEntries(lane, session, context);
-    // The harness owns the storage it adopted; closing it first means the
-    // handle's release only gives the lock back (and closes a storage no
-    // harness took). The result is already mapped: a close failure must
-    // neither escape nor mask it. An abandoned turn may still hold a stuck
-    // invocation, so THAT close is bounded — the run's own result wins.
-    try {
-      if (lane !== undefined) {
-        const closing = lane.close(context);
-        if (abandoned) {
-          await settledWithin(closing, LANE_ABORT_BOUND_MS);
-        } else {
-          await closing;
+    // The sweep, the policy's posture check and the session close, on every
+    // exit path. While the session is still open: the span artifact, the
+    // prompt guarantee and the trajectory's entries.
+    await boot.teardown({
+      ...(abandoned ? { closeBoundMs: LANE_ABORT_BOUND_MS } : {}),
+      beforeClose: async () => {
+        flushSpans();
+        // The prompt guarantee first: a run that never admitted the prompt
+        // still gets its one durable entry, and the transcript decides —
+        // never a second copy for a prompt that is already carried. Done
+        // before the capture below so the trajectory carries the fallback
+        // write.
+        try {
+          await ensurePromptDurable(
+            lane,
+            session,
+            effectivePrompt,
+            context,
+            (message) => guardedReport(debug, message),
+          );
+        } catch (error) {
+          guardedReport(
+            debug,
+            `session: prompt not persisted: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
-      }
-    } catch {
-      // Intentionally swallowed — the mapped result stands.
-    }
-    try {
-      await session.release(context);
-    } catch {
-      // Intentionally swallowed — the mapped result stands.
-    }
+        // The trajectory's entries, read while the session is still open
+        // through the shared transcript adapter; a read failure leaves the
+        // trajectory without actions, never the run without its result.
+        capture.entries = await captureEntries(lane, session, context);
+      },
+    });
   }
 }
 
-// The provider ids and model ids a run names: the words a live
-// key value must not be scrubbed out of. Empty before the catalog exists.
-function catalogIdentity(models: MutableModels | undefined): string[] {
-  if (models === undefined) return [];
-  return models
-    .getProviders()
-    .flatMap((provider) => [
-      provider.id,
-      ...models.getModels(provider.id).map((model) => model.id),
-    ]);
+// A refusal from the session checks or the guard bounds, as the usage
+// message, or undefined.
+function usageRefusal(refusal: BootRefusal | undefined): string | undefined {
+  return refusal?.kind === 'usage' ? refusal.message : undefined;
+}
+
+// Guard overrides are validated before any store or lane exists: an
+// invalid bound fails closed with the usage terminus (exit 2) and never
+// boots a lane. Unset bounds fall through to the CLI default.
+function guardBoundsRefusal(options: HeadlessRunOptions): string | undefined {
+  if (
+    options.timeoutMs !== undefined &&
+    (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)
+  ) {
+    return `invalid timeoutMs ${JSON.stringify(options.timeoutMs)} (need a positive integer of milliseconds)`;
+  }
+  // Same ceiling as the CLI (defense-in-depth for direct callers): above
+  // 2^31-1 ms setTimeout clamps to 1 ms, which would fire the "bound"
+  // immediately and misreport a timeout.
+  if (
+    options.timeoutMs !== undefined &&
+    options.timeoutMs > MAX_RUN_TIMEOUT_MS
+  ) {
+    return `invalid timeoutMs ${JSON.stringify(options.timeoutMs)} (max ${MAX_RUN_TIMEOUT_MS})`;
+  }
+  if (
+    options.maxTurns !== undefined &&
+    (!Number.isInteger(options.maxTurns) || options.maxTurns <= 0)
+  ) {
+    return `invalid maxTurns ${JSON.stringify(options.maxTurns)} (need a positive integer of turns)`;
+  }
+  return undefined;
+}
+
+// What the boot settled, for the trajectory: the role, the model the lane
+// runs (else the selection), the workspace, the loaded skills and the
+// thinking level the lane booted with (post-clamp; unset stays unset).
+function captureBoot(boot: SessionBoot, capture: RunCapture): void {
+  if (boot.role !== undefined) capture.role = boot.role.resolved.name;
+  const model = boot.liveModel ?? boot.model;
+  if (model !== undefined) {
+    capture.model = { provider: model.provider, id: model.id };
+  }
+  if (boot.env !== undefined) capture.cwd = boot.env.cwd;
+  if (boot.skills !== undefined) {
+    capture.skills = boot.skills.skills.map((skill) => skill.name);
+  }
+  if (boot.thinkingLevel !== undefined) capture.thinking = boot.thinkingLevel;
 }
 
 // The `provider/id` the lane actually runs: the live

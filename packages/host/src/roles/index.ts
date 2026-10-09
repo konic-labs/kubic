@@ -10,5 +10,4 @@ export {
   roleModelAllowed,
   roleModelEntry,
 } from './resolver.js';
-export type { SelectedRole } from './roles-boot.js';
 export { rolePromptFor, rolesDoctorProbe, selectRole } from './roles-boot.js';

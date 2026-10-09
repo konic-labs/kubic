@@ -71,8 +71,9 @@ import {
   selectModelUnderPolicy,
   sessionRetentionDays,
 } from './config-runtime.js';
-import { composePromptSections, runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './headless-run.js';
 import { prodRunDeps } from './prod-runners.js';
+import { composePromptSections } from './session/bootstrap.js';
 
 const made: string[] = [];
 

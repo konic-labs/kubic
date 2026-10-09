@@ -277,14 +277,11 @@ import {
   selectBootModel,
   selectModelUnderPolicy,
 } from './config-runtime.js';
-import {
-  assistantSummary,
-  composePromptSections,
-  NO_ASSISTANT_TEXT_SUMMARY,
-} from './headless-run.js';
+import { assistantSummary, NO_ASSISTANT_TEXT_SUMMARY } from './headless-run.js';
 import { hasExplicitModelSelection } from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
 import { formatScopedModels } from './scoped-models.js';
+import { composePromptSections } from './session/bootstrap.js';
 import { readTuiWorkspace } from './tui-workspace.js';
 
 // The interaction surface the root shares with the app: the seat

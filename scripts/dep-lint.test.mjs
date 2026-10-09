@@ -551,7 +551,7 @@ describe('dep-lint', () => {
 
   it('flags a package test reaching the app root', () => {
     const dir = fixtureTree({
-      'packages/host/src/run-prod-path.test.ts': `import { d } from '../../../apps/kubic/src/prod-runners.js';\n`,
+      'packages/host/src/wiring.test.ts': `import { d } from '../../../apps/kubic/src/prod-runners.js';\n`,
     });
     const violations = checkTree(dir);
     assert.ok(

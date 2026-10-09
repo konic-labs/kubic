@@ -166,9 +166,7 @@ time; a refused config simply leaves both without a window: prune then
 demands an explicit `--keep-days` rather than falling back to a default
 (deletion stays explicit either way), and `log` writes nothing.
 
-A minimal `.kubic/config.toml` that actually changes behaviour — this exact
-block is parsed and loaded by `config-docs.test.ts`, so the page can never
-drift from the parser:
+A minimal `.kubic/config.toml` that actually changes behaviour:
 
 ```toml
 [model]

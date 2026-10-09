@@ -113,6 +113,12 @@ are re-exported.
 
 - **Test first.** Write the failing test, watch it fail, then write the
   code. One behaviour per test, real code over mocks.
+- **Placement.** A unit test sits beside its module (`foo.ts` and
+  `foo.test.ts`). The composition root's integration tests, which drive
+  `kubic run`, `kubic tui` and the command front door through the real
+  wiring, live in `apps/kubic/test/`, grouped by surface (`run/`, `tui/`,
+  `cli/`, `approvals/`, `lane/`, `replay/`, `config/`) and named by the
+  behaviour they cover.
 - **No network, no paid tokens.** Agent tests use the `faux` provider;
   usage and cost tests use fixture `usage` rows.
 - **Hermetic by default.** `test/vitest-setup.ts` runs every test file

@@ -7,9 +7,14 @@ export default defineConfig({
     conditions: ['source'],
   },
   test: {
-    // `apps/*/src` is collected too: the composition root's
-    // dispatch seam is a testable surface, not a silently-unrun directory.
-    include: ['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts'],
+    // Unit tests sit beside their modules under `src/`; the composition
+    // root's integration tests, which drive `kubic run`, `kubic tui` and the
+    // command front door through the real wiring, live in `apps/*/test/`.
+    include: [
+      'packages/*/src/**/*.test.ts',
+      'apps/*/src/**/*.test.ts',
+      'apps/*/test/**/*.test.ts',
+    ],
     environment: 'node',
     // Hermetic env: temp HOME, no ambient KUBIC_* variables,
     // non-loopback TCP connects refused — see test/hermetic-env.ts. Credential-shaped

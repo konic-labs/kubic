@@ -10,7 +10,7 @@
 // The rule this gate enforces:
 //
 //   any *.test.ts under packages/agent/src, packages/exec/src,
-//   packages/host/src or apps/kubic/src that spawns `git` directly
+//   packages/host/src, apps/kubic/src or apps/kubic/test that spawns `git` directly
 //   (execFileSync/spawnSync/execSync/execFile/spawn with a 'git' command,
 //   quoted or backtick, a path ending in `/git`, or a name the file binds
 //   to one, the call split across lines or not) is an offender — importing
@@ -43,6 +43,7 @@ const SCOPED_DIRS = [
   join('packages', 'exec', 'src'),
   join('packages', 'host', 'src'),
   join('apps', 'kubic', 'src'),
+  join('apps', 'kubic', 'test'),
 ];
 
 // A direct `git` spawn: `execFileSync('git', …)`, `spawnSync("git", …)`,

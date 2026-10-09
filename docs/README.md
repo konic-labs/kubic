@@ -47,10 +47,11 @@ rationale, package APIs and CLI behaviour never mix.
 | [models.md](cli/models.md) | `kubic models`, `kubic setup`, `models.json` and provider keys |
 | [analysis.md](cli/analysis.md) | `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy`, `audit` |
 | [exit-codes.md](cli/exit-codes.md) | The exit-code table |
-| [configuration.md](cli/configuration.md) | Config precedence and secrets |
+| [configuration.md](cli/configuration.md) | Config layers, keys and `kubic config` |
+| [enterprise.md](cli/enterprise.md) | The managed `[policy]` layer and its audit sinks |
 | [doctor-and-debug.md](cli/doctor-and-debug.md) | `kubic doctor` diagnostics and debugging |
 | [tools.md](cli/tools.md) | The tools the model calls |
-| [trust.md](cli/trust.md) | Project trust |
+| [trust.md](cli/trust.md) | Project trust and `kubic trust` |
 | [skills.md](cli/skills.md) | `kubic skills`: which skills loaded and why any were left out |
 | [contributing.md](contributing.md) | Contributor workflow |
 | [contributing-cli.md](contributing-cli.md) | Building CLI commands: the commander registry, exit codes, `--json`, output helpers |
@@ -62,8 +63,9 @@ rationale, package APIs and CLI behaviour never mix.
    behaviour operators see. Cross-link instead of duplicating.
 2. **Docs change with the code.** A behaviour change ships its docs page
    in the same commit. See [contributing.md](contributing.md).
-3. **No broken internal links.** `npm run docs:check` must pass. External
-   URLs and same-page anchors are exempt.
+3. **No broken internal links.** `npm run docs:check` must pass: every
+   relative link resolves, and every anchor names a heading on its page.
+   External URLs are not fetched.
 4. **Honest limits, stated plainly.** Kubic has no isolation, and the
    docs never imply otherwise.
 

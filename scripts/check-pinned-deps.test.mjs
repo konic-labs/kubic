@@ -1,6 +1,6 @@
 // Exact-pin check for every dependency.
 //
-// `scripts/check-pinned-deps.mjs` (`npm run check:pi`) rejects every
+// `scripts/check-pinned-deps.mjs` (`npm run check:pins`) rejects every
 // `^`/`~`/range spec on `@earendil-works/*` and the CLI stack: the runtime
 // tree must not move under a release. Moved out of
 // `scripts/pi-boundary.test.mjs` so every gate has a

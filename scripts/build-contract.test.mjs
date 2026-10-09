@@ -97,7 +97,7 @@ describe('build/install contract', () => {
   it('dist/ stays gitignored', () => {
     // Probe a path *under* dist/: `check-ignore -q dist` only matches the
     // dir-only `dist/` pattern when dist/ exists on disk, so a bare probe
-    // fails on fresh checkouts where `npm test` runs before any build (CI).
+    // fails on fresh checkouts where the gates run before any build (CI).
     try {
       execFileSync('git', ['check-ignore', '-q', 'dist/probe.js'], {
         cwd: ROOT,

@@ -18,17 +18,18 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "kubic": "node ./bin/kubic.js",
+    "test": "vitest run",
+    "test:binary": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs",
+    "check": "npm run typecheck && npm run lint && npm run lint:deps && npm run lint:dead && npm run lint:dead:prod && npm run check:pins && npm run docs:check && npm run check:gates",
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
     "lint": "biome ci .",
     "lint:deps": "node scripts/dep-lint.mjs",
     "lint:dead": "knip",
     "lint:dead:prod": "knip --config knip.production.jsonc --production",
-    "check:pi": "node scripts/check-pinned-deps.mjs",
-    "test:unit": "vitest run",
-    "test": "node --test \"scripts/*.test.mjs\"",
+    "check:pins": "node scripts/check-pinned-deps.mjs",
+    "check:gates": "node --test \"scripts/*.test.mjs\"",
     "docs:check": "node scripts/check-docs-links.mjs && node scripts/gen-config-docs.mjs --check",
-    "docs:config": "node scripts/gen-config-docs.mjs",
-    "test:binary-contract": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs"
+    "docs:config": "node scripts/gen-config-docs.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

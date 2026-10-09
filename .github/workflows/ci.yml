@@ -33,27 +33,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --no-audit --no-fund
-      # Static checks do not depend on the Node version: run them once (first,
-      # cheapest first) so a typo fails in seconds, before the test suites.
+      # The static gates do not depend on the Node version: run them once,
+      # first, so a typo fails in seconds, before the test suite.
       - if: matrix.node == '22'
-        run: npm run typecheck
-      - if: matrix.node == '22'
-        run: npx biome ci .
-      - if: matrix.node == '22'
-        run: npm run lint:deps
-      - if: matrix.node == '22'
-        run: npm run lint:dead
-      - if: matrix.node == '22'
-        run: npm run lint:dead:prod
-      - if: matrix.node == '22'
-        run: npm run check:pi
-      - if: matrix.node == '22'
-        run: npm run docs:check
+        run: npm run check
       - run: npm test
-      - run: npm run test:unit
       # The shipped artifact (bin/kubic.js over dist/) is proven per push:
-      # build, then pin the version line, doctor's provider-down exit 6 +
-      # reason, and the provider-less run -p ref triple. Hermetic: HOME is a
-      # temp dir, no models.json in the cwd, no provider, no network.
+      # build, then run the built binary's contract and the faux smoke.
+      # Hermetic: HOME is a temp dir, no provider, no network.
       - run: npm run build
-      - run: npm run test:binary-contract
+      - run: npm run test:binary

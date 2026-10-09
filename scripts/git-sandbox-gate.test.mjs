@@ -20,7 +20,7 @@
 //   Tests that need git call `sandbox.git(...)` / `sandbox.gitResult(...)`
 //   (scrubbed env) or activate the sandbox into process.env for
 //   production code that spawns git on the inherited environment.
-// Runs from `npm test` (node --test) so it gates CI alongside the other
+// Runs from `npm run check:gates` (node --test) so it gates CI alongside the other
 // script gates.
 import assert from 'node:assert/strict';
 import {

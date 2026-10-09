@@ -21,31 +21,58 @@ pins), installed from npm like every other dependency.
 
 ## Before you push
 
-CI runs these commands in this order; run them locally first:
+Three commands cover everything CI runs:
 
 ```sh
-npm run typecheck            # tsc --noEmit: typecheck only, no emit
-npm run lint                  # biome ci — exact CI parity
-npm run lint:deps             # package dependency direction, no relative cross-package imports
-npm run lint:dead             # knip: unused files, exports, dependencies, types
-npm run lint:dead:prod        # knip, production code only: test imports count as no use
-npm run check:pi              # exact pins on every dependency
-npm run docs:check            # no dangling internal doc links; generated config docs current
-npm run docs:config           # regenerate the config docs and example from the schema
-npm test                      # repo gates: scripts/*.test.mjs via node --test
-npm run test:unit             # vitest
-npm run build
-npm run test:binary-contract  # runs the built binary: version / doctor / run
+npm run check                         # every static gate, listed below
+npm test                              # the vitest suite: unit and integration tests
+npm run build && npm run test:binary  # the built binary's contract and the faux smoke
 ```
 
-`npm run test:binary-contract` (`scripts/binary-contract.mjs`) is the
-install-story gate: with `dist/` built it asserts the exact
-`kubic <version> (license: MIT)` line (exit 0), `kubic doctor` exiting 6
-with `FAIL limit:provider-availability (provider-down)`, and a
-provider-less `kubic run -p` exiting 6 while still printing the
-`session:`/`journal:`/`usage:`/`trajectory:` refs. It is hermetic — the
-probes run under a temp `HOME` with no `models.json` in the cwd, so no
-provider and no network.
+`npm run check` runs, in this order:
+
+```sh
+npm run typecheck        # tsc --noEmit: typecheck only, no emit
+npm run lint             # biome ci: formatting and lint, exact CI parity
+npm run lint:deps        # import rules: package direction, seams, test fixtures
+npm run lint:dead        # knip: unused files, exports, dependencies, types
+npm run lint:dead:prod   # knip on production code only: test imports count as no use
+npm run check:pins       # exact pins on every dependency
+npm run docs:check       # no dangling internal doc links; generated config docs current
+npm run check:gates      # the repo gates and the scripts' own tests (node --test)
+```
+
+`npm run docs:config` regenerates the config docs and `example.toml` from the
+config schema.
+
+`npm run test:binary` (`scripts/binary-contract.mjs`, then
+`scripts/faux-smoke.mjs`) is the install-story gate: with `dist/` built it
+asserts the exact `kubic <version> (license: MIT)` line (exit 0), `kubic
+doctor` exiting 6 with `FAIL limit:provider-availability (provider-down)`,
+and a provider-less `kubic run -p` exiting 6 while still printing the
+`session:`/`journal:`/`usage:`/`trajectory:` refs, then drives a full faux
+run through the binary. It is hermetic — the probes run under a temp `HOME`
+with no `models.json` in the cwd, so no provider and no network.
+
+## Repo scripts
+
+The gates use standard tools where one fits (TypeScript, biome, knip, vitest).
+The scripts under `scripts/` cover what those tools cannot, each with its own
+`*.test.mjs` beside it:
+
+| Script | Why it exists |
+| --- | --- |
+| `build.mjs` | Bundles Kubic's own code into `dist/kubic.js` with esbuild. Third-party packages stay external, and a bare import that no manifest declares fails the build. |
+| `binary-contract.mjs` | Runs the built binary: only the shipped artifact proves its exit codes, its startup output and the purity of its `--json` output. |
+| `faux-smoke.mjs` | Drives the built binary through a whole faux-provider run with a tool call. |
+| `dep-lint.mjs` | The import rules: package direction, no relative import across packages, test fixtures in tests only, `node:fs`/`node:child_process` only in `exec`, the two Pi boundary files, a host concern folder reached through its `index.ts`, and one argv parser. It reads `vi.mock` specifiers as imports too. dependency-cruiser, the standard tool, cannot parse TypeScript 7 sources. |
+| `check-pinned-deps.mjs` | Every dependency in every manifest is one exact version. `.npmrc` sets `save-exact=true` for new installs; the check catches a hand edit. |
+| `check-docs-links.mjs` | Every relative link in `docs/` resolves, with no dependency to install. |
+| `gen-config-docs.mjs` | Generates the config key tables and `example.toml` from the config schema; `--check` fails when they are stale. |
+| `pi-boundary.test.mjs` | The Pi dependency contract: exact Pi pins, one hoisted copy of each Pi package in the lockfile, and a `JUSTIFICATION:` block on every boundary export. |
+| `git-sandbox-gate.test.mjs` | Real-git tests go through the shared sandbox: a direct git spawn reads the developer's own git config. |
+| `license.test.mjs` | MIT on every manifest, the NOTICE attributions, and a permissive license for every runtime dependency in the lockfile. |
+| `build-contract.test.mjs` | The packaging story: the ESM root manifest, the `kubic` bin wrapper loading `dist/kubic.js`, `dist/` ignored, the Node floor. |
 
 ### Dead-code gate
 
@@ -107,7 +134,7 @@ those is test restructuring for a later change; this gate does not report them.
   `terminalRig()`). A test never sleeps for a render.
 - **Real git.** Tests that run git use the shared sandbox
   (`packages/exec/src/test-support/git-sandbox.ts`); a direct
-  `execFileSync('git', …)` in a test fails `npm test`, whether the call
+  `execFileSync('git', …)` in a test fails `npm run check`, whether the call
   spans lines, names a path to git or a variable bound to it.
 - **Colour.** Tests never depend on the shell's colour variables:
   `FORCE_COLOR=3`, `FORCE_COLOR=0` and `NO_COLOR=1` runs all pass.
@@ -116,7 +143,7 @@ those is test restructuring for a later change; this gate does not report them.
 
 - **Erasable-syntax TypeScript only** — no parameter properties, `enum`,
   `namespace`, `import =` / `export =`.
-- **Exact pins** — no `^` / `~` on any dependency (`npm run check:pi`).
+- **Exact pins** — no `^` / `~` on any dependency (`npm run check:pins`).
 - **Dependency direction** — packages import "downward" only, and the TUI
   never imports `host` / `agent` implementation; contracts come from
   `core`. A package imports another as `@kubic/<pkg>/<subpath>`, a subpath its
@@ -161,9 +188,9 @@ than history, no tracker references) are in
 
 ## CI
 
-A push runs the `test` job: the static checks first (typecheck, biome,
-`lint:deps`, `lint:dead`, `lint:dead:prod`, `check:pi`, `docs:check`), then the suites and the built
-binary. It runs on Node 22 (the lowest supported) on every ref and on
+A push runs the `test` job: `npm run check` first (once, on Node 22: the
+gates do not depend on the Node version), then `npm test`, the build and
+`npm run test:binary`. It runs on Node 22 (the lowest supported) on every ref and on
 Node 22 and 24 on `main`. A newer push cancels the older run of the same
 ref; `main` is keyed by commit and never cancelled. Workflow permissions
 are read-only.

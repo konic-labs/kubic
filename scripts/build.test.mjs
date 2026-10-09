@@ -1,7 +1,7 @@
 // Unit tests for the pure parts of scripts/build.mjs: the package name of a
 // specifier, the declared-dependency set, and the third-party resolution
 // policy the esbuild plugin applies. The bundle itself is proven end to end by
-// `npm run test:binary-contract`.
+// `npm run test:binary`.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {

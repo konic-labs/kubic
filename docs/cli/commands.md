@@ -360,7 +360,7 @@ $ KUBIC_PROVIDER=faux kubic run -p hello --json
 $ KUBIC_PROVIDER=faux kubic run -p 'faux:tool ls {"path":"."}'
 ```
 
-`npm run test:binary-contract` runs `scripts/faux-smoke.mjs` against the
+`npm run test:binary` runs `scripts/faux-smoke.mjs` against the
 built binary: a faux `run --json` (echo and a tool call), text mode, the
 unknown-value refusal, and the built-in benchmark suites.
 

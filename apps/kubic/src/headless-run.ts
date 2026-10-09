@@ -77,7 +77,7 @@ import {
   UserEntry,
   withCancel,
 } from '@kubic/agent/pi-boundary';
-import { expandSkillInvocation } from '@kubic/agent/skills/skills';
+import { expandSkillInvocation } from '@kubic/agent/skills';
 import {
   resolveStreamOptions,
   type StreamTuningTables,

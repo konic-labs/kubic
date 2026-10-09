@@ -97,10 +97,7 @@ import {
   type SubmissionId,
 } from '@kubic/agent/pi-boundary';
 import type { ModelEscalationEvent } from '@kubic/agent/prompts';
-import {
-  expandSkillInvocation,
-  type LoadedSkill,
-} from '@kubic/agent/skills/skills';
+import { expandSkillInvocation, type LoadedSkill } from '@kubic/agent/skills';
 import {
   resolveStreamOptions,
   type StreamTuningTables,

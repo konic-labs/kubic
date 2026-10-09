@@ -7,15 +7,15 @@ import type { FileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PERMISSIONS } from '../permissions.js';
-import type { LoadedSkill } from './skills.js';
+import { discoverSkills } from './discover.js';
+import { parseSkillFile } from './frontmatter.js';
+import { gateSkills } from './gate.js';
 import {
-  discoverSkills,
   expandSkillInvocation,
   formatSkillsForSystemPrompt,
-  gateSkills,
   invokeSkill,
-  parseSkillFile,
-} from './skills.js';
+} from './prompt.js';
+import type { LoadedSkill } from './types.js';
 
 function bridgeFromEnv(
   env: FakeExecutionEnv,
@@ -940,11 +940,16 @@ describe('skill CLI flags', () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const names = readdirSync(here);
     // Non-vacuity: the listing is the real skills dir.
-    expect(names).toContain('skills.ts');
+    expect(names).toContain('discover.ts');
     expect(names.some((name) => /fetch|install/i.test(name))).toBe(false);
-    // And the loader itself has no network path to fetch through.
-    const source = readFileSync(join(here, 'skills.ts'), 'utf8');
-    expect(source).not.toMatch(/\bfetch\(|node:https?\b|node:net\b/);
+    // And no skills module has a network path to fetch through.
+    const modules = names.filter(
+      (name) => name.endsWith('.ts') && !name.endsWith('.test.ts'),
+    );
+    for (const name of modules) {
+      const source = readFileSync(join(here, name), 'utf8');
+      expect(source).not.toMatch(/\bfetch\(|node:https?\b|node:net\b/);
+    }
   });
 });
 

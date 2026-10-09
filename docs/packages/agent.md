@@ -603,7 +603,7 @@ widened. `RunMode` is `autonomous` only when the user asked for it
 explicitly (`--autonomous`) and `interactive` otherwise; it is recorded on
 the session and in the audit trail.
 
-## Skills (`skills/skills.ts`)
+## Skills (`skills/`)
 
 Markdown-only skills from local files: user roots (`~/.pi/agent/skills`,
 `~/.agents/skills`), project roots (`.pi/skills` and `.agents/skills` from

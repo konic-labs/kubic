@@ -19,12 +19,12 @@ import type {
   SkillSource,
   SkippedSkill,
   WithheldSkill,
-} from '@kubic/agent/skills/skills';
+} from '@kubic/agent/skills';
 import {
   discoverSkills,
   formatSkillsForSystemPrompt,
   gateSkills,
-} from '@kubic/agent/skills/skills';
+} from '@kubic/agent/skills';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import type { DoctorCheck } from '../doctor/index.js';
 
@@ -202,7 +202,7 @@ export function bootSkills(options: BootSkillOptions): BootSkills {
   };
 }
 
-export type { SkippedSkill } from '@kubic/agent/skills/skills';
+export type { SkippedSkill } from '@kubic/agent/skills';
 
 // The role/capability gate: applied in `bootSkills`
 // above — discovery stays in the loader (it owns the roots and trust),

@@ -105,9 +105,9 @@
       "source": "./src/prompts.ts",
       "default": "./src/prompts.ts"
     },
-    "./skills/skills": {
-      "source": "./src/skills/skills.ts",
-      "default": "./src/skills/skills.ts"
+    "./skills": {
+      "source": "./src/skills/index.ts",
+      "default": "./src/skills/index.ts"
     },
     "./stream-options": {
       "source": "./src/stream-options.ts",

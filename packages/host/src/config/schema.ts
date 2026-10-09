@@ -841,7 +841,7 @@ export const CONFIG_SECTIONS = [
     docs: [
       {
         keys: ['skills'],
-        text: 'Settings skills: files or directories loaded with source `settings` on `kubic run` and `kubic tui` (see [Settings skills](#settings-skills)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load.',
+        text: 'Settings skills: files or directories loaded with source `settings` on every lane a command boots — `kubic run`, `kubic tui`, the suite runs of `kubic eval`/`kubic benchmark` and the re-executing tiers of `kubic replay` (see [Settings skills](#settings-skills)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load.',
       },
     ],
   },

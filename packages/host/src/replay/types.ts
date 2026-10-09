@@ -89,6 +89,10 @@ export interface ReplayRuntimeDeps {
   // projection `kubic run` threads — the re-executed tiers assemble the
   // same prompt. Absent means the lane assembles its prompt unchanged.
   systemPromptSection?: string;
+  // The config `skills` projection `kubic run` threads (loaded with source
+  // 'settings'), so the re-executed lane offers the same configured skills.
+  // Absent means none configured.
+  skills?: { settingsSkills: string[] };
 }
 
 export interface ReplayCommandDeps {

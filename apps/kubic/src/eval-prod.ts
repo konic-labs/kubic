@@ -29,7 +29,11 @@ import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import type { CliConfigResult } from './config/load.js';
 import { projectTrustFor } from './config/load.js';
 import { runtimePolicy } from './config/model-selection.js';
-import { runtimeLaneDeps, runtimeRunDeps } from './config/projections.js';
+import {
+  runtimeLaneDeps,
+  runtimeRunDeps,
+  runtimeSkillsDeps,
+} from './config/projections.js';
 import { runHeadlessPrompt } from './run/command.js';
 import type { HeadlessRunDeps } from './run/options.js';
 
@@ -96,6 +100,8 @@ async function runFixture(
     ...(enterprisePolicy === undefined
       ? {}
       : { modelPolicy: enterprisePolicy }),
+    // The config `skills`, loaded with source 'settings' like `kubic run`.
+    skills: { ...runtimeSkillsDeps(cliConfig) },
     verify: {
       commands: fixture.verify,
       ...(fixture.timeoutMs === undefined

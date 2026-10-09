@@ -5,8 +5,10 @@
 
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -57,9 +59,14 @@ function ensureDriver(): GitSandbox {
   return driver;
 }
 
-function cliConfig(): CliConfigResult {
+// The effective config, from an optional global `config.toml` body.
+function cliConfig(globalToml?: string): CliConfigResult {
+  const globalPath = join('/nonexistent-home', '.kubic', 'config.toml');
   const runtime = loadRuntimeConfig({
-    bridge: { exists: () => false, readTextFile: () => '' },
+    bridge: {
+      exists: (path) => globalToml !== undefined && path === globalPath,
+      readTextFile: () => globalToml ?? '',
+    },
     home: '/nonexistent-home',
     cwd: '/nonexistent-cwd',
     enterprisePath: '/nonexistent/enterprise.toml',
@@ -86,6 +93,22 @@ function runners(workspace: string) {
       debug: (line) => errs.push(line),
     }),
   };
+}
+
+// Every trajectory a run wrote under the sessions root.
+function trajectoryFiles(): string[] {
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(join(dir, entry.name));
+      else if (entry.name === 'trajectory.json') {
+        found.push(join(dir, entry.name));
+      }
+    }
+  };
+  const root = join(homedir(), '.kubic', 'sessions');
+  if (existsSync(root)) walk(root);
+  return found;
 }
 
 function git(dir: string, args: string[]): void {
@@ -160,18 +183,42 @@ describe('the live suite runner runs the built-in suites', () => {
     expect(envelope.record.toolCalls).toBeGreaterThan(0);
     // The run wrote its trajectory under the sessions root (the score
     // is derived from it).
-    const sessionsRoot = join(homedir(), '.kubic', 'sessions');
-    const trajectories: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.isDirectory()) walk(join(dir, entry.name));
-        else if (entry.name === 'trajectory.json') {
-          trajectories.push(join(dir, entry.name));
-        }
-      }
+    expect(trajectoryFiles()).toHaveLength(1);
+  });
+
+  it('loads the configured settings skills into the suite lane', {
+    timeout: 60_000,
+  }, async () => {
+    const workspace = tmp('kubic-eval-ws-');
+    const skill = join(tmp('kubic-eval-skills-'), 'house-style');
+    mkdirSync(skill);
+    writeFileSync(
+      join(skill, 'SKILL.md'),
+      '---\nname: house-style\ndescription: The house style\n---\nUse tabs.\n',
+    );
+    const { r } = runners(workspace);
+    // The sessions root is shared by every test in this file: this run's
+    // trajectory is the one it adds.
+    const before = new Set(trajectoryFiles());
+    const code = (
+      await r.eval(
+        {
+          task: 'fix it',
+          suite: 'swe-bench-mini',
+          model: 'faux/echo',
+          worktree: workspace,
+          size: 'smoke',
+          json: true,
+        },
+        cliConfig(`skills = [${JSON.stringify(skill)}]\n`),
+      )
+    ).exitCode;
+    expect(code).toBe(0);
+    const [trajectory] = trajectoryFiles().filter((file) => !before.has(file));
+    const exported = JSON.parse(readFileSync(trajectory ?? '', 'utf8')) as {
+      resources: { skills: string[] };
     };
-    walk(sessionsRoot);
-    expect(trajectories).toHaveLength(1);
+    expect(exported.resources.skills).toContain('house-style');
   });
 
   it('benchmark runs the matrix and exits 0 by verdict', {

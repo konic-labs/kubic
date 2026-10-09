@@ -287,7 +287,7 @@ quietly stop configuring anything.
 | `policy.filesystem_policy` | Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from `[permissions]` classes today, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it. |
 | `policy.data_policy`, `policy.logging_policy` | Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced. |
 | `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory repo ledger (see [Audit sinks](#audit-sinks-audit)). |
-| `skills` | Settings skills: files or directories loaded with source `settings` on `kubic run` and `kubic tui` (see [Settings skills](#settings-skills)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load. |
+| `skills` | Settings skills: files or directories loaded with source `settings` on every lane a command boots — `kubic run`, `kubic tui`, the suite runs of `kubic eval`/`kubic benchmark` and the re-executing tiers of `kubic replay` (see [Settings skills](#settings-skills)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load. |
 <!-- /generated:config-keys -->
 
 **Two keys, two windows.** `kubic journal prune` removes journal entries older
@@ -309,7 +309,9 @@ skills = ["./team", "/opt/shared/skills"]
 
 A top-level array of skill files or directories. Each entry
 loads with source `settings` — like an explicit `--skill`, it applies even
-under `--no-skills` — on `kubic run` and `kubic tui`. Relative entries resolve against the directory of
+under `--no-skills` — on every lane a command boots: `kubic run`, `kubic tui`,
+the suite runs of `kubic eval`/`kubic benchmark` and the re-executing tiers
+of `kubic replay` (which discover skills at the pinned worktree). Relative entries resolve against the directory of
 the config file that declared them — a project config's `"../shared"`
 names the project's sibling wherever the run was invoked from — never the
 cwd; absolute entries pass through as written. `~` and env vars are not

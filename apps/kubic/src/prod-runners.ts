@@ -943,6 +943,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
         ...runtimeLaneDeps(cliConfig),
         ...(compaction === undefined ? {} : { compaction }),
         ...(systemPromptSection === undefined ? {} : { systemPromptSection }),
+        skills: { ...runtimeSkillsDeps(cliConfig) },
       };
       return runReplayCommand(
         resolved.options,

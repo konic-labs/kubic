@@ -240,6 +240,20 @@ describe('prod replay re-execution runner', () => {
     expect(deps.reconcileOutOfScope).toEqual(['dist']);
   });
 
+  it('discovers skills at the pinned worktree with the configured settings skills', async () => {
+    cwdWithTrajectory();
+    const worktree = tempDir('replay-worktree-');
+    await runProdReplay(request({ worktree }), {
+      policySource: 'config',
+      skills: { settingsSkills: ['/configured/skill'] },
+    });
+    const deps = lane.runHeadlessPrompt.mock.calls[0]?.[2];
+    expect(deps.skills).toEqual({
+      settingsSkills: ['/configured/skill'],
+      cwd: worktree,
+    });
+  });
+
   it('boots no role when the request carries none (deterministic tier)', async () => {
     cwdWithTrajectory();
     await runProdReplay(request());

@@ -98,6 +98,9 @@ export async function runProdReplay(
             // own projections (agent id, role layers, out-of-scope paths)
             // exactly as `kubic run` installs them.
             env: new NodeExecutionEnv(cwd),
+            // Skills are discovered where the pin says too, with the
+            // configured settings skills on top.
+            skills: { ...runRuntime.skills, cwd },
             roles: {
               cwd,
               ...(runRuntime.roles?.layers === undefined

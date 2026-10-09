@@ -198,7 +198,7 @@ describe('journal durability', () => {
     const blob = join(dir, 'blobs', recorded.afterHash ?? 'missing');
     expect(readFileSync(blob, 'utf8')).toBe('hello\n');
     expect(sha256Hex(readFileSync(blob, 'utf8'))).toBe(recorded.afterHash);
-    // No tmp survives a successful putBlob: the blob is the only file.
+    // No tmp survives a successful blob write: the blob is the only file.
     expect(readdirSync(join(dir, 'blobs'))).toEqual([recorded.afterHash]);
   });
 });

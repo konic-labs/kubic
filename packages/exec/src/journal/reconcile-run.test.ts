@@ -23,7 +23,8 @@ import { diffEntries, renderDiff } from './diff.js';
 import { sha256Hex } from './hash.js';
 import { beginReconciliation } from './reconcile.js';
 import { FileJournalStore } from './store.js';
-import { applyUndo, planUndo } from './undo.js';
+import { applyUndo } from './undo.js';
+import { planUndo } from './undo-plan.js';
 
 const NOW = 1_700_000_000_000;
 

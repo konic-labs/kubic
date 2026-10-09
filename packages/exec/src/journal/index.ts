@@ -32,4 +32,5 @@ export type {
   JournalRetention,
 } from './types.js';
 export { /** @internal */ JournalEntryTooLargeError } from './types.js';
-export { applyUndo, planUndo } from './undo.js';
+export { applyUndo } from './undo.js';
+export { planUndo } from './undo-plan.js';

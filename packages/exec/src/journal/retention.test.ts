@@ -460,7 +460,7 @@ describe('prune stats bound', () => {
 
 // `append` with the reconcile shape (before: null plus a hash-only beforeHash)
 // must account that hash's bytes. An existing but unaccounted blob (crash-residue
-// orphan from a putBlob-then-failed appendFile, or a sweep's best-effort remove
+// orphan from a blob write whose index append then failed, or a sweep's best-effort remove
 // leak) must not make trackedBytes under-count: the fast path would skip pruning
 // passes while the journal grew past its bound. Every append keeps it bounded.
 describe('hash-only before refs are tracked', () => {

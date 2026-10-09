@@ -2,7 +2,7 @@
 // blobs it references must be on platter BEFORE it — otherwise a power loss
 // leaves a durable entry pointing at a zero-length or missing blob, undo
 // reports "no before-content", and the corrupt file is never healed because
-// putBlob trusts the name. The retention rewrite has the mirror problem: a
+// a blob write would trust the name. The retention rewrite has the mirror problem: a
 // crash right after its rename can replace the journal's whole history with
 // an empty file, because nothing was flushed before the rename.
 import {

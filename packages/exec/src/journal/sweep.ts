@@ -128,17 +128,53 @@ export function reconcile(
   ctx: ReconcileContext,
   options: BaselineOptions = {},
 ): number {
-  // Same read seam as captureBaseline: the hash honours `options.bridge`, and so
-  // must this after-content read, or an injected double observes only half the
-  // walk. One bridge serves the whole reconcile.
+  // Same read seam as captureBaseline: the hash honours `options.bridge`,
+  // and so must the after-content read, or an injected double observes
+  // only half the walk. One bridge serves the whole reconcile.
   const bridge = options.bridge ?? createNodeFileBridge('/');
   const outOfScope = options.outOfScope ?? [];
   const current = captureBaseline(root, { ...options, previous: baseline });
-  // Each path's EXPECTED state is the last entry journaled
-  // during THIS run, else the boot baseline — never "matches the baseline
-  // OR any historical after-hash", which hid same-run reverts, a resumed
-  // session's change back to an older hash, and repeat deletes.
-  // `null` = expected absent.
+  const sweep: Sweep = {
+    store,
+    baseline,
+    root,
+    ctx,
+    options,
+    bridge,
+    outOfScope,
+    sinceStart: journaledSinceRunStart(store, root, ctx),
+    added: 0,
+  };
+  recordChanges(sweep, current);
+  recordDeletes(sweep, current);
+  recordHeadMove(sweep);
+  return sweep.added;
+}
+
+// One reconcile pass: its inputs, and the count of entries it appended.
+interface Sweep {
+  store: FileJournalStore;
+  baseline: Baseline;
+  root: string;
+  ctx: ReconcileContext;
+  options: BaselineOptions;
+  bridge: FileBridge;
+  outOfScope: readonly string[];
+  sinceStart: Map<string, string | null>;
+  added: number;
+}
+
+// Each path's EXPECTED state is the last entry journaled
+// during THIS run, else the boot baseline — never "matches the baseline
+// OR any historical after-hash", which hid same-run reverts, a resumed
+// session's change back to an older hash, and repeat deletes.
+// This is the first half: the after-hash of each path's last entry this run
+// (`null` = expected absent).
+function journaledSinceRunStart(
+  store: FileJournalStore,
+  root: string,
+  ctx: ReconcileContext,
+): Map<string, string | null> {
   const sinceStart = new Map<string, string | null>();
   for (const e of entriesSinceRunStart(store.entries(), ctx.runStart)) {
     // Markers are not file state — they never define a path's
@@ -150,111 +186,94 @@ export function reconcile(
     const key = rootRelativeKey(root, e.path);
     if (key !== null) sinceStart.set(key, e.afterHash);
   }
-  const expectedHash = (relPath: string): string | null => {
-    if (sinceStart.has(relPath)) return sinceStart.get(relPath) ?? null;
-    const boot = baseline[relPath];
-    // An unreadable-at-boot path has no known pre-state. Treated
-    // as absent, so a path that is readable later is an honest create with no
-    // invented before-hash — never the sentinel in the journal, never a
-    // delete of a file that was only unreadable.
-    return boot === undefined || boot === UNREADABLE_HASH ? null : boot;
-  };
-  let added = 0;
-  const record = (input: {
-    path: string;
-    op: JournalEntryInput['op'];
-    before: string | null;
-    beforeHash: string | null;
-    after: string | null;
-    afterHash?: string;
-    afterOmitted?: boolean;
-    afterBytes?: number;
-  }): void => {
-    // The sweep's byte delta, computed when both sides are
-    // known — a create grows from absent (0), a delete shrinks to it, and a
-    // write is the difference. Unknown stays 0, exactly today's shape.
-    const beforeLen =
-      input.before === null
-        ? input.op === 'create'
-          ? 0
-          : null
-        : Buffer.byteLength(input.before, 'utf8');
-    const afterLen =
-      input.after === null
-        ? (input.afterBytes ?? (input.op === 'delete' ? 0 : null))
-        : Buffer.byteLength(input.after, 'utf8');
-    store.append({
-      path: input.path,
-      op: input.op,
-      before: input.before,
-      beforeHash: input.beforeHash,
-      after: input.after,
-      ...(input.afterHash === undefined ? {} : { afterHash: input.afterHash }),
-      ...(input.afterOmitted === true ? { afterOmitted: true } : {}),
-      ...(input.afterBytes === undefined
-        ? {}
-        : { afterBytes: input.afterBytes }),
-      bytesDelta:
-        beforeLen !== null && afterLen !== null ? afterLen - beforeLen : 0,
-      sessionId: ctx.sessionId,
-      source: 'sweep',
-      toolCallId: null,
-      timestamp: ctx.timestamp,
-      unattributed: true,
-      ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
-    });
-    added++;
-  };
+  return sinceStart;
+}
+
+function expectedHash(sweep: Sweep, relPath: string): string | null {
+  if (sweep.sinceStart.has(relPath)) {
+    return sweep.sinceStart.get(relPath) ?? null;
+  }
+  const boot = sweep.baseline[relPath];
+  // An unreadable-at-boot path has no known pre-state. Treated
+  // as absent, so a path that is readable later is an honest create with no
+  // invented before-hash — never the sentinel in the journal, never a
+  // delete of a file that was only unreadable.
+  return boot === undefined || boot === UNREADABLE_HASH ? null : boot;
+}
+
+interface SweepFind {
+  path: string;
+  op: JournalEntryInput['op'];
+  before: string | null;
+  beforeHash: string | null;
+  after: string | null;
+  afterHash?: string;
+  afterOmitted?: boolean;
+  afterBytes?: number;
+}
+
+function record(sweep: Sweep, input: SweepFind): void {
+  // The sweep's byte delta, computed when both sides are
+  // known — a create grows from absent (0), a delete shrinks to it, and a
+  // write is the difference. Unknown stays 0, exactly today's shape.
+  const beforeLen =
+    input.before === null
+      ? input.op === 'create'
+        ? 0
+        : null
+      : Buffer.byteLength(input.before, 'utf8');
+  const afterLen =
+    input.after === null
+      ? (input.afterBytes ?? (input.op === 'delete' ? 0 : null))
+      : Buffer.byteLength(input.after, 'utf8');
+  const { ctx } = sweep;
+  sweep.store.append({
+    path: input.path,
+    op: input.op,
+    before: input.before,
+    beforeHash: input.beforeHash,
+    after: input.after,
+    ...(input.afterHash === undefined ? {} : { afterHash: input.afterHash }),
+    ...(input.afterOmitted === true ? { afterOmitted: true } : {}),
+    ...(input.afterBytes === undefined ? {} : { afterBytes: input.afterBytes }),
+    bytesDelta:
+      beforeLen !== null && afterLen !== null ? afterLen - beforeLen : 0,
+    sessionId: ctx.sessionId,
+    source: 'sweep',
+    toolCallId: null,
+    timestamp: ctx.timestamp,
+    unattributed: true,
+    ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
+  });
+  sweep.added++;
+}
+
+// Present now but not as expected: a write, or a create when nothing was
+// expected.
+function recordChanges(sweep: Sweep, current: Baseline): void {
   for (const [relPath, hash] of Object.entries(current)) {
     // Declared out of scope: never read, never journaled.
-    // The walk above already prunes an excluded directory, so this states the
+    // The walk already prunes an excluded directory, so this states the
     // rule for a path that reaches the sweep any other way.
-    if (isOutOfScope(relPath, outOfScope)) continue;
+    if (isOutOfScope(relPath, sweep.outOfScope)) continue;
     // A path the walk could see but not read has no observed
     // state — never a change (nothing was read), and never a delete either
-    // (the candidates loop below skips it: it IS present in `current`).
+    // (recordDeletes skips it: it IS present in `current`).
     if (hash === UNREADABLE_HASH) continue;
-    const expected = expectedHash(relPath);
+    const expected = expectedHash(sweep, relPath);
     if (expected === hash) continue;
-    const abs = join(root, relPath);
-    let size: number | null = null;
-    try {
-      size = bridge.fileInfo(abs).size;
-    } catch {
-      // Vanished since the walk: no size to bound a read by, so the entry
-      // records no after-side — exactly the pre shape for this race.
-    }
-    let after: string | null = null;
-    let omitted = false;
-    if (size !== null && size > MAX_SWEEP_CONTENT_BYTES) {
-      // Above the bound: never read whole. Hash-only, with the
-      // walk hash intact, rendered as a size-only change.
-      omitted = true;
-    } else if (size !== null) {
-      try {
-        // At or under the bound: one read, bytes first — the lossless check
-        // needs the bytes the decode came from, and the range read is
-        // bounded by the size just observed.
-        const bytes =
-          bridge.readFileRange === undefined
-            ? bridge.readBinaryFile(abs)
-            : bridge.readFileRange(abs, 0, size);
-        after = decodeLossless(bytes);
-        // decodeLossless returns null only for a lossy decode (binary
-        // content): record hash-only instead of a mangled blob.
-        omitted = after === null;
-      } catch {
-        after = null;
-      }
-    }
+    const { size, after, omitted } = afterSide(
+      sweep.bridge,
+      join(sweep.root, relPath),
+    );
     // A path a tool journaled this run keeps the tool chain —
     // its before-side is the tool's after-content, never the
     // boot blob — and a create has no pre-image by definition.
     const before =
-      expected === null || sinceStart.has(relPath)
+      expected === null || sweep.sinceStart.has(relPath)
         ? null
-        : gitBeforeContent(root, relPath, expected, options);
-    record({
+        : gitBeforeContent(sweep.root, relPath, expected, sweep.options);
+    record(sweep, {
       path: relPath,
       op: expected === null ? 'create' : 'write',
       before,
@@ -269,15 +288,56 @@ export function reconcile(
         : {}),
     });
   }
+}
+
+// A changed file's after-side as the sweep records it: its size, and its
+// content when it is small enough to read and decodes losslessly.
+function afterSide(
+  bridge: FileBridge,
+  abs: string,
+): { size: number | null; after: string | null; omitted: boolean } {
+  let size: number | null = null;
+  try {
+    size = bridge.fileInfo(abs).size;
+  } catch {
+    // Vanished since the walk: no size to bound a read by, so the entry
+    // records no after-side — exactly the pre shape for this race.
+  }
+  if (size === null) return { size, after: null, omitted: false };
+  if (size > MAX_SWEEP_CONTENT_BYTES) {
+    // Above the bound: never read whole. Hash-only, with the
+    // walk hash intact, rendered as a size-only change.
+    return { size, after: null, omitted: true };
+  }
+  try {
+    // At or under the bound: one read, bytes first — the lossless check
+    // needs the bytes the decode came from, and the range read is
+    // bounded by the size just observed.
+    const bytes =
+      bridge.readFileRange === undefined
+        ? bridge.readBinaryFile(abs)
+        : bridge.readFileRange(abs, 0, size);
+    const after = decodeLossless(bytes);
+    // decodeLossless returns null only for a lossy decode (binary
+    // content): record hash-only instead of a mangled blob.
+    return { size, after, omitted: after === null };
+  } catch {
+    return { size, after: null, omitted: false };
+  }
+}
+
+// Expected but gone: a delete.
+function recordDeletes(sweep: Sweep, current: Baseline): void {
+  const { baseline, sinceStart } = sweep;
   const candidates = new Set([...Object.keys(baseline), ...sinceStart.keys()]);
   for (const relPath of candidates) {
     // The same rule in the delete direction: a baseline captured
     // before the entry was declared — or supplied by a caller — can name
     // out-of-scope paths, and their disappearance is not a journal event
     // either.
-    if (isOutOfScope(relPath, outOfScope)) continue;
+    if (isOutOfScope(relPath, sweep.outOfScope)) continue;
     if (current[relPath] !== undefined) continue;
-    const expected = expectedHash(relPath);
+    const expected = expectedHash(sweep, relPath);
     if (expected === null) continue;
     // A path only a tool journaled (not in the boot baseline) is absent from
     // `current` whenever the walk skips it — gitignored, `.git/`, `.kubic/` —
@@ -286,10 +346,10 @@ export function reconcile(
     // IS a delete. Baseline keys keep the old rule.
     if (
       baseline[relPath] === undefined &&
-      regularFileStillThere(bridge, root, relPath)
+      regularFileStillThere(sweep.bridge, sweep.root, relPath)
     )
       continue;
-    record({
+    record(sweep, {
       path: relPath,
       op: 'delete',
       // The same tool-chain rule in the delete direction — a
@@ -297,46 +357,46 @@ export function reconcile(
       // blob.
       before: sinceStart.has(relPath)
         ? null
-        : gitBeforeContent(root, relPath, expected, options),
+        : gitBeforeContent(sweep.root, relPath, expected, sweep.options),
       beforeHash: expected,
       after: null,
     });
   }
-  // The HEAD-move marker. Compared after the file loops so the
-  // marker is the sweep's newest entry — `undo --step` (which never targets
-  // markers) still lands on the latest file entry. One marker per observed
-  // move: a repeat sweep of an unchanged HEAD appends nothing.
+}
+
+// The HEAD-move marker. Recorded after the file finds so the
+// marker is the sweep's newest entry — `undo --step` (which never targets
+// markers) still lands on the latest file entry. One marker per observed
+// move: a repeat sweep of an unchanged HEAD appends nothing.
+function recordHeadMove(sweep: Sweep): void {
+  const { store, ctx, root, options } = sweep;
   const headBaseline = options.headBaseline;
-  if (headBaseline !== undefined && headBaseline !== null) {
-    const currentHead = captureHeadState(root, options.gitRun);
-    if (currentHead !== null && !sameHeadState(headBaseline, currentHead)) {
-      const known = entriesSinceRunStart(store.entries(), ctx.runStart).some(
-        (e) =>
-          e.op === 'marker' &&
-          e.headFrom !== undefined &&
-          e.headTo !== undefined &&
-          sameHeadState(e.headFrom, headBaseline) &&
-          sameHeadState(e.headTo, currentHead),
-      );
-      if (!known) {
-        store.append({
-          path: '',
-          op: 'marker',
-          before: null,
-          after: null,
-          bytesDelta: 0,
-          headFrom: headBaseline,
-          headTo: currentHead,
-          sessionId: ctx.sessionId,
-          source: 'sweep',
-          toolCallId: null,
-          timestamp: ctx.timestamp,
-          unattributed: true,
-          ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
-        });
-        added++;
-      }
-    }
-  }
-  return added;
+  if (headBaseline === undefined || headBaseline === null) return;
+  const currentHead = captureHeadState(root, options.gitRun);
+  if (currentHead === null || sameHeadState(headBaseline, currentHead)) return;
+  const known = entriesSinceRunStart(store.entries(), ctx.runStart).some(
+    (e) =>
+      e.op === 'marker' &&
+      e.headFrom !== undefined &&
+      e.headTo !== undefined &&
+      sameHeadState(e.headFrom, headBaseline) &&
+      sameHeadState(e.headTo, currentHead),
+  );
+  if (known) return;
+  store.append({
+    path: '',
+    op: 'marker',
+    before: null,
+    after: null,
+    bytesDelta: 0,
+    headFrom: headBaseline,
+    headTo: currentHead,
+    sessionId: ctx.sessionId,
+    source: 'sweep',
+    toolCallId: null,
+    timestamp: ctx.timestamp,
+    unattributed: true,
+    ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
+  });
+  sweep.added++;
 }

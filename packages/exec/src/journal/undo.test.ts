@@ -13,7 +13,8 @@ import { diffEntries } from './diff.js';
 import { sha256Hex, sha256HexOfBytes } from './hash.js';
 import { journalStatus } from './status.js';
 import { FileJournalStore } from './store.js';
-import { applyUndo, planUndo } from './undo.js';
+import { applyUndo } from './undo.js';
+import { planUndo } from './undo-plan.js';
 
 const roots: string[] = [];
 

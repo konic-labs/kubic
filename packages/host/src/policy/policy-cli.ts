@@ -14,12 +14,10 @@ import { createLineLogger } from '@kubic/core/cli/logger';
 import { formatJson } from '@kubic/core/cli/output';
 import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
-import {
-  type EffectivePolicy,
-  isToolAllowed,
-  normalizeToolName,
-  resolveEffectivePolicy,
-} from './enterprise.js';
+import { isToolAllowed } from './gates.js';
+import { resolveEffectivePolicy } from './resolve.js';
+import type { EffectivePolicy } from './types.js';
+import { normalizeToolName } from './validate.js';
 
 // The parsed `kubic policy` options (commander's `opts()`); `tool` is a
 // required option there, still checked here for direct callers.

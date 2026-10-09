@@ -3,8 +3,8 @@
 > Implementation:
 > `packages/host/src/config/config.ts` (layers, TOML, merge),
 > `runtime.ts` (the load the binary actually runs on), `config-cli.ts`
-> (`kubic config`), `secrets.ts` (request-time secrets), `stances.ts`
-> (refusals), `../host/src/policy/enterprise.ts` (the `[policy]` engine).
+> (`kubic config`), `stances.ts` (refusals), `../secret-refs/secrets.ts`
+> (request-time secrets) and `../policy/` (the `[policy]` engine).
 > This table matches that implementation exactly.
 
 ## Precedence: first layer wins

@@ -30,7 +30,7 @@ composition-root tests are tagged `@internal`.
 | `git/` | `kubic git` (status, log, stage, commit) over the agent git operations |
 | `journal/` | `kubic diff`, `undo`, `log`, `status` and `journal prune` |
 | `models/` | The model catalogue (built-ins plus `models.json`), provider probes, the `KUBIC_PROVIDER=faux` testing provider, provider key hints and `kubic models` |
-| `policy/` | The effective enterprise policy (`enterprise.ts`) and `kubic policy` |
+| `policy/` | The enterprise policy: layer validation (`validate.ts`), resolution of the effective policy (`resolve.ts`), the tool, model and provider gates (`gates.ts`), its doctor checks, and `kubic policy` |
 | `presentation/` | Folds lane events and approval facts into the `KubicPresentationState` the TUI renders |
 | `replay/` | `kubic replay` over trajectory exports, and the re-execution runner |
 | `roles/` | The five built-in roles, role documents and their layer merge, and role loading from `.kubic/roles/*.md` |

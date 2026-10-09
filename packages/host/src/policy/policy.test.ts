@@ -1,15 +1,13 @@
-// Enterprise policy engine tests (surface, precedence).
-// Imports fail until enterprise.ts lands. Faux-only, zero network.
+// Enterprise policy engine tests (surface, precedence). Faux-only, zero
+// network.
 import { describe, expect, it } from 'vitest';
 import {
   assertToolGrantable,
   isToolAllowed,
   isToolAllowedByEnterprise,
-  POLICY_LAYERS,
-  PolicyDeniedError,
-  PolicyError,
-  resolveEffectivePolicy,
-} from './enterprise.js';
+} from './gates.js';
+import { resolveEffectivePolicy } from './resolve.js';
+import { POLICY_LAYERS, PolicyDeniedError, PolicyError } from './types.js';
 
 describe('policy vocabulary bridge', () => {
   const POLICY_EXAMPLE = `[policy]
@@ -28,7 +26,7 @@ logging_policy = "full-audit"
 `;
 
   it('translates the policy example into engine leaves', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const { parseTomlConfig } = await import('../config/index.js');
     const layer = mod.layerPolicyFromConfig(parseTomlConfig(POLICY_EXAMPLE));
     expect(layer.tools?.allow).toContain('bash');
@@ -51,12 +49,12 @@ logging_policy = "full-audit"
   });
 
   it('returns an empty layer for a config with no [policy] section', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     expect(mod.layerPolicyFromConfig({})).toEqual({});
   });
 
   it('gates providers and models through provider-qualified patterns', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const { policy } = mod.resolveEffectivePolicy([
       { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
     ]);
@@ -67,7 +65,7 @@ logging_policy = "full-audit"
   });
 
   it('matches a bare model id across providers, keeping the provider gate', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const { policy } = mod.resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -89,7 +87,7 @@ logging_policy = "full-audit"
   });
 
   it('refuses model patterns that are empty or cannot name a model', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     for (const pattern of ['', '  ', '/x', 'x/', 'a/b/c']) {
       expect(
         () =>
@@ -97,12 +95,12 @@ logging_policy = "full-audit"
             { layer: 'enterprise', policy: { models: { allowed: [pattern] } } },
           ]),
         pattern,
-      ).toThrow(mod.PolicyError);
+      ).toThrow(PolicyError);
     }
   });
 
   it('reports which layer set the allow list and which layer denied a tool', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const resolved = mod.resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -115,7 +113,7 @@ logging_policy = "full-audit"
   });
 
   it('answers whether tool/model gates are configured at all', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const empty = mod.resolveEffectivePolicy([]).policy;
     expect(mod.hasToolPolicy(empty)).toBe(false);
     expect(mod.hasModelPolicy(empty)).toBe(false);
@@ -287,7 +285,7 @@ describe('list hygiene', () => {
 
 describe('policy surface', () => {
   it('resolves models, filesystem, data, logging and audit sinks', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const { policy } = mod.resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -309,7 +307,7 @@ describe('policy surface', () => {
   });
 
   it('lower layers cannot lift an enterprise filesystem denial', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const { policy, overriddenAttempts } = mod.resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -327,7 +325,7 @@ describe('policy surface', () => {
 
 describe('enterprise doctor checks', () => {
   it('unenforceable syslog sink is reported, never silent', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const { policy } = mod.resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -342,7 +340,7 @@ describe('enterprise doctor checks', () => {
   });
 
   it('clean policy still emits checks (never silent) and syslog-first holds', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const { policy } = mod.resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -360,7 +358,7 @@ describe('enterprise doctor checks', () => {
   });
 
   it('empty sinks and non-syslog-first sinks fail loudly', async () => {
-    const mod = await import('./enterprise.js');
+    const mod = await import('./index.js');
     const empty = mod.resolveEffectivePolicy([
       { layer: 'enterprise', policy: {} },
     ]).policy;

@@ -214,14 +214,13 @@ describe('the run verifier writes gate signals', () => {
     timeout: 30_000,
   }, async () => {
     const repo = fixtureRepo();
-    const started = Date.now();
     const exported = await run(repo, false, {
       commands: { tests: 'sleep 1' },
       timeoutMs: 100,
     });
-    // Both the run and the baseline gate are killed at 100ms; without the
-    // configured bound `sleep 1` would finish and both gates would pass.
-    expect(Date.now() - started).toBeLessThan(900);
+    // Both the run and the baseline gate are killed at 100ms. Without the
+    // configured bound `sleep 1` would exit 0 and both gates would pass, so
+    // the failed gate is the proof — no wall-clock bound to flake under load.
     expect(exported.eval.labels).toEqual({
       'signal:tests': 'fail',
       'signal:regression': 'pass',

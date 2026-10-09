@@ -153,7 +153,8 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   `status`, never infer it from the exit code.
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown options, missing values, operands, bad `--session`), 5
-  missing session, 6 no reachable provider, 1 any other lane boot failure.
+  missing session, 6 no reachable provider (a `KUBIC_PROVIDER` other than
+  `faux` included), 1 any other lane boot failure.
   A signalled quit exits `128+signo` after the same drain, restore and
   session close as a keyboard quit: 129 `SIGHUP`, 130 `SIGINT`, 143
   `SIGTERM`. An exception in input or render, or an unhandled rejection,

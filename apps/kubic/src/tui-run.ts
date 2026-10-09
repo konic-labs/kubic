@@ -32,7 +32,6 @@ import {
   type OperationKillRegistry,
 } from '@kubic/agent/lane/abort';
 import {
-  bootLane,
   escalateLaneModel,
   type Lane,
   type LaneCompactionOptions,
@@ -50,12 +49,11 @@ import {
   settlePending,
 } from '@kubic/agent/lane/pending';
 import {
-  attachSession,
-  createSession,
   forkSession,
   listSessions,
-  openSessionStore,
   SESSION_ID_PATTERN,
+  type SessionHandle,
+  type SessionStore,
 } from '@kubic/agent/lane/session-store';
 import {
   entriesToTranscript,
@@ -79,14 +77,8 @@ import {
   supportedThinking,
 } from '@kubic/agent/model-select';
 import { isThinkingLevel, THINKING_LEVELS } from '@kubic/agent/models-config';
-import { OPERATIONS } from '@kubic/agent/ops/registry';
 import { walkFiles } from '@kubic/agent/ops/walk';
 import type { PermissionClasses } from '@kubic/agent/permissions';
-import {
-  checkAgreement,
-  DEFAULT_PERMISSIONS,
-  validateClasses,
-} from '@kubic/agent/permissions';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -97,11 +89,8 @@ import {
   type SubmissionId,
 } from '@kubic/agent/pi-boundary';
 import type { ModelEscalationEvent } from '@kubic/agent/prompts';
-import { expandSkillInvocation, type LoadedSkill } from '@kubic/agent/skills';
-import {
-  resolveStreamOptions,
-  type StreamTuningTables,
-} from '@kubic/agent/stream-options';
+import { expandSkillInvocation } from '@kubic/agent/skills';
+import type { StreamTuningTables } from '@kubic/agent/stream-options';
 import {
   type CommandResult,
   EXIT_FAILED,
@@ -115,34 +104,28 @@ import {
 import { formatCost } from '@kubic/core/cli/kit';
 import type { LaneImagePart } from '@kubic/core/presentation';
 import { DEFAULT_RUN_ROLE, runRoleLabel } from '@kubic/core/run-role';
-import { type FileSystem, NodeExecutionEnv } from '@kubic/exec/env';
+import {
+  type ExecutionEnv,
+  type FileSystem,
+  NodeExecutionEnv,
+} from '@kubic/exec/env';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   applyUndo,
-  beginReconciliation,
   diffEntries,
-  FileJournalStore,
+  type FileJournalStore,
   type JournalRetention,
   planUndo,
-  type RunReconciliation,
 } from '@kubic/exec/journal';
-import { createSecretCommandRunner } from '@kubic/exec/secret-runner';
 import {
   type ApprovalConfig,
   type ApprovalRequest,
   type ApprovalVerdict,
-  enableSessionFullAccess,
   fullAccessInForceWarning,
   type InstalledPolicy,
-  installPolicy,
   type SessionFullAccessGrant,
 } from '@kubic/host/approvals';
-import {
-  createLedgerModelKeyResolver,
-  resolveRunBaseRevision,
-} from '@kubic/host/audit';
-import { findProjectRoot } from '@kubic/host/cli';
 import type {
   RoleModelEntry,
   RuntimeEscalation,
@@ -154,28 +137,14 @@ import {
   shouldEmitNotice,
 } from '@kubic/host/doctor';
 import {
-  type AssembledModels,
-  assembleModels,
   FAUX_FOOTER,
   FAUX_MODEL_ID,
   FAUX_PROVIDER_ID,
-  fauxProviderActive,
   providerKeyHints,
 } from '@kubic/host/models';
-import {
-  type EffectivePolicy,
-  hasModelPolicy,
-  hasToolPolicy,
-  isModelAllowed,
-  isToolAllowedByEnterprise,
-} from '@kubic/host/policy';
+import type { EffectivePolicy } from '@kubic/host/policy';
 import { PresentationProjector } from '@kubic/host/presentation';
 import type { RoleLayerInput } from '@kubic/host/roles';
-import {
-  effectiveRoleClasses,
-  rolePromptFor,
-  selectRole,
-} from '@kubic/host/roles';
 import type { DebugSink, RunOutcome } from '@kubic/host/run';
 import {
   hookErrorLine,
@@ -187,13 +156,11 @@ import {
 } from '@kubic/host/run';
 import type { SessionUsageRow } from '@kubic/host/sessions';
 import {
-  defaultSessionsRoot,
   readSessionUsage,
   type SessionSummary,
   summarizeProjectSessions,
 } from '@kubic/host/sessions';
-import type { SkippedSkill } from '@kubic/host/skills';
-import { bootSkills, describeSkillSkips } from '@kubic/host/skills';
+import { describeSkillSkips } from '@kubic/host/skills';
 import { createApprovalSurface } from '@kubic/tui/approval-surface';
 import {
   type AttachmentImage,
@@ -271,17 +238,14 @@ import {
 } from './auto-escalation.js';
 import {
   resolveLaneLadder,
-  resolveRoleThinking,
   roleModelScope,
   type runtimeLaneDeps,
-  selectBootModel,
   selectModelUnderPolicy,
 } from './config-runtime.js';
 import { assistantSummary, NO_ASSISTANT_TEXT_SUMMARY } from './headless-run.js';
-import { hasExplicitModelSelection } from './model-projection.js';
 import { persistRunTrajectory } from './run-trajectory.js';
 import { formatScopedModels } from './scoped-models.js';
-import { composePromptSections } from './session/bootstrap.js';
+import { type BootRefusal, SessionBoot } from './session/bootstrap.js';
 import { readTuiWorkspace } from './tui-workspace.js';
 
 // The interaction surface the root shares with the app: the seat
@@ -1105,9 +1069,8 @@ export function tuiLoop(
   };
 }
 
-// Prod lane boot: same session/model setup as the headless runner
-// (create-or-attach, journal dir, assembled models, default select, lane
-// boot) plus the loop surface the interactive path drives.
+// A refused tool selection: a usage error (exit 2), not a generic lane boot
+// failure.
 class ToolSelectionError extends Error {
   constructor(message: string) {
     super(message);
@@ -1115,63 +1078,98 @@ class ToolSelectionError extends Error {
   }
 }
 
-// The per-invocation tool selection is
-// validated before the lane boots — mutual exclusion, unknown names and the
-// Agreement with the permission classes all fail closed (exit 2)
-// rather than silently narrowing the run.
-function assertToolSelection(
-  selection: readonly string[] | undefined,
-  noTools: boolean,
-  classes: PermissionClasses | undefined,
-): void {
-  if (selection !== undefined && noTools) {
-    throw new ToolSelectionError(
-      '--tools and --no-tools are mutually exclusive',
-    );
-  }
-  if (selection === undefined) return;
-  const known = Object.keys(OPERATIONS).sort();
-  const unknown = selection.find((tool) => !known.includes(tool));
-  if (unknown !== undefined) {
-    throw new ToolSelectionError(
-      `unknown tool ${JSON.stringify(unknown)} (known tools: ${known.join(', ')})`,
-    );
-  }
-  const agreement = checkAgreement(
-    validateClasses({ ...(classes ?? DEFAULT_PERMISSIONS) }),
-    [...selection],
-  );
-  if (!agreement.agree) throw new ToolSelectionError(agreement.reason);
-}
-
+// The prod lane boot: the shared session bootstrap (session, role, model,
+// policy, journal baseline, skills, lane) plus the loop surface the
+// interactive path drives.
 export async function bootTuiLane(
   sessionId?: string,
   options: TuiRunOptions = {},
 ): Promise<TuiLaneBoot> {
-  // Defense-in-depth with runTuiCommand's --session check: direct
-  // callers bypass the CLI, so reject path-unsafe ids here before any
-  // store attach or path join can see them (mirrors headless-run.ts).
-  if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
-    throw new Error(
-      `invalid --session id ${JSON.stringify(sessionId)} (use [A-Za-z0-9_-])`,
-    );
-  }
-  const root = options.sessionsRoot ?? defaultSessionsRoot();
-  assertToolSelection(
-    options.toolSelection,
-    options.noTools === true,
-    options.classes,
-  );
   const context = BACKGROUND_CONTEXT;
-  const bridge = createNodeFileBridge(root);
-  const store = openSessionStore(root, bridge);
-  const session =
-    sessionId === undefined
-      ? await createSession(store, { cwd: process.cwd() }, context)
-      : await attachSession(store, sessionId, context);
+  // Warnings for the transcript, never stderr: the screen owns the terminal.
+  // The skill loader's unresolvable --skill and each settled turn's
+  // trajectory write push here; the loop drains them.
+  const transcriptNotices: string[] = [];
+  // Warnings that must show before the screen opens (a refused
+  // models.json): they ride the boot notices, printed on stderr first.
+  const bootWarnings: string[] = [];
+  // The model and thinking notices of the boot: a model switched or kept,
+  // a clamped level. The footer names them from the first render.
+  const modelNotices: string[] = [];
+  // The turn cell the loop's counter fills post-boot via
+  // setCurrentTurnSupplier. Unwired (undefined) reads turn-less, so a
+  // boot without a loop behaves like a headless run.
+  const turnCell: { supplier?: () => number | undefined } = {};
+  const boot = new SessionBoot(
+    {
+      command: 'tui',
+      context,
+      ...(sessionId === undefined ? {} : { sessionId }),
+      ...(options.role === undefined ? {} : { role: options.role }),
+      ...(options.toolSelection === undefined
+        ? {}
+        : { tools: options.toolSelection }),
+      ...(options.noTools === undefined ? {} : { noTools: options.noTools }),
+      ...(options.noSkills === undefined ? {} : { noSkills: options.noSkills }),
+      ...(options.skillsList === undefined
+        ? {}
+        : { cliSkills: options.skillsList }),
+      ...(options.dangerouslySkipApprovals === undefined
+        ? {}
+        : { dangerouslySkipApprovals: options.dangerouslySkipApprovals }),
+      // The answer seat: with the overlay's surface attached, `kubic tui`
+      // is the command that can actually collect a verdict on a challenged
+      // call instead of refusing it unseen.
+      ...(options.answer === undefined ? {} : { answer: options.answer }),
+      currentTurn: () => turnCell.supplier?.(),
+    },
+    {
+      sessionsRoot: options.sessionsRoot,
+      env: options.env,
+      classes: options.classes,
+      policySource: options.policySource,
+      approvals: options.approvals,
+      policy: options.policy,
+      models: options.models,
+      model: options.model,
+      streamTuning: options.streamTuning,
+      thinking: options.thinking,
+      compaction: options.compaction,
+      agentId: options.agentId,
+      journalRetention: options.journalRetention,
+      reconcileOutOfScope: options.reconcileOutOfScope,
+      systemPromptSection: options.systemPromptSection,
+      modelPolicy: options.modelPolicy,
+      trustProject: options.trustProject,
+      skills: options.skills,
+      roles: options.roles,
+    },
+    {
+      ...(options.debug === undefined ? {} : { debug: options.debug }),
+      warn: (line) => bootWarnings.push(line),
+      modelNotice: (line) => modelNotices.push(line),
+      thinkingNotice: (line) => modelNotices.push(line),
+      // An unresolvable explicit --skill is a transcript notice, never only
+      // a line on the debug sink the TUI drops — so a typo cannot read as a
+      // loaded skill.
+      skillsWarn: (line) => {
+        transcriptNotices.push(`warning: ${line}`);
+      },
+      // No debug footer on the alt-screen: loader lines are dropped (the
+      // block itself is observable).
+      skillsLog: () => undefined,
+    },
+  );
+  const badSession = boot.validateSessionId();
+  if (badSession?.kind === 'usage') throw new Error(badSession.message);
+  const badTools = boot.validateTools();
+  if (badTools?.kind === 'usage')
+    throw new ToolSelectionError(badTools.message);
+  const opened = await boot.open();
+  if (opened?.kind === 'store') throw opened.error;
+  const session = boot.session as SessionHandle;
   const id = session.id;
-  // The [session] debug line names the session.
-  options.debug?.(`[session] id=${id}`);
+  const root = boot.root;
   // The session's committed spend, read from its own `pi.usage`
   // ledger (the reader — the same numbers `kubic cost` prints) BEFORE the
   // lane adopts the storage. Best-effort: a torn or foreign usage document
@@ -1184,18 +1182,6 @@ export async function bootTuiLane(
   } catch {
     usageRows = [];
   }
-  // Baseline + end-of-run sweep: the TUI's run end is its
-  // close — quit, SIGINT, EOF — so the sweep rides that `close`. There is no
-  // closed-latch: idempotence comes from `reconcile`'s per-path after-hash
-  // comparison, so a second close on an unchanged tree appends nothing, while
-  // a mutation landing between two closes IS appended (pinned by the exec
-  // suite). Assigned inside the try below.
-  let reconciliation: RunReconciliation | undefined;
-  // The installed policy's end-of-session posture check.
-  let settlePolicy: (() => void) | undefined;
-  // The booted lane, once it exists. The session release is the caller's job:
-  // the harness closes first, then the handle gives the lock back.
-  let lane: Lane | undefined;
   // The quit's last-resort kill drain. keys every bash group
   // by String(conversation.id): whatever is still registered when the quit
   // runs is killed here — before the sweep and the close — because a tool
@@ -1203,202 +1189,43 @@ export async function bootTuiLane(
   // turn's handles are forgotten (forgetKills), so a kept background job is
   // not this quit's to kill.
   let killRemaining: (() => void) | undefined;
+  // The TUI's run end is its close — quit, SIGINT, EOF — so the end-of-run
+  // sweep rides it. There is no closed-latch: idempotence comes from
+  // `reconcile`'s per-path after-hash comparison, so a second close on an
+  // unchanged tree appends nothing.
   const close = async (): Promise<void> => {
     try {
       killRemaining?.();
     } catch {
       // A kill that already exited is not a reason to skip the sweep.
     }
-    try {
-      reconciliation?.sweep();
-    } catch {
-      // A sweep failure never masks the clean quit (same posture as the
-      // headless runner: reconciliation observes, it does not gate).
-    }
-    try {
-      settlePolicy?.();
-    } catch {
-      // Best-effort, like the sweep: the clean quit stands.
-    }
-    try {
-      await lane?.close(context);
-    } catch {
-      // A harness that was never booted, or one already closed, still
-      // releases the session handle below.
-    }
-    try {
-      await session.release(context);
-    } catch {
-      // The mapped result stands — close failures never escape.
-    }
+    await boot.teardown();
   };
   try {
-    bridge.createDir(join(id, 'journal'));
-    // The store takes the same retention policy the
-    // headless runner threads from config — a TUI session's journal age-
-    // prunes when the operator configured it, like any run.
-    const journal = new FileJournalStore(
-      join(root, id, 'journal'),
-      options.journalRetention ?? {},
-    );
-    // A capture failure is not a boot failure (same posture as the headless
-    // runner): the sweep then simply has no baseline to compare against.
-    try {
-      reconciliation = beginReconciliation({
-        store: journal,
-        root: options.env?.cwd ?? process.cwd(),
-        runId: id,
-        sessionId: id,
-        ...(options.reconcileOutOfScope === undefined
-          ? {}
-          : { outOfScope: options.reconcileOutOfScope }),
-      });
-    } catch {
-      // Reported below by the loop's own surfaces; the boot stands.
-    }
-    // Request-time provider keys, audited per use.
-    // `!command` secret refs execute in the run's workspace
-    // through the production runner — rerun per request.
-    const keyResolver = createLedgerModelKeyResolver({
-      workspace: options.env?.cwd ?? process.cwd(),
-      role: 'root',
-      sessionId: () => id,
-      runCommand: createSecretCommandRunner({
-        cwd: options.env?.cwd ?? process.cwd(),
-      }),
-    });
-    const assembled =
-      options.models === undefined
-        ? await assembleModels(process.cwd(), process.env, {
-            resolveApiKey: keyResolver.resolve,
-            ...(options.trustProject === undefined
-              ? {}
-              : { projectTrust: options.trustProject }),
-          })
-        : undefined;
-    const models = options.models ?? (assembled as AssembledModels).models;
-    // The faux testing provider (`KUBIC_PROVIDER=faux`) is pinned, never
-    // picked implicitly; the footer names it (runTuiCommand). The implicit
-    // pick never takes a keyless built-in.
-    const fauxPinned =
-      options.models === undefined && fauxProviderActive(process.env);
-    // `--role` derives both halves of the boot from
-    // the role document — prompt text and tool allowlist — with the same
-    // fail-closed refusals as `kubic run`. An unknown role refuses the
-    // boot (the catch below closes the session and rethrows for the
-    // command shell to print) rather than silently booting a roleless
-    // lane. Resolved BEFORE model selection: the role layer's model pin is
-    // a selection input.
-    // Enterprise policy: the same gates the headless runner
-    // applies — role grants are checked and the model selection is gated.
+    const refused = await boot.boot();
+    if (refused !== undefined) throw bootRefusalError(refused);
+    const booted = boot.lane as Lane;
+    const models = boot.models as MutableModels;
+    const assembled = boot.assembled;
+    const installed = boot.installed as InstalledPolicy;
+    const journal = boot.journal as FileJournalStore;
+    const store = boot.store as SessionStore;
+    const bridge = boot.bridge;
+    const env = boot.env as ExecutionEnv;
+    const selectedRole = boot.role;
     const enterprisePolicy = options.modelPolicy;
-    const toolGate =
-      enterprisePolicy !== undefined && hasToolPolicy(enterprisePolicy)
-        ? (tool: string): boolean =>
-            isToolAllowedByEnterprise(enterprisePolicy, tool)
-        : undefined;
-    // The stored model of a resumed session is gated too: the
-    // selection is checked at boot, the stored one only by this closure.
-    const modelGate =
-      enterprisePolicy !== undefined && hasModelPolicy(enterprisePolicy)
-        ? (provider: string, modelId: string): boolean =>
-            isModelAllowed(enterprisePolicy, provider, modelId)
-        : undefined;
-    const selectedRole = (() => {
-      if (options.role === undefined) return undefined;
-      const rolesCwd = options.roles?.cwd ?? process.cwd();
-      const rolesBridge = createNodeFileBridge(rolesCwd);
-      // Role documents resolve at the project root, so
-      // `--role` from a subdirectory finds `<root>/.kubic/roles/*.md`.
-      const selected = selectRole({
-        bridge: rolesBridge,
-        cwd: rolesCwd,
-        role: options.role,
-        projectRoot: findProjectRoot(rolesBridge, rolesCwd, homedir()),
-        ...(options.roles?.layers === undefined
-          ? {}
-          : { layers: options.roles.layers }),
-        // Trust-gated like `kubic run` — the
-        // `roles` projection already carries the config load's check.
-        ...(options.roles?.trusted === undefined
-          ? {}
-          : { trusted: options.roles.trusted }),
-        ...(options.roles?.trustProject === undefined
-          ? {}
-          : { trustProject: options.roles.trustProject }),
-        // The global `~/.kubic/roles` layer under the
-        // project documents — same projection as `kubic run`.
-        ...(options.roles?.homeDir === undefined
-          ? {}
-          : { home: options.roles.homeDir }),
-        ...(enterprisePolicy === undefined
-          ? {}
-          : { toolPolicy: enterprisePolicy }),
-      });
-      const promptText = rolePromptFor(selected.doc, selected.markdown);
-      // The document's `skills` list travels with the
-      // resolved role for the skill gate.
-      return {
-        resolved: selected.resolved,
-        prompt: promptText,
-        docSkills: selected.doc.skills,
-      };
-    })();
-    // The [policy] line names the resolved role — or the
-    // default the boot runs as when no --role was given (mirrors the
-    // headless runner's line).
-    if (selectedRole === undefined) {
-      options.debug?.(`[policy] role=${DEFAULT_RUN_ROLE} (default)`);
-    } else {
-      options.debug?.(
-        `[policy] role=${selectedRole.resolved.name} tools=${selectedRole.resolved.tools.join(',')}`,
-      );
-    }
-    const roleBoot: { rolePrompt?: string; toolAllowlist?: string[] } =
-      selectedRole === undefined
-        ? {}
-        : {
-            rolePrompt: selectedRole.prompt,
-            ...(selectedRole.resolved.tools.length === 0
-              ? {}
-              : { toolAllowlist: selectedRole.resolved.tools }),
-          };
-    // The ONE projection `kubic run` and
-    // `kubic tui` share — the runtime pin (cli `--model` > env > `[model]`)
-    // beats the role layer's model, which beats the first usable provider;
-    // the implicit pick never takes a keyless built-in. The
-    // Enterprise policy gates the explicit/role selection
-    // and the provider pool. The explicit-selection predicate is the
-    // rule: any pin (faux, runtime or role) switches a resumed session
-    // whose stored model differs, the default pick never does.
-    const model = selectBootModel({
-      models,
-      fauxPinned,
-      pin: options.model,
-      roleModel: selectedRole?.resolved.model,
-      fallbackProviders: assembled?.fallbackProviders,
-      policy: enterprisePolicy,
-      // The role's allowed set: the same gate
-      // `kubic run` applies, so a scoped role boots in-set on both.
-      roleScope: roleModelScope(selectedRole?.resolved),
-    });
-    const explicitModel = hasExplicitModelSelection({
-      fauxPinned,
-      pin: options.model,
-      roleModel: selectedRole?.resolved.model,
-    });
-    // The `provider/id` the audit rows name: seeded with
-    // the selection, re-pointed at the model the lane reports once the boot
-    // has applied the stored-model rule and again on every `/model` switch —
-    // the policy is installed before the lane exists, so it reads this at
-    // record time instead of freezing the pre-boot pick.
-    let liveModelRef = `${model.provider}/${model.id}`;
-    // The run's escalation ladder: the role's own
-    // rungs win over the merged `[model]` ones (`resolveLaneLadder`),
-    // and the record lives here — one ladder object per boot, so every
-    // explicit climb and the single auto climb draw from the
-    // same budget. Undefined when nothing configured a ladder: the
-    // `/model` switch keeps its existing path.
+    // The loaded skill names, for the trajectory's resources; the invocable
+    // skills (admitted + gate-passed, hidden included, withheld excluded),
+    // so `/skill:` expands and completes against the boot's gated set; and
+    // the skills the loader met but did not load, for the boot notices.
+    const skillNames = (boot.skills?.skills ?? []).map((skill) => skill.name);
+    const bootedSkillList = boot.skills?.invocable ?? [];
+    const skillSkips = boot.skills?.skipped ?? [];
+    // The run's escalation ladder: the role's own rungs win over the merged
+    // `[model]` ones (`resolveLaneLadder`), and the record lives here — one
+    // ladder object per boot, so every explicit climb and the single auto
+    // climb draw from the same budget. Undefined when nothing configured a
+    // ladder: the `/model` switch keeps its existing path.
     const laneLadderSteps = resolveLaneLadder(
       options.escalate,
       selectedRole?.resolved.escalate,
@@ -1411,291 +1238,16 @@ export async function bootTuiLane(
             maxEscalations: laneLadderSteps.maxEscalations,
             record: [],
           };
-    // The climbs this run recorded: the sink every
-    // escalateLaneModel call reports to — the trajectory event and the
-    // transcript line read them from here.
+    // The climbs this run recorded: the sink every escalateLaneModel call
+    // reports to — the trajectory event and the transcript line read them
+    // from here.
     const escalationEvents: ModelEscalationEvent[] = [];
-    // The single automatic trigger's streak:
-    // consecutive tool-failure turns climb one rung, once per run.
+    // The single automatic trigger's streak: consecutive tool-failure turns
+    // climb one rung, once per run.
     const autoEscalation = createAutoEscalation();
-    // Transcript rows already reported: the drain
-    // below reports each recorded climb once, however many turns settle.
+    // Transcript rows already reported: the drain below reports each
+    // recorded climb once, however many turns settle.
     let reportedEscalations = 0;
-    // Warnings for the transcript, never stderr: the screen owns the terminal.
-    // The skill loader's unresolvable --skill and each settled turn's
-    // trajectory write push here; the loop drains them.
-    const transcriptNotices: string[] = [];
-    const env = options.env ?? new NodeExecutionEnv(process.cwd());
-    // Audit identity: the base revision this run started
-    // from — captured once here, `none` outside git — and the thinking
-    // level the lane runs, re-pointed after boot and on every change.
-    const runBase = await resolveRunBaseRevision(env.cwd, (cmd, args) =>
-      env.shell
-        .spawn(cmd, args, {
-          provenance: {
-            sessionId: id,
-            agentId: options.agentId ?? 'root',
-            toolCallId: 'tui:base-revision',
-            turnId: 0,
-            operation: 'tui',
-          },
-        })
-        .wait(),
-    );
-    let liveThinkingRef: string | undefined;
-    // The loaded skill names, for the trajectory's resources.
-    let skillNames: string[] = [];
-    // The invocable skills (admitted + gate-passed,
-    // hidden included, withheld excluded), so `/skill:` expands and
-    // completes against the boot's gated set — never the raw load.
-    let bootedSkillList: LoadedSkill[] = [];
-    // The skills the loader met but did not load — the TUI
-    // drops none of these lines: they ride the boot notices once.
-    let skillSkips: SkippedSkill[] = [];
-    // Installed policy: `kubic tui` drives the same lane as
-    // `kubic run`, so it installs the same policy — one derivation
-    // (host/approvals.installPolicy), which is also what `doctor`
-    // reports. Without this the interactive path would be the unprotected
-    // one, which is the gap this install closes.
-    // The explicit flag records full access for THIS
-    // session (posture.json + one audit row) before the policy is installed.
-    const fullAccessGrant =
-      options.dangerouslySkipApprovals === true
-        ? enableSessionFullAccess({
-            sessionDir: join(root, id),
-            sessionId: id,
-            command: 'tui',
-            workspace: env.cwd,
-          })
-        : undefined;
-    const installed =
-      options.policy ??
-      installPolicy({
-        workspace: env.cwd,
-        // The lane enforces the most
-        // restrictive merge of the config classes and the role's, and
-        // the role's approval obligations challenge on the triggers.
-        // No role means the config (or the lane default).
-        ...(selectedRole === undefined
-          ? {
-              ...(options.classes === undefined
-                ? {}
-                : { classes: options.classes }),
-            }
-          : {
-              classes: effectiveRoleClasses(
-                { ...DEFAULT_PERMISSIONS, ...options.classes },
-                selectedRole.resolved.classes,
-              ),
-              ...(selectedRole.resolved.requires.length === 0
-                ? {}
-                : { requires: selectedRole.resolved.requires }),
-            }),
-        source: options.policySource ?? 'default',
-        ...(options.approvals ?? {}),
-        sessionDir: join(root, id),
-        // The session root in use is refused control-plane state.
-        sessionsRoot: root,
-        // Audit identity: every resolved ask names the
-        // session and the model the lane runs on, like `kubic run`'s.
-        sessionId: id,
-        model: () => liveModelRef,
-        // The thinking level at record time, and the base
-        // revision captured above.
-        thinking: () => liveThinkingRef,
-        base: runBase,
-        // The answer seat: with the overlay's surface attached,
-        // `kubic tui` is the command that can actually collect a verdict on a
-        // challenged call instead of refusing it unseen. Injected policies
-        // (tests, and any caller that supplies its own) keep their own seat.
-        ...(options.answer === undefined ? {} : { answer: options.answer }),
-      });
-    // The same rule as `kubic run` — a pin (faux,
-    // runtime, or the role's default) switches a resumed session whose
-    // stored model differs; the default pick keeps the session's own model.
-    const modelNotices: string[] = [];
-    // The turn cell the loop's counter fills post-boot via
-    // setCurrentTurnSupplier. Unwired (undefined) reads turn-less, so a
-    // boot without a loop behaves like a headless run.
-    const turnCell: { supplier?: () => number | undefined } = {};
-    // Request options: the merged `[model]` tuning with
-    // `--role` layered over it becomes this lane's `settings.stream` — the
-    // same resolution `kubic run` performs.
-    const stream = resolveStreamOptions(
-      options.streamTuning?.model,
-      options.role === undefined
-        ? undefined
-        : options.streamTuning?.roles?.[options.role],
-    );
-    // The same request shape as `kubic run` — a
-    // per-run source is the override, a file-layer source the config
-    // default, and the role default loses to the session's stored level.
-    // A clamp joins the model notices: it names the model, the request
-    // and the level applied, and the footer line says the same thing.
-    const requestThinking = options.thinking;
-    // A matching set entry's thinking wins over the flat role default —
-    // resolved against the SELECTED model.
-    const roleThinking = resolveRoleThinking(
-      selectedRole?.resolved,
-      model.provider,
-      model.id,
-    );
-    const booted = await bootLane({
-      session,
-      models,
-      model,
-      modelPolicy: explicitModel ? 'selected' : 'stored',
-      onModelNotice: (line) => modelNotices.push(line),
-      onThinkingNotice: (line) => modelNotices.push(line),
-      ...(requestThinking === undefined && roleThinking === undefined
-        ? {}
-        : {
-            thinking: {
-              ...(requestThinking === undefined
-                ? {}
-                : requestThinking.source === 'cli' ||
-                    requestThinking.source === 'env' ||
-                    requestThinking.source === 'enterprise'
-                  ? {
-                      override: {
-                        level: requestThinking.level,
-                        source: requestThinking.source,
-                      },
-                    }
-                  : {
-                      config: {
-                        level: requestThinking.level,
-                        source: requestThinking.source,
-                      },
-                    }),
-              ...(roleThinking === undefined ? {} : { role: roleThinking }),
-            },
-          }),
-      // The session id pins the boot model
-      // for the task — escalateLaneModel is the only path off it, so an
-      // off-ladder `/model` target refuses instead of silently switching.
-      taskId: id,
-      env,
-      sessionId: id,
-      agentId: options.agentId ?? 'root',
-      // The configured compaction policy — absent
-      // means the own defaults.
-      ...(options.compaction === undefined
-        ? {}
-        : { compaction: options.compaction }),
-      journal,
-      // An untuned boot omits `stream` — the provider
-      // defaults stand, never an invented Kubic one.
-      ...(stream === undefined ? {} : { settings: { stream } }),
-      currentTurn: () => turnCell.supplier?.(),
-      // Skills discovery at boot, same as the headless
-      // runner — the <skills> block lands on the interactive lane too. A
-      // loader refusal is never fatal (skills are context, never a gate);
-      // it is logged to the boot's debug channel.
-      ...((): {
-        promptSections?: string[];
-        skillReadRoots?: readonly string[];
-      } => {
-        const trustProject =
-          options.trustProject ?? options.skills?.trustProject;
-        const skills = bootSkills({
-          bridge: createNodeFileBridge(options.skills?.cwd ?? process.cwd()),
-          cwd: options.skills?.cwd ?? process.cwd(),
-          homeDir: options.skills?.homeDir ?? homedir(),
-          trusted:
-            options.skills?.trusted ??
-            (process.env.KUBIC_TRUST_PROJECT === '1' ||
-              process.env.KUBIC_TRUST_PROJECT === 'true'),
-          ...(trustProject === undefined ? {} : { trustProject }),
-          ...(options.noSkills === undefined
-            ? {}
-            : { noSkills: options.noSkills }),
-          ...(options.skillsList === undefined
-            ? {}
-            : { cliSkills: options.skillsList }),
-          // The config `skills` projection loads
-          // with source 'settings'.
-          ...(options.skills?.settingsSkills === undefined
-            ? {}
-            : { settingsSkills: options.skills.settingsSkills }),
-          // The injected set depends on the resolved
-          // role and the installed classes — withheld skills never reach
-          // the prompt, with the reason on the debug sink.
-          ...(selectedRole === undefined
-            ? {}
-            : { role: selectedRole.resolved.name }),
-          ...(selectedRole?.docSkills === undefined
-            ? {}
-            : { roleSkills: selectedRole.docSkills }),
-          classes: installed.classes,
-          // An unresolvable explicit --skill is a transcript notice, never
-          // only a line on this debug sink the TUI drops — so a typo cannot
-          // read as a loaded skill.
-          warn: (line: string): void => {
-            transcriptNotices.push(`warning: ${line}`);
-          },
-          log: () => {
-            // TUI: no debug footer on the alt-screen; loader lines are
-            // intentionally dropped (the block itself is observable).
-          },
-        });
-        skillNames = skills.skills.map((skill) => skill.name);
-        bootedSkillList = skills.invocable;
-        skillSkips = skills.skipped;
-
-        return {
-          // The system prompt file section lands ahead of the
-          // skills block — same composition `kubic run` uses.
-          ...(() => {
-            const sections = composePromptSections(
-              options.systemPromptSection,
-              skills.block,
-            );
-            return sections === undefined ? {} : { promptSections: sections };
-          })(),
-          // The advertised skills outside the cwd stay readable.
-          ...(skills.readRoots.length === 0
-            ? {}
-            : { skillReadRoots: skills.readRoots }),
-        };
-      })(),
-      // `--role` derives both halves of the boot from
-      // the role document — prompt text and tool allowlist — resolved above,
-      // before model selection, with the same fail-closed refusals as
-      // `kubic run`.
-      ...roleBoot,
-      // The CLI's `--tools`/`--no-tools`
-      // selection narrows the booted lane's tool set (never widens).
-      ...(options.toolSelection === undefined
-        ? {}
-        : { toolSelection: options.toolSelection }),
-      ...(options.noTools === true ? { noTools: true } : {}),
-      // The same installed policy `kubic run` boots with: one
-      // derivation, so the interactive path is not the unprotected one.
-      policy: {
-        classes: installed.classes,
-        interceptors: installed.interceptors,
-        ...(installed.contributions.length === 0
-          ? {}
-          : { contributions: [...installed.contributions] }),
-        // Enterprise tool gate: the same active-tools /
-        // prompt-tools intersection the headless lane installs.
-        ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
-        ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
-      },
-    });
-    // The booted lane: `lane` stays optional for the close closure (a boot
-    // that failed before the assignment must still release the session).
-    lane = booted;
-    {
-      const running = await liveModelOf(booted, context);
-      liveModelRef = `${running.provider}/${running.id}`;
-      // The thinking level the lane actually runs (pi-durable
-      // defaults an unset level to `off`, the same answer `/thinking`
-      // reports) — the audit rows name this, and the switches below keep it.
-      liveThinkingRef =
-        (await booted.conversation.agent(context)).thinkingLevel ?? 'off';
-    }
     killRemaining = (): void => {
       // Every bash group is keyed by the conversation id, so the quit's
       // backstop drains exactly that key (forgetKills may already have
@@ -1716,10 +1268,10 @@ export async function bootTuiLane(
     // operator sees WHAT was interrupted. The outcome is named in the footer
     // from the first render.
     const pendingNotices: string[] = [];
-    const pending = await inspectPending(lane, context);
+    const pending = await inspectPending(booted, context);
     if (pending.pending) {
-      const interrupted = await pendingInputText(lane, context);
-      const settlement = await settlePending(lane, 'abort', {
+      const interrupted = await pendingInputText(booted, context);
+      const settlement = await settlePending(booted, 'abort', {
         context,
         kills: booted.kills,
       });
@@ -1731,18 +1283,17 @@ export async function bootTuiLane(
       );
     }
     const fullAccess = installed.posture.fullAccess;
-    settlePolicy = installed.settle;
     // The model the lane actually runs: the status bar, the
     // usage rows the turn runner records and the context gauge all
     // read this.
-    const runningModel = await liveModelOf(lane, context);
+    const runningModel = await liveModelOf(booted, context);
     // The thinking level the lane actually
     // runs — read back from the committed agent document, exactly the
     // value whose clamp (or keep) the boot notices already reported. The
     // seed below shows this from the first frame; a stale seed would
     // disagree with the lane until the first turn's refresh.
     const runningThinking =
-      (await lane.conversation.agent(context)).thinkingLevel ?? 'off';
+      (await booted.conversation.agent(context)).thinkingLevel ?? 'off';
     return {
       sessionId: id,
       model: `${runningModel.provider}/${runningModel.id}`,
@@ -1787,14 +1338,14 @@ export async function bootTuiLane(
       // resolves journal paths against the same workspace root.
       keySourceOf: (provider: string) =>
         assembled?.providers.get(provider)?.authSource,
-      // The workspace a TUI session records is the process cwd (see the
-      // createSession above), so "this project" is matched against it. Each
+      // A session records the workspace it booted in (the boot env's cwd),
+      // so "this project" is matched against the same directory. Each
       // summary parses a session file, so one read serves the palette and
       // `/resume` for SESSION_SUMMARY_TTL_MS.
       summarizeSessions: cachedSummaries((exclude) =>
         summarizeProjectSessions({
           sessionsRoot: root,
-          workspace: process.cwd(),
+          workspace: env.cwd,
           ...(exclude === undefined ? {} : { exclude }),
           context,
         }),
@@ -1830,10 +1381,10 @@ export async function bootTuiLane(
             };
       },
       reconcile: () => {
-        reconciliation?.sweep();
+        boot.reconciliation?.sweep();
       },
       rebaseline: (turn: number) => {
-        reconciliation?.rebaseline(turn);
+        boot.reconciliation?.rebaseline(turn);
       },
       // The lane samples this cell per tool call (through
       // LaneBootOptions.currentTurn) — installing the loop's counter here
@@ -1868,8 +1419,9 @@ export async function bootTuiLane(
       ...((): { notices?: string[] } => {
         const skillSkipNotice = describeSkillSkips(skillSkips);
         const notices = [
+          ...bootWarnings,
           ...(fullAccess
-            ? [fullAccessGrant?.warning ?? fullAccessInForceWarning(id)]
+            ? [boot.fullAccessWarning ?? fullAccessInForceWarning(id)]
             : []),
           ...(skillSkipNotice === undefined ? [] : [skillSkipNotice]),
         ];
@@ -1935,7 +1487,7 @@ export async function bootTuiLane(
           // through to the re-clamp below, which commits the thinking
           // level for the NEW model in the same switch.
           const requested = `${selection.provider}/${selection.modelId}`;
-          if (laneLadder !== undefined && requested !== liveModelRef) {
+          if (laneLadder !== undefined && requested !== boot.liveModelRef) {
             await escalateLaneModel(
               booted,
               laneLadder,
@@ -1966,15 +1518,15 @@ export async function bootTuiLane(
           // of echoing the request (it also re-clamps the compaction reserve,
           // which follows the current model live).
           const live = await liveModelOf(booted, loopContext);
-          liveModelRef = `${live.provider}/${live.id}`;
+          boot.liveModelRef = `${live.provider}/${live.id}`;
           // The switch committed a re-clamped level with the
           // model — the audit rows follow it.
-          liveThinkingRef = effective;
+          boot.liveThinkingRef = effective;
           // An explicit climb moves the auto
           // trigger's streak out from under it — restart the count on
           // the new model without spending the single auto slot.
           resetAutoEscalation(autoEscalation);
-          return liveModelRef;
+          return boot.liveModelRef;
         },
         model: async (loopContext) => {
           const running = await liveModelOf(booted, loopContext);
@@ -2003,7 +1555,7 @@ export async function bootTuiLane(
           const agent = await booted.conversation.agent(loopContext);
           // The audit rows name the committed level.
           const committed = agent.thinkingLevel ?? effective;
-          liveThinkingRef = committed;
+          boot.liveThinkingRef = committed;
           return committed;
         },
         supportedThinking: async (loopContext) => {
@@ -2170,6 +1722,24 @@ export async function bootTuiLane(
   } catch (error) {
     await close();
     throw error;
+  }
+}
+
+// A boot refusal as the error the TUI command maps to its exit code: a bad
+// tool selection is a usage error (exit 2), no usable model a provider
+// error (exit 6), everything else its own error.
+function bootRefusalError(refusal: BootRefusal): unknown {
+  switch (refusal.kind) {
+    case 'usage':
+      return new ToolSelectionError(refusal.message);
+    case 'provider':
+      return new ModelSelectError(refusal.message);
+    case 'store':
+      return refusal.error;
+    case 'failed':
+      return refusal.cause ?? new Error(refusal.message);
+    case 'cancelled':
+      return new Error('the boot was cancelled');
   }
 }
 

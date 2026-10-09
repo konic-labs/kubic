@@ -110,8 +110,9 @@ export type BootRefusal =
   | { kind: 'store'; error: unknown }
   // An interrupt arrived while the boot was running.
   | { kind: 'cancelled' }
-  // A refused role document.
-  | { kind: 'failed'; message: string }
+  // A refused role document (with the error that refused it) or a refused
+  // skill invocation.
+  | { kind: 'failed'; message: string; cause?: unknown }
   // No usable model: a refused selection or provider override (exit 6).
   | { kind: 'provider'; message: string };
 
@@ -462,7 +463,7 @@ export class SessionBoot {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { kind: 'failed', message };
+      return { kind: 'failed', message, cause: error };
     }
   }
 

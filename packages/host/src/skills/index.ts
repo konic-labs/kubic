@@ -1,5 +1,4 @@
 // Skills: discovery and boot for a run, the doctor probe, and `kubic skills`.
-export type { SkippedSkill } from './skills-boot.js';
 export {
   bootSkills,
   describeSkillSkips,

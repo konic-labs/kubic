@@ -1489,28 +1489,3 @@ function captureBoot(boot: SessionBoot, capture: RunCapture): void {
   }
   if (boot.thinkingLevel !== undefined) capture.thinking = boot.thinkingLevel;
 }
-
-// The `provider/id` the lane actually runs: the live
-// conversation's agent model, else the boot's effective model. Tolerant of
-// liveness gaps, which report nothing rather than fail.
-async function liveModel(
-  lane: Lane,
-  context: Context,
-): Promise<{ provider: string; id: string } | undefined> {
-  const agent = await lane.conversation.agent(context);
-  const live = agent.model;
-  if (live !== undefined) {
-    return { provider: live.provider, id: live.modelId };
-  }
-  return lane.model as Lane['model'] | undefined;
-}
-
-async function liveModelId(
-  lane: Lane,
-  context: Context,
-): Promise<string | undefined> {
-  const running = await liveModel(lane, context);
-  return running === undefined
-    ? undefined
-    : `${running.provider}/${running.id}`;
-}

@@ -653,9 +653,9 @@ Which files were found and their trust state is reported: `kubic models`
 and `kubic doctor` print a `loaded models.json: <path> (global|project,
 trusted): <ids>` / `models.json ignored: <path> …` line on stderr, doctor's
 `dep:models-json` check lists each file with `loaded`, `ignored, untrusted`
-or `invalid` (an invalid file fails the check), and `kubic run` prints a
+or `invalid` (an invalid file fails the check), `kubic run` prints a
 `models.json ignored: …` line on stderr (the `loaded` receipt only under
-`--debug`).
+`--debug`), and `kubic tui` lists the same line among its boot notices.
 
 ### models.json schema
 
@@ -744,8 +744,8 @@ Secrets never appear in config: a secret-shaped value or a secret ref in
   result but not from the session file. A trajectory export also redacts every
   secret-classified env key (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`,
   `*_CREDENTIALS`, and the Anthropic federation block below) to
-  `<redacted>` with the same classifier the tool spawn env uses. (`kubic tui` resolves and audits keys the same
-  way but does not yet scrub its session writes.)
+  `<redacted>` with the same classifier the tool spawn env uses. `kubic tui` resolves and audits keys the same
+  way and writes its session JSONL through the same redacting bridge.
 
 **Anthropic workload identity federation is secret whole.**
 `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`,

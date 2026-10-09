@@ -43,7 +43,6 @@
         "**/*.test.ts",
         "**/*.test.mjs",
         "**/test-support/**",
-        "**/test-harness.ts",
         "test/**"
       ]
     }

@@ -337,7 +337,8 @@ policy, the session store and the journal.
 
 - **Never implicit.** Only the exact value `faux` turns it on. Unset or
   empty means no override; any other value is refused by name — `run`
-  ends `provider_probe_failed` (exit 6) with
+  ends `provider_probe_failed` (exit 6) and `tui` exits 6 before the screen
+  opens, both with
   `unsupported KUBIC_PROVIDER "<value>" (the only override is 'faux', the testing provider)`.
 - **Always announced.** `run` prints
   `warn: provider: faux/echo (testing provider: scripted replies, no model is called; KUBIC_PROVIDER=faux)`

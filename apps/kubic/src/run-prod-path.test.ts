@@ -23,8 +23,8 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { resolveEffectivePolicy } from '@kubic/host/policy';
 import {
   buildRunEnvelope,

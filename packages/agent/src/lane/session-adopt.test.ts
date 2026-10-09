@@ -3,7 +3,7 @@
 // records that a harness owns it and its `release()` gives the lock back
 // without closing a storage a live harness is using.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { describe, expect, it } from 'vitest';
 import {
   BACKGROUND_CONTEXT,

@@ -12,7 +12,7 @@ import {
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import type { CommandResult } from '@kubic/core/cli/exit-codes';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {

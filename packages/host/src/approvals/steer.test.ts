@@ -8,13 +8,13 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { KubicLaneEvent } from '@kubic/agent/lane/events';
+import { fauxAssistantMessage, fauxToolCall } from '@kubic/agent/pi-boundary';
 import {
   bootFauxLane,
   type FauxLane,
   fauxToolUse,
-} from '@kubic/agent/lane/test-harness';
-import { fauxAssistantMessage, fauxToolCall } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+} from '@kubic/agent/test-support/lane-harness';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { auditLedgerDirFor, readAuditLedger } from '../audit/index.js';
 import { installPolicy } from './install.js';

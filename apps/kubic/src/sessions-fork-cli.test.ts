@@ -9,11 +9,11 @@ import {
   attachSession,
   openSessionStore,
 } from '@kubic/agent/lane/session-store';
-import { bootFauxLane } from '@kubic/agent/lane/test-harness';
 import {
   BACKGROUND_CONTEXT,
   fauxAssistantMessage,
 } from '@kubic/agent/pi-boundary';
+import { bootFauxLane } from '@kubic/agent/test-support/lane-harness';
 import { createLineLogger } from '@kubic/core/cli/logger';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {

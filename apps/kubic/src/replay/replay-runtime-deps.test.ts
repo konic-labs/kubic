@@ -17,7 +17,6 @@ import {
   attachSession,
   openSessionStore,
 } from '@kubic/agent/lane/session-store';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   entriesToTranscript,
   readSessionEntries,
@@ -31,8 +30,9 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import {
   createProdReplayRun,

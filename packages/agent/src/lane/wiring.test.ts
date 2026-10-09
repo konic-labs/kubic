@@ -2,7 +2,7 @@
 // hook order), the prompt sections (role prompt, appended context blocks), and
 // the HarnessSettings the boot hands over.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EscalationLadder } from '../model-select.js';
 import {

@@ -30,7 +30,7 @@ every diff touching the boundary for maintainer review.
 | `lane/pending.ts` | `PendingPolicy`, `PendingReport`, `PendingSettlementResult`, `SettlePendingOptions`, `PendingLane`, `inspectPending`, `settlePending`, `describePendingSettlement`, `pendingInputText`, `inspectStoredWork` — settle a turn a crashed process left open (`harness.inspect()` decides, `resume` waits under the caller's guard, `abort` is durable) |
 | `lane/abort.ts` | `KillFn`, `OperationKillRegistry`, `AbortableLane`, `LaneAbortResult`, `LaneDriveError`, `abortLane`, `forgetLaneKills` — `conversation.abort(context)` plus the conversation-keyed kill drain (every kill attempted, failures aggregated); `track()` returns the unregister fn its owner calls when the handle settles |
 | `lane/transcript.ts` | `TranscriptItem`, `entriesToTranscript`, `readConversationEntries`, `readSessionEntries` — the one pi-durable → Kubic transcript adapter |
-| `lane/test-harness.ts` | `bootFauxLane`, `runPrompt`, `laneEntries`, `laneToolResults`, `laneSystemPrompt`, `laneActiveTools`, `fauxToolUse`, … — the test-only faux Lane factory |
+| `test-support/lane-harness.ts` | `bootFauxLane`, `runPrompt`, `laneEntries`, `laneToolResults`, `laneSystemPrompt`, `laneActiveTools`, `fauxToolUse`, … — the test-only faux Lane factory |
 | `lane/wrap.ts` | `ExecuteFn`, `ToolContribution`, `composeTools`, `PolicyDeniedError`, `withPermissionCheck`, `TelemetryRecord`, `withTelemetry` |
 | `usage.ts` | `KubicUsageRow`, `formatCost`, `usageRowFromEntry` |
 | `model-select.ts` | `ModelSelectError`, `ModelSelection`, `AnyModel`, `selectModel`, `parseModelFlag`, `EscalationLadder`, `escalateModel`, `supportedThinking`, `clampThinking` |
@@ -46,7 +46,7 @@ Child output is capped at two independent layers, both keeping the **tail**
 (endings usually carry the error) and naming exactly what was dropped:
 
 - **Seam (memory):** `NodeShell` accumulates at most `MAX_CHILD_OUTPUT_BYTES`
-  (10 MiB) per stream — `env.ts`, overridable per spawn via
+  (10 MiB) per stream — `env/node-shell.ts`, overridable per spawn via
   `SpawnOptions.maxOutputBytes`. A chatty child (`yes`, a verbose build) can no
   longer OOM the run; the settled stream gains a
   `[kubic: output truncated — dropped N leading bytes, kept the last M]`
@@ -156,7 +156,7 @@ The `bash` op runs **bash when the system has it** — not `sh`, so
 bashisms (`[[ ]]`, `local`, arrays) work wherever bash exists. Resolution
 is lazy and cached per process: the first command attempts `bash`, and a
 spawn that settles exit 127 with Node's `spawn <name> ENOENT` message
-line (the `env.ts` ENOENT hardening is what puts that
+line (the `env/node-shell.ts` ENOENT hardening is what puts that
 message in stderr — user output never matches) degrades once to `sh` and
 remembers — a single detect-and-retry inside
 `execute()`, before the registry memoizes under `op-result-bash`, so a

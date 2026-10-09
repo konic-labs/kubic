@@ -10,7 +10,6 @@ import {
   attachSession,
   openSessionStore,
 } from '@kubic/agent/lane/session-store';
-import { bootFauxLane } from '@kubic/agent/lane/test-harness';
 import { readSessionEntries } from '@kubic/agent/lane/transcript';
 import {
   BACKGROUND_CONTEXT,
@@ -18,6 +17,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
+import { bootFauxLane } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it } from 'vitest';

@@ -2,7 +2,7 @@
 // harness. The class-derived allowlist is now a
 // `conversation.configure({ tools })` against the registry's registrations.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PERMISSIONS } from '../permissions.js';
 import {

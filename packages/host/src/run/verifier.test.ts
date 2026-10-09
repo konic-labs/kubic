@@ -6,11 +6,8 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  type ExecutionEnv,
-  FakeExecutionEnv,
-  NodeExecutionEnv,
-} from '@kubic/exec/env';
+import { type ExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_VERIFY_TIMEOUT_MS,

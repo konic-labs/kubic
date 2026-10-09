@@ -49,10 +49,6 @@
       "source": "./src/lane/settle.ts",
       "default": "./src/lane/settle.ts"
     },
-    "./lane/test-harness": {
-      "source": "./src/lane/test-harness.ts",
-      "default": "./src/lane/test-harness.ts"
-    },
     "./lane/transcript": {
       "source": "./src/lane/transcript.ts",
       "default": "./src/lane/transcript.ts"
@@ -116,6 +112,10 @@
     "./stream-options": {
       "source": "./src/stream-options.ts",
       "default": "./src/stream-options.ts"
+    },
+    "./test-support/lane-harness": {
+      "source": "./src/test-support/lane-harness.ts",
+      "default": "./src/test-support/lane-harness.ts"
     },
     "./test-support/models-fixtures": {
       "source": "./src/test-support/models-fixtures.ts",

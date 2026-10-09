@@ -15,7 +15,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import {
   createModels,
@@ -23,6 +22,7 @@ import {
   fauxProvider,
   fauxToolCall,
 } from '@kubic/agent/pi-boundary';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {

@@ -7,16 +7,16 @@
 // the shared faux harness factory.
 
 import {
-  bootFauxLane,
-  type FauxLane,
-  invokeRegisteredTool,
-} from '@kubic/agent/lane/test-harness';
-import {
   PolicyDeniedError,
   type TelemetryRecord,
 } from '@kubic/agent/lane/wrap';
 import { DEFAULT_PERMISSIONS, toolsForClasses } from '@kubic/agent/permissions';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import {
+  bootFauxLane,
+  type FauxLane,
+  invokeRegisteredTool,
+} from '@kubic/agent/test-support/lane-harness';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterAll, describe, expect, it } from 'vitest';
 import { installPolicy } from './install.js';
 import type { InstalledPolicy } from './installed-policy.js';

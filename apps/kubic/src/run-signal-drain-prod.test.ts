@@ -27,8 +27,9 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';

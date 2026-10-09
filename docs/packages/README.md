@@ -79,7 +79,7 @@ path under `src/` without its extension.
 
 ### `@kubic/agent` (29)
 
-`compaction`, `lane/abort`, `lane/boot`, `lane/events`, `lane/failures`, `lane/interceptors`, `lane/pending`, `lane/policy`, `lane/session-fs`, `lane/session-store`, `lane/settle`, `lane/test-harness`, `lane/transcript`, `lane/turn`, `lane/wrap`, `model-select`, `models-config`, `ops/display-diff`, `ops/git`, `ops/memos`, `ops/registry`, `ops/types`, `ops/walk`, `permissions`, `pi-boundary`, `prompts`, `skills/skills`, `stream-options`, `test-support/models-fixtures`
+`compaction`, `lane/abort`, `lane/boot`, `lane/events`, `lane/failures`, `lane/interceptors`, `lane/pending`, `lane/policy`, `lane/session-fs`, `lane/session-store`, `lane/settle`, `test-support/lane-harness`, `lane/transcript`, `lane/turn`, `lane/wrap`, `model-select`, `models-config`, `ops/display-diff`, `ops/git`, `ops/memos`, `ops/registry`, `ops/types`, `ops/walk`, `permissions`, `pi-boundary`, `prompts`, `skills/skills`, `stream-options`, `test-support/models-fixtures`
 
 ### `@kubic/host` (18)
 

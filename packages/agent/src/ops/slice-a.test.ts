@@ -1,4 +1,4 @@
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { describe, expect, it, vi } from 'vitest';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';

@@ -16,9 +16,9 @@ import {
   fauxAssistantMessage,
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runTuiCommand, type TuiRunDeps, tuiLoop } from './tui-run.js';

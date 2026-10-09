@@ -18,7 +18,6 @@ import {
   createSession,
   openSessionStore,
 } from '@kubic/agent/lane/session-store';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -27,9 +26,10 @@ import {
   fauxText,
   fauxToolCall,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {

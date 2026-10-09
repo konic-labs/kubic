@@ -6,10 +6,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyToolPolicy } from '@kubic/agent/lane/policy';
-import { bootFauxLane, promptToolsLine } from '@kubic/agent/lane/test-harness';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import {
+  bootFauxLane,
+  promptToolsLine,
+} from '@kubic/agent/test-support/lane-harness';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
@@ -17,6 +19,7 @@ import {
   ensureRuntimeExcludeRules,
   gitSync,
 } from '@kubic/exec/runtime-exclude';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,

@@ -7,13 +7,13 @@ import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BACKGROUND_CONTEXT, fauxAssistantMessage } from '../pi-boundary.js';
-import { attachSession, openSessionStore } from './session-store.js';
 import {
   bootFauxLane,
   type FauxLane,
   type FauxLaneOptions,
   runPrompt,
-} from './test-harness.js';
+} from '../test-support/lane-harness.js';
+import { attachSession, openSessionStore } from './session-store.js';
 
 const dirs: string[] = [];
 const lanes: FauxLane[] = [];

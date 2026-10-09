@@ -2,12 +2,12 @@
 // resolves to pi-durable `settings.stream`, and the lane hands it to
 // the harness — the faux provider sees exactly what was configured.
 import { afterEach, describe, expect, it } from 'vitest';
-import { bootFauxLane, type FauxLane } from './lane/test-harness.js';
 import { fauxAssistantMessage } from './pi-boundary.js';
 import {
   type ModelStreamTuning,
   resolveStreamOptions,
 } from './stream-options.js';
+import { bootFauxLane, type FauxLane } from './test-support/lane-harness.js';
 
 const LANES: FauxLane[] = [];
 

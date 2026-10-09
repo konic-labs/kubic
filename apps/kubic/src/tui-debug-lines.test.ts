@@ -14,7 +14,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootTuiLane, type TuiLaneLoop, TuiTurnRunner } from './tui-run.js';

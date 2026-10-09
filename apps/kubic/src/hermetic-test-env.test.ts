@@ -30,8 +30,8 @@ import {
   fauxProvider,
   SystemEntry,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
 import { runHeadlessPrompt } from './headless-run.js';

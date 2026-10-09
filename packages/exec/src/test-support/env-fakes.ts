@@ -1,4 +1,4 @@
-import type { CheckpointStore, ProcessSnapshot } from '../env.js';
+import type { CheckpointStore, ProcessSnapshot } from '../env/index.js';
 // Durable recovery checkpoints: at most every
 // CHECKPOINT_INTERVAL_MS and only when the encoded snapshot changed.
 // Clock is injectable so throttle behavior is unit-testable.

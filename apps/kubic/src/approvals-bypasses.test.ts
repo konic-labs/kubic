@@ -16,7 +16,6 @@ import {
   defaultIsDestructive,
   isNetworkCommand,
 } from '@kubic/agent/lane/interceptors';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   createModels,
   fauxAssistantMessage,
@@ -24,6 +23,7 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   type ApprovalRequest,

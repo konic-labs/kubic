@@ -5,8 +5,11 @@
 // Faux provider only: zero network, zero paid tokens. The lane is real and
 // boots through the shared faux harness factory.
 
-import { bootFauxLane, fauxToolUse } from '@kubic/agent/lane/test-harness';
 import { fauxAssistantMessage, fauxToolCall } from '@kubic/agent/pi-boundary';
+import {
+  bootFauxLane,
+  fauxToolUse,
+} from '@kubic/agent/test-support/lane-harness';
 import { describe, expect, it } from 'vitest';
 import { installPolicy } from './install.js';
 import { NO_ANSWER_SURFACE_REASON } from './installed-policy.js';

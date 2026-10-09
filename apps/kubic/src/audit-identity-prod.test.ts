@@ -12,7 +12,6 @@ import {
   createSession,
   openSessionStore,
 } from '@kubic/agent/lane/session-store';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -21,6 +20,7 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { installPolicy } from '@kubic/host/approvals';

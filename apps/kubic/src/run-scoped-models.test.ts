@@ -16,7 +16,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

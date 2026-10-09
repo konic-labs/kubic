@@ -17,14 +17,26 @@
 // The helpers are read-only views over the durable transcript: `run` is one
 // admitted input and its wait — the same `submit()` → `wait()` shape `kubic
 // run` drives (lane/turn.ts owns the production turn glue).
-// Test-only: imported by `*.test.ts` files. The build compiles it but no
-// runtime path reaches it.
+// Test-only: imported by `*.test.ts` files; nothing in the product reaches it.
 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import type { FileJournalStore } from '@kubic/exec/journal';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
+import {
+  bootLane,
+  type Lane,
+  type LaneBootOptions,
+  PROMPT_SECTION,
+} from '../lane/boot.js';
+import type { LaneEventSink } from '../lane/events.js';
+import { subscribeLaneEvents } from '../lane/events.js';
+import {
+  createSession,
+  openSessionStore,
+  type SessionHandle,
+  type SessionStore,
+} from '../lane/session-store.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -37,25 +49,11 @@ import {
   type ToolRegistration,
   ToolResultEntry,
 } from '../pi-boundary.js';
-import {
-  bootLane,
-  type Lane,
-  type LaneBootOptions,
-  PROMPT_SECTION,
-} from './boot.js';
-import type { LaneEventSink } from './events.js';
-import { subscribeLaneEvents } from './events.js';
-import {
-  createSession,
-  openSessionStore,
-  type SessionHandle,
-  type SessionStore,
-} from './session-store.js';
 
 type Models = ReturnType<typeof createModels>;
 
 /** The faux provider handle, without importing pi-ai in a test file. */
-export type Faux = ReturnType<typeof fauxProvider>;
+type Faux = ReturnType<typeof fauxProvider>;
 
 /** One scripted faux response (`fauxAssistantMessage(...)` or a factory). */
 export type FauxResponseStep = Parameters<Faux['setResponses']>[0][number];
@@ -72,11 +70,11 @@ export function fauxToolUse(
 }
 
 /** One faux model definition (`{ id, contextWindow, ... }`). */
-export type FauxModel = NonNullable<
+type FauxModel = NonNullable<
   NonNullable<Parameters<typeof fauxProvider>[0]>['models']
 >[number];
 
-export interface FauxLaneSessionOptions {
+interface FauxLaneSessionOptions {
   // 'memory' (default) is a MemoryStorage behind a synthetic handle; 'jsonl'
   // creates a real session store, so recovery tests can
   // `attachSession` the same directory afterwards.
@@ -118,7 +116,7 @@ export interface FauxLaneOptions
   faux?: Faux;
 }
 
-export interface HarnessToolResult {
+interface HarnessToolResult {
   toolName: string;
   toolCallId: string;
   isError: boolean;
@@ -212,7 +210,7 @@ export async function runPrompt(
 }
 
 /** The conversation's active transcript, oldest first. */
-export async function laneEntries(
+async function laneEntries(
   lane: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<EntryRecord[]> {
@@ -221,7 +219,7 @@ export async function laneEntries(
 }
 
 /** The tool results of a conversation, oldest first. */
-export async function laneToolResults(
+async function laneToolResults(
   lane: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<HarnessToolResult[]> {
@@ -246,7 +244,7 @@ export async function laneToolResults(
 }
 
 /** The committed prompt (its one `kubic` section), newest entry first. */
-export async function laneSystemPrompt(
+async function laneSystemPrompt(
   lane: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<string> {
@@ -263,7 +261,7 @@ export async function laneSystemPrompt(
 }
 
 /** The tool names the conversation offers right now. */
-export async function laneActiveTools(
+async function laneActiveTools(
   lane: Pick<Lane, 'conversation'>,
   context: Context = BACKGROUND_CONTEXT,
 ): Promise<string[]> {
@@ -424,7 +422,3 @@ export async function bootFauxLane(
     },
   };
 }
-
-// Types a test needs to name the factory's session/journal options without
-// importing exec or the session store directly.
-export type { FileJournalStore, SessionHandle, SessionStore };

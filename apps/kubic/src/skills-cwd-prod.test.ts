@@ -13,7 +13,8 @@ import {
   fauxProvider,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane, type TuiLaneBoot, tuiBootOptions } from './tui-run.js';

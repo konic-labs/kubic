@@ -177,7 +177,7 @@ that decide them:
 
 Every child the exec seam spawns — the bash tool, host `git` calls —
 starts from an explicit allowlist (`TOOL_ENV_ALLOWLIST` in
-`packages/exec/src/env.ts`: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
+`packages/exec/src/env/tool-env.ts`: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
 `TERM`, `LANG`, `LC_*`, `XDG_*`, `TMPDIR`, `TZ`, `CI`, `NO_COLOR`, `CLICOLOR`,
 proxy vars (`HTTP(S)_PROXY`, `NO_PROXY`, either case), trust roots
 (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`), plus Windows

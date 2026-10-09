@@ -6,12 +6,13 @@ import { createInvocation, MemoryMemoStore } from '@kubic/agent/ops/memos';
 import { callOperation } from '@kubic/agent/ops/registry';
 import { CliExitError, CliUsageError } from '@kubic/core/cli/exit-codes';
 import { createCliTheme } from '@kubic/core/cli/theme';
-import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
   captureBaseline,
   FileJournalStore,
   reconcile,
 } from '@kubic/exec/journal';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,

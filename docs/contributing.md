@@ -97,7 +97,7 @@ those is test restructuring for a later change; this gate does not report them.
 - **Clean up.** A test removes every temp dir, environment change and child
   process it creates.
 - **Lanes.** Boot a lane with `bootFauxLane`
-  (`packages/agent/src/lane/test-harness.ts`): the real `bootLane`
+  (`packages/agent/src/test-support/lane-harness.ts`): the real `bootLane`
   over in-memory or temp-dir storage. A faux tool round must end with
   `stopReason: 'toolUse'` (`fauxToolUse(...)`), or the tool never runs.
 - **The TUI.** Render functions are pure and tested as headless snapshots;

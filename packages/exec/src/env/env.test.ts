@@ -2,15 +2,13 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ExecutionEnv, ProcessSnapshot, Provenance } from './env.js';
-import {
-  FakeExecutionEnv,
-  MAX_CHILD_OUTPUT_BYTES,
-  NodeExecutionEnv,
-  ROOT_PROVENANCE,
-  toolSpawnEnv,
-} from './env.js';
-import { argvKey, MemoryCheckpointStore } from './test-support/env-fakes.js';
+import { argvKey, MemoryCheckpointStore } from '../test-support/env-fakes.js';
+import { FakeExecutionEnv } from '../test-support/fake-env.js';
+import type { ExecutionEnv, ProcessSnapshot, Provenance } from './contracts.js';
+import { ROOT_PROVENANCE } from './contracts.js';
+import { NodeExecutionEnv } from './node-env.js';
+import { MAX_CHILD_OUTPUT_BYTES } from './node-shell.js';
+import { toolSpawnEnv } from './tool-env.js';
 
 const PROV: Provenance = {
   sessionId: 's1',

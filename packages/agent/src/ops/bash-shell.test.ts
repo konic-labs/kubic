@@ -9,17 +9,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
   ExecutionEnv,
-  FakeScript,
   ProcessHandle,
   Shell,
   ShellResult,
   SpawnOptions,
 } from '@kubic/exec/env';
-import {
-  FakeExecutionEnv,
-  NodeExecutionEnv,
-  ROOT_PROVENANCE,
-} from '@kubic/exec/env';
+import { NodeExecutionEnv, ROOT_PROVENANCE } from '@kubic/exec/env';
+import type { FakeScript } from '@kubic/exec/test-support/fake-env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import type {

@@ -13,7 +13,7 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,

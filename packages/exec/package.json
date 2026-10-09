@@ -6,8 +6,8 @@
   "type": "module",
   "exports": {
     "./env": {
-      "source": "./src/env.ts",
-      "default": "./src/env.ts"
+      "source": "./src/env/index.ts",
+      "default": "./src/env/index.ts"
     },
     "./file-bridge": {
       "source": "./src/file-bridge.ts",
@@ -48,6 +48,10 @@
     "./test-support/env-fakes": {
       "source": "./src/test-support/env-fakes.ts",
       "default": "./src/test-support/env-fakes.ts"
+    },
+    "./test-support/fake-env": {
+      "source": "./src/test-support/fake-env.ts",
+      "default": "./src/test-support/fake-env.ts"
     },
     "./test-support/git-sandbox": {
       "source": "./src/test-support/git-sandbox.ts",

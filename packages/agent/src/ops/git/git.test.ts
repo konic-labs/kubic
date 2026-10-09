@@ -3,8 +3,8 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FakeExecutionEnv } from '@kubic/exec/env';
 import { argvKey } from '@kubic/exec/test-support/env-fakes';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSessionSpillSink } from '../../spill.js';
 import { BASH_RESULT_MAX_CHARS } from '../bash.js';

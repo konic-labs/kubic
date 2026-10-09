@@ -3,7 +3,7 @@
 // `conversation.configure({ model })`; the reserve re-clamp lives in the live
 // CompactionPolicy getter.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EscalationLadder } from '../model-select.js';
 import {

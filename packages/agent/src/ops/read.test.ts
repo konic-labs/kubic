@@ -8,7 +8,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
+import { NodeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { READ_RESULT_MAX_BYTES, readOperation } from './read.js';

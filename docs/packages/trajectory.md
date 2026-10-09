@@ -71,7 +71,7 @@ failures throw `TrajectoryExportError` (exit 2) with
 `TrajectorySchemaError` (exit 3): `unknown-major` | `malformed`.
 
 The package imports none of the shapes it records: the execution
-environment (`exec` `env.ts`), file-change diffs (`exec`
+environment (`exec` `env/`), file-change diffs (`exec`
 `journal/diff.ts`), approval verdicts (`host` `approvals/`), usage rows
 (`agent` `usage.ts`) and failure codes (`agent` `lane/failures.ts`) are
 structural snapshots pinned by the golden fixture test.

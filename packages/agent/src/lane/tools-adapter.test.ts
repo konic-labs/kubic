@@ -13,14 +13,14 @@ import { Buffer } from 'node:buffer';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  FakeExecutionEnv,
-  type ProcessHandle,
-  type ProcessSnapshot,
-  type ShellResult,
-  type SpawnOptions,
+import type {
+  ProcessHandle,
+  ProcessSnapshot,
+  ShellResult,
+  SpawnOptions,
 } from '@kubic/exec/env';
 import { FileJournalStore } from '@kubic/exec/journal';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { GREP_MAX_LINE_LENGTH } from '../ops/grep.js';
 import { OPERATION_PARAMETERS, OPERATIONS } from '../ops/registry.js';

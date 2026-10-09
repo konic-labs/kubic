@@ -25,7 +25,7 @@ import {
   bootFauxLane,
   type FauxLane,
   type FauxResponseStep,
-} from './test-harness.js';
+} from '../test-support/lane-harness.js';
 
 const LANES: FauxLane[] = [];
 

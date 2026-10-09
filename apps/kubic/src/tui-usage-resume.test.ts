@@ -6,7 +6,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { bootFauxLane, runPrompt } from '@kubic/agent/lane/test-harness';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -16,7 +15,11 @@ import {
   type Usage,
   UsageDoc,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import {
+  bootFauxLane,
+  runPrompt,
+} from '@kubic/agent/test-support/lane-harness';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import {

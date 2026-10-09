@@ -12,7 +12,7 @@ import {
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
 import { createCliTheme } from '@kubic/core/cli/theme';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';

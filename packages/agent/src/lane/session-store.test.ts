@@ -27,6 +27,7 @@ import {
   Harness,
   UserEntry,
 } from '../pi-boundary.js';
+import { bootFauxLane } from '../test-support/lane-harness.js';
 import {
   acquireSessionLock,
   attachSession,
@@ -42,7 +43,6 @@ import {
   SessionLockError,
   sessionsTouchingWorkspace,
 } from './session-store.js';
-import { bootFauxLane } from './test-harness.js';
 import { readSessionEntries } from './transcript.js';
 
 const openSessions: SessionHandle[] = [];

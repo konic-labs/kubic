@@ -28,9 +28,9 @@ import {
   fauxProvider,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import {
   NOTICE_OPT_OUT_ENV,
   noIsolationNoticeLines,

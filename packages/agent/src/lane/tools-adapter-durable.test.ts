@@ -15,13 +15,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  FakeExecutionEnv,
-  type ProcessHandle,
-  type ShellResult,
-  type SpawnOptions,
-} from '@kubic/exec/env';
+import type { ProcessHandle, ShellResult, SpawnOptions } from '@kubic/exec/env';
 import { FileJournalStore } from '@kubic/exec/journal';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BACKGROUND_CONTEXT,

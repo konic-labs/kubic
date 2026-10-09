@@ -20,8 +20,8 @@ import {
   type MutableModels,
   SystemEntry,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { projectTrustCheck } from '@kubic/host/config';
 import { runDoctorCommand } from '@kubic/host/doctor';
 import { rolesDoctorProbe } from '@kubic/host/roles';

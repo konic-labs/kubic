@@ -2,8 +2,8 @@
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FakeExecutionEnv } from '@kubic/exec/env';
 import { FileJournalStore } from '@kubic/exec/journal';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';

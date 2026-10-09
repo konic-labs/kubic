@@ -5,7 +5,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import type { MutableModels } from '@kubic/agent/pi-boundary';
 import {
   createModels,
@@ -13,6 +12,7 @@ import {
   fauxProvider,
   fauxToolCall,
 } from '@kubic/agent/pi-boundary';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import type { RunProgressSink } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

@@ -3,7 +3,7 @@
 // `policyInterceptorHooks` is not merged yet, so boot.ts cannot load without
 // the mock; the tool adapter, the compaction policy and the harness are real.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_RESERVE_TOKENS,

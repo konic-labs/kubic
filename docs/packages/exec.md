@@ -14,18 +14,18 @@ escapes, not a sandbox boundary.
 
 | Module | Exports |
 | --- | --- |
-| `env.ts` | `ExecutionEnv`, `Provenance`, `ROOT_PROVENANCE`, `FileSystem`, `StatInfo`, `Shell`, `ShellResult`, `SpawnOptions`, `ProcessHandle`, `ProcessSnapshot`, `CheckpointStore`, `NodeExecutionEnv`, `FakeExecutionEnv`, `FakeScript`, `FakeSpawnCall`, `FakeOptions`, `MAX_CHILD_OUTPUT_BYTES`, `toolSpawnEnv` (every spawned child gets the allowlisted env, secrets dropped) |
+| `env/` | The execution seam, entry `env/index.ts`: the contracts every tool runs through (`contracts.ts`: `ExecutionEnv`, `FileSystem`, `Shell`, `Provenance`, `CheckpointStore`, …), the Node bindings (`node-fs.ts`, `node-shell.ts`, `node-env.ts`: `NodeExecutionEnv`) and the tool environment (`tool-env.ts`: `toolSpawnEnv`). The in-memory `FakeExecutionEnv` for tests is `test-support/fake-env.ts` |
 | `journal/` | The change journal, entry `journal/index.ts`: the store (`store.ts`) over the index file (`index-file.ts`), the content-addressed blobs (`blobs.ts`) and retention (`retention.ts`: a pure plan and its executor), entry types (`types.ts`), hashing and deltas (`hash.ts`, `delta.ts`), the boot baseline and end-of-run sweep (`baseline.ts`, `sweep.ts`, `reconcile.ts`), restore and undo (`restore.ts`, `undo-plan.ts`, `undo.ts`), diff and status (`diff.ts`, `status.ts`) and git HEAD state (`git.ts`). [journal/README.md](../../packages/exec/src/journal/README.md) states the durability protocol |
 | `ignore.ts` | `IgnoreRule`, `parseIgnoreFile`, `isIgnored` — the shared `.gitignore`-subset matcher: the journal baseline walk and the agent's find/grep walk cannot disagree on what is ignored |
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
-| `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts`; path confinement in `env.ts` + `@kubic/agent` `lane/interceptors.ts` |
+| `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env/node-env.ts`; path confinement in `env/node-fs.ts` + `@kubic/agent` `lane/interceptors.ts` |
 | `index.ts` | Pointer | No barrel — import a module by its subpath, `@kubic/exec/<subpath>` |
 
 ## Contracts
 
-### `ExecutionEnv` (`env.ts`)
+### `ExecutionEnv` (`env/`)
 
 | Field | Type |
 | --- | --- |
@@ -329,7 +329,7 @@ What actually ships in Kubic:
   which opt in through `ToolInvocation.keepEffectMemo`; the lane sets it
   `false`. Explicit op memos (`getMemo`/`setMemo`/`memoOnce`) still map onto
   pi-durable's durable per-task `api.memo` where a call provides them.
-- **`MemoryCheckpointStore`** (`env.ts`) is the `CheckpointStore` seam
+- **`MemoryCheckpointStore`** (`test-support/env-fakes.ts`) is the `CheckpointStore` seam
   behind `SpawnOptions.checkpointKey`/`checkpointStore`, exercised by the
   exec and lane tests. No production caller supplies one, so **a
   `kubic run` invocation persists no checkpoint**.

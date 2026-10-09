@@ -21,8 +21,9 @@ import {
   type MutableModels,
   UserEntry,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { collectDoctorChecks } from '@kubic/host/doctor';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { runSessionsCommand } from '@kubic/host/sessions';

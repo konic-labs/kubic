@@ -21,7 +21,6 @@ import {
   attachSession,
   openSessionStore,
 } from '@kubic/agent/lane/session-store';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   entriesToTranscript,
   readSessionEntries,
@@ -35,8 +34,10 @@ import {
   type MutableModels,
   SystemEntry,
 } from '@kubic/agent/pi-boundary';
-import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
+import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { runRunCommand } from '@kubic/host/run';
 import { bootSkills } from '@kubic/host/skills';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

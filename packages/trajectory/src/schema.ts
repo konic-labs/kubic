@@ -4,7 +4,7 @@
 // eval) read it with parseTrajectoryExport — no shim, no adapter.
 //
 // Shape ownership (read-only — this package never modifies them):
-//   Provenance/ExecutionEnv in packages/exec/src/env.ts,
+//   Provenance/ExecutionEnv in packages/exec/src/env/contracts.ts,
 //   ResultStatus in packages/agent/src/lane/settle.ts,
 //   FileChange diffs in packages/exec/src/journal/diff.ts,
 //   ApprovalPolicy/verdicts in packages/host/src/approvals/policy.ts,

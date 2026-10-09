@@ -15,7 +15,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   createModels,
   fauxAssistantMessage,
@@ -23,6 +22,7 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { buildPreferencePair } from '@kubic/eval/rl/preference';
 import { referenceVerifier } from '@kubic/eval/rl/verifier';
 import { computeSignals } from '@kubic/eval/signals';

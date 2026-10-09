@@ -6,7 +6,6 @@
 import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   createModels,
   fauxAssistantMessage,
@@ -14,6 +13,7 @@ import {
   fauxToolCall,
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import { afterEach, describe, expect, it } from 'vitest';

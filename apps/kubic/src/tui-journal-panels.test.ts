@@ -15,13 +15,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fauxToolUse } from '@kubic/agent/lane/test-harness';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
 } from '@kubic/agent/pi-boundary';
+import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';

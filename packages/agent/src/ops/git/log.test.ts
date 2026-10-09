@@ -1,7 +1,7 @@
 // Git log/show read ops.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
 import { argvKey } from '@kubic/exec/test-support/env-fakes';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { describe, expect, it } from 'vitest';
 import { createInvocation, MemoryMemoStore } from '../memos.js';
 import { callOperation } from '../registry.js';

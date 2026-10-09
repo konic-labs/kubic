@@ -308,6 +308,7 @@ export async function readSessionRunUsage(
     });
   }
   const storage = await openReadOnlySessionStorage(sessionsRoot, sessionId);
+  let measured: { usage: RunUsage; model?: string };
   try {
     const totals = totalSessionUsage(
       await readSessionUsage(storage, BACKGROUND_CONTEXT),
@@ -326,7 +327,7 @@ export async function readSessionRunUsage(
         model = `${item.provider}/${item.model}`;
       }
     }
-    return {
+    measured = {
       usage: {
         input: totals.input,
         output: totals.output,
@@ -340,6 +341,17 @@ export async function readSessionRunUsage(
   } finally {
     await storage.close(BACKGROUND_CONTEXT);
   }
+  // The race the pre-read probe cannot see, as `kubic cost` handles it: a
+  // session that went live during the read may have yielded partial totals,
+  // and a run report carries no numbers rather than partial ones.
+  const wentLive = sessionLockIsLive(join(sessionsRoot, sessionId));
+  if (wentLive !== undefined) {
+    throw new SessionLockError(sessionId, {
+      pid: wentLive.pid,
+      startedAt: wentLive.startedAt ?? 0,
+    });
+  }
+  return measured;
 }
 
 // Presentation over the grouped rows: the group column

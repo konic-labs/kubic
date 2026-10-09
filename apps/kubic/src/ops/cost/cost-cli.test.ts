@@ -743,6 +743,28 @@ describe('kubic cost durable usage', () => {
     expect(measured.usage.input).toBeGreaterThan(0);
     expect(measured.usage.costUsd).toBeGreaterThanOrEqual(0);
   });
+
+  it('refuses run usage read from a session that went live during the read', async () => {
+    const root = tmpRoot();
+    const store = openSessionStore(root, createNodeFileBridge(root));
+    const session = await createSession(
+      store,
+      { cwd: '/work' },
+      BACKGROUND_CONTEXT,
+    );
+    await fauxRun(session.adopt());
+    await session.release(BACKGROUND_CONTEXT);
+    // Dead at the pre-read probe, live after the read: the totals may be
+    // partial, so the run report keeps no numbers rather than wrong ones.
+    attached.lockScript.push(undefined, { pid: process.pid });
+    try {
+      await expect(readSessionRunUsage(root, session.id)).rejects.toMatchObject(
+        { name: 'SessionLockError' },
+      );
+    } finally {
+      attached.lockScript.length = 0;
+    }
+  });
 });
 
 describe('kubic cost lock-free reads', () => {

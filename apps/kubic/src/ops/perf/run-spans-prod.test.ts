@@ -1,5 +1,5 @@
 // Run spans on the live headless path: drives the
-// composition-root adapter (`apps/kubic/src/headless-run.ts`) against a real
+// composition-root run (`apps/kubic/src/run/`) against a real
 // lane with faux models — the same black-box standard as
 // run-prod-path.test.ts — and asserts a live run actually EMITS the
 // lane/tool spans at the documented destination:
@@ -19,7 +19,7 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from '../../headless-run.js';
+import { runHeadlessPrompt } from '../../run/command.js';
 
 const roots: string[] = [];
 

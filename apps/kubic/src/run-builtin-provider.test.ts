@@ -10,7 +10,7 @@ import { fauxAssistantMessage, fauxProvider } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { assembleModels } from '@kubic/host/models';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];
 

@@ -26,7 +26,7 @@ import type {
 } from '@kubic/host/replay';
 import { createProdReplayRun } from '@kubic/host/replay';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 // The re-execution is rooted at the pinned worktree when
 // that path exists on this machine. A recorded worktree that is absent

@@ -39,7 +39,8 @@ import {
 } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runtimeRunDeps } from './config-runtime.js';
-import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
+import type { HeadlessRunDeps } from './run/options.js';
 
 const made: string[] = [];
 

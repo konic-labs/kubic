@@ -119,10 +119,11 @@ import {
 } from './config-runtime.js';
 import type { DispatchRunners } from './dispatch.js';
 import { createProdRunSuite } from './eval-prod.js';
-import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
 import { runProdReplay } from './replay-run.js';
-import { createRunProgress } from './run-progress.js';
-import { resolveSessionTrajectory } from './run-trajectory.js';
+import { runHeadlessPrompt } from './run/command.js';
+import type { HeadlessRunDeps } from './run/options.js';
+import { createRunProgress } from './run/progress.js';
+import { resolveSessionTrajectory } from './run/trajectory.js';
 import { prodSetupDeps } from './setup-prod.js';
 import {
   runTuiCommand,

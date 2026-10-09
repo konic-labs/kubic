@@ -18,7 +18,7 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { runRunCommand } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 import { runTuiCommand } from './tui-run.js';
 
 const made: string[] = [];

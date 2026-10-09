@@ -3,7 +3,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { createCliTheme } from '@kubic/core/cli/theme';
 import type { HeadlessRunResult } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { countDiffLines, createRunProgress } from './run-progress.js';
+import { countDiffLines, createRunProgress } from './progress.js';
 
 // What a terminal ends up showing: the settled lines (each `\n`-terminated
 // segment after its last carriage return), escape sequences removed.

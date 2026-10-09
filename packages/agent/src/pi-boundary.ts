@@ -38,8 +38,8 @@ export type { Context, JsonValue } from '@earendil-works/chord';
 // JUSTIFICATION:
 //   seam: @earendil-works/chord/context#BACKGROUND_CONTEXT
 //   used by: packages/agent/src/lane/* (harness calls), apps/kubic/src/
-//     {prod-runners,headless-run,tui-run}.ts and
-//     packages/host/src/{sessions-cli,journal-cli,ops/cost/cost-cli}.ts
+//     {prod-runners,tui-run,run/state,run/close}.ts and the host readers
+//     under packages/host/src/{sessions,journal,cost,doctor}/
 //   why Pi has no alternative: Pi 1.0 has no pi-agent-core re-export;
 //     chord owns Context, and every durable call (Harness.open, submit,
 //     wait, abort, watchEvents) takes one. BACKGROUND_CONTEXT is the
@@ -238,9 +238,9 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable entry-kind tokens (#UserEntry,
 //     #AssistantEntry, #ToolResultEntry, #SystemEntry, #CompactionEntry)
-//   used by: packages/host/src/run/run-trajectory.ts,
-//     packages/host/src/sessions/sessions-cli.ts and apps/kubic/src/headless-run.ts
-//     (the shared pi-durable → Kubic transcript adapter)
+//   used by: packages/agent/src/lane/transcript.ts (the shared pi-durable →
+//     Kubic transcript adapter) and apps/kubic/src/run/close.ts (the plain
+//     `pi.user` entry that keeps a run's prompt durable)
 //   why Pi has no alternative: these tokens carry both the stored entry
 //     kinds (pi.user, pi.assistant, …) and their `model` payload types;
 //     matching on Kubic string copies would silently drift from storage on
@@ -389,10 +389,11 @@ export {
 
 // JUSTIFICATION:
 //   seam: @earendil-works/chord/context#withAbortSignal, #withCancel
-//   used by: packages/agent/src/lane/turn.ts (the caller's guard is a
-//     cancellable Context: a derived turn context is cancelled by a wall
-//     clock, a turn count or an interrupt) and apps/kubic/src/
-//     {headless-run,tui-run}.ts (the guard/quit bounds)
+//   used by: apps/kubic/src/run/{guard,close}.ts (the run's guard is a
+//     cancellable Context, cancelled by a wall clock, a turn count or an
+//     interrupt, whose abort reason packages/agent/src/lane/turn.ts reads;
+//     the end-of-run abort has its own bound) and, for withAbortSignal, the
+//     lane turn tests
 //   why Pi has no alternative: chord's Context IS the cancellation plumbing
 //     every durable call is threaded with; hand-rolling a context
 //     object would not carry the ContextKeys the harness reads and would

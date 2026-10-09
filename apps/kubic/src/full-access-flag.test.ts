@@ -40,8 +40,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { loadCliConfig } from './config-runtime.js';
 import { dispatchCommand } from './dispatch.js';
-import { runHeadlessPrompt } from './headless-run.js';
 import { createProdRunners } from './prod-runners.js';
+import { runHeadlessPrompt } from './run/command.js';
 import { bootTuiLane, runTuiCommand, type TuiLaneBoot } from './tui-run.js';
 
 const made: string[] = [];

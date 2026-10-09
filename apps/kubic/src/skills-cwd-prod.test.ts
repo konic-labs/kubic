@@ -16,7 +16,7 @@ import {
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 import { bootTuiLane, type TuiLaneBoot, tuiBootOptions } from './tui-run.js';
 
 const made: string[] = [];

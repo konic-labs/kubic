@@ -37,7 +37,7 @@ import {
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runtimeLaneDeps, runtimeRunDeps } from '../config-runtime.js';
-import { runHeadlessPrompt } from '../headless-run.js';
+import { runHeadlessPrompt } from '../run/command.js';
 
 const tempDirs: string[] = [];
 

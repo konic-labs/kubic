@@ -28,7 +28,7 @@ import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
 
 const made: string[] = [];

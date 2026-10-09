@@ -17,7 +17,7 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { loadSessionCostRows } from '@kubic/host/cost';
 import { buildRunEnvelope } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];
 

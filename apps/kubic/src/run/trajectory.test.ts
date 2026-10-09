@@ -17,11 +17,11 @@ import { AUDIT_LEDGER_FILE, auditLedgerDirFor } from '@kubic/host/audit';
 import { runReplayCommand } from '@kubic/host/replay';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './command.js';
 import {
   persistRunTrajectory,
   resolveSessionTrajectory,
-} from './run-trajectory.js';
+} from './trajectory.js';
 
 const made: string[] = [];
 

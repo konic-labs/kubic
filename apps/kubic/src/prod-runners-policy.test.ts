@@ -34,8 +34,8 @@ import {
   runtimeModelPin,
   runtimeRunDeps,
 } from './config-runtime.js';
-import { runHeadlessPrompt } from './headless-run.js';
 import { createProdRunners, prodRunDeps } from './prod-runners.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const tempDirs: string[] = [];
 

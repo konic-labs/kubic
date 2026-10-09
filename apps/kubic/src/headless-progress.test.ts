@@ -16,7 +16,7 @@ import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import type { RunProgressSink } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 describe('headless run progress', () => {
   const made: string[] = [];

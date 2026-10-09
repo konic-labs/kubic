@@ -43,7 +43,7 @@ export interface AnalysisRunners {
 
 // `--session <id>`: read the session's own trajectory
 // (<sessions-root>/<id>/trajectory.json) instead of naming the file. The
-// prod runner resolves it (./run-trajectory.ts resolveSessionTrajectory).
+// prod runner resolves it (./run/trajectory.ts resolveSessionTrajectory).
 interface SessionOption {
   readonly session?: string;
 }

@@ -1,5 +1,5 @@
 // Session-journal reachability: `kubic diff/undo` reach the
-// headless-run session journal under <sessionsRoot>/<id>/journal via
+// `kubic run` session journal under <sessionsRoot>/<id>/journal via
 // --session or the printed `journal:<id>` ref.
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

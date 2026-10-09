@@ -462,12 +462,15 @@ function isWorkspaceFailure(error: unknown): boolean {
 }
 
 // Caught (non-lane) failures → terminus, shared with the composition
-// root so the prod path maps store/attach errors identically (E2).
+// root so the prod path maps store/attach errors identically.
 export function mapCaughtErrorToTerminus(error: unknown): RunTerminusKind {
   return isWorkspaceFailure(error) ? 'workspace_unavailable' : 'failed';
 }
 
-function runFailure(
+// The result for a failure the run caught rather than settled (a store or
+// attach error, a throw): its terminus, and the failure classification too,
+// so the envelope never has to guess the domain from the exit code.
+export function caughtRunResult(
   sessionId: string | undefined,
   error: unknown,
 ): HeadlessRunResult {
@@ -563,7 +566,7 @@ export async function runRunCommand(
     });
     await deps.persist?.(result);
   } catch (error) {
-    result = runFailure(options.session, error);
+    result = caughtRunResult(options.session, error);
   }
   const exitCode = mapTerminusToExitCode(result.terminus, result.signal);
   if (options.json === true) {

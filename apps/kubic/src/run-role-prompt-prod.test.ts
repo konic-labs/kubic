@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { createModels, fauxProvider } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];
 

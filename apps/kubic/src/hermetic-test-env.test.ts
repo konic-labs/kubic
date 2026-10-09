@@ -34,7 +34,7 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 // The prompt the lane committed for this session (the reader).
 async function committedPrompt(

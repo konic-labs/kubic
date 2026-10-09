@@ -33,7 +33,7 @@ import {
   parseSecretRef,
 } from '@kubic/host/secret-refs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const SECRET = 'sk-live-kubic-do-not-leak';
 const roots: string[] = [];

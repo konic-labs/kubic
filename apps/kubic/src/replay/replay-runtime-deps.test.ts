@@ -44,7 +44,7 @@ import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type CliConfigResult, runtimeRunDeps } from '../config-runtime.js';
-import { runHeadlessPrompt } from '../headless-run.js';
+import { runHeadlessPrompt } from '../run/command.js';
 
 const roots: string[] = [];
 

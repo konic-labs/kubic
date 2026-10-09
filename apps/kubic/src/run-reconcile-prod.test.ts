@@ -28,7 +28,7 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FileJournalStore, restoreEntry } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];
 

@@ -21,7 +21,7 @@ import {
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadCliConfig, runtimeModelPin } from './config-runtime.js';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];
 

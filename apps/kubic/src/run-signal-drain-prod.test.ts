@@ -32,7 +32,7 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];
 let observedPid: number | undefined;

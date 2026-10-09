@@ -1,9 +1,9 @@
 // Composition-root half of the trajectory: gathers the I/O
 // evidence a settled run left behind — the git base, the session journal,
 // the audit ledger and the used tool env — and hands it to the pure
-// assembler (packages/host/src/trajectory/
-// run-trajectory.ts), which the fail-closed exporter backs. Called once per
-// settled `kubic run` and per TUI turn; the file lands at <sessions-root>/<id>/trajectory.json.
+// assembler (`assembleRunTrajectory` in `@kubic/host/run`), which the
+// fail-closed exporter backs. Called once per settled `kubic run` and per
+// TUI turn; the file lands at <sessions-root>/<id>/trajectory.json.
 
 import { join } from 'node:path';
 import { SESSION_ID_PATTERN } from '@kubic/agent/lane/session-store';

@@ -1199,7 +1199,7 @@ exit 2 for a missing or empty message, exit 1 outside a git repository.
 VCS-independent change journal — works without git. Each command reads
 one store, resolved in this order:
 
-1. `--session <id>` names the store explicitly: the headless-run session
+1. `--session <id>` names the store explicitly: the `kubic run` session
    journal at `<sessions-root>/<id>/journal` (`~/.kubic/sessions` by
    default). `kubic run` prints the session's ref as `journal:<id>`; pass
    it verbatim (`--session journal:<id>` or `--session <id>`). It works

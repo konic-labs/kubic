@@ -39,7 +39,7 @@ import {
 import { FAUX_MODEL_REF } from '@kubic/host/models';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 import { runTuiCommand, type TuiRunDeps, tuiLoop } from './tui-run.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));

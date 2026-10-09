@@ -33,7 +33,8 @@ import {
   runtimePolicy,
   runtimeRunDeps,
 } from './config-runtime.js';
-import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
+import type { HeadlessRunDeps } from './run/options.js';
 
 export type ProdRunSuite = (
   suiteId: string,

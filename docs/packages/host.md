@@ -52,7 +52,7 @@ either package would depend back on the rest of the host.
 `spans.ts` is the span recorder (`SpanRecorder` over `SPAN_NAMES`), the
 `--debug` vocabulary (seven classes) and the transcript
 sinks. `run-spans.ts` maps what the lane and the harness actually
-do onto it and `apps/kubic/src/headless-run.ts` drives it, so a real
+do onto it and `apps/kubic/src/run/` drives it, so a real
 `kubic run` records `kubic.agent.run` → `kubic.lane.accept` /
 `kubic.lane.drive` → `pi.tool.execute`, with parent linkage and per-span
 ms. `accept` covers admitting this run's work (settling a pending turn

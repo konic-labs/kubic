@@ -1,6 +1,6 @@
 // Git abort + timeout against a REAL hanging child: a commit
 // hook that sleeps, killed mid-flight through the lane kill registry (the
-// headless-run drain path) or the op's AbortSignal, or by the runGit
+// `kubic run` drain path) or the op's AbortSignal, or by the runGit
 // timeout. Hermetic git sandbox per test; the sandbox owns
 // every scratch dir, the group kill owns the child — no sleeps, no leaks.
 //

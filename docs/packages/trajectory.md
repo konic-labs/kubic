@@ -31,7 +31,7 @@ absolute path. The producers are `kubic run -p` and each settled
 The pure assembler is `packages/host/src/run/run-trajectory.ts`
 (`assembleRunTrajectory`, `trajectoryResultFor`, `taskIdForPrompt`,
 `writeRunTrajectory`). The composition root gathers the I/O evidence in
-`apps/kubic/src/run-trajectory.ts` (`persistRunTrajectory`,
+`apps/kubic/src/run/trajectory.ts` (`persistRunTrajectory`,
 `resolveSessionTrajectory`). What each section is built from:
 
 | Section | Source |

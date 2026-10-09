@@ -719,7 +719,7 @@ export function runtimeRunDeps(result: CliConfigResult): {
 // The shared lane projections: the agent id the lane and
 // its journal attribution carry, and the config-sourced role layers the
 // `--role` resolution merges under the role document. ONE projection with
-// two one-line consumers — `kubic run` (headless-run.ts) and `kubic tui`
+// two one-line consumers — `kubic run` (run/command.ts) and `kubic tui`
 // (tui-run.ts) — so both entry points name the lane and layer the roles
 // identically. Absent means the shipped behaviour: agent id 'root', no
 // layers. adds the effective thinking level with its source, which

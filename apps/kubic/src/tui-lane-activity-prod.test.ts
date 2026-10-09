@@ -16,7 +16,7 @@ import {
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';
 
 const made: string[] = [];

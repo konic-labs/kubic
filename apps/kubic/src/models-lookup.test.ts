@@ -14,7 +14,7 @@ import {
 } from '@kubic/host/config';
 import { assembleModels, findModelsProjectRoot } from '@kubic/host/models';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];
 

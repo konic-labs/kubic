@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // observable as "never booted" (and no real lane, journal or model is
 // touched by a passing test).
 const lane = vi.hoisted(() => ({ runHeadlessPrompt: vi.fn() }));
-vi.mock('./headless-run.js', () => ({
+vi.mock('./run/command.js', () => ({
   runHeadlessPrompt: lane.runHeadlessPrompt,
 }));
 

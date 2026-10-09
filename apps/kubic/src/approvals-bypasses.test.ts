@@ -49,7 +49,7 @@ import {
   runDoctorCommand,
 } from '@kubic/host/doctor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const WS = '/work';
 const HOME = '/home/tester';

@@ -2,7 +2,6 @@
 // run and turn spans, the run trajectory, and the `[verify]` gate runner.
 export type {
   HeadlessRunResult,
-  LaneOutcomeTerminus,
   RetryRecord,
   RunCommandOptions,
   RunProgressSink,
@@ -11,6 +10,7 @@ export type {
 } from './run-cli.js';
 export {
   buildRunEnvelope,
+  caughtRunResult,
   checkPromptValue,
   DEFAULT_RUN_TIMEOUT_MS,
   MAX_RUN_TIMEOUT_MS,

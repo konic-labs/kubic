@@ -35,7 +35,7 @@ import {
   runtimeApprovalDeps,
   runtimeRunDeps,
 } from './config-runtime.js';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 import { bootTuiLane } from './tui-run.js';
 
 const made: string[] = [];

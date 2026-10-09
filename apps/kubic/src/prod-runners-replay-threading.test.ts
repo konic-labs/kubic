@@ -19,10 +19,10 @@ import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliConfigResult } from './config-runtime.js';
-import { runHeadlessPrompt } from './headless-run.js';
 import { createProdRunners } from './prod-runners.js';
+import { runHeadlessPrompt } from './run/command.js';
 
-vi.mock('./headless-run.js', async (importOriginal) => ({
+vi.mock('./run/command.js', async (importOriginal) => ({
   ...(await importOriginal()),
   runHeadlessPrompt: vi.fn(),
 }));

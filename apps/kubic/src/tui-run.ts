@@ -242,8 +242,8 @@ import {
   type runtimeLaneDeps,
   selectModelUnderPolicy,
 } from './config-runtime.js';
-import { assistantSummary, NO_ASSISTANT_TEXT_SUMMARY } from './headless-run.js';
-import { persistRunTrajectory } from './run-trajectory.js';
+import { assistantSummary, NO_ASSISTANT_TEXT_SUMMARY } from './run/output.js';
+import { persistRunTrajectory } from './run/trajectory.js';
 import { formatScopedModels } from './scoped-models.js';
 import { type BootRefusal, SessionBoot } from './session/bootstrap.js';
 import { readTuiWorkspace } from './tui-workspace.js';

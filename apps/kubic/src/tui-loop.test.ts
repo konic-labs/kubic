@@ -101,7 +101,7 @@ function fauxModels(steps: FauxStep[]): {
 
 // A real lane boot against a temp sessions root with the faux provider —
 // the prod boot shape (bootTuiLane) with the sessions root and models
-// injected, exactly like headless-run.ts accepts its deps.
+// injected, exactly like `runHeadlessPrompt` accepts its deps.
 function fauxLaneBoot(
   root: string,
   models: MutableModels,

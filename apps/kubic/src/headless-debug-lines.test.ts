@@ -15,7 +15,8 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { laneActivityDebugLine, runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
+import { laneActivityDebugLine } from './run/output.js';
 
 function usageEvent(): KubicLaneEvent {
   return {

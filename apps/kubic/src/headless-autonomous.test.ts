@@ -21,7 +21,7 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { auditLedgerDirFor, readAuditLedger } from '@kubic/host/audit';
 import { buildRunEnvelope } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];
 

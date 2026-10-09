@@ -1,5 +1,5 @@
 // Run spans on the live headless path.
-// Maps the real headless-run events (lane accept, lane drive, harness tool
+// Maps the real `kubic run` events (lane accept, lane drive, harness tool
 // hooks) onto the SpanRecorder, so a live `kubic run` records spans
 // instead of leaving unimplemented. Destination is documented in
 // docs/packages/host.md and docs/cli/commands.md:

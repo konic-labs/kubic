@@ -119,6 +119,43 @@ function shortPath(path: string, home: string | undefined): string {
   return path;
 }
 
+// The lines a settled edit or write changed, for its settled line and the
+// receipt. Undefined for any other call, and for a failed one.
+function fileStat(
+  toolName: string,
+  failed: boolean,
+  entry: unknown,
+  args: unknown,
+): { added: number; removed: number } | undefined {
+  if (failed) return undefined;
+  if (toolName === 'edit') return editStat(resultDetails(entry));
+  if (toolName === 'write' && isRecord(args)) {
+    const content = typeof args.content === 'string' ? args.content : '';
+    return { added: lineCount(content), removed: 0 };
+  }
+  return undefined;
+}
+
+// The settled line of one tool call: its mark and name, the target cut to
+// the room the meta leaves, then the meta.
+function settledToolLine(
+  theme: CliTheme,
+  columns: number,
+  toolName: string,
+  failed: boolean,
+  target: string,
+  meta: readonly string[],
+): string {
+  const ui = theme.ui;
+  const head = `${statusMark(theme, failed ? 'fail' : 'ok')} ${ui.style({ fg: 'fg0', bold: true })(padVisible(toolName, TOOL_COLUMN))} `;
+  const tail = meta.length === 0 ? '' : `  ${meta.join('  ')}`;
+  const room = Math.max(
+    8,
+    columns - visibleWidth(head) - visibleWidth(tail) - 1,
+  );
+  return `${head}${ui.fg('fg1')(truncateVisible(target, room))}${tail}`;
+}
+
 function clock(ms: number): string {
   const seconds = Math.floor(Math.max(0, ms) / 1000);
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -198,17 +235,9 @@ export function createRunProgress(
       const outcome = summarizeToolOutcome(event.entry, event.toolName);
       const failed =
         event.isError || (outcome !== undefined && /^exit [1-9]/.test(outcome));
-      const details = resultDetails(event.entry);
-      let stat: { added: number; removed: number } | undefined;
-      if (!failed && event.toolName === 'edit') {
-        stat = editStat(details);
-      }
       const args = pendingArgs.get(event.toolCallId);
       pendingArgs.delete(event.toolCallId);
-      if (!failed && event.toolName === 'write' && isRecord(args)) {
-        const content = typeof args.content === 'string' ? args.content : '';
-        stat = { added: lineCount(content), removed: 0 };
-      }
+      const stat = fileStat(event.toolName, failed, event.entry, args);
       const path =
         isRecord(args) && typeof args.path === 'string' ? args.path : undefined;
       if (stat !== undefined && path !== undefined) {
@@ -218,7 +247,6 @@ export function createRunProgress(
           removed: prior.removed + stat.removed,
         });
       }
-      const target = summarizeToolArguments(args);
       const meta: string[] = [];
       if (stat !== undefined) {
         meta.push(
@@ -231,15 +259,15 @@ export function createRunProgress(
       }
       if (begun !== undefined)
         meta.push(ui.fg('fg2')(formatDuration(now() - begun)));
-      const head = `${statusMark(theme, failed ? 'fail' : 'ok')} ${ui.style({ fg: 'fg0', bold: true })(padVisible(event.toolName, TOOL_COLUMN))} `;
-      const tail = meta.length === 0 ? '' : `  ${meta.join('  ')}`;
-      const columns = stream.columns ?? DEFAULT_COLUMNS;
-      const room = Math.max(
-        8,
-        columns - visibleWidth(head) - visibleWidth(tail) - 1,
-      );
       spinner.print(
-        `${head}${ui.fg('fg1')(truncateVisible(target, room))}${tail}`,
+        settledToolLine(
+          theme,
+          stream.columns ?? DEFAULT_COLUMNS,
+          event.toolName,
+          failed,
+          summarizeToolArguments(args),
+          meta,
+        ),
       );
       state = 'thinking';
       spinner.update(spinnerText());

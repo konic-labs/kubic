@@ -2,7 +2,8 @@
 // only when a retry actually follows, and the envelope record carries
 // whether the retry happened.
 import { describe, expect, it } from 'vitest';
-import { overflowRecoveryNotice, retryRecord } from './headless-run.js';
+import { retryRecord } from './run/outcome.js';
+import { overflowRecoveryNotice } from './run/output.js';
 
 const retryDecision = {
   decision: 'retry_with_new_context',

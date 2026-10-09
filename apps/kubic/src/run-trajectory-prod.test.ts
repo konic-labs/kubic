@@ -14,7 +14,7 @@ import {
   type TrajectoryExport,
 } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];
 

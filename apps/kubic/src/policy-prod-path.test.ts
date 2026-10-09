@@ -39,7 +39,7 @@ import {
 import { runDoctorCommand } from '@kubic/host/doctor';
 import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runHeadlessPrompt } from './headless-run.js';
+import { runHeadlessPrompt } from './run/command.js';
 
 const roots: string[] = [];
 

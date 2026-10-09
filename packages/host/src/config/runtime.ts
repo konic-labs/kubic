@@ -229,7 +229,9 @@ interface ConfigLayerReport {
 }
 
 export interface RuntimeConfigInputs {
-  bridge: Pick<FileBridge, 'exists' | 'readTextFile'>;
+  // `realPath` (optional) lets the project layer's prompt file be contained
+  // through symlinks too.
+  bridge: Pick<FileBridge, 'exists' | 'readTextFile' | 'realPath'>;
   home: string;
   cwd: string;
   // The project root the project layer resolves at —
@@ -651,8 +653,28 @@ function programmaticSourceFor(
   return undefined;
 }
 
+// Whether `path` lies outside `root` (the root itself counts as outside:
+// it is a directory, never the file).
+function outsideRoot(path: string, root: string): boolean {
+  const rel = relative(root, path);
+  return rel === '' || rel.startsWith('..') || isAbsolute(rel);
+}
+
+// The real path, or undefined when the bridge cannot resolve it (a missing
+// file is then reported by the existence check that follows).
+function realPathOf(
+  bridge: Pick<FileBridge, 'realPath'>,
+  path: string,
+): string | undefined {
+  try {
+    return bridge.realPath?.(path);
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveSystemPromptFile(args: {
-  bridge: Pick<FileBridge, 'exists' | 'readTextFile'>;
+  bridge: Pick<FileBridge, 'exists' | 'readTextFile' | 'realPath'>;
   home: string;
   projectRoot: string;
   configured: string | undefined;
@@ -686,10 +708,22 @@ function resolveSystemPromptFile(args: {
     resolved = join(dirname(args.layerPath), configured);
   }
   if (layer === 'project') {
-    const rel = relative(args.projectRoot, resolved);
-    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    if (outsideRoot(resolved, args.projectRoot)) {
       throw new ConfigError(
         `'agent': 'systemPromptFile' '${resolved}' is outside the project root '${args.projectRoot}'`,
+      );
+    }
+    // A symlink inside the root can still point out of it: the target is
+    // contained too, measured against the root's own real path.
+    const real = realPathOf(args.bridge, resolved);
+    const realRoot = realPathOf(args.bridge, args.projectRoot);
+    if (
+      real !== undefined &&
+      realRoot !== undefined &&
+      outsideRoot(real, realRoot)
+    ) {
+      throw new ConfigError(
+        `'agent': 'systemPromptFile' '${resolved}' resolves outside the project root '${args.projectRoot}' (to '${real}')`,
       );
     }
   }

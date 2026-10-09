@@ -2,7 +2,13 @@
 // Every test drives the production entry point (`loadRuntimeConfig`) over
 // a fake FileBridge: zero network, zero real files, dummy $ENV_VAR refs.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyToolPolicy } from '@kubic/agent/lane/policy';
@@ -988,6 +994,42 @@ describe('effective config view', () => {
         { projectTrusted: true },
       ),
     ).toThrow(/is outside the project root/);
+  });
+
+  it('refuses a project prompt file that links out of the project root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'kubic-prompt-link-'));
+    try {
+      const project = join(root, 'repo');
+      mkdirSync(join(project, '.kubic'), { recursive: true });
+      writeFileSync(join(root, 'outside.md'), 'Outside.\n');
+      writeFileSync(join(project, '.kubic', 'inside.md'), 'Inside.\n');
+      symlinkSync(join(root, 'outside.md'), join(project, '.kubic', 'out.md'));
+      symlinkSync(
+        join(project, '.kubic', 'inside.md'),
+        join(project, '.kubic', 'in.md'),
+      );
+      // The project config declares the file, relative to `.kubic/`.
+      const loadWith = (file: string) => {
+        writeFileSync(
+          join(project, '.kubic', 'config.toml'),
+          `[agent]\nsystemPromptFile = "${file}"\n`,
+        );
+        return loadRuntimeConfig({
+          bridge: createNodeFileBridge('/'),
+          home: join(root, 'home'),
+          cwd: project,
+          projectRoot: project,
+          projectTrusted: true,
+        });
+      };
+      expect(() => loadWith('out.md')).toThrow(
+        /'agent': 'systemPromptFile' '.*out\.md' resolves outside the project root/,
+      );
+      // A link that stays inside the root is fine.
+      expect(loadWith('in.md').systemPromptFile?.contents).toBe('Inside.\n');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('refuses an untrusted project file pre-trust and a missing file by name', () => {

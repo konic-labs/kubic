@@ -43,6 +43,14 @@ const IMPORT_RE =
 const TEST_SUPPORT_SPEC = /(^|\/)test-support(\/|$)/;
 const TEST_FILE = /\.test\.m?[jt]sx?$/;
 
+// The root test/ folder holds the shared test fixtures (the fake terminal,
+// the hermetic setup): tests only, the same as test-support/.
+function reachesRootTests(importerFile, spec, root) {
+  if (!spec.startsWith('.')) return false;
+  const rel = relative(root, resolve(dirname(importerFile), spec));
+  return rel.split(sep)[0] === 'test';
+}
+
 // Packages organised into concern folders, each with an index.ts entry: a
 // module in one folder reaches another folder only through that entry, never
 // into its internal modules. test-support/ holds shared test fixtures, not a
@@ -144,7 +152,8 @@ export function checkTree(root) {
         const spec = m[1] ?? m[2];
         const line = content.slice(0, m.index).split('\n').length;
         if (
-          TEST_SUPPORT_SPEC.test(spec) &&
+          (TEST_SUPPORT_SPEC.test(spec) ||
+            reachesRootTests(file, spec, root)) &&
           !isTestScaffold(relative(root, file))
         ) {
           // Test scaffolding is for tests: a production file that imports it

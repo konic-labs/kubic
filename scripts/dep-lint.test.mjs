@@ -173,6 +173,24 @@ describe('dep-lint', () => {
     );
   });
 
+  it('fails when production code imports the root test fixtures', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/screen.ts': `import { terminalRig } from '../../../test/fake-terminal.js';\n`,
+      'packages/tui/src/screen.test.ts': `import { terminalRig } from '../../../test/fake-terminal.js';\n`,
+      'test/fake-terminal.ts': `export const terminalRig = 1;\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir).map((v) => [v.kind, v.file, v.to]),
+      [
+        [
+          'test-support',
+          join('packages', 'tui', 'src', 'screen.ts'),
+          '../../../test/fake-terminal.js',
+        ],
+      ],
+    );
+  });
+
   it('allows test files and test-support modules to import test-support', () => {
     const dir = fixtureTree({
       'packages/host/src/feature.test.ts': `import { fake } from './test-support/fake.js';\n`,

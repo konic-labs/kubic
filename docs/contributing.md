@@ -122,6 +122,8 @@ those is test restructuring for a later change; this gate does not report them.
   `core`. A package imports another as `@kubic/<pkg>/<subpath>`, a subpath its
   exports map lists; a relative path into another package fails
   `npm run lint:deps` (see the [package import rule](packages/README.md)).
+  Test fixtures (`test-support/` and the root `test/` folder) serve tests
+  only: a production module that imports one fails it too.
 - **The Pi boundary** — only `packages/agent/src/pi-boundary.ts` and
   `packages/tui/src/tui-boundary.ts` import `@earendil-works/*`. Every
   re-export carries a `JUSTIFICATION:` block naming the seam, its users

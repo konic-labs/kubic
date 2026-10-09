@@ -25,7 +25,7 @@ escapes, not a sandbox boundary.
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
 | `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env.ts`; path confinement in `env.ts` + `@kubic/agent` `lane/interceptors.ts` |
-| `index.ts` | Pointer | No barrel — import per-module paths |
+| `index.ts` | Pointer | No barrel — import a module by its subpath, `@kubic/exec/<subpath>` |
 
 ## Contracts
 

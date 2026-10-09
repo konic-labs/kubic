@@ -145,7 +145,7 @@ adds `signal:regression`.
   them; RL fields are untouched by harness edits.
 
 ```text
-core + agent + trajectory ──→ @kubic/eval ──→ benchmark matrix
+core + trajectory ──→ @kubic/eval ──→ benchmark matrix
 ```
 
 Back to the [docs index](../README.md).

@@ -1,6 +1,6 @@
 # Doctor and debug
 
-> `kubic doctor` diagnostics (`packages/host/src/doctor/doctor.ts`; honest-limits registration in
+> `kubic doctor` diagnostics (`packages/host/src/doctor/`; honest-limits registration in
 > `packages/host/src/doctor/doctor-limits.ts`).
 > Presentation only: providers are listed, never dialled (faux-only
 > probes, zero network); deps check the live node runtime.

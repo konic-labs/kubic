@@ -2,12 +2,12 @@
 
 import { createCliTheme } from '@kubic/core/cli/theme';
 import { describe, expect, it } from 'vitest';
-import type { DoctorCheck } from './doctor.js';
 import {
   doctorGroup,
   doctorShort,
   renderDoctorGrouped,
 } from './doctor-render.js';
+import type { DoctorCheck } from './types.js';
 
 function check(
   id: string,

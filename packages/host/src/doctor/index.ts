@@ -1,19 +1,10 @@
 // `kubic doctor`: the checks and probes, their rendering, the limit
 // disclosures (no isolation, detection-only classes) and full-access session
 // reporting.
-export type {
-  ContextRoomProbe,
-  DepProbe,
-  DoctorCheck,
-  DoctorCommandOptions,
-  /** @internal */ DoctorDeps,
-  ProviderProbe,
-  SessionOverlapProbe,
-} from './doctor.js';
-export {
-  /** @internal */ collectDoctorChecks,
-  runDoctorCommand,
-} from './doctor.js';
+
+export { /** @internal */ collectDoctorChecks } from './collect.js';
+export type { DoctorCommandOptions } from './command.js';
+export { runDoctorCommand } from './command.js';
 export type { FullAccessSession } from './doctor-full-access.js';
 export {
   describeFullAccessSession,
@@ -28,3 +19,11 @@ export {
   noIsolationTuiLine,
   shouldEmitNotice,
 } from './no-isolation-notice.js';
+export type {
+  ContextRoomProbe,
+  DepProbe,
+  DoctorCheck,
+  /** @internal */ DoctorDeps,
+  ProviderProbe,
+  SessionOverlapProbe,
+} from './types.js';

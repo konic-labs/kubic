@@ -26,7 +26,7 @@ composition-root tests are tagged `@internal`.
 | `cli/` | Shared command plumbing: the output channels and theme (`cli-io.ts`) and project-root discovery |
 | `config/` | Layered TOML config and its validation (`config.ts`), the runtime load every command runs on (`runtime.ts`), comment-preserving edits (`toml-model.ts`), project trust (`trust-store.ts`), the MCP and ACP stances, and `kubic config`, `kubic setup` and `kubic trust` |
 | `cost/` | `kubic cost`: per-session cost rows, the prompt-cache hit rate and the usage a headless run reports |
-| `doctor/` | `kubic doctor`: the checks and probes, the grouped summary, the honest-limit checks, the no-isolation notice and the live full-access session list |
+| `doctor/` | `kubic doctor`: the checks (`checks/`) collected in report order (`collect.ts`), the command (`command.ts`), the grouped summary, the honest-limit checks, the no-isolation notice and the live full-access session list |
 | `git/` | `kubic git` (status, log, stage, commit) over the agent git operations |
 | `journal/` | `kubic diff`, `undo`, `log`, `status` and `journal prune` |
 | `models/` | The model catalogue (built-ins plus `models.json`), provider probes, the `KUBIC_PROVIDER=faux` testing provider, provider key hints and `kubic models` |

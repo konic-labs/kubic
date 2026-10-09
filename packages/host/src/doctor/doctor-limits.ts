@@ -17,7 +17,7 @@ import {
 } from '@kubic/core/cli/exit-codes';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals/index.js';
 import { mcpRefusalMessage } from '../config/index.js';
-import type { DoctorCheck } from './doctor.js';
+import type { DoctorCheck } from './types.js';
 
 export interface LimitProviderProbe {
   id: string;

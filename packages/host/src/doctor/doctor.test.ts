@@ -14,8 +14,8 @@ import {
   enterpriseDoctorChecks,
   resolveEffectivePolicy,
 } from '../policy/index.js';
-import type { ContextRoomProbe, DoctorDeps } from './doctor.js';
-import { runDoctorCommand } from './doctor.js';
+import { runDoctorCommand } from './command.js';
+import type { ContextRoomProbe, DoctorDeps } from './types.js';
 
 const made: string[] = [];
 

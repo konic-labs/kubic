@@ -17,7 +17,7 @@ import {
   visibleWidth,
   wrapVisible,
 } from '@kubic/core/cli/width';
-import type { DoctorCheck } from './doctor.js';
+import type { DoctorCheck } from './types.js';
 
 const LABEL_WIDTH = 12;
 const DEFAULT_COLUMNS = 100;

@@ -11,8 +11,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import { MCP_ARRIVAL_REQUIREMENTS } from '../config/index.js';
 import { mapTerminusToExitCode } from '../run/index.js';
-import type { DoctorCheck } from './doctor.js';
-import { runDoctorCommand } from './doctor.js';
+import { runDoctorCommand } from './command.js';
 import {
   depsLimitCheck,
   limitsDoctorExit,
@@ -20,6 +19,7 @@ import {
   providerAvailabilityCheck,
   staticLimitChecks,
 } from './doctor-limits.js';
+import type { DoctorCheck } from './types.js';
 
 describe('static limit notices', () => {
   it('covers every applicable limit with honest warn notices', () => {

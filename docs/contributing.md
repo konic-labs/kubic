@@ -43,7 +43,10 @@ npm run check:gates      # the repo gates and the scripts' own tests (node --tes
 ```
 
 `npm run docs:config` regenerates the config docs and `example.toml` from the
-config schema.
+config schema. `npm run test:coverage` runs the suite with v8 coverage of the
+product sources: the floors in `vitest.config.ts` (statements, branches,
+functions, lines) fail a run that drops below them, and the HTML report lands
+in the gitignored `coverage/`.
 
 `npm run test:binary` (`scripts/binary-contract.mjs`, then
 `scripts/faux-smoke.mjs`) is the install-story gate: with `dist/` built it
@@ -189,8 +192,8 @@ than history, no tracker references) are in
 ## CI
 
 A push runs the `test` job: `npm run check` first (once, on Node 22: the
-gates do not depend on the Node version), then `npm test`, the build and
-`npm run test:binary`. It runs on Node 22 (the lowest supported) on every ref and on
+gates do not depend on the Node version), then the suite (with coverage on
+the Node 22 leg), the build and `npm run test:binary`. It runs on Node 22 (the lowest supported) on every ref and on
 Node 22 and 24 on `main`. A newer push cancels the older run of the same
 ref; `main` is keyed by commit and never cancelled. Workflow permissions
 are read-only.

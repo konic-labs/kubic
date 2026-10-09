@@ -37,7 +37,12 @@ jobs:
       # first, so a typo fails in seconds, before the test suite.
       - if: matrix.node == '22'
         run: npm run check
-      - run: npm test
+      # The Node 22 leg measures coverage against the floors in
+      # vitest.config.ts; the other leg runs the plain suite.
+      - if: matrix.node == '22'
+        run: npm run test:coverage
+      - if: matrix.node != '22'
+        run: npm test
       # The shipped artifact (bin/kubic.js over dist/) is proven per push:
       # build, then run the built binary's contract and the faux smoke.
       # Hermetic: HOME is a temp dir, no provider, no network.

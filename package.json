@@ -19,6 +19,7 @@
     "build": "node scripts/build.mjs",
     "kubic": "node ./bin/kubic.js",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:binary": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs",
     "check": "npm run typecheck && npm run lint && npm run lint:deps && npm run lint:dead && npm run lint:dead:prod && npm run check:pins && npm run docs:check && npm run check:gates",
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
@@ -34,6 +35,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@types/node": "26.6.2",
+    "@vitest/coverage-v8": "5.0.3",
     "esbuild": "0.28.2",
     "knip": "6.38.0",
     "typescript": "7.0.2",

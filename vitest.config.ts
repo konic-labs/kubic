@@ -22,9 +22,21 @@ export default defineConfig({
       './test/vitest-setup.ts',
       './vitest.setup.ts',
     ],
-    // Half the cores, not vitest's cores-1 default: several coding agents
-    // often run the suite at once on one laptop. The suite is ~10s either way.
+    // Half the cores, not vitest's cores-1 default, so a run leaves room for
+    // other work on the machine.
     maxWorkers: '50%',
     testTimeout: 5_000,
+    // `npm run test:coverage`: the product's own sources, without the tests
+    // and their support code.
+    coverage: {
+      provider: 'v8',
+      include: ['packages/*/src/**/*.ts', 'apps/*/src/**/*.ts'],
+      exclude: ['**/*.test.ts', '**/test-support/**'],
+      reporter: ['text-summary', 'json-summary', 'html'],
+      reportsDirectory: 'coverage',
+      // Floors a point under the measured coverage: a change that drops it
+      // fails the run.
+      thresholds: { statements: 92, branches: 85, functions: 93, lines: 93 },
+    },
   },
 });

@@ -137,6 +137,10 @@
       "source": "./src/session-summaries.ts",
       "default": "./src/session-summaries.ts"
     },
+    "./session-usage": {
+      "source": "./src/session-usage.ts",
+      "default": "./src/session-usage.ts"
+    },
     "./sessions-cli": {
       "source": "./src/sessions-cli.ts",
       "default": "./src/sessions-cli.ts"

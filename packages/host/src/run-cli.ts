@@ -13,6 +13,7 @@ import {
   classifyFailure,
   type RetryDecision,
 } from '@kubic/agent/lane/failures';
+import { SESSION_ID_PATTERN } from '@kubic/agent/lane/session-store';
 import type { OperationErrorLike } from '@kubic/agent/lane/settle';
 import {
   type LaneTerminalStatus,
@@ -334,11 +335,6 @@ export interface RunCommandDeps extends CliIo {
   // stdout AND stderr are a coloured TTY and the run is not `--json`.
   progress?: () => RunProgressSink;
 }
-
-// Session ids are path segments under the sessions root: accept only
-// [A-Za-z0-9_-] so --session can never escape into a path traversal.
-// Checked here (exit 2) before any store attach is attempted.
-export const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 // Default wall-clock bound for a headless run: a model that
 // never stops thinking settles as `timeout` instead of

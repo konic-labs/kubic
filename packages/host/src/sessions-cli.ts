@@ -12,6 +12,7 @@ import {
   forkSession,
   listSessions,
   openSessionStore,
+  SESSION_ID_PATTERN,
   SessionAttachError,
   SessionForkError,
   SessionLockError,
@@ -38,7 +39,6 @@ import {
   FileApprovalStore,
 } from './approvals/index.js';
 import { type CliIo, diagnosticsOf, themeOf } from './cli-io.js';
-import { SESSION_ID_PATTERN } from './run-cli.js';
 import {
   deleteSessionPruneCandidates,
   planSessionPrune,

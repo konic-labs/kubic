@@ -36,6 +36,7 @@ import {
   createSession,
   laneConversationIdOf,
   openSessionStore,
+  SESSION_ID_PATTERN,
   type SessionHandle,
   sessionsTouchingWorkspace,
 } from '@kubic/agent/lane/session-store';
@@ -152,7 +153,6 @@ import {
   mapCaughtErrorToTerminus,
   mapLaneOutcomeToFailure,
   type RetryRecord,
-  SESSION_ID_PATTERN,
 } from '@kubic/host/run-cli';
 import {
   RunSpans,

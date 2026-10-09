@@ -38,14 +38,13 @@ import { FAUX_PROVIDER_ID } from '@kubic/host/faux-provider';
 import {
   loadSessionCostRows,
   readSessionRunUsage,
-  readSessionUsage,
   runCostCommand,
-  totalSessionUsage,
 } from '@kubic/host/ops/cost/cost-cli';
 import {
   summarizeSessionCost,
   toCostJson,
 } from '@kubic/host/ops/cost/session-cost';
+import { readSessionUsage, totalSessionUsage } from '@kubic/host/session-usage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const attached = vi.hoisted(() => ({

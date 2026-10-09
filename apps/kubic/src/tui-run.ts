@@ -55,6 +55,7 @@ import {
   forkSession,
   listSessions,
   openSessionStore,
+  SESSION_ID_PATTERN,
 } from '@kubic/agent/lane/session-store';
 import {
   entriesToTranscript,
@@ -156,10 +157,6 @@ import {
   shouldEmitNotice,
 } from '@kubic/host/limits/no-isolation-notice';
 import { type AssembledModels, assembleModels } from '@kubic/host/models-cli';
-import {
-  readSessionUsage,
-  type SessionUsageRow,
-} from '@kubic/host/ops/cost/cost-cli';
 import { resolveRunBaseRevision } from '@kubic/host/policy/audit-ledger';
 import {
   type EffectivePolicy,
@@ -177,13 +174,14 @@ import { rolePromptFor, selectRole } from '@kubic/host/roles/roles-boot';
 import {
   mapCaughtErrorToTerminus,
   type RunTerminusKind,
-  SESSION_ID_PATTERN,
 } from '@kubic/host/run-cli';
 import { TurnSpans, type TurnSpansSink } from '@kubic/host/run-spans';
 import {
   type SessionSummary,
   summarizeProjectSessions,
 } from '@kubic/host/session-summaries';
+import type { SessionUsageRow } from '@kubic/host/session-usage';
+import { readSessionUsage } from '@kubic/host/session-usage';
 import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
 import type { SkippedSkill } from '@kubic/host/skills-boot';
 import { bootSkills, describeSkillSkips } from '@kubic/host/skills-boot';

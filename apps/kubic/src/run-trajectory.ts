@@ -6,6 +6,7 @@
 // settled `kubic run` and per TUI turn; the file lands at <sessions-root>/<id>/trajectory.json.
 
 import { join } from 'node:path';
+import { SESSION_ID_PATTERN } from '@kubic/agent/lane/session-store';
 import { toolSpawnEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { gitHeadOf } from '@kubic/exec/git-clean';
@@ -17,7 +18,6 @@ import {
   auditLedgerDirFor,
   readAuditLedger,
 } from '@kubic/host/policy/audit-ledger';
-import { SESSION_ID_PATTERN } from '@kubic/host/run-cli';
 import {
   assembleRunTrajectory,
   type RunOutcome,

@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   openSessionStore,
+  SESSION_ID_PATTERN,
   sessionsTouchingWorkspace,
 } from '@kubic/agent/lane/session-store';
 import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
@@ -96,7 +97,7 @@ import {
   runReplayCommand,
 } from '@kubic/host/replay/replay';
 import { rolesDoctorProbe, selectRole } from '@kubic/host/roles/roles-boot';
-import { runRunCommand, SESSION_ID_PATTERN } from '@kubic/host/run-cli';
+import { runRunCommand } from '@kubic/host/run-cli';
 import {
   defaultSessionsRoot,
   runSessionsCommand,

@@ -96,7 +96,7 @@ export interface RunReconciliation {
   rebaseline(turn: number): void;
 }
 
-// Same rule as `--session`/`--run` ids (host `SESSION_ID_PATTERN`): `exec`
+// Same rule as `--session`/`--run` ids (`SESSION_ID_PATTERN` in the agent session store): `exec`
 // sits below `host` and may not import it, so the literal is repeated here
 // with the rule it enforces rather than drifting silently.
 const RUN_ID_PATTERN = /^[A-Za-z0-9_-]+$/;

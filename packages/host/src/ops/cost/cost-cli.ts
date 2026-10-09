@@ -1,19 +1,8 @@
-// `kubic cost [--session <id>] [--json]`.
-// Presentation only over session cost rows: one table row per aggregated row
-// plus the task total, or the in-code `toCostJson` shape under --json. Rows
-// arrive injected (faux in tests); the prod loader below reads real
-// session stats out of the session store — this module never invents
-// costs, and the task total is always Σ(rows) by construction.
-//
-// The rows that carry tokens and cost also carry `cacheRead`/`cacheWrite`, so
-// the prefix hit-rate (cache.ts) is measured over real usage rows and reported
-// on the readout. No new top-level --json field: the extra per-row numbers are
-// additive inside the existing `rows` entries.
-
 import { join } from 'node:path';
 import {
   listSessions,
   openSessionStore,
+  SESSION_ID_PATTERN,
   SessionAttachError,
   SessionLockError,
   sessionLockIsLive,
@@ -22,41 +11,40 @@ import {
   entriesToTranscript,
   readSessionEntries,
 } from '@kubic/agent/lane/transcript';
-import {
-  BACKGROUND_CONTEXT,
-  type Context,
-  type Storage,
-  type Usage,
-  UsageDoc,
-} from '@kubic/agent/pi-boundary';
-import {
-  type CommandResult,
-  EXIT_FAILED,
-  EXIT_OK,
-  EXIT_USAGE,
-} from '@kubic/core/cli/exit-codes';
+import type { Storage } from '@kubic/agent/pi-boundary';
+import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
+import type { CommandResult } from '@kubic/core/cli/exit-codes';
+import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { createLineLogger } from '@kubic/core/cli/logger';
 import { formatJson } from '@kubic/core/cli/output';
 import { renderTable } from '@kubic/core/cli/table';
-import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
+import type { CliTheme } from '@kubic/core/cli/theme';
+import { createCliTheme } from '@kubic/core/cli/theme';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { stripUnsafeCharacters } from '@kubic/exec/runtime-exclude';
-import { type RunUsage, SESSION_ID_PATTERN } from '../../run-cli.js';
+import type { RunUsage } from '../../run-cli.js';
 import {
   openReadOnlySessionStorage,
   touchesWorkspace,
 } from '../../session-read.js';
+import {
+  num,
+  readSessionUsage,
+  totalSessionUsage,
+} from '../../session-usage.js';
 import { defaultSessionsRoot } from '../../sessions-cli.js';
 import { transparentCachingNote } from './cache.js';
+import type {
+  CostGroupBy,
+  SessionCostInput,
+  SessionCostSummary,
+} from './session-cost.js';
 import {
-  type CostGroupBy,
   DEFAULT_COST_GROUP_BY,
   formatCostUsd,
   groupCostRows,
   isCostGroupBy,
-  type SessionCostInput,
-  type SessionCostSummary,
   summarizeSessionCost,
   toCostJson,
 } from './session-cost.js';
@@ -102,136 +90,12 @@ export interface CostCommandDeps {
 
 const PLAIN = createCliTheme('none');
 
-function num(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-// One usage bucket read from a conversation's `pi.usage` document: a model
-// (`provider/modelId`) or a tool name, and the counters it accumulated.
-export interface SessionUsageRow {
-  key: string;
-  kind: 'model' | 'tool';
-  usage: Usage;
-}
-
-// The session's own token/cost totals, summed over every conversation's
-// usage document — the same numbers `Harness.usage()` reports.
-export interface SessionUsageTotals {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  costUsd: number;
-}
-
-function addCounters(total: Usage, usage: Usage): void {
-  total.input += num(usage.input);
-  total.output += num(usage.output);
-  total.cacheRead += num(usage.cacheRead);
-  total.cacheWrite += num(usage.cacheWrite);
-  total.totalTokens += num(usage.totalTokens);
-  const cost = (usage.cost ?? {}) as Partial<Usage['cost']>;
-  total.cost.input += num(cost.input);
-  total.cost.output += num(cost.output);
-  total.cost.cacheRead += num(cost.cacheRead);
-  total.cost.cacheWrite += num(cost.cacheWrite);
-  total.cost.total += num(cost.total);
-}
-
-function emptyUsage(): Usage {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
-}
-
-// Every usage bucket of one session, read straight from its Storage:
-// one `pi.usage` document per conversation, summed by bucket key. No harness
-// is booted and nothing is written — `kubic cost` reads sessions it must not
-// open as a run.
-export async function readSessionUsage(
-  storage: Storage,
-  context: Context,
-): Promise<SessionUsageRow[]> {
-  const rows = new Map<string, SessionUsageRow>();
-  // Bounded paged scan, no unbounded query; the cursor's type comes from the
-  // storage's own signature.
-  const buckets: Array<
-    Awaited<ReturnType<Storage['scanConversations']>>['items'][number]
-  > = [];
-  let cursor: Awaited<ReturnType<Storage['scanConversations']>>['next'];
-  for (;;) {
-    const page = await storage.scanConversations({}, 256, cursor, context);
-    buckets.push(...page.items);
-    if (page.next === undefined) break;
-    cursor = page.next;
-  }
-  for (const conversation of buckets) {
-    const record = await storage.findDocument(
-      {
-        kind: UsageDoc.definition.kind,
-        scope: { kind: 'conversation', conversationId: conversation.id },
-      },
-      'current',
-      context,
-    );
-    if (record === undefined) continue;
-    const stored = await storage.document(record.id, 'current', context);
-    const state = stored?.value as
-      | { models?: Record<string, unknown>; tools?: Record<string, unknown> }
-      | undefined;
-    if (state === undefined) continue;
-    for (const [kind, map] of [
-      ['model', state.models],
-      ['tool', state.tools],
-    ] as const) {
-      for (const [key, raw] of Object.entries(map ?? {})) {
-        // A stored bucket is untrusted JSON: a torn or foreign value is
-        // skipped, never merged into the totals (and never a crash).
-        if (typeof raw !== 'object' || raw === null) continue;
-        const id = `${kind}:${key}`;
-        const row = rows.get(id) ?? {
-          key,
-          kind,
-          usage: emptyUsage(),
-        };
-        addCounters(row.usage, raw as Usage);
-        rows.set(id, row);
-      }
-    }
-  }
-  // Deterministic readout order: models, then tools, each alphabetically.
-  return [...rows.values()].sort(
-    (left, right) =>
-      left.kind.localeCompare(right.kind) || left.key.localeCompare(right.key),
-  );
-}
-
 // A session's tool calls: one per committed tool result, the count a run's
 // `--json` usage reports.
 function toolCallsOf(items: ReturnType<typeof entriesToTranscript>): number {
   let count = 0;
   for (const item of items) if (item.kind === 'tool-result') count += 1;
   return count;
-}
-
-// The session's totals over every bucket it holds.
-export function totalSessionUsage(
-  rows: readonly SessionUsageRow[],
-): SessionUsageTotals {
-  const total = emptyUsage();
-  for (const row of rows) addCounters(total, row.usage);
-  return {
-    input: total.input,
-    output: total.output,
-    cacheRead: total.cacheRead,
-    cacheWrite: total.cacheWrite,
-    costUsd: total.cost.total,
-  };
 }
 
 // Prod loader: usage facts out of the session store, aggregated to the

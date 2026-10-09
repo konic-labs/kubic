@@ -26,10 +26,12 @@
 // never imports node:fs.
 
 import { join } from 'node:path';
-import { sessionLockIsLive } from '@kubic/agent/lane/session-store';
+import {
+  SESSION_ID_PATTERN,
+  sessionLockIsLive,
+} from '@kubic/agent/lane/session-store';
 import type { BridgeFileInfo, FileBridge } from '@kubic/exec/file-bridge';
 import { MS_PER_DAY } from './config/runtime.js';
-import { SESSION_ID_PATTERN } from './run-cli.js';
 
 // A malformed sessions root (exists, but cannot be listed as a directory):
 // refused by name, never half-scanned.

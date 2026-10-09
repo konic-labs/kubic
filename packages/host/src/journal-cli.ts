@@ -19,6 +19,7 @@ import { basename, dirname, join, sep } from 'node:path';
 import {
   listSessions,
   openSessionStore,
+  SESSION_ID_PATTERN,
   sessionLockIsLive,
 } from '@kubic/agent/lane/session-store';
 import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
@@ -57,7 +58,6 @@ import {
   auditLedgerDirFor,
   undoRestoreAudit,
 } from './policy/audit-ledger.js';
-import { SESSION_ID_PATTERN } from './run-cli.js';
 import { defaultSessionsRoot } from './sessions-cli.js';
 
 export interface JournalCommandDeps {

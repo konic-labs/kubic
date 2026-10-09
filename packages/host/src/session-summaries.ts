@@ -20,11 +20,11 @@ import {
   type Storage,
 } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { readSessionUsage, totalSessionUsage } from './ops/cost/cost-cli.js';
 import {
   openReadOnlySessionStorage,
   touchesWorkspace,
 } from './session-read.js';
+import { readSessionUsage, totalSessionUsage } from './session-usage.js';
 
 export interface SessionSummary {
   readonly id: string;

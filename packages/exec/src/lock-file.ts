@@ -195,8 +195,10 @@ export function claimLockLink(lockPath: string, payload: string): boolean {
     try {
       writeFileSync(tmp, payload, { flag: 'wx', mode: 0o600 });
     } catch (error) {
-      // Our own temp name is taken: retry under a fresh one. Anything
-      // else is a real I/O failure and still throws.
+      // Our own temp name is taken: retry under a fresh one, three names
+      // at most (the attempt index is part of the name, so a collision
+      // needs a leftover with this pid, millisecond and random stamp).
+      // Anything else is a real I/O failure and still throws.
       if ((error as { code?: string } | null)?.code === 'EEXIST' && attempt < 2)
         continue;
       throw error;

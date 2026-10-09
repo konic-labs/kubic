@@ -1,7 +1,8 @@
-// Review regression: the steal path's conditional clear must
-// compare unconditionally. A live lock landing after an absent read must
-// never be removed — the absent observation licenses nothing.
-import { describe, expect, it, vi } from 'vitest';
+// The lock acquire over a scripted lock-file seam: the steal path's
+// conditional clear compares unconditionally (a live lock landing after an
+// absent read is never removed — the absent observation licenses nothing),
+// and a lock this attempt landed never outlives a failed acquire.
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@kubic/exec/lock-file', () => ({
   claimLockLink: vi.fn(() => true),
@@ -14,10 +15,15 @@ vi.mock('@kubic/exec/lock-file', () => ({
 
 import {
   claimLockLink,
+  createLockFile,
   readLockFile,
   removeLockFile,
 } from '@kubic/exec/lock-file';
 import { acquireSessionLock, SessionLockError } from './lock.js';
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('steal conditional clear', () => {
   it('never removes a live lock that lands after an absent read', () => {
@@ -76,5 +82,38 @@ describe('steal conditional clear', () => {
     }
     expect(removeLockFile).not.toHaveBeenCalled();
     expect(claimLockLink).not.toHaveBeenCalled();
+  });
+});
+
+describe('a failed acquire', () => {
+  it('removes the lock it landed when the verify read throws', () => {
+    // The create lands this attempt's bytes, then the verify read fails:
+    // no handle ever received the nonce, so only the acquire can remove it.
+    let landed: string | undefined;
+    vi.mocked(createLockFile).mockImplementation((_path, payload) => {
+      landed = payload;
+      return true;
+    });
+    let reads = 0;
+    vi.mocked(readLockFile).mockImplementation(() => {
+      reads++;
+      if (reads === 1) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      return landed;
+    });
+    expect(() => acquireSessionLock('/no-such-dir', 'sess-io')).toThrow('EIO');
+    expect(removeLockFile).toHaveBeenCalledWith('/no-such-dir/lock.json');
+  });
+
+  it('leaves a lock alone that is not provably its own', () => {
+    vi.mocked(createLockFile).mockReturnValue(true);
+    const other = JSON.stringify({ pid: 1, startedAt: 0, nonce: 'theirs' });
+    let reads = 0;
+    vi.mocked(readLockFile).mockImplementation(() => {
+      reads++;
+      if (reads === 1) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      return other;
+    });
+    expect(() => acquireSessionLock('/no-such-dir', 'sess-io')).toThrow('EIO');
+    expect(removeLockFile).not.toHaveBeenCalled();
   });
 });

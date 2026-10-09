@@ -197,15 +197,35 @@ export function acquireSessionLock(
   // The verify closes the fresh path against a stealer that observed a
   // stale lock before our create: bytes that are not ours fall through to
   // the steal path, which re-evaluates the live occupant.
-  if (createLockFile(lockPath, payload)) {
-    if (readLockFile(lockPath) === payload) return nonce;
-  } else {
-    const holder = readLockHolder(lockPath);
-    if (holderIsLive(holder))
-      throw new SessionLockError(sessionId, lockErrorHolder(holder));
+  try {
+    if (createLockFile(lockPath, payload)) {
+      if (readLockFile(lockPath) === payload) return nonce;
+    } else {
+      const holder = readLockHolder(lockPath);
+      if (holderIsLive(holder))
+        throw new SessionLockError(sessionId, lockErrorHolder(holder));
+    }
+    stealSessionLock(lockPath, sessionId, payload);
+    return nonce;
+  } catch (error) {
+    // A throw after this attempt's bytes landed (a failed verify read)
+    // leaves a lock no handle holds the nonce for, so no release could
+    // prove it owns it: the acquire removes its own bytes before the error
+    // escapes.
+    dropOwnLock(lockPath, payload);
+    throw error;
   }
-  stealSessionLock(lockPath, sessionId, payload);
-  return nonce;
+}
+
+// Removes the lock only when it reads back as exactly `payload`. Unreadable
+// bytes are not provably ours and stay: once this process exits they are a
+// stale candidate the next acquire steals.
+function dropOwnLock(lockPath: string, payload: string): void {
+  try {
+    if (readLockFile(lockPath) === payload) removeLockFile(lockPath);
+  } catch {
+    // Not provably ours.
+  }
 }
 
 // Read-only liveness view for consumers that must never pull state out

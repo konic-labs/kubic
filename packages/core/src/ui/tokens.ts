@@ -75,7 +75,7 @@ export function ansiSlot(value: ColorValue): number | undefined {
   return slot >= 0 && slot <= 15 ? slot : undefined;
 }
 
-// The Konic brand on a near-black terminal (docs/ui values).
+// The Konic brand on a near-black terminal.
 export const DARK_PALETTE: Palette = {
   bg0: '#0a0a0c',
   bg1: '#111115',

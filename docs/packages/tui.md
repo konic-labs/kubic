@@ -39,7 +39,7 @@ TUI-side analogue of the agent Pi boundary.
 ## UI kit (`packages/tui/src/ui`)
 
 Pure render helpers every new surface is drawn with, over the
-shared design tokens (`packages/core/src/ui`, `docs/ui/README.md`): each takes
+shared design tokens (`packages/core/src/ui`): each takes
 a `UiTheme` (`tuiTheme().ui`) and returns strings — plain text at colour
 depth `none`, so snapshots stay readable.
 

@@ -126,7 +126,7 @@ keyed by signal name: SIGHUP 129, SIGINT 130, SIGTERM 143.
   computes `interactive` and `fancy`).
 - **Colour** comes from `themeFor(stream)` / `createCliTheme(level)`: it
   honours `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb`, and is off on a non-TTY.
-  The palette is the shared design tokens (`docs/ui/README.md`); new output
+  The palette is the shared design tokens (`packages/core/src/ui/tokens.ts`); new output
   styles through `theme.ui` roles (`fg2`, `accent`, `ok`, …), never raw hex.
 - **Tables**: `renderTable(rows, columns, { fancy, theme, markers })` — the
   kit's borderless table when `fancy` (muted header, faint rule, optional

@@ -9,7 +9,6 @@ rationale, package APIs and CLI behaviour never mix.
 | Packages | [packages/](packages/README.md) | One page per package: public API, contracts, dependency neighbours | Architecture rationale, CLI usage |
 | CLI & operations | [cli/](cli/README.md) | Commands, flags, exit codes, configuration, `doctor` diagnostics | Package internals |
 | Contributing | [contributing.md](contributing.md) | Workflow, Conventional Commits, the docs-update rule | Feature documentation |
-| UI design | [ui/](ui/README.md) | The terminal design system: colour tokens, glyphs, key map, screen mockups | Implementation details, CLI flags |
 
 ## Pages
 

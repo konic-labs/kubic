@@ -4,7 +4,7 @@
 import type { ApprovalOverlayHandle } from '../approval-view.js';
 import { keyCap } from '../chrome.js';
 import { mentionFor } from '../file-mentions.js';
-import { sanitizeLaneText } from '../lane-cells.js';
+import { sanitizeLaneText } from '../lane-text.js';
 import { PaletteView } from '../palette-view.js';
 import {
   findSlashCommand,

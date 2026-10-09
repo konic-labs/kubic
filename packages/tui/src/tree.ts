@@ -10,11 +10,8 @@
 // the fields it reads are typed here.
 
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
-import {
-  sanitizeLaneText,
-  summarizeToolArguments,
-  summarizeToolOutcome,
-} from './lane-cells.js';
+import { summarizeToolArguments, summarizeToolOutcome } from './lane-cells.js';
+import { sanitizeLaneText } from './lane-text.js';
 import { formatStatusCost } from './status-bar.js';
 import { tuiTheme } from './theme.js';
 import type { Component, MouseRegionHandler } from './tui-boundary.js';

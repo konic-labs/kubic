@@ -22,6 +22,7 @@ and [keys](../cli/tui-keys.md) pages.
 | `@kubic/tui/screen` | The alt-screen lifecycle |
 | `@kubic/tui/transcript` | The transcript: committed lane entries as cells, plus the streaming draft |
 | `@kubic/tui/lane-cells` | Committed lane entries to cells, with every model-supplied text sanitised |
+| `@kubic/tui/lane-text` | The sanitiser: model and tool text made safe for the terminal |
 | `@kubic/tui/tree` | The agent tree: the run row and its tool calls, grouped per turn |
 | `@kubic/tui/status-bar` | The one-row status line: model, context gauge, cost, journal count, turn state |
 | `@kubic/tui/chrome` | The one-row header and the context-aware key-hint row |
@@ -42,8 +43,8 @@ internal to the package.
 
 ## Invariants
 
-- **Model output cannot drive the terminal.** `lane-cells.ts` sanitises
-  every cell's text: complete ECMA-48 sequences (CSI, OSC, C1, two-byte
+- **Model output cannot drive the terminal.** Every cell's text goes
+  through `sanitizeLaneText` (`lane-text.ts`): complete ECMA-48 sequences (CSI, OSC, C1, two-byte
   ESC forms) are stripped, carriage-return overwrites collapse to the text
   after the last `\r`, tabs expand by column and the remaining C0/C1
   controls are dropped. Approval asks are sanitised when they arrive.

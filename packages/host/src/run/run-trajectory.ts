@@ -43,7 +43,7 @@ import type {
   TrajectoryUsage,
 } from '@kubic/trajectory/schema';
 import type { OrgAuditRecord } from '../audit/index.js';
-import type { RunTerminusKind } from './run-cli.js';
+import type { RunTerminusKind } from './run-result.js';
 
 export const TRAJECTORY_FILE = 'trajectory.json';
 

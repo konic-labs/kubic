@@ -8,7 +8,7 @@
 import type { LaneImagePart } from '@kubic/core/presentation';
 import { FOCUS_EDGE, PROSE } from '@kubic/core/ui/glyphs';
 import { createAttachmentComponent } from './attachments.js';
-import { sanitizeLaneText } from './lane-cells.js';
+import { sanitizeLaneText } from './lane-text.js';
 import { type TuiTheme, tuiTheme } from './theme.js';
 import { formatToolDuration, renderToolCard } from './tool-card.js';
 import type { Component } from './tui-boundary.js';

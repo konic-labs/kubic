@@ -36,7 +36,7 @@ import {
   approvalKeyProblems,
   resolveApprovalKey,
 } from './approval-view.js';
-import { sanitizeLaneText } from './lane-cells.js';
+import { sanitizeLaneText } from './lane-text.js';
 import { matchesKey } from './tui-boundary.js';
 
 // The reason recorded when the session cannot collect a verdict. Named

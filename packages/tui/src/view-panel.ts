@@ -21,7 +21,7 @@ import type { DiffFileChange, DiffOp } from './diff-view.js';
 import { renderDiffLines } from './diff-view.js';
 import type { JournalFilter } from './journal-view.js';
 import { JournalView } from './journal-view.js';
-import { sanitizeLaneText } from './lane-cells.js';
+import { sanitizeLaneText } from './lane-text.js';
 import type { Component } from './tui-boundary.js';
 
 export type PanelMode = 'closed' | 'diff' | 'journal';

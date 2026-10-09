@@ -29,6 +29,10 @@
       "source": "./src/lane-cells.ts",
       "default": "./src/lane-cells.ts"
     },
+    "./lane-text": {
+      "source": "./src/lane-text.ts",
+      "default": "./src/lane-text.ts"
+    },
     "./layout": {
       "source": "./src/layout.ts",
       "default": "./src/layout.ts"

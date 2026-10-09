@@ -1,5 +1,11 @@
 // Models: the catalogue assembled from the built-ins and models.json, provider
 // probes, the offline faux provider, key hints, and `kubic models`.
+
+export type { AssembledModels } from './catalogue.js';
+export {
+  assembleModels,
+  /** @internal */ findModelsProjectRoot,
+} from './catalogue.js';
 export {
   FAUX_FOOTER,
   FAUX_MODEL_ID,
@@ -10,11 +16,9 @@ export {
   invalidProviderMessage,
   providerOverrideFromEnv,
 } from './faux-provider.js';
-export type { AssembledModels, ModelsCommandOptions } from './models-cli.js';
+export type { ModelsCommandOptions } from './models-cli.js';
 export {
-  assembleModels,
   contextRoomProbeOf,
-  /** @internal */ findModelsProjectRoot,
   modelsSourcesProbe,
   providerProbesOf,
   runModelsCommand,

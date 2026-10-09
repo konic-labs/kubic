@@ -12,11 +12,9 @@
 import type { PermissionClasses } from '@kubic/agent/permissions';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLE_NAMES, BUILTIN_ROLE_PRESETS } from './builtin-presets.js';
-import {
-  type ParsedRoleDoc,
-  parseRoleDocument,
-  resolveRole,
-} from './resolver.js';
+import { resolveRole } from './resolver.js';
+import type { ParsedRoleDoc } from './role-document.js';
+import { parseRoleDocument } from './role-document.js';
 
 function docNamed(docs: ParsedRoleDoc[], name: string): ParsedRoleDoc {
   const doc = docs.find((entry) => entry.name === name);

@@ -8,11 +8,8 @@ import { join } from 'node:path';
 import { ModelSelectError, selectModel } from '@kubic/agent/model-select';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
-import {
-  assembleModels,
-  providerProbesOf,
-  runModelsCommand,
-} from './models-cli.js';
+import { assembleModels } from './catalogue.js';
+import { providerProbesOf, runModelsCommand } from './models-cli.js';
 
 function assemble(
   env: Record<string, string | undefined>,

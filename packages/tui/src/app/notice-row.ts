@@ -2,7 +2,7 @@
 
 import type { WorkingInfo } from '../editor-frame.js';
 import { renderWorkingLine } from '../editor-frame.js';
-import { sanitizeLaneText } from '../lane-cells.js';
+import { sanitizeLaneText } from '../lane-text.js';
 import { tuiTheme } from '../theme.js';
 import type { Component } from '../tui-boundary.js';
 import { truncateToWidth } from '../tui-boundary.js';

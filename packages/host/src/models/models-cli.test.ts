@@ -9,11 +9,8 @@ import { createModels, fauxProvider } from '@kubic/agent/pi-boundary';
 import { LOCAL_MODELS_EXAMPLE } from '@kubic/agent/test-support/models-fixtures';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
-import {
-  assembleModels,
-  contextRoomProbeOf,
-  runModelsCommand,
-} from './models-cli.js';
+import { assembleModels } from './catalogue.js';
+import { contextRoomProbeOf, runModelsCommand } from './models-cli.js';
 
 describe('kubic models', () => {
   it('lists providers, models, and thinking support', async () => {

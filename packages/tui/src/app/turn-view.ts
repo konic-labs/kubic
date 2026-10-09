@@ -11,8 +11,8 @@ import {
   entriesToCells,
   type LaneEntryLike,
   PROMPT_PREFIX,
-  sanitizeLaneText,
 } from '../lane-cells.js';
+import { sanitizeLaneText } from '../lane-text.js';
 import { parseSlashCommand } from '../slash-commands.js';
 import type { StatusTurnState } from '../status-bar.js';
 import type {

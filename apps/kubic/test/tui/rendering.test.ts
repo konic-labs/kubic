@@ -4,7 +4,7 @@
 
 import { renderHeader } from '@kubic/tui/chrome';
 import { formatTurnClock, renderWorkingLine } from '@kubic/tui/editor-frame';
-import { sanitizeLaneText } from '@kubic/tui/lane-cells';
+import { sanitizeLaneText } from '@kubic/tui/lane-text';
 import { buildLayoutRoot, TREE_MAX_ROWS } from '@kubic/tui/layout';
 import { bootScreen } from '@kubic/tui/screen';
 import {

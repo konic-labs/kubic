@@ -4,14 +4,14 @@
 // no alt-screen in -p path, and attach-reopens-transcript.
 import { rmSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
+import { runRunCommand } from './run-cli.js';
+import type { HeadlessRunResult } from './run-result.js';
 import {
   failureForTerminus,
-  type HeadlessRunResult,
   mapCaughtErrorToTerminus,
   mapLaneOutcomeToFailure,
   mapTerminusToExitCode,
-  runRunCommand,
-} from './run-cli.js';
+} from './run-result.js';
 
 const made: string[] = [];
 

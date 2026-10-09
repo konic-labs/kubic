@@ -18,15 +18,17 @@ import {
 } from './builtin-presets.js';
 import type { RoleLayerInput } from './resolver.js';
 import {
-  type ParsedRoleDoc,
-  parseRoleDocument,
-  RESERVED_ROLE_REASON,
   type ResolvedRole,
-  RoleParseError,
   RoleRefusedError,
   resolveRole,
   roleDoctorChecks,
 } from './resolver.js';
+import type { ParsedRoleDoc } from './role-document.js';
+import {
+  parseRoleDocument,
+  RESERVED_ROLE_REASON,
+  RoleParseError,
+} from './role-document.js';
 
 const ROLES_DIR = '.kubic/roles';
 

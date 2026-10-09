@@ -8,7 +8,7 @@ import type {
 import { approvalOverlayOptions } from '../approval-view.js';
 import { keyCap } from '../chrome.js';
 import { KEY_ACTIONS, type KeyAction } from '../keybindings.js';
-import { sanitizeLaneText } from '../lane-cells.js';
+import { sanitizeLaneText } from '../lane-text.js';
 import { PickerView } from '../picker-view.js';
 import { tuiTheme } from '../theme.js';
 import { type Component, truncateToWidth } from '../tui-boundary.js';

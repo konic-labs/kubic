@@ -1,7 +1,7 @@
 // The session the app shows: its id and title, the live model, the
 // workspace facts the header reads, and the first screen's preflight.
 import { keyCap } from '../chrome.js';
-import { sanitizeLaneText } from '../lane-cells.js';
+import { sanitizeLaneText } from '../lane-text.js';
 import { type PreflightInfo, renderPreflight } from '../preflight.js';
 import { tuiTheme } from '../theme.js';
 import type { AppCore } from './core.js';

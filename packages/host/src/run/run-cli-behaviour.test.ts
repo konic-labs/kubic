@@ -19,7 +19,8 @@ import { createLineLogger } from '@kubic/core/cli/logger';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
-import { type HeadlessRunResult, runRunCommand } from './run-cli.js';
+import { runRunCommand } from './run-cli.js';
+import type { HeadlessRunResult } from './run-result.js';
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];

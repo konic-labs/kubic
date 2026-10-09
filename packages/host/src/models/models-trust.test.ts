@@ -24,7 +24,8 @@ vi.mock('@kubic/agent/models-config', async (importOriginal) => {
   };
 });
 
-const { assembleModels, modelsSourcesProbe } = await import('./models-cli.js');
+const { assembleModels } = await import('./catalogue.js');
+const { modelsSourcesProbe } = await import('./models-cli.js');
 
 afterEach(() => {
   registered.calls.splice(0);

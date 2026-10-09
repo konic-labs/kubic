@@ -7,13 +7,13 @@ import { describe, expect, it } from 'vitest';
 import {
   effectiveRoleClasses,
   mergeRoleLayers,
-  parseRoleDocument,
   RoleRefusedError,
   resolveRole,
   roleDoctorChecks,
   roleModelAllowed,
   validateResolvedRole,
 } from './resolver.js';
+import { parseRoleDocument } from './role-document.js';
 import { loadRoles } from './roles-boot.js';
 
 const PLANNER_MD = `---

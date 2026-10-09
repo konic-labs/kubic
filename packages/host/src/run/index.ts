@@ -1,29 +1,30 @@
 // `kubic run`: argument parsing, the result envelope and exit-code mapping,
 // run and turn spans, the run trajectory, and the `[verify]` gate runner.
-export type {
-  HeadlessRunResult,
-  RetryRecord,
-  RunCommandOptions,
-  RunProgressSink,
-  RunTerminusKind,
-  RunUsage,
-} from './run-cli.js';
+export type { RunCommandOptions, RunProgressSink } from './run-cli.js';
 export {
-  buildRunEnvelope,
-  caughtRunResult,
   checkPromptValue,
   DEFAULT_RUN_TIMEOUT_MS,
   MAX_RUN_TIMEOUT_MS,
-  mapCaughtErrorToTerminus,
-  mapLaneOutcomeToFailure,
-  /** @internal */ mapTerminusToExitCode,
   parseRunMaxTurns,
   parseRunTimeout,
   parseSessionIdArg,
-  refusedRunResult,
   runRunCommand,
   shellQuote,
 } from './run-cli.js';
+export type {
+  HeadlessRunResult,
+  RetryRecord,
+  RunTerminusKind,
+  RunUsage,
+} from './run-result.js';
+export {
+  buildRunEnvelope,
+  caughtRunResult,
+  mapCaughtErrorToTerminus,
+  mapLaneOutcomeToFailure,
+  /** @internal */ mapTerminusToExitCode,
+  refusedRunResult,
+} from './run-result.js';
 export type { TurnSpansSink } from './run-spans.js';
 export {
   RunSpans,

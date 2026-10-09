@@ -2,7 +2,7 @@
 // deps, and approval-policy mismatches, with a skip flag. Presentation
 // only — every probe is injected (faux-only, zero network): the command
 // never dials a provider, it reports what the injected probers say.
-// Provider shapes mirror packages/agent/src/models-config.ts read-only; policy
+// Provider shapes mirror packages/agent/src/models-config/ read-only; policy
 // validation reuses approvals/policy.ts. File access, if ever needed,
 // goes through the exec FileBridge — this module never imports node:fs.
 

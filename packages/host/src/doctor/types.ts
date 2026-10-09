@@ -27,7 +27,7 @@ export interface DoctorCheck {
   detail: string;
 }
 
-// Provider probe input mirrors CustomProviderSpec (models-config.ts)
+// Provider probe input mirrors CustomProviderSpec (models-config/schema.ts)
 // plus reachability — set by an injected faux prober, never by dialing.
 // `dialled` is the honesty switch: absent/false means the
 // provider was only LISTED (registered in the catalog, never contacted),

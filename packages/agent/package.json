@@ -66,8 +66,8 @@
       "default": "./src/model-select.ts"
     },
     "./models-config": {
-      "source": "./src/models-config.ts",
-      "default": "./src/models-config.ts"
+      "source": "./src/models-config/index.ts",
+      "default": "./src/models-config/index.ts"
     },
     "./ops/display-diff": {
       "source": "./src/ops/display-diff.ts",

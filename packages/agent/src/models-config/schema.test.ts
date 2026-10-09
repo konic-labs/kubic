@@ -2,12 +2,10 @@
 // object form, cache costs, input modalities, and validated
 // contextWindow/maxTokens. Zero network: registration only.
 import { describe, expect, it } from 'vitest';
-import {
-  ModelsJsonError,
-  parseModelsJson,
-  registerCustomProviders,
-} from './models-config.js';
-import { createModels } from './pi-boundary.js';
+import { createModels } from '../pi-boundary.js';
+import { parseModelsJson } from './parse.js';
+import { registerCustomProviders } from './register.js';
+import { ModelsJsonError } from './schema.js';
 
 // The object-form example in docs/cli/configuration.md, verbatim.
 const DOCS_EXAMPLE = `{

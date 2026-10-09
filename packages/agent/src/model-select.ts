@@ -10,7 +10,7 @@
 // the storage.
 
 import { suggest } from '@kubic/core/suggest';
-import { isThinkingLevel, THINKING_LEVELS } from './models-config.js';
+import { isThinkingLevel, THINKING_LEVELS } from './models-config/index.js';
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,

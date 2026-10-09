@@ -3,14 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
-} from './compaction.js';
-import {
-  ModelsJsonError,
-  parseModelsJson,
-  registerCustomProviders,
-} from './models-config.js';
-import { createModels } from './pi-boundary.js';
-import { LOCAL_MODELS_EXAMPLE } from './test-support/models-fixtures.js';
+} from '../compaction.js';
+import { createModels } from '../pi-boundary.js';
+import { LOCAL_MODELS_EXAMPLE } from '../test-support/models-fixtures.js';
+import { parseModelsJson } from './parse.js';
+import { registerCustomProviders } from './register.js';
+import { ModelsJsonError } from './schema.js';
 
 describe('models.json apiKeyEnv allowlist', () => {
   const withKeyEnv = (apiKeyEnv: string) => ({

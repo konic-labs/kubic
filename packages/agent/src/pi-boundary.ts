@@ -85,7 +85,7 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai custom providers (createProvider +
 //     OpenAI-compatible stream factories for models.json endpoints)
-//   used by: packages/agent/src/models-config.ts
+//   used by: packages/agent/src/models-config/
 //   why Pi has no alternative: provider streaming, auth resolution, and cost
 //     accounting live in Pi's model layer (registry generated, never
 //     hand-edited); Kubic only parses models.json and calls the factory
@@ -118,7 +118,7 @@ export {
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai/api/openai-completions.lazy
-//   used by: packages/agent/src/models-config.ts (an OpenAI-compatible
+//   used by: packages/agent/src/models-config/ (an OpenAI-compatible
 //     models.json endpoint is registered as a custom provider)
 //   why Pi has no alternative: the lazy subpath is an upstream entry point
 //     that loads the completions API without the provider SDKs; importing
@@ -127,7 +127,7 @@ export { openAICompletionsApi as openAICompletionsApiLazy } from '@earendil-work
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai/api/openai-responses.lazy
-//   used by: packages/agent/src/models-config.ts (an OpenAI-compatible
+//   used by: packages/agent/src/models-config/ (an OpenAI-compatible
 //     models.json endpoint is registered as a custom provider)
 //   why Pi has no alternative: the lazy subpath is an upstream entry point
 //     that loads the responses API without the provider SDKs; importing the

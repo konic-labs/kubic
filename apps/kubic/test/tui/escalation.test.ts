@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
 import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
-import { prodTuiDeps } from '../../src/prod-runners.js';
+import { prodTuiDeps } from '../../src/runners/session.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { tuiDepsWithDefaults } from '../../src/tui/deps.js';
 import { runTuiCommand } from '../../src/tui/run.js';

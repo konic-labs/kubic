@@ -25,7 +25,7 @@ import {
   renderEffectiveConfig,
 } from '@kubic/host/config';
 import { afterEach, describe, expect, it } from 'vitest';
-import { prodRunDeps } from '../prod-runners.js';
+import { prodRunDeps } from '../runners/session.js';
 import {
   configRefusalExit,
   doctorConfigProbe,

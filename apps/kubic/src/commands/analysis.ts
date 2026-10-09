@@ -26,7 +26,8 @@ import type { CommandRegistrar, KubicProgram } from '../cli/context.js';
 import type { CliConfigResult } from '../config/load.js';
 
 // One analysis runner: commander's parsed options plus the process-wide
-// config load in, the command's result out (production wiring: ../prod-runners.ts).
+// config load in, the command's result out (production wiring:
+// ../runners/analysis.ts).
 type AnalysisRunner<Options> = (
   options: Options,
   config: CliConfigResult,

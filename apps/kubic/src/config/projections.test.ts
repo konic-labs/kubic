@@ -36,8 +36,8 @@ import {
 } from '@kubic/host/config';
 import { describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
-import { prodRunDeps } from '../prod-runners.js';
 import { runHeadlessPrompt } from '../run/command.js';
+import { prodRunDeps } from '../runners/session.js';
 import { composePromptSections } from '../session/bootstrap.js';
 import {
   doctorConfigProbe,

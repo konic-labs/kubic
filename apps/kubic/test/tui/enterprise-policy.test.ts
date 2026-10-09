@@ -28,7 +28,7 @@ import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
 import { runtimeModelPin } from '../../src/config/model-selection.js';
 import { runtimeApprovalDeps } from '../../src/config/projections.js';
-import { prodTuiDeps } from '../../src/prod-runners.js';
+import { prodTuiDeps } from '../../src/runners/session.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { tuiBootOptions, tuiDepsWithDefaults } from '../../src/tui/deps.js';
 import type { TuiBootFlags, TuiRunOptions } from '../../src/tui/options.js';

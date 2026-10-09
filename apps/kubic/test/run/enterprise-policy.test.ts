@@ -27,8 +27,9 @@ import {
   runtimeApprovalDeps,
   runtimeRunDeps,
 } from '../../src/config/projections.js';
-import { createProdRunners, prodRunDeps } from '../../src/prod-runners.js';
+import { createProdRunners } from '../../src/prod-runners.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
+import { prodRunDeps } from '../../src/runners/session.js';
 import { cliConfig, ENTERPRISE } from '../fixtures/cli-config.js';
 
 beforeEach(() => {

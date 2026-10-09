@@ -4,7 +4,7 @@
 > Implementation: `packages/agent/src/skills/` (the loader),
 > `packages/host/src/skills/skills-boot.ts` (lane boot + listing summary),
 > `packages/host/src/skills/skills-cli.ts` (`kubic skills`),
-> `apps/kubic/src/prod-runners.ts` (prod wiring).
+> `apps/kubic/src/runners/setup.ts` (prod wiring).
 
 Skills are markdown documents (`SKILL.md`) the agent can read: reusable
 instructions that land on the system prompt as `<skill>` blocks. Discovery

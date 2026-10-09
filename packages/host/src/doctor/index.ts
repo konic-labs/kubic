@@ -23,7 +23,7 @@ export type {
   ContextRoomProbe,
   DepProbe,
   DoctorCheck,
-  /** @internal */ DoctorDeps,
+  DoctorDeps,
   ProviderProbe,
   SessionOverlapProbe,
 } from './types.js';

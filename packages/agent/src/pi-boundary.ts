@@ -38,7 +38,7 @@ export type { Context, JsonValue } from '@earendil-works/chord';
 // JUSTIFICATION:
 //   seam: @earendil-works/chord/context#BACKGROUND_CONTEXT
 //   used by: packages/agent/src/lane/* (harness calls), apps/kubic/src/
-//     {prod-runners,tui/boot,tui/lane-loop,run/state,run/close}.ts and the host readers
+//     {runners/doctor,tui/boot,tui/lane-loop,run/state,run/close}.ts and the host readers
 //     under packages/host/src/{sessions,journal,cost,doctor}/
 //   why Pi has no alternative: Pi 1.0 has no pi-agent-core re-export;
 //     chord owns Context, and every durable call (Harness.open, submit,

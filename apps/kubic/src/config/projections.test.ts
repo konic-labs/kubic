@@ -38,7 +38,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../run/command.js';
 import { prodRunDeps } from '../runners/session.js';
-import { composePromptSections } from '../session/bootstrap.js';
+import { composePromptSections } from '../session/lane.js';
 import {
   doctorConfigProbe,
   loadCliConfig,

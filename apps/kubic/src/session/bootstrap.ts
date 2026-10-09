@@ -2,6 +2,9 @@
 // session, resolve the role, assemble and select the model, install the
 // approval policy, capture the journal baseline, boot the skills and the lane
 // — in one order, with one set of refusals — and tear it all down again.
+// Each step's work is its own module (role, catalog, approval-policy,
+// journal, lane); SessionBoot keeps the order, the state the steps share and
+// the teardown.
 //
 // The two front ends differ only where the product says they do, and each
 // difference is an explicit input here: the session's recorded mode, the
@@ -11,31 +14,23 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  bootLane,
-  type Lane,
-  type LaneCompactionOptions,
-} from '@kubic/agent/lane/boot';
+import type { Lane, LaneCompactionOptions } from '@kubic/agent/lane/boot';
+import type {
+  SessionHandle,
+  SessionStore,
+} from '@kubic/agent/lane/session-store';
 import {
   attachSession,
   createSession,
   openSessionStore,
   SESSION_ID_PATTERN,
-  type SessionHandle,
-  type SessionStore,
-  sessionsTouchingWorkspace,
 } from '@kubic/agent/lane/session-store';
-import {
-  ModelSelectError,
-  type ModelSelection,
-  type selectModel,
-} from '@kubic/agent/model-select';
+import type { ModelSelection, selectModel } from '@kubic/agent/model-select';
 import { OPERATIONS } from '@kubic/agent/ops/registry';
+import type { PermissionClasses, RunMode } from '@kubic/agent/permissions';
 import {
   checkAgreement,
   DEFAULT_PERMISSIONS,
-  type PermissionClasses,
-  type RunMode,
   validateClasses,
 } from '@kubic/agent/permissions';
 import type {
@@ -43,62 +38,33 @@ import type {
   HookRegistration,
   MutableModels,
 } from '@kubic/agent/pi-boundary';
-import {
-  resolveStreamOptions,
-  type StreamTuningTables,
-} from '@kubic/agent/stream-options';
-import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
+import type { StreamTuningTables } from '@kubic/agent/stream-options';
 import type { ExecutionEnv } from '@kubic/exec/env';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { createNodeFileBridge, type FileBridge } from '@kubic/exec/file-bridge';
-import {
-  beginReconciliation,
+import type { FileBridge } from '@kubic/exec/file-bridge';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import type {
   FileJournalStore,
-  type JournalRetention,
-  type RunReconciliation,
+  JournalRetention,
+  RunReconciliation,
 } from '@kubic/exec/journal';
-import { createSecretCommandRunner } from '@kubic/exec/secret-runner';
-import {
-  type ApprovalConfig,
-  enableSessionFullAccess,
-  type InstalledPolicy,
+import type {
+  ApprovalConfig,
+  InstalledPolicy,
   installPolicy,
 } from '@kubic/host/approvals';
-import {
-  createLedgerModelKeyResolver,
-  resolveRunBaseRevision,
-} from '@kubic/host/audit';
-import { findProjectRoot } from '@kubic/host/cli';
 import type { RuntimeThinking } from '@kubic/host/config';
-import {
-  type AssembledModels,
-  assembleModels,
-  FAUX_NOTICE,
-  invalidProviderMessage,
-  providerOverrideFromEnv,
-} from '@kubic/host/models';
-import {
-  type EffectivePolicy,
-  hasModelPolicy,
-  hasToolPolicy,
-  isModelAllowed,
-  isToolAllowedByEnterprise,
-} from '@kubic/host/policy';
+import type { AssembledModels } from '@kubic/host/models';
+import type { EffectivePolicy } from '@kubic/host/policy';
 import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles';
-import {
-  effectiveRoleClasses,
-  rolePromptFor,
-  selectRole,
-} from '@kubic/host/roles';
 import { redactBridgeWrites } from '@kubic/host/secret-refs';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { bootSkills } from '@kubic/host/skills';
-import {
-  resolveRoleThinking,
-  roleModelScope,
-  selectBootModel,
-} from '../config/model-selection.js';
-import { hasExplicitModelSelection } from '../model-projection.js';
+import { installBootPolicy } from './approval-policy.js';
+import { assembleBootCatalog } from './catalog.js';
+import { beginBootJournal, probeBootOverlap } from './journal.js';
+import { bootSessionLane } from './lane.js';
+import { resolveBootRole } from './role.js';
 
 // Why a boot stopped before the lane ran. Each front end maps these to its
 // own output: an exit code and stderr for `kubic run`, an error the TUI
@@ -211,7 +177,7 @@ export interface SessionBootSinks {
   skillsLog: (line: string) => void;
 }
 
-interface BootRole {
+export interface BootRole {
   resolved: ResolvedRole;
   prompt: string;
   docSkills: string[] | undefined;
@@ -239,34 +205,6 @@ function toolSelectionRefusal(
     [...tools],
   );
   return agreement.agree ? undefined : agreement.reason;
-}
-
-// The lane's appended prompt sections: the `[agent] systemPromptFile` text
-// first (the user's own instructions), the skills block second (discovered
-// context). Undefined when neither is set, so the lane assembles its prompt
-// unchanged — the cache-stable prefix is never rewritten by an empty
-// composition.
-/** @internal */
-export function composePromptSections(
-  systemPromptSection: string | undefined,
-  skillsBlock: string | undefined,
-): string[] | undefined {
-  const sections = [
-    ...(systemPromptSection === undefined ? [] : [systemPromptSection]),
-    ...(skillsBlock === undefined ? [] : [skillsBlock]),
-  ];
-  return sections.length === 0 ? undefined : sections;
-}
-
-// The provider ids and model ids a catalog names: the words a live key value
-// must not be scrubbed out of.
-function catalogIdentity(models: MutableModels): string[] {
-  return models
-    .getProviders()
-    .flatMap((provider) => [
-      provider.id,
-      ...models.getModels(provider.id).map((model) => model.id),
-    ]);
 }
 
 // One session boot. `validate`, `open` and `boot` run in that order; each
@@ -395,314 +333,22 @@ export class SessionBoot {
   async boot(): Promise<BootRefusal | undefined> {
     this.bridge.createDir(join(this.id, 'journal'));
     if (this.request.cancelled?.() === true) return { kind: 'cancelled' };
-    const role = this.resolveRole();
+    const role = resolveBootRole(this);
     if (role !== undefined && 'kind' in role) return role;
     this.role = role;
-    const catalog = await this.assembleCatalog();
+    const catalog = await assembleBootCatalog(this);
     if (catalog !== undefined) return catalog;
     const env = this.config.env ?? new NodeExecutionEnv(process.cwd());
     this.env = env;
-    await this.installApprovalPolicy(env);
+    await installBootPolicy(this, env);
     this.request.onPolicyInstalled?.(this);
-    this.beginJournal(env);
-    await this.probeOverlap(env);
+    beginBootJournal(this, env);
+    await probeBootOverlap(this, env);
     this.bootRunSkills();
     const skills = this.request.onSkillsBooted?.(this);
     if (skills !== undefined) return skills;
     if (this.request.cancelled?.() === true) return { kind: 'cancelled' };
-    return this.bootRunLane(env);
-  }
-
-  // `--role` loads the role document and derives the prompt text, the tool
-  // allowlist and the model default from it. The refusals are fail-closed
-  // with a named reason: an unknown role, a contradictory document, a
-  // document with no instructions, and a parse failure. An absent --role
-  // leaves the lane boot unchanged.
-  private resolveRole(): BootRole | BootRefusal | undefined {
-    const { role } = this.request;
-    const policy = this.config.modelPolicy;
-    if (role === undefined) {
-      // The stock run resolves no role document — the [policy] line still
-      // names the default role it runs as.
-      this.sinks.debug?.(`[policy] role=${DEFAULT_RUN_ROLE} (default)`);
-      return undefined;
-    }
-    const roles = this.config.roles;
-    const rolesCwd = roles?.cwd ?? process.cwd();
-    const rolesBridge = createNodeFileBridge(rolesCwd);
-    try {
-      const selected = selectRole({
-        bridge: rolesBridge,
-        cwd: rolesCwd,
-        role,
-        // Role documents resolve at the project root, so `--role` from a
-        // subdirectory finds `<root>/.kubic/roles/*.md`.
-        projectRoot: findProjectRoot(rolesBridge, rolesCwd, homedir()),
-        ...(roles?.layers === undefined ? {} : { layers: roles.layers }),
-        // An untrusted root's documents are withheld — `--role` naming one
-        // refuses with the trust message.
-        ...(roles?.trusted === undefined ? {} : { trusted: roles.trusted }),
-        ...(roles?.trustProject === undefined
-          ? {}
-          : { trustProject: roles.trustProject }),
-        // The global `~/.kubic/roles` layer under the project documents.
-        ...(roles?.homeDir === undefined ? {} : { home: roles.homeDir }),
-        // A role document declaring a denied tool is refused here, by name,
-        // before the lane boots.
-        ...(policy === undefined ? {} : { toolPolicy: policy }),
-      });
-      // The prompt comes from the winning document: a repo override's text,
-      // or the preset embedded in the binary.
-      const prompt = rolePromptFor(selected.doc, selected.markdown);
-      this.sinks.debug?.(
-        `[policy] role=${selected.resolved.name} tools=${selected.resolved.tools.join(',')}`,
-      );
-      return {
-        resolved: selected.resolved,
-        prompt,
-        docSkills: selected.doc.skills,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { kind: 'failed', message, cause: error };
-    }
-  }
-
-  // The model catalog and the boot model. Provider keys resolve per request,
-  // and each use lands in the ledger of the run's workspace.
-  private async assembleCatalog(): Promise<BootRefusal | undefined> {
-    const { config, sinks } = this;
-    const workspace = config.env?.cwd ?? process.cwd();
-    let fallbackProviders: readonly string[] | undefined;
-    if (config.models === undefined) {
-      let identityWords: string[] | undefined;
-      const keyResolver = createLedgerModelKeyResolver({
-        workspace,
-        role: this.role?.resolved.name ?? 'root',
-        sessionId: () => this.id,
-        onError: (message) =>
-          sinks.debug?.(`[session] credential use not audited: ${message}`),
-        // A dummy key that IS its provider's name (LM Studio's `lm-studio`)
-        // is identity, not a secret: the catalog's provider and model ids
-        // are read once assembled.
-        identity: () => {
-          if (identityWords !== undefined) return identityWords;
-          if (this.models === undefined) return [];
-          identityWords = catalogIdentity(this.models);
-          return identityWords;
-        },
-        // `!command` secret refs execute in the run's workspace through the
-        // production runner — rerun per request.
-        runCommand: createSecretCommandRunner({ cwd: workspace }),
-      });
-      this.liveSecrets = keyResolver.live;
-      const modelsEnv = Object.fromEntries(
-        Object.entries(process.env).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined,
-        ),
-      );
-      const assembled = await assembleModels(
-        config.modelsCwd ?? process.cwd(),
-        modelsEnv,
-        {
-          resolveApiKey: keyResolver.resolve,
-          ...(config.trustProject === undefined
-            ? {}
-            : { projectTrust: config.trustProject }),
-        },
-      );
-      // A refused models.json is a config error the user must see: it goes
-      // to the warning channel; a successful load is a debug receipt.
-      for (const note of assembled.notes) {
-        if (note.startsWith('models.json ignored')) sinks.warn(note);
-        else sinks.debug?.(note);
-      }
-      this.assembled = assembled;
-      this.models = assembled.models;
-      fallbackProviders = assembled.fallbackProviders;
-    } else {
-      this.models = config.models;
-    }
-    // The faux testing provider (`KUBIC_PROVIDER=faux`): registered by
-    // assembleModels and pinned here, so it is the model that answers —
-    // announced on the warning channel, never silent. Any other
-    // KUBIC_PROVIDER value is refused by name.
-    const override = providerOverrideFromEnv(process.env);
-    if (override.kind === 'invalid') {
-      return {
-        kind: 'provider',
-        message: invalidProviderMessage(override.value),
-      };
-    }
-    const fauxPinned = override.kind === 'faux' && config.models === undefined;
-    if (fauxPinned) sinks.fauxNotice?.(FAUX_NOTICE);
-    const roleModel = this.role?.resolved.model;
-    try {
-      // An explicit pin wins over default selection; the role layer's own
-      // `provider/id` pin is the next default, and with neither the first
-      // usable provider is taken (customs first; never a keyless built-in).
-      // Enterprise policy and the role's allowed set gate the explicit
-      // selection and the implicit pool alike.
-      this.model = selectBootModel({
-        models: this.models,
-        fauxPinned,
-        pin: config.model,
-        roleModel,
-        fallbackProviders,
-        policy: config.modelPolicy,
-        roleScope: roleModelScope(this.role?.resolved),
-      });
-    } catch (error) {
-      if (error instanceof ModelSelectError) {
-        return { kind: 'provider', message: error.message };
-      }
-      throw error;
-    }
-    this.explicitModel = hasExplicitModelSelection({
-      fauxPinned,
-      pin: config.model,
-      roleModel,
-    });
-    this.liveModelRef = `${this.model.provider}/${this.model.id}`;
-    return undefined;
-  }
-
-  // The approval policy the lane runs under — the same derivation doctor
-  // reports. Config classes replace the documented DEFAULT_PERMISSIONS; the
-  // destructive, network and confine guards and the approval ask are
-  // installed either way, so a run with no config is not a run with no
-  // policy.
-  private async installApprovalPolicy(env: ExecutionEnv): Promise<void> {
-    const { config, request, root, sinks } = this;
-    const id = this.id;
-    // The explicit flag enables full access for THIS session through the one
-    // host enable path (posture.json, one audit row, the shared warning)
-    // BEFORE the policy is installed, so the lane boots under the posture
-    // the user asked for.
-    const grant =
-      request.dangerouslySkipApprovals === true
-        ? enableSessionFullAccess({
-            sessionDir: join(root, id),
-            sessionId: id,
-            command: request.command,
-            workspace: env.cwd,
-            onAuditError: (message) =>
-              sinks.debug?.(`audit: ledger append failed: ${message}`),
-          })
-        : undefined;
-    this.fullAccessWarning = grant?.warning;
-    // Audit identity: the base revision this run started from — `git
-    // rev-parse HEAD` captured once here, `none` outside git.
-    const base = await resolveRunBaseRevision(env.cwd, (cmd, args) =>
-      env.shell
-        .spawn(cmd, args, {
-          provenance: {
-            sessionId: id,
-            agentId: config.agentId ?? 'root',
-            toolCallId: `${request.command}:base-revision`,
-            turnId: 0,
-            operation: request.command,
-          },
-        })
-        .wait(),
-    );
-    this.base = base;
-    const role = this.role?.resolved;
-    this.installed =
-      config.policy ??
-      installPolicy({
-        workspace: env.cwd,
-        // The lane enforces the most restrictive merge of the config classes
-        // and the role's — a role declaring `network: none` runs under it
-        // even when config allows full — and the role's approval
-        // obligations challenge on the triggers. No role means the config
-        // (or the lane default).
-        ...(role === undefined
-          ? config.classes === undefined
-            ? {}
-            : { classes: config.classes }
-          : {
-              classes: effectiveRoleClasses(
-                { ...DEFAULT_PERMISSIONS, ...config.classes },
-                role.classes,
-              ),
-              ...(role.requires.length === 0
-                ? {}
-                : { requires: role.requires }),
-            }),
-        // The layer's own record, so the posture's `source` is the same
-        // answer doctor prints.
-        source: config.policySource ?? 'default',
-        ...(config.approvals ?? {}),
-        sessionDir: join(root, id),
-        // The session root in use is refused control-plane state.
-        sessionsRoot: root,
-        // Audit identity for the ledger record of each resolved ask, read at
-        // record time.
-        sessionId: id,
-        model: () => this.liveModelRef,
-        thinking: () => this.liveThinkingRef,
-        base,
-        // The answer seat, when a user is attached to collect verdicts.
-        ...(request.answer === undefined ? {} : { answer: request.answer }),
-      });
-  }
-
-  // The baseline for the end-of-run sweep: captured ONCE, before the first
-  // turn, as a metadata walk (hashes only, no blobs). A capture failure is
-  // not a boot failure — the sweep then simply has no baseline.
-  private beginJournal(env: ExecutionEnv): void {
-    const id = this.id;
-    this.journal = new FileJournalStore(
-      join(this.root, id, 'journal'),
-      this.config.journalRetention ?? {},
-    );
-    try {
-      this.reconciliation = beginReconciliation({
-        store: this.journal,
-        root: env.cwd,
-        runId: id,
-        sessionId: id,
-        // A very large file (or a bridge without ranged reads) is named on
-        // the debug channel rather than silently costing its size at boot.
-        onNotice: (detail: string) =>
-          this.sinks.debug?.(`reconcile: ${detail}`),
-        ...(this.config.reconcileOutOfScope === undefined
-          ? {}
-          : { outOfScope: [...this.config.reconcileOutOfScope] }),
-      });
-    } catch (error) {
-      this.sinks.debug?.(
-        `reconcile: baseline capture failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  // Two DIFFERENT sessions in one workspace are legal, but each sweeps
-  // against its own boot baseline, so a live sibling's in-progress changes
-  // land in this session's journal as unattributed, non-reversible entries.
-  // The store can show a session, not its liveness, so the line says "may
-  // be live". A debug receipt only: never a block, never a boot failure.
-  private async probeOverlap(env: ExecutionEnv): Promise<void> {
-    const { debug } = this.sinks;
-    if (debug === undefined || this.store === undefined) return;
-    try {
-      const touching = await sessionsTouchingWorkspace(
-        this.store,
-        env.cwd,
-        this.request.context,
-      );
-      const others = touching.filter((sessionId) => sessionId !== this.id);
-      if (others.length > 0) {
-        debug(
-          `reconcile: another run may be live in this workspace — its in-progress changes will be recorded as unattributed (sessions: ${others.join(', ')})`,
-        );
-      }
-    } catch (error) {
-      debug(
-        `reconcile: overlap probe failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    return bootSessionLane(this, env);
   }
 
   // Skills discovery: the project roots stay gated behind trust, and the
@@ -738,141 +384,7 @@ export class SessionBoot {
     });
   }
 
-  private async bootRunLane(
-    env: ExecutionEnv,
-  ): Promise<BootRefusal | undefined> {
-    const { config, request, sinks } = this;
-    const installed = this.requireInstalled();
-    const model = this.model;
-    const models = this.models;
-    const session = this.session;
-    const skills = this.skills;
-    if (model === undefined || models === undefined || session === undefined) {
-      throw new Error('boot steps ran out of order');
-    }
-    const role = this.role;
-    const policy = config.modelPolicy;
-    const toolGate =
-      policy !== undefined && hasToolPolicy(policy)
-        ? (tool: string): boolean => isToolAllowedByEnterprise(policy, tool)
-        : undefined;
-    // The stored model of a resumed session is gated too: the selection is
-    // checked above, the stored one only by this closure.
-    const modelGate =
-      policy !== undefined && hasModelPolicy(policy)
-        ? (provider: string, modelId: string): boolean =>
-            isModelAllowed(policy, provider, modelId)
-        : undefined;
-    // Request options: the merged `[model]` tuning with the role layered
-    // over it becomes this lane's `settings.stream`.
-    const stream = resolveStreamOptions(
-      config.streamTuning?.model,
-      request.role === undefined
-        ? undefined
-        : config.streamTuning?.roles?.[request.role],
-    );
-    const thinking = laneThinking(
-      config.thinking,
-      // A matching set entry's thinking wins over the flat role default —
-      // resolved against the SELECTED model.
-      resolveRoleThinking(role?.resolved, model.provider, model.id),
-    );
-    const sections = composePromptSections(
-      config.systemPromptSection,
-      skills?.block,
-    );
-    const contributions = [...installed.contributions];
-    try {
-      this.lane = await bootLane({
-        session,
-        models,
-        model,
-        modelPolicy: this.explicitModel ? 'selected' : 'stored',
-        onModelNotice: sinks.modelNotice,
-        ...(sinks.thinkingNotice === undefined
-          ? {}
-          : { onThinkingNotice: sinks.thinkingNotice }),
-        ...(thinking === undefined ? {} : { thinking }),
-        // The session id pins the boot model for the task — escalation is
-        // the only path off it.
-        taskId: this.id,
-        env,
-        sessionId: this.id,
-        agentId: config.agentId ?? 'root',
-        journal: this.journal,
-        // An untuned boot omits `stream` — the provider defaults stand.
-        ...(stream === undefined ? {} : { settings: { stream } }),
-        ...(request.currentTurn === undefined
-          ? {}
-          : { currentTurn: request.currentTurn }),
-        ...(sections === undefined ? {} : { promptSections: sections }),
-        // The advertised skills outside the cwd stay readable.
-        ...(skills === undefined || skills.readRoots.length === 0
-          ? {}
-          : { skillReadRoots: skills.readRoots }),
-        // The role document's resolved set narrows the lane (absence, not
-        // approval).
-        ...(role === undefined
-          ? {}
-          : {
-              rolePrompt: role.prompt,
-              ...(role.resolved.tools.length === 0
-                ? {}
-                : { toolAllowlist: role.resolved.tools }),
-            }),
-        // The explicit CLI selection narrows whatever the role granted: the
-        // lane intersects it (never widens).
-        ...(request.noTools === true ? { noTools: true } : {}),
-        ...(request.tools === undefined
-          ? {}
-          : { toolSelection: [...request.tools] }),
-        ...(config.compaction === undefined
-          ? {}
-          : { compaction: config.compaction }),
-        // One policy object carrying every mechanism: the classes, the
-        // always-installed interceptors, the contributions, and the tool
-        // spans after policy (a blocked call never opens one).
-        policy: {
-          classes: installed.classes,
-          interceptors: installed.interceptors,
-          ...(contributions.length === 0 ? {} : { contributions }),
-          ...(request.spanHooks === undefined
-            ? {}
-            : { spanHooks: request.spanHooks }),
-          // Enterprise tool gate: the same predicate drives the active tool
-          // set and the prompt tools line.
-          ...(toolGate === undefined ? {} : { toolAllowed: toolGate }),
-          ...(modelGate === undefined ? {} : { modelAllowed: modelGate }),
-        },
-      });
-    } catch (error) {
-      // A stored session model that is not registered is the same refusal
-      // as an unknown selection.
-      if (error instanceof ModelSelectError) {
-        return { kind: 'provider', message: error.message };
-      }
-      throw error;
-    }
-    // The boot reconciled the selection with the session's stored model and
-    // level: the audit rows name what the lane reports.
-    const agent = await this.lane.conversation.agent(this.request.context);
-    const live = agent.model;
-    const running =
-      live === undefined
-        ? (this.lane.model as Lane['model'] | undefined)
-        : { provider: live.provider, id: live.modelId };
-    if (running !== undefined) {
-      this.liveModel = { provider: running.provider, id: running.id };
-      this.liveModelRef = `${running.provider}/${running.id}`;
-    }
-    // pi-durable defaults an unset level to `off`, the same answer
-    // `/thinking` reports.
-    this.thinkingLevel = agent.thinkingLevel;
-    this.liveThinkingRef = agent.thinkingLevel ?? 'off';
-    return undefined;
-  }
-
-  private requireInstalled(): InstalledPolicy {
+  requireInstalled(): InstalledPolicy {
     if (this.installed === undefined) {
       throw new Error('boot steps ran out of order');
     }
@@ -938,30 +450,6 @@ export class SessionBoot {
       // Best-effort.
     }
   }
-}
-
-// The lane's thinking request. A per-run source (cli `--thinking`, env
-// `KUBIC_MODEL_THINKING`, enterprise-frozen included) is the override and
-// beats the session's stored level; a file-layer source is the config
-// default the stored level and the role default beat. The lane reads the
-// stored level itself and clamps to the effective model.
-function laneThinking(
-  request: RuntimeThinking | undefined,
-  role: ReturnType<typeof resolveRoleThinking>,
-): Parameters<typeof bootLane>[0]['thinking'] {
-  if (request === undefined && role === undefined) return undefined;
-  const perRun =
-    request?.source === 'cli' ||
-    request?.source === 'env' ||
-    request?.source === 'enterprise';
-  return {
-    ...(request === undefined
-      ? {}
-      : perRun
-        ? { override: { level: request.level, source: request.source } }
-        : { config: { level: request.level, source: request.source } }),
-    ...(role === undefined ? {} : { role }),
-  };
 }
 
 // Waits for `work` for at most `ms`; undefined when the bound elapses. The

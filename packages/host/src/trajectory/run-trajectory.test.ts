@@ -618,7 +618,6 @@ describe('assembleRunTrajectory reads real entries defensively', () => {
     ]);
     const [created, deleted, omitted] = exported.diff.files;
     expect(created?.hunks.join('\n')).toMatch(/\+hi/);
-    expect(created?.hunks.join('\n')).not.toMatch(/Stryker/);
     expect(deleted?.hunks.join('\n')).toMatch(/-bye/);
     expect(omitted).toEqual({ path: 'big.bin', hunks: [] });
   });

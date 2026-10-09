@@ -493,7 +493,7 @@ describe('runDoctorCommand', () => {
   });
 });
 
-describe('runDoctorCommand mutation hardening', () => {
+describe('runDoctorCommand exact output', () => {
   it('reports a listed-but-not-dialled provider without models as 0 registered', async () => {
     const lines: string[] = [];
     const deps = cleanDeps((line: string) => lines.push(line));

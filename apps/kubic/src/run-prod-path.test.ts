@@ -516,7 +516,7 @@ describe('enterprise policy gate on model selection', () => {
   });
 });
 
-describe('prod run path, result refs (mutation hardening)', () => {
+describe('prod run path, result refs', () => {
   it('points journal/usage/trajectory refs at the live session', async () => {
     const root = tmpRoot();
     const result = await runHeadlessPrompt(

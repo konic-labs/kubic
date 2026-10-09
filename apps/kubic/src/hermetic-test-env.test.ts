@@ -87,73 +87,57 @@ afterEach(() => {
 });
 
 describe('hermetic unit-test environment', () => {
-  // The mutation runner executes vitest with a thread pool, where a worker's
-  // process.env is a JS-side copy: setting HOME there never reaches the C
-  // environment os.homedir() reads, so the HOME half of these assertions
-  // cannot hold there. The KUBIC_* half is JS-only and
-  // still asserted; `npm run test:unit` (forks) proves the HOME isolation.
-  const homedirIsolated = process.env.STRYKER_MUTATOR_WORKER === undefined;
-
   it('points HOME at a temp dir and clears the ambient KUBIC_* opt-ins', () => {
-    if (homedirIsolated) {
-      expect(homedir()).not.toBe(userInfo().homedir);
-      expect(existsSync(homedir())).toBe(true);
-    }
+    expect(homedir()).not.toBe(userInfo().homedir);
+    expect(existsSync(homedir())).toBe(true);
     const ambient = Object.keys(process.env).filter((key) =>
       key.startsWith('KUBIC_'),
     );
     expect(ambient).toEqual([]);
   });
 
-  // Skipped under the mutation runner: its thread pool cannot isolate HOME
-  // (a worker's process.env copy never reaches the C environment
-  // os.homedir() reads), so the developer's real skills would leak into the
-  // prompt and this would test the runner, not Kubic.
-  it.skipIf(!homedirIsolated)(
-    "keeps a developer's installed skills and trust opt-in out of the prompt",
-    async () => {
-      // A developer machine: skills in both account roots, trust exported.
-      const devHome = tmpRoot('dev-home-');
-      writeSkill(join(devHome, '.agents', 'skills'), 'dev-agents-skill');
-      writeSkill(join(devHome, '.pi', 'agent', 'skills'), 'dev-pi-skill');
-      vi.stubEnv('HOME', devHome);
-      vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
-      vi.stubEnv('KUBIC_DEBUG', '1');
+  it("keeps a developer's installed skills and trust opt-in out of the prompt", async () => {
+    // A developer machine: skills in both account roots, trust exported.
+    const devHome = tmpRoot('dev-home-');
+    writeSkill(join(devHome, '.agents', 'skills'), 'dev-agents-skill');
+    writeSkill(join(devHome, '.pi', 'agent', 'skills'), 'dev-pi-skill');
+    vi.stubEnv('HOME', devHome);
+    vi.stubEnv('KUBIC_TRUST_PROJECT', '1');
+    vi.stubEnv('KUBIC_DEBUG', '1');
 
-      const isolated = isolateTestEnv();
-      try {
-        expect(homedir()).toBe(isolated.home);
-        const faux = fauxProvider();
-        const models = createModels();
-        models.setProvider(faux.provider);
-        faux.setResponses([fauxAssistantMessage('done')]);
-        const sessionsRoot = tmpRoot('hermetic-sessions-');
-        const result = await runHeadlessPrompt(
-          'hello',
-          {},
-          {
-            sessionsRoot,
-            models,
-            env: new FakeExecutionEnv({}),
-          },
-        );
-        expect(result.terminus).toBe('completed');
-        const prompt = await committedPrompt(sessionsRoot, result.sessionId);
-        expect(prompt).toContain('cwd:');
-        expect(prompt).not.toContain('dev-agents-skill');
-        expect(prompt).not.toContain('dev-pi-skill');
-        // The repo's own skills/ and .agents/skills roots stay out too: the
-        // trust opt-in is cleared, so project roots are never traversed.
-        expect(prompt).not.toContain('<skills>');
-      } finally {
-        isolated.restore();
-      }
-      // Restore puts the caller's environment back and removes the temp HOME.
-      expect(process.env.HOME).toBe(devHome);
-      expect(process.env.KUBIC_TRUST_PROJECT).toBe('1');
-      expect(existsSync(isolated.home)).toBe(false);
-    },
-  );
+    const isolated = isolateTestEnv();
+    try {
+      expect(homedir()).toBe(isolated.home);
+      const faux = fauxProvider();
+      const models = createModels();
+      models.setProvider(faux.provider);
+      faux.setResponses([fauxAssistantMessage('done')]);
+      const sessionsRoot = tmpRoot('hermetic-sessions-');
+      const result = await runHeadlessPrompt(
+        'hello',
+        {},
+        {
+          sessionsRoot,
+          models,
+          env: new FakeExecutionEnv({}),
+        },
+      );
+      expect(result.terminus).toBe('completed');
+      const prompt = await committedPrompt(sessionsRoot, result.sessionId);
+      expect(prompt).toContain('cwd:');
+      expect(prompt).not.toContain('dev-agents-skill');
+      expect(prompt).not.toContain('dev-pi-skill');
+      // The repo's own skills/ and .agents/skills roots stay out too: the
+      // trust opt-in is cleared, so project roots are never traversed.
+      expect(prompt).not.toContain('<skills>');
+    } finally {
+      isolated.restore();
+    }
+    // Restore puts the caller's environment back and removes the temp HOME.
+    expect(process.env.HOME).toBe(devHome);
+    expect(process.env.KUBIC_TRUST_PROJECT).toBe('1');
+    expect(existsSync(isolated.home)).toBe(false);
+  });
 
   it('refuses non-loopback TCP connects so no test reaches the network', () => {
     expect(() => connect({ host: '10.0.0.1', port: 1 })).toThrow(

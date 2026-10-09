@@ -168,9 +168,8 @@ describe('bounded baseline hashing', () => {
   });
 
   it('flushes a truncated multi-byte sequence at EOF like the whole-file read', () => {
-    // Mutation M3 on a4a37cd (deleting the final `decoder.decode()`) SURVIVED
-    // all tests: nothing exercised a sequence cut off at exact EOF, where the
-    // streaming decoder holds bytes back and the flush is what emits U+FFFD.
+    // A sequence cut off at exact EOF: the streaming decoder holds the bytes
+    // back, and only the final flush (`decoder.decode()`) emits U+FFFD.
     const bytes = new Uint8Array(HASH_CHUNK_BYTES + 8);
     bytes.fill(0x61);
     // A 3-byte character truncated to its first byte at the very end.
@@ -184,8 +183,8 @@ describe('bounded baseline hashing', () => {
   });
 
   it('hashes only what was read when the file shrinks mid-hash', () => {
-    // Mutation M7 on a4a37cd (dropping `buffer.subarray(0, read)`) SURVIVED:
-    // a short read must not be zero-padded and hashed as NULs. Simulated by a
+    // A short read must not be zero-padded and hashed as NULs
+    // (`buffer.subarray(0, read)`). Simulated by a
     // bridge whose range read returns fewer bytes than requested, which is
     // what a file truncated between the size probe and the read produces.
     const root = tmpFile('shrinks.bin', 'a'.repeat(HASH_CHUNK_BYTES * 2));

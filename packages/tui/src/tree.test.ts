@@ -443,7 +443,7 @@ describe('tree tool detail', () => {
   });
 });
 
-describe('tree mutation hardening', () => {
+describe('tree exact rendering', () => {
   it('ignores non-toggle keys without toggling or refocusing', () => {
     const state = createTreeState();
     let editorFocus = 0;

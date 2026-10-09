@@ -193,7 +193,7 @@ describe('diff placeholders', () => {
   });
 });
 
-describe('diff mutation hardening', () => {
+describe('diff view exact rendering', () => {
   it('badges the header for unattributed reconciliation entries', () => {
     expect(renderDiffHeader({ ...WRITE_EDIT, unattributed: true })).toBe(
       'a.txt — write [unattributed]',

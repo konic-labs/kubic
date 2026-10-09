@@ -838,9 +838,8 @@ function jobBlock(name) {
   return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
-// CI efficiency (per-push cost): the workflow keeps one live run per ref,
-// tests the newest Node only on main, and never installs dependencies for a
-// mutation gate that has nothing to score. Text-matched like the wiring above.
+// CI efficiency (per-push cost): the workflow keeps one live run per ref and
+// tests the newest Node only on main. Text-matched like the wiring above.
 describe('CI efficiency', () => {
   it('tests node 22 everywhere and node 24 as well on main only', () => {
     const job = jobBlock('test');
@@ -861,23 +860,6 @@ describe('CI efficiency', () => {
 
   it('runs with read-only token permissions', () => {
     assert.match(ciYml(), /^permissions:\n {2}contents: read$/m);
-  });
-
-  it('scopes the mutation diff before installing, and installs only when something is mutable', () => {
-    const job = jobBlock('mutation');
-    const scope = job.indexOf('id: scope');
-    const install = job.indexOf('run: npm ci');
-    assert.ok(scope !== -1 && install > scope, 'scope must precede `npm ci`');
-    assert.match(
-      job,
-      /- if: steps\.scope\.outputs\.run == 'true'\n {8}run: npm ci/,
-    );
-  });
-
-  it('gives the mutation steps their own timeout so an overrun is a named failure', () => {
-    const job = jobBlock('mutation');
-    assert.match(job, /timeout-minutes: 26/);
-    assert.match(job, /timeout-minutes: 30\n/);
   });
 });
 

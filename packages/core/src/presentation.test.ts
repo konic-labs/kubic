@@ -23,7 +23,7 @@ describe('presentation contract', () => {
       'usage',
     ]);
     // Values are the closed-world marker, not just the keys: flipping any
-    // field to false must fail (mutation: BooleanLiteral true→false).
+    // field to false must fail.
     expect(PRESENTATION_STATE_FIELDS).toEqual({
       session: true,
       lane: true,

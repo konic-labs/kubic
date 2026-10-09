@@ -768,8 +768,8 @@ describe('destructive/confine matchers (unit)', () => {
   });
 
   it('matches every destructive shape, not just rm and git clean', () => {
-    // Each entry pins one DESTRUCTIVE_PATTERNS arm or rmBlocked branch:
-    // surviving Regex mutants here mean a destructive shape slips through.
+    // Each entry pins one DESTRUCTIVE_PATTERNS arm or rmBlocked branch, so a
+    // weakened pattern lets a destructive shape slip through and fails here.
     for (const command of [
       'dd if=/dev/zero of=/dev/sda',
       'dd if=x of= /dev/null',

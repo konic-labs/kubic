@@ -915,8 +915,7 @@ describe('prod wiring deps shapes (moved from main.ts)', () => {
     const cap = capture();
     // The ledger is the REPO's (`<repo>/.kubic/audit/`), resolved from the
     // cwd. Run from an empty scratch dir so the developer's
-    // own ledger — or rows a mutation-run sandbox leaked into the enclosing
-    // checkout — can never change the answer.
+    // own ledger can never change the answer.
     const scratch = mkdtempSync(join(FIXTURE, 'audit-cwd-'));
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(scratch);
     try {

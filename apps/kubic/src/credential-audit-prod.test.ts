@@ -162,7 +162,7 @@ function writeModelsJson(
 // trust-gated and this suite covers a trusted file's key
 // use, not the trust decision — so trust comes from the injected check, not
 // KUBIC_TRUST_PROJECT, and skills/roles/models are read from the workspace,
-// never the real cwd (a Stryker sandbox is a directory inside the checkout).
+// never the real cwd.
 function hermetic(workspace: string) {
   return {
     modelsCwd: workspace,
@@ -675,8 +675,7 @@ describe('kubic run: models.json key use is audited', () => {
     }
     expect(debugLines.join('\n')).not.toContain(SECRET);
     // Hermetic: the run discovered no skills — in particular not the repo's
-    // own project skills from process.cwd() (a Stryker sandbox lives inside
-    // the checkout, so anything defaulting to the cwd reaches the real repo).
+    // own project skills from process.cwd().
     expect(debugLines.filter((line) => line.includes('skills:'))).toEqual([]);
   });
 

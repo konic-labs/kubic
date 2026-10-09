@@ -805,7 +805,7 @@ describe('run -p headless behavior', () => {
   });
 });
 
-describe('run -p argument handling (mutation hardening)', () => {
+describe('run -p argument handling', () => {
   it('accepts the --prompt long form like -p', async () => {
     const o = out();
     const seen: { prompt?: string; sessionId?: string } = {};

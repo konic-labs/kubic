@@ -76,8 +76,8 @@ function catalog(steps: FauxMessage[]): MutableModels {
 // The seams of a headless run that default to process.cwd() — the tool env
 // (and so the ledger's workspace), skills discovery, role documents and
 // models.json — pinned to a temp workspace, so a run never reads or writes the
-// real cwd (a Stryker sandbox is a directory inside the checkout: the ledger
-// resolver would climb out of it into the real repo).
+// real cwd (the ledger resolver would otherwise climb into the enclosing
+// checkout).
 function hermetic(workspace: string) {
   return {
     env: new NodeExecutionEnv(workspace),

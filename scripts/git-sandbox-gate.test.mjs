@@ -94,9 +94,6 @@ const SCOPED_TESTS = testFiles();
 
 describe('real-git tests use the shared helper', () => {
   it('no agent, exec, host or apps test spawns git directly', () => {
-    // Source-text scan: the Stryker sandbox copy rewrites sources, so the
-    // check is meaningless there (mutation work is deferred).
-    if (process.env.STRYKER_MUTATOR_WORKER !== undefined) return;
     const offenders = gitOffenders(ROOT, SCOPED_TESTS);
     assert.deepEqual(
       offenders,

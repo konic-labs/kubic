@@ -17,8 +17,7 @@ npm run build
 
 ## Before you open a pull request
 
-Run the checks that CI's test job runs, in this order (the mutation jobs are
-switched off in `.github/workflows/ci.yml`):
+Run the checks that CI's test job runs, in this order:
 
 ```sh
 npm run typecheck

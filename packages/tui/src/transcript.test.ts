@@ -202,7 +202,7 @@ describe('transcript view', () => {
   });
 });
 
-describe('transcript snapshot guards (mutation hardening)', () => {
+describe('transcript snapshot guards', () => {
   it('ignores a same-revision resnapshot on the same lane', () => {
     const view = createTranscriptView();
     view.applyLaneSnapshot(

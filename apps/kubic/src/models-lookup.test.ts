@@ -138,45 +138,35 @@ describe('models.json lookup', () => {
     expect(findModelsProjectRoot(sub, home)).toBe(root);
   });
 
-  // Skipped under the mutation runner: this exercises the RUN path, whose
-  // global models.json is resolved through os.homedir(). A worker thread's
-  // process.env copy never reaches the C environment os.homedir() reads, so
-  // the file written under the stubbed HOME is never found and the run
-  // reports 'no models available'. The contract is
-  // proven by `npm run test:unit` (forks); the explicit-home tests above
-  // keep covering the lookup itself in every pool.
-  it.skipIf(process.env.STRYKER_MUTATOR_WORKER !== undefined)(
-    '`kubic run` from a subdirectory uses the global provider',
-    async () => {
-      const home = tmpDir();
-      const path = globalFile(home, provider('mine'));
-      vi.stubEnv('HOME', home);
-      vi.stubEnv('KUBIC_NO_NOTICE', '1');
-      const { sub } = repo();
-      const debugLines: string[] = [];
-      const result = await runHeadlessPrompt(
-        'hello',
-        // A safety net only, never the thing under test: the wall-clock guard
-        // must not race the boot-phase sinks (under coverage instrumentation a
-        // 1 ms bound fires before model assembly and the debug line is never
-        // emitted). The unreachable keyless endpoint ends the run on its own.
-        { timeoutMs: 30_000, debug: true },
-        {
-          sessionsRoot: tmpDir(),
-          env: new FakeExecutionEnv({}),
-          modelsCwd: sub,
-          debugSink: (line) => debugLines.push(line),
-          warn: () => undefined,
-        },
-      );
-      // The global provider was selected (a keyless custom endpoint then
-      // fails its auth — never "no models available").
-      expect(result.summary).not.toContain('no models available');
-      expect(debugLines.join('\n')).toContain(
-        `loaded models.json: ${path} (global): mine`,
-      );
-    },
-  );
+  it('`kubic run` from a subdirectory uses the global provider', async () => {
+    const home = tmpDir();
+    const path = globalFile(home, provider('mine'));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('KUBIC_NO_NOTICE', '1');
+    const { sub } = repo();
+    const debugLines: string[] = [];
+    const result = await runHeadlessPrompt(
+      'hello',
+      // A safety net only, never the thing under test: the wall-clock guard
+      // must not race the boot-phase sinks (under coverage instrumentation a
+      // 1 ms bound fires before model assembly and the debug line is never
+      // emitted). The unreachable keyless endpoint ends the run on its own.
+      { timeoutMs: 30_000, debug: true },
+      {
+        sessionsRoot: tmpDir(),
+        env: new FakeExecutionEnv({}),
+        modelsCwd: sub,
+        debugSink: (line) => debugLines.push(line),
+        warn: () => undefined,
+      },
+    );
+    // The global provider was selected (a keyless custom endpoint then
+    // fails its auth — never "no models available").
+    expect(result.summary).not.toContain('no models available');
+    expect(debugLines.join('\n')).toContain(
+      `loaded models.json: ${path} (global): mine`,
+    );
+  });
 });
 
 it('scopes a store grant to the tree the models.json lives in', async () => {

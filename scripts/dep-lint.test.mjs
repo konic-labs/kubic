@@ -10,8 +10,7 @@ import { checkTree } from './dep-lint.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Every fixture is removed after the file: this suite builds ~50 trees per
-// run (and Stryker's tap run repeats it per mutant), so leaking them piles
-// up six-figure dir counts in the OS temp dir.
+// run, so leaking them piles up in the OS temp dir.
 const scratchDirs = [];
 after(() => {
   for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });

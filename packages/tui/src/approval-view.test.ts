@@ -74,7 +74,7 @@ describe('approval keybindings', () => {
   });
 });
 
-describe('approval mutation hardening', () => {
+describe('approval view exact rendering', () => {
   it('floors fractional overlay geometry instead of returning floats', () => {
     expect(approvalOverlayBounds(99, 29)).toEqual({
       width: 69,

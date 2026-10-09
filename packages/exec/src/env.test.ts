@@ -41,8 +41,7 @@ const AWAIT_GO_END = '}},5)';
 
 describe('execution env', () => {
   it('pins the root provenance identity exactly', () => {
-    // Every field is asserted: '' → 'Stryker was here!' and 'root'/0/'init'
-    // mutants must fail (mutation: StringLiteral).
+    // Every field is asserted exactly.
     expect(ROOT_PROVENANCE).toEqual({
       sessionId: '',
       agentId: '',

@@ -16,7 +16,6 @@
     "apps/*"
   ],
   "scripts": {
-    "postinstall": "node scripts/patch-vitest-runner.mjs",
     "build": "node scripts/build.mjs",
     "kubic": "node ./bin/kubic.js",
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
@@ -28,16 +27,10 @@
     "test:unit": "vitest run",
     "test": "node --test \"scripts/*.test.mjs\"",
     "docs:check": "node scripts/check-docs-links.mjs",
-    "test:binary-contract": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs",
-    "test:mutation:vitest": "stryker run",
-    "test:mutation:tap": "stryker run stryker.tap.conf.json",
-    "test:mutation": "npm run test:mutation:vitest && npm run test:mutation:tap && node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80 && node scripts/mutation-check.mjs --report reports/mutation-tap/mutation.json --min 80"
+    "test:binary-contract": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "@stryker-mutator/core": "10.0.0",
-    "@stryker-mutator/tap-runner": "10.0.0",
-    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "26.6.2",
     "esbuild": "0.28.2",
     "knip": "6.38.0",

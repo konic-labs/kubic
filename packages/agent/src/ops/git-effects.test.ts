@@ -47,9 +47,8 @@ describe('git effects', () => {
     );
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.result.staged).toEqual(['a.txt']);
-    // Exact argv pin: a `git add -A` mutant derives a
-    // different key, hits no script, and strict mode throws — so this
-    // assertion failing is the mutant being killed.
+    // Exact argv pin: staging with `git add -A` instead would derive a
+    // different key, hit no script, and throw in strict mode.
     expect(argvOf(env)).toEqual(['git add -- a.txt']);
   });
 

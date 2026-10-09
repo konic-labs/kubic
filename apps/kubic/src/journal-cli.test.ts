@@ -957,9 +957,8 @@ describe('journal CLI worktree status', () => {
     );
   });
 
-  // Review gap on: the ahead/behind and conflicts branches
-  // of the repo line need a direct render pin — a mutant deleting those
-  // parts.push lines must fail.
+  // The ahead/behind and conflicts parts of the repo line, rendered from a
+  // real repository.
   it('status renders ahead/behind and conflicts on a real repository', async () => {
     const journalDir = mkTmp('j-');
     const origin = mkTmp('origin-');

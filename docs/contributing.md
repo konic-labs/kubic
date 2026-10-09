@@ -160,37 +160,4 @@ Node 22 and 24 on `main`. A newer push cancels the older run of the same
 ref; `main` is keyed by commit and never cancelled. Workflow permissions
 are read-only.
 
-## Mutation testing
-
-The mutation jobs are switched off for now; the tooling stays in the repo.
-The bar is a **mutation score ≥ 80% per file**, enforced by
-`scripts/mutation-check.mjs` over Stryker's JSON report.
-
-- **vitest side** — `stryker.conf.json` (`@stryker-mutator/vitest-runner`)
-  with `coverageAnalysis: "perTest"`, so each mutant runs only the tests
-  that cover it, and `ignoreStatic: true`.
-- **tap side** — `stryker.tap.conf.json` mutates the script gates and runs
-  their `node:test` suites in-process
-  (`nodeArgs: ["--test-reporter=tap", "{{testFile}}"]`). `node --test` must
-  not be the runner command: it runs each file in a child process, and
-  Stryker then records no coverage.
-- **ratchet** — `mutation-check.mjs --baseline <previous report>` holds
-  each file to `min(80, its baseline score)`; a file new to the baseline
-  needs 80.
-- **scope** — `scripts/mutation-scope.mjs --ref <base>` maps a diff to the
-  changed lines of the touched source files.
-
-Run a scope locally with `npx stryker run --mutate "path/a.ts,path/b.ts"`,
-then `node scripts/mutation-check.mjs --report reports/mutation/mutation.json`.
-
-The vitest runner needs a patch (`scripts/patch-vitest-runner.mjs`, run on
-`postinstall`): the stock runner filters each mutant's tests by a name
-vitest 5 never matches, so every mutant would fall back to the full suite.
-The patch is idempotent and fails loudly if the runner changes shape —
-re-verify it before upgrading any `@stryker-mutator/*` package.
-
-Stryker runs the suite from a gitignored sandbox copy with instrumented
-sources: a test must not rely on `git ls-files` alone, and a test that
-scans source text skips when `STRYKER_MUTATOR_WORKER` is set.
-
 Back to the [docs index](README.md).

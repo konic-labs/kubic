@@ -16,7 +16,7 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import type { CliConfigResult } from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
 import { prodTuiDeps } from './prod-runners.js';
 import { bootTuiLane } from './tui/boot.js';
 import { tuiDepsWithDefaults } from './tui/deps.js';

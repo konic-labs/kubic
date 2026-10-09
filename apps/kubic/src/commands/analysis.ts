@@ -22,7 +22,7 @@ import type { CostOptions } from '@kubic/host/cost';
 import type { PolicyOptions } from '@kubic/host/policy';
 import type { ReplayCommandOptions } from '@kubic/host/replay';
 import type { CommandRegistrar, KubicProgram } from '../cli/context.js';
-import type { CliConfigResult } from '../config-runtime.js';
+import type { CliConfigResult } from '../config/load.js';
 
 // One analysis runner: commander's parsed options plus the process-wide
 // config load in, the command's result out (production wiring: ../prod-runners.ts).

@@ -10,7 +10,7 @@ import {
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { describe, expect, it } from 'vitest';
-import { selectBootModel } from './config-runtime.js';
+import { selectBootModel } from './config/model-selection.js';
 import {
   hasExplicitModelSelection,
   roleModelSelection,

@@ -30,11 +30,12 @@ import {
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
-import { runtimeLaneDeps, runtimeModelPin } from '../config-runtime.js';
 import { bootTuiLane } from '../tui/boot.js';
 import { tuiDepsWithDefaults } from '../tui/deps.js';
 import type { TuiRunOptions } from '../tui/options.js';
 import { runTuiCommand } from '../tui/run.js';
+import { runtimeModelPin } from './model-selection.js';
+import { runtimeLaneDeps } from './projections.js';
 
 const tempDirs: string[] = [];
 

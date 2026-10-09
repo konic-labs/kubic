@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CliConfigResult } from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
 import { createProdRunners } from './prod-runners.js';
 
 const made: string[] = [];

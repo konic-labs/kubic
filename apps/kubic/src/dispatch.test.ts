@@ -26,11 +26,8 @@ import {
   it,
   vi,
 } from 'vitest';
-import {
-  type CliConfigResult,
-  CONFIG_CONSUMING_COMMANDS,
-  loadCliConfig,
-} from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
+import { CONFIG_CONSUMING_COMMANDS, loadCliConfig } from './config/load.js';
 import {
   type DispatchDeps,
   type DispatchRunners,

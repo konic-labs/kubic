@@ -86,7 +86,7 @@ export interface HeadlessRunDeps {
   // documented defaults.
   approvals?: ApprovalConfig;
   // Enterprise policy: the composition root resolves it
-  // once (`runtimePolicy` in config-runtime) and threads it here. A run only
+  // once (`runtimePolicy` in config/model-selection.ts) and threads it here. A run only
   // gates its tool set and model selection when the layer actually
   // configured those halves — an absent [policy] section never narrows
   // anything.

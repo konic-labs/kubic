@@ -9,7 +9,7 @@ import {
 } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
 import { registerSessionCommands } from '../commands/session.js';
-import type { CliConfigResult } from '../config-runtime.js';
+import type { CliConfigResult } from '../config/load.js';
 import { COMMAND_NAMES } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';
 import { createKubicProgram, runKubicProgram } from './program.js';

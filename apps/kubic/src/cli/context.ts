@@ -17,7 +17,7 @@ import type { RunCommandOptions } from '@kubic/host/run';
 import type { SessionsInvocation } from '@kubic/host/sessions';
 import type { SkillsCommandOptions } from '@kubic/host/skills';
 import type { AnalysisRunners } from '../commands/analysis.js';
-import type { CliConfigResult } from '../config-runtime.js';
+import type { CliConfigResult } from '../config/load.js';
 import type { TuiCommandOptions } from '../tui/options.js';
 
 // A command's runner takes the options commander parsed (the `Input`

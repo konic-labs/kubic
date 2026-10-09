@@ -19,7 +19,7 @@ import { EXAMPLE_AUDIT_RECORD } from '@kubic/host/test-support/audit-fixtures';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
-import type { CliConfigResult } from '../config-runtime.js';
+import type { CliConfigResult } from '../config/load.js';
 import { type AnalysisRunners, registerAnalysisCommands } from './analysis.js';
 
 const CONFIG = {} as CliConfigResult;

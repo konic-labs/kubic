@@ -15,7 +15,7 @@ import { type JournalRequest, runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
-import type { CliConfigResult } from '../config-runtime.js';
+import type { CliConfigResult } from '../config/load.js';
 import { registerJournalCommands } from './journal.js';
 
 const CONFIG = {} as CliConfigResult;

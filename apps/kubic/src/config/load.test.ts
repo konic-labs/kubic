@@ -43,37 +43,41 @@ import {
   renderEffectiveConfig,
 } from '@kubic/host/config';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { prodRunDeps } from '../prod-runners.js';
+import { runHeadlessPrompt } from '../run/command.js';
+import { composePromptSections } from '../session/bootstrap.js';
 import {
   configRefusalExit,
   doctorConfigProbe,
   doctorPolicyLoader,
-  installedPolicyClasses,
-  installedPolicyDeps,
   kubicConfigLoader,
   loadCliConfig,
   projectTrustFor,
   requireRuntimeConfig,
   resolveInteractiveProjectTrust,
+} from './load.js';
+import {
   resolveLaneLadder,
   resolveRoleThinking,
-  roleLayersFromConfig,
-  runtimeApprovalDeps,
-  runtimeCompactionDeps,
-  runtimeLaneDeps,
   runtimeModelFrozen,
   runtimeModelPin,
   runtimeModelPinNotes,
   runtimePolicy,
+  selectModelUnderPolicy,
+} from './model-selection.js';
+import {
+  installedPolicyClasses,
+  installedPolicyDeps,
+  roleLayersFromConfig,
+  runtimeApprovalDeps,
+  runtimeCompactionDeps,
+  runtimeLaneDeps,
   runtimeRunDeps,
   runtimeSkillsDeps,
   runtimeStreamTuning,
   runtimeSystemPromptSection,
-  selectModelUnderPolicy,
   sessionRetentionDays,
-} from './config-runtime.js';
-import { prodRunDeps } from './prod-runners.js';
-import { runHeadlessPrompt } from './run/command.js';
-import { composePromptSections } from './session/bootstrap.js';
+} from './projections.js';
 
 const made: string[] = [];
 
@@ -499,9 +503,9 @@ describe('cli model layer', () => {
   });
 });
 
-// The config-runtime projections: every export of
-// config-runtime.ts is referenced by a behavioural test below, driven
-// through the real loadCliConfig over temp dirs (no network, no tokens).
+// The config projections (load.ts, model-selection.ts, projections.ts),
+// each driven through the real loadCliConfig over temp dirs (no network, no
+// tokens).
 // Helpers write one layer file at a time: the global layer needs no trust,
 // the project layer loads under KUBIC_TRUST_PROJECT=1.
 function globalHome(toml: string): { home: string; cwd: string } {

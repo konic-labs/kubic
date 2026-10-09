@@ -26,13 +26,10 @@ import { gitHeadOf, withDetachedCheckout } from '@kubic/exec/git-clean';
 import { assembleModels } from '@kubic/host/models';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
-import {
-  type CliConfigResult,
-  projectTrustFor,
-  runtimeLaneDeps,
-  runtimePolicy,
-  runtimeRunDeps,
-} from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
+import { projectTrustFor } from './config/load.js';
+import { runtimePolicy } from './config/model-selection.js';
+import { runtimeLaneDeps, runtimeRunDeps } from './config/projections.js';
 import { runHeadlessPrompt } from './run/command.js';
 import type { HeadlessRunDeps } from './run/options.js';
 

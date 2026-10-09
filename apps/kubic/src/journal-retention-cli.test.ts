@@ -21,7 +21,8 @@ import { join } from 'node:path';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadCliConfig, sessionRetentionDays } from './config-runtime.js';
+import { loadCliConfig } from './config/load.js';
+import { sessionRetentionDays } from './config/projections.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

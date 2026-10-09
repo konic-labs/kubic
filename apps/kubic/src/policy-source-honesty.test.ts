@@ -21,7 +21,8 @@ import {
   type RuntimeConfig,
 } from '@kubic/host/config';
 import { describe, expect, it } from 'vitest';
-import { type CliConfigResult, installedPolicyDeps } from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
+import { installedPolicyDeps } from './config/projections.js';
 
 // The shape the composition root hands the projection: the load's own result
 // plus the fields `run`/`tui` do not read. Only `runtime` matters here.

@@ -24,7 +24,8 @@ import {
   type SessionsInvocation,
 } from '@kubic/host/sessions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadCliConfig, sessionRetentionDays } from './config-runtime.js';
+import { loadCliConfig } from './config/load.js';
+import { sessionRetentionDays } from './config/projections.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FAKE_PID = 424243;

@@ -17,7 +17,7 @@ import {
   disposeAllGitSandboxes,
 } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadCliConfig } from './config-runtime.js';
+import { loadCliConfig } from './config/load.js';
 import { dispatchCommand } from './dispatch.js';
 import { createProdRunners } from './prod-runners.js';
 

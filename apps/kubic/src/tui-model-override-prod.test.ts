@@ -21,7 +21,8 @@ import {
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadCliConfig, runtimeModelPin } from './config-runtime.js';
+import { loadCliConfig } from './config/load.js';
+import { runtimeModelPin } from './config/model-selection.js';
 import { bootTuiLane } from './tui/boot.js';
 
 const made: string[] = [];

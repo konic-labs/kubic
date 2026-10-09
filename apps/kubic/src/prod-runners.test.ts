@@ -29,8 +29,9 @@ import {
 import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CliConfigResult } from './config-runtime.js';
-import { loadCliConfig } from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
+import { loadCliConfig } from './config/load.js';
+
 import { createProdRunners, prodTuiDeps } from './prod-runners.js';
 import { tuiDepsWithDefaults } from './tui/deps.js';
 

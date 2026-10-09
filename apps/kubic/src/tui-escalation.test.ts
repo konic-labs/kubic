@@ -20,7 +20,7 @@ import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import type { CliConfigResult } from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
 import { prodTuiDeps } from './prod-runners.js';
 import { bootTuiLane } from './tui/boot.js';
 import { tuiDepsWithDefaults } from './tui/deps.js';

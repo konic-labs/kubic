@@ -29,12 +29,12 @@ import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import { collectDoctorChecks } from '@kubic/host/doctor';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadCliConfig } from './config/load.js';
 import {
   installedPolicyDeps,
-  loadCliConfig,
   runtimeApprovalDeps,
   runtimeRunDeps,
-} from './config-runtime.js';
+} from './config/projections.js';
 import { runHeadlessPrompt } from './run/command.js';
 import { bootTuiLane } from './tui/boot.js';
 

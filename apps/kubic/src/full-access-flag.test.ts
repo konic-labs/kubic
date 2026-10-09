@@ -38,7 +38,7 @@ import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run';
 import { runSessionsCommand } from '@kubic/host/sessions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import { loadCliConfig } from './config-runtime.js';
+import { loadCliConfig } from './config/load.js';
 import { dispatchCommand } from './dispatch.js';
 import { createProdRunners } from './prod-runners.js';
 import { runHeadlessPrompt } from './run/command.js';

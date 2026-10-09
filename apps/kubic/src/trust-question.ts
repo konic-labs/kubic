@@ -4,11 +4,11 @@
 // project's files do, the key risk included), and one key to answer:
 // `y` yes, `n` not now, `v` view the file. The question still runs before
 // the config load and the alt-screen (the layer must be decided before the
-// lane boots); config-runtime.ts owns what each answer records.
+// lane boots); config/load.ts owns what each answer records.
 
 import type { CliTheme } from '@kubic/core/cli/theme';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import type { TrustQuestion } from './config-runtime.js';
+import type { TrustQuestion } from './config/load.js';
 
 const LABEL = 12;
 // Under the value column: `  ◆ trust       ` is 17 cells.

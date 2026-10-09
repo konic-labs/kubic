@@ -46,7 +46,8 @@ import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './cli/root-help.js';
 import { registerAnalysisCommands } from './commands/analysis.js';
 import { registerJournalCommands } from './commands/journal.js';
 import { registerSessionCommands } from './commands/session.js';
-import { type CliConfigResult, configRefusalExit } from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
+import { configRefusalExit } from './config/load.js';
 
 // The root help: one text, printed by `--help`/`-h`
 // (exit 0 — a help request is a successful invocation), by the bare

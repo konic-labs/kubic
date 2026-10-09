@@ -95,28 +95,32 @@ import { rolesDoctorProbe, selectRole } from '@kubic/host/roles';
 import { runRunCommand } from '@kubic/host/run';
 import { defaultSessionsRoot, runSessionsCommand } from '@kubic/host/sessions';
 import { runSkillsCommand, skillsDoctorProbe } from '@kubic/host/skills';
+import type { CliConfigResult } from './config/load.js';
 import {
-  type CliConfigResult,
   doctorConfigProbe,
   doctorPolicyLoader,
-  installedPolicyClasses,
-  installedPolicyDeps,
-  journalRetentionDays,
   kubicConfigLoader,
   projectTrustFor,
-  runtimeApprovalDeps,
-  runtimeCompactionDeps,
-  runtimeLaneDeps,
+} from './config/load.js';
+import {
   runtimeModelFrozen,
   runtimeModelPin,
   runtimeModelPinNotes,
   runtimePolicy,
+} from './config/model-selection.js';
+import {
+  installedPolicyClasses,
+  installedPolicyDeps,
+  journalRetentionDays,
+  runtimeApprovalDeps,
+  runtimeCompactionDeps,
+  runtimeLaneDeps,
   runtimeRunDeps,
   runtimeSkillsDeps,
   runtimeStreamTuning,
   runtimeSystemPromptSection,
   sessionRetentionDays,
-} from './config-runtime.js';
+} from './config/projections.js';
 import type { DispatchRunners } from './dispatch.js';
 import { createProdRunSuite } from './eval-prod.js';
 import { runProdReplay } from './replay-run.js';

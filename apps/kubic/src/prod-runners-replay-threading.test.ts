@@ -7,7 +7,7 @@
 // captured at the `runHeadlessPrompt` seam: if the production spread is
 // dropped, the captured deps miss the fields and this fails. Lane behavior
 // under the fields is pinned for real elsewhere (the autoCompact threshold test
-// in config-runtime.test.ts, the replay seam test in
+// in config/load.test.ts, the replay seam test in
 // replay-runtime-deps.test.ts).
 //
 // Faux provider only (`KUBIC_PROVIDER=faux`): zero network, zero paid
@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CliConfigResult } from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
 import { createProdRunners } from './prod-runners.js';
 import { runHeadlessPrompt } from './run/command.js';
 

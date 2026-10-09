@@ -257,7 +257,7 @@ describe('this repo ships the split', () => {
   // sites so the wiring cannot be dropped silently.
   it('invokes the ignore-split check from the production config path', () => {
     const runtime = readFileSync(
-      join(ROOT, 'apps', 'kubic', 'src', 'config-runtime.ts'),
+      join(ROOT, 'apps', 'kubic', 'src', 'config', 'load.ts'),
       'utf8',
     );
     assert.match(
@@ -266,7 +266,7 @@ describe('this repo ships the split', () => {
       // way the writer does, so the runner (exec's sync git probe) is part
       // of the pinned wiring — dropping it would re-break worktrees.
       /checkWorkspaceIgnoreSplit\(\s*bridge,\s*projectRoot,\s*gitSync/,
-      'apps/kubic/src/config-runtime.ts must run the ignore-split check on the real repo',
+      'apps/kubic/src/config/load.ts must run the ignore-split check on the real repo',
     );
     const hostRuntime = readFileSync(
       join(ROOT, 'packages', 'host', 'src', 'config', 'runtime.ts'),

@@ -8,7 +8,7 @@ import type { JournalRetention } from '@kubic/exec/journal';
 import type { ApprovalConfig, InstalledPolicy } from '@kubic/host/approvals';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import { ProcessTerminal } from '@kubic/tui/tui-boundary';
-import type { runtimeLaneDeps } from '../config-runtime.js';
+import type { runtimeLaneDeps } from '../config/projections.js';
 import { readTuiWorkspace } from '../tui-workspace.js';
 import { bootTuiLane } from './boot.js';
 import type { TuiBootFlags, TuiRunDeps, TuiRunOptions } from './options.js';

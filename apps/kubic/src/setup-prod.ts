@@ -26,13 +26,15 @@ import {
   type SetupUi,
 } from '@kubic/host/config';
 import { assembleModels } from '@kubic/host/models';
+import type { CliConfigResult } from './config/load.js';
 import {
-  type CliConfigResult,
   projectTrustFor,
   resolveInteractiveProjectTrust,
+} from './config/load.js';
+import {
   runtimeModelFrozen,
   runtimeModelPin,
-} from './config-runtime.js';
+} from './config/model-selection.js';
 
 type Env = Readonly<Record<string, string | undefined>>;
 

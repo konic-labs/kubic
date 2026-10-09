@@ -9,11 +9,9 @@ import { join } from 'node:path';
 import type { ConfigCommandOptions } from '@kubic/host/config';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { DispatchRunners } from './cli/context.js';
-import {
-  type CliConfigResult,
-  loadCliConfig,
-  runtimeModelPin,
-} from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
+import { loadCliConfig } from './config/load.js';
+import { runtimeModelPin } from './config/model-selection.js';
 import {
   cliModelFromArgs,
   type DispatchDeps,

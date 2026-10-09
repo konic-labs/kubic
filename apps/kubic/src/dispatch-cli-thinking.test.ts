@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { DispatchRunners } from './cli/context.js';
-import { type CliConfigResult, loadCliConfig } from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
+import { loadCliConfig } from './config/load.js';
 import {
   cliThinkingFromArgs,
   type DispatchDeps,

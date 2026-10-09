@@ -24,7 +24,8 @@ import {
 import { FileJournalStore, sha256Hex } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { journalRetentionDays, loadCliConfig } from './config-runtime.js';
+import { loadCliConfig } from './config/load.js';
+import { journalRetentionDays } from './config/projections.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

@@ -20,7 +20,8 @@ import {
 } from '@kubic/host/config';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadCliConfig, runtimeModelPin } from './config-runtime.js';
+import { loadCliConfig } from './config/load.js';
+import { runtimeModelPin } from './config/model-selection.js';
 import { runHeadlessPrompt } from './run/command.js';
 
 const made: string[] = [];

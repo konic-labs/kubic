@@ -46,7 +46,7 @@ import {
   resolveLaneLadder,
   roleModelScope,
   selectModelUnderPolicy,
-} from '../config-runtime.js';
+} from '../config/model-selection.js';
 import { persistRunTrajectory } from '../run/trajectory.js';
 import type { SessionBoot } from '../session/bootstrap.js';
 import type { TuiRunOptions } from './options.js';

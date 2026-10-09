@@ -25,11 +25,9 @@ import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import {
-  type CliConfigResult,
-  runtimeApprovalDeps,
-  runtimeModelPin,
-} from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
+import { runtimeModelPin } from './config/model-selection.js';
+import { runtimeApprovalDeps } from './config/projections.js';
 import { prodTuiDeps } from './prod-runners.js';
 import { bootTuiLane } from './tui/boot.js';
 import { tuiBootOptions, tuiDepsWithDefaults } from './tui/deps.js';

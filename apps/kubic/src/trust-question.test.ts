@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createCliTheme } from '@kubic/core/cli/theme';
 import { ProjectTrustStore } from '@kubic/host/config';
 import { afterEach, describe, expect, it } from 'vitest';
-import { resolveInteractiveProjectTrust } from './config-runtime.js';
+import { resolveInteractiveProjectTrust } from './config/load.js';
 import {
   TRUST_VIEW_MAX_LINES,
   trustFileLines,

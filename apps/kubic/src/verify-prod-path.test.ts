@@ -38,7 +38,7 @@ import {
   type TrajectoryExport,
 } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runtimeRunDeps } from './config-runtime.js';
+import { runtimeRunDeps } from './config/projections.js';
 import { runHeadlessPrompt } from './run/command.js';
 import type { HeadlessRunDeps } from './run/options.js';
 

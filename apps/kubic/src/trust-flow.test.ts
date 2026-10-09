@@ -13,7 +13,7 @@ import {
   runTrustCommand,
 } from '@kubic/host/config';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadCliConfig } from './config-runtime.js';
+import { loadCliConfig } from './config/load.js';
 
 const made: string[] = [];
 

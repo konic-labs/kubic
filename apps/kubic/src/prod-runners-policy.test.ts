@@ -28,12 +28,9 @@ import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  type CliConfigResult,
-  runtimeApprovalDeps,
-  runtimeModelPin,
-  runtimeRunDeps,
-} from './config-runtime.js';
+import type { CliConfigResult } from './config/load.js';
+import { runtimeModelPin } from './config/model-selection.js';
+import { runtimeApprovalDeps, runtimeRunDeps } from './config/projections.js';
 import { createProdRunners, prodRunDeps } from './prod-runners.js';
 import { runHeadlessPrompt } from './run/command.js';
 

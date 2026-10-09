@@ -97,7 +97,7 @@ import {
   resolveRoleThinking,
   roleModelScope,
   selectBootModel,
-} from '../config-runtime.js';
+} from '../config/model-selection.js';
 import { hasExplicitModelSelection } from '../model-projection.js';
 
 // Why a boot stopped before the lane ran. Each front end maps these to its

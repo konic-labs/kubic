@@ -126,6 +126,34 @@ describe('TUI debug lines', () => {
     expect(debugLines).toEqual(['[model] in=10 out=3 cached=0 faux/faux-1']);
   });
 
+  it('redacts a secret-shaped value in the fault before it reaches the screen', async () => {
+    const target = app();
+    const notice = vi.spyOn(target, 'appendNotice');
+    const debugLines: string[] = [];
+    const runner = new TuiTurnRunner(
+      target,
+      stubLoop([
+        {
+          type: 'fault',
+          code: 'tool',
+          message: 'request failed: Authorization: Bearer abcdef0123456789xyz',
+        },
+      ]),
+      'faux/faux-1',
+      undefined,
+      undefined,
+      [],
+      undefined,
+      (line: string) => debugLines.push(line),
+    );
+    await runner.run('hi');
+    const shown = notice.mock.calls.flat(2).join('\n');
+    expect(shown).toContain('handler_error hook=tool error=request failed');
+    expect(shown).toContain('[REDACTED]');
+    expect(shown).not.toContain('abcdef0123456789xyz');
+    expect(debugLines.join('\n')).not.toContain('abcdef0123456789xyz');
+  });
+
   it('still notices a fault with no debug sink attached', async () => {
     const target = app();
     const notice = vi.spyOn(target, 'appendNotice');

@@ -2,6 +2,7 @@
 // renders, the draft of the generation in flight, the status bar's usage
 // rows, and the committed transcript.
 import type { KubicLaneEvent } from '@kubic/agent/lane/events';
+import { redactSecrets } from '@kubic/agent/lane/interceptors';
 import type { EntryRecord } from '@kubic/agent/pi-boundary';
 import { PresentationProjector } from '@kubic/host/presentation';
 import { type DebugSink, hookErrorLine, modelLine } from '@kubic/host/run';
@@ -121,8 +122,10 @@ export class TuiTranscriptFeed {
       // Pi 1.0 has no `handler_error` event) is the handler_error
       // line. It rides the debug sink when one is attached, and it ALWAYS
       // lands as a transcript notice: the TUI has no --debug channel, so
-      // a silent sink would swallow an extension/hook failure whole.
-      const line = hookErrorLine(event.code, event.message);
+      // a silent sink would swallow an extension/hook failure whole. The
+      // message is a raw task error, so secret-shaped values are redacted
+      // before it reaches the screen, like an approval summary.
+      const line = hookErrorLine(event.code, redactSecrets(event.message));
       this.debug?.(line);
       this.app.appendNotice([line]);
     }

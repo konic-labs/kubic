@@ -4,7 +4,6 @@
 //
 // Fixture repos only (real git, hermetic global config); every temp dir and
 // file mode is restored in afterEach. No network, no model.
-import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -17,6 +16,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
+import {
+  createGitSandbox,
+  disposeAllGitSandboxes,
+  type GitSandbox,
+} from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   AUDIT_LEDGER_FILE,
@@ -40,6 +44,8 @@ function tmpRoot(prefix: string): string {
 }
 
 afterEach(() => {
+  driver = undefined;
+  disposeAllGitSandboxes();
   for (const path of chmodded.splice(0)) {
     try {
       chmodSync(path, 0o644);
@@ -51,17 +57,15 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-const GIT_ENV = {
-  ...process.env,
-  GIT_CONFIG_GLOBAL: '/dev/null',
-  GIT_CONFIG_NOSYSTEM: '1',
-};
+// Git on the test's own fixture repo, through the shared sandbox's
+// scrubbed environment (one sandbox per test).
+let driver: GitSandbox | undefined;
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync(
-    'git',
+  driver ??= createGitSandbox();
+  return driver.git(
     ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args],
-    { cwd, env: GIT_ENV, encoding: 'utf8' },
+    { cwd },
   );
 }
 

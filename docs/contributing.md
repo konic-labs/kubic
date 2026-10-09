@@ -107,7 +107,8 @@ those is test restructuring for a later change; this gate does not report them.
   `terminalRig()`). A test never sleeps for a render.
 - **Real git.** Tests that run git use the shared sandbox
   (`packages/exec/src/test-support/git-sandbox.ts`); a direct
-  `execFileSync('git', …)` in a test fails `npm test`.
+  `execFileSync('git', …)` in a test fails `npm test`, whether the call
+  spans lines, names a path to git or a variable bound to it.
 - **Colour.** Tests never depend on the shell's colour variables:
   `FORCE_COLOR=3`, `FORCE_COLOR=0` and `NO_COLOR=1` runs all pass.
 

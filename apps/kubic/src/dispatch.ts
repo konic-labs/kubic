@@ -136,19 +136,12 @@ function tryParseCliThinking(value: string): string | undefined {
   }
 }
 
-// Read the session model override exactly once, from the raw argv, for the
-// commands that own the flag. A `--` ends the scan (the rest are operands);
-// only well-formed `provider/id` values are forwarded — a malformed one is
-// left to commander, whose own option rule refuses it with exit 2 before any
-// runner runs. Later occurrences win, matching commander's repetition
-// behaviour, so the load sees the same value the parser will.
 // Read the session thinking override exactly once, from the raw argv, for
 // the commands that own the flag. Same contract as `cliModelFromArgs`: a
 // `--` ends the scan, only known levels are forwarded (a malformed one is
 // left to commander, whose own option rule refuses it with exit 2), and
-// later occurrences win. The prefix check spells the full flag name — the
-// single-parser gate (scripts/flag-parser-gate.test.mjs) forbids a bare
-// double-dash-prefix value guard, so the literal flag name is inlined.
+// later occurrences win. Both spellings are read: `--thinking <level>` and
+// `--thinking=<level>`.
 export function cliThinkingFromArgs(
   command: string | undefined,
   rest: readonly string[],
@@ -176,6 +169,12 @@ export function cliThinkingFromArgs(
   return found;
 }
 
+// Read the session model override exactly once, from the raw argv, for the
+// commands that own the flag. A `--` ends the scan (the rest are operands);
+// only well-formed `provider/id` values are forwarded — a malformed one is
+// left to commander, whose own option rule refuses it with exit 2 before any
+// runner runs. Later occurrences win, matching commander's repetition
+// behaviour, so the load sees the same value the parser will.
 export function cliModelFromArgs(
   command: string | undefined,
   rest: readonly string[],

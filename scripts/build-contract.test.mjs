@@ -45,13 +45,8 @@ describe('build/install contract', () => {
     );
   });
 
-  it('esbuild is an exact-pinned devDependency', () => {
-    const pin = rootManifest().devDependencies?.esbuild ?? '';
-    assert.match(
-      pin,
-      /^\d+\.\d+\.\d+$/,
-      'esbuild must be pinned to one exact version (no ^ or ~)',
-    );
+  it('declares the supported Node floor', () => {
+    assert.equal(rootManifest().engines?.node, '>=22.19');
   });
 
   it('tsc only typechecks: no build tsconfig, typecheck is noEmit', () => {

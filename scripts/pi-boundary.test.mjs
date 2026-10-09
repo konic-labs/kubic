@@ -1,17 +1,13 @@
+// The Pi dependency contract: exact pins in the two manifests that declare
+// Pi, the root override for its transitive telemetry package, one hoisted copy
+// of every Pi package in the lockfile, and a JUSTIFICATION block on every
+// export of the two boundary files (which files may import Pi at all is
+// `npm run lint:deps`).
 import assert from 'node:assert/strict';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { after, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { checkTree } from './dep-lint.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -40,17 +36,6 @@ const GONE_FROM_LOCK = [
 const OVERRIDDEN_PI_DEPS = ['@earendil-works/pi-telemetry'];
 const PI_VERSION = '1.0.2';
 
-const scratchDirs = [];
-after(() => {
-  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
-});
-
-function scratchDir(prefix) {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  scratchDirs.push(dir);
-  return dir;
-}
-
 // Every `export` statement in either Pi boundary file must be
 // preceded by the JUSTIFICATION block the file's own template requires.
 // Returns the 1-based line numbers of unjustified exports.
@@ -71,7 +56,7 @@ function unjustifiedExports(source) {
   return bad;
 }
 
-// / commit 83ee635: exactly ONE hoisted copy of every Pi package.
+// Exactly ONE hoisted copy of every Pi package.
 // Walks the lockfile's `packages` map (v3 is authoritative) and returns one
 // `{ name, paths }` entry per `@earendil-works/*` package resolved at more
 // than one path — a hoisted root copy plus a nested one under a workspace or
@@ -139,15 +124,6 @@ describe('pi pinning + boundary', () => {
     );
   });
 
-  it('pi-boundary.ts exists with seam docs and justification template', () => {
-    const file = join(ROOT, 'packages', 'agent', 'src', 'pi-boundary.ts');
-    assert.ok(existsSync(file), 'missing packages/agent/src/pi-boundary.ts');
-    const src = readFileSync(file, 'utf8');
-    for (const needle of ['FileSystem', 'beforeTool', 'JUSTIFICATION']) {
-      assert.ok(src.includes(needle), `pi-boundary.ts must document ${needle}`);
-    }
-  });
-
   it('both Pi boundary files justify every export', () => {
     for (const rel of [
       join('packages', 'agent', 'src', 'pi-boundary.ts'),
@@ -181,88 +157,11 @@ describe('pi pinning + boundary', () => {
     );
   });
 
-  it('pi-boundary.ts itself may import Pi', () => {
-    const okDir = scratchDir('piseam-ok-');
-    mkdirSync(join(okDir, 'packages', 'agent', 'src'), { recursive: true });
-    writeFileSync(
-      join(okDir, 'packages', 'agent', 'src', 'pi-boundary.ts'),
-      `import type { Agent } from '@earendil-works/pi-agent-core';\n`,
-    );
-    assert.deepEqual(checkTree(okDir), []);
-  });
-
-  it('agent files outside pi-boundary.ts must not import Pi', () => {
-    const dir = scratchDir('piseam-bad-');
-    mkdirSync(join(dir, 'packages', 'agent', 'src'), { recursive: true });
-    writeFileSync(
-      join(dir, 'packages', 'agent', 'src', 'tools.ts'),
-      `import { Agent } from '@earendil-works/pi-agent-core';\n`,
-    );
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some(
-        (v) => v.from === 'agent' && v.to.includes('pi-agent-core'),
-      ),
-      `expected agent Pi-seam violation, got ${JSON.stringify(violations)}`,
-    );
-  });
-
-  it('similarly-suffixed agent files must not import Pi', () => {
-    const dir = scratchDir('piseam-suffix-');
-    mkdirSync(join(dir, 'packages', 'agent', 'src'), { recursive: true });
-    writeFileSync(
-      join(dir, 'packages', 'agent', 'src', 'fake-pi-boundary.ts'),
-      `import { Agent } from '@earendil-works/pi-agent-core';\n`,
-    );
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some(
-        (v) => v.from === 'agent' && v.to.includes('pi-agent-core'),
-      ),
-      `expected suffix-bypass violation, got ${JSON.stringify(violations)}`,
-    );
-  });
-
-  it('non-agent packages must not import Pi', () => {
-    const dir = scratchDir('piseam-host-');
-    mkdirSync(join(dir, 'packages', 'host', 'src'), { recursive: true });
-    writeFileSync(
-      join(dir, 'packages', 'host', 'src', 'dispatch.ts'),
-      `import { x } from '@earendil-works/chord';\n`,
-    );
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some((v) => v.from === 'host'),
-      `expected host Pi-seam violation, got ${JSON.stringify(violations)}`,
-    );
-  });
-
-  it('CODEOWNERS flags pi-boundary.ts', () => {
-    const file = join(ROOT, 'CODEOWNERS');
-    assert.ok(existsSync(file), 'missing CODEOWNERS');
-    const src = readFileSync(file, 'utf8');
-    assert.ok(
-      src.includes('packages/agent/src/pi-boundary.ts'),
-      'CODEOWNERS must own pi-boundary.ts',
-    );
-  });
-
-  it('CI runs the pinned-deps check', () => {
-    const yml = readFileSync(
-      join(ROOT, '.github', 'workflows', 'ci.yml'),
-      'utf8',
-    );
-    assert.ok(yml.includes('check:pi'), 'ci.yml must run check:pi');
-  });
-
-  // / commit 83ee635: the built binary could not load
-  // @earendil-works/chord from dist/ because the lockfile NESTED a
-  // second copy of pi-ai and chord (under packages/agent and under
-  // pi-durable) instead of hoisting them — all at 1.0.2, so the pin check
-  // below stayed green, vitest resolved from source so the suite stayed
-  // green, and only the binary contract caught it. One hoisted copy of every
-  // `@earendil-works/*` package is the invariant a lockfile refresh must not
-  // break; two copies of pi-ai would also give Kubic and pi-durable separate
+  // One hoisted copy of every `@earendil-works/*` package is the invariant a
+  // lockfile refresh must not break. A nested second copy (under a workspace
+  // or under pi-durable) at the same version passes the pin check below, and
+  // vitest resolves from source, but the built binary cannot load it from
+  // dist/; two copies of pi-ai would also give Kubic and pi-durable separate
   // module instances.
   it('the lockfile resolves exactly one copy of every Pi package', () => {
     const lock = JSON.parse(

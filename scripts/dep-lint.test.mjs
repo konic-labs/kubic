@@ -103,6 +103,29 @@ describe('dep-lint', () => {
     );
   });
 
+  it('allows only the agent boundary to touch the Pi runtime modules', () => {
+    const ok = fixtureTree({
+      'packages/agent/src/pi-boundary.ts': `import type { Harness } from '@earendil-works/pi-durable';\n`,
+    });
+    assert.deepEqual(checkTree(ok), []);
+    // Another agent file, a look-alike name, and another package.
+    const bad = fixtureTree({
+      'packages/agent/src/tools.ts': `import { Harness } from '@earendil-works/pi-durable';\n`,
+      'packages/agent/src/fake-pi-boundary.ts': `import { complete } from '@earendil-works/pi-ai';\n`,
+      'packages/host/src/dispatch.ts': `import { chord } from '@earendil-works/chord';\n`,
+    });
+    assert.deepEqual(
+      checkTree(bad)
+        .filter((v) => v.kind === 'pi')
+        .map((v) => v.file),
+      [
+        join('packages', 'agent', 'src', 'fake-pi-boundary.ts'),
+        join('packages', 'agent', 'src', 'tools.ts'),
+        join('packages', 'host', 'src', 'dispatch.ts'),
+      ],
+    );
+  });
+
   it('allows exec to import node:fs for the Node binding', () => {
     const dir = fixtureTree({
       'packages/exec/src/env.ts': `import { readFileSync } from 'node:fs';\n`,
@@ -186,6 +209,30 @@ describe('dep-lint', () => {
           'test-support',
           join('packages', 'tui', 'src', 'screen.ts'),
           '../../../test/fake-terminal.js',
+        ],
+      ],
+    );
+  });
+
+  it('allows one argv parser: extra-typings in the app root', () => {
+    const dir = fixtureTree({
+      'packages/host/src/cli.ts': `import yargs from 'yargs';\n`,
+      'packages/host/src/flags.ts': `import { parseArgs } from 'node:util';\n`,
+      'packages/host/src/inspect.ts': `import { inspect } from 'node:util';\n`,
+      'packages/tui/src/keys.ts': `import { Command } from '@commander-js/extra-typings';\n`,
+      'apps/kubic/src/program.ts': `import { Command } from '@commander-js/extra-typings';\n`,
+      'packages/host/src/cli.test.ts': `import { Command } from 'commander';\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir)
+        .filter((v) => v.kind === 'argv')
+        .map((v) => [v.file, v.to]),
+      [
+        [join('packages', 'host', 'src', 'cli.ts'), 'yargs'],
+        [join('packages', 'host', 'src', 'flags.ts'), 'node:util'],
+        [
+          join('packages', 'tui', 'src', 'keys.ts'),
+          '@commander-js/extra-typings',
         ],
       ],
     );

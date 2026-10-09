@@ -51,6 +51,24 @@ function reachesRootTests(importerFile, spec, root) {
   return rel.split(sep)[0] === 'test';
 }
 
+// commander, through @commander-js/extra-typings in the composition root, is
+// the one argv parser: no other parser is imported (node:util's parseArgs
+// included), and extra-typings stays in apps/kubic/src.
+const FOREIGN_PARSER_SPEC = /^(yargs(\/.*)?|minimist|meow|arg|commander)$/;
+
+function isSecondArgvParser(spec, statement, file, root) {
+  if (FOREIGN_PARSER_SPEC.test(spec)) return true;
+  if (
+    (spec === 'node:util' || spec === 'util') &&
+    /\bparseArgs\b/.test(statement)
+  )
+    return true;
+  return (
+    spec === '@commander-js/extra-typings' &&
+    !file.startsWith(join(root, 'apps', 'kubic', 'src') + sep)
+  );
+}
+
 // Packages organised into concern folders, each with an index.ts entry: a
 // module in one folder reaches another folder only through that entry, never
 // into its internal modules. test-support/ holds shared test fixtures, not a
@@ -160,6 +178,19 @@ export function checkTree(root) {
           // would ship fixtures in the product.
           violations.push({
             kind: 'test-support',
+            from: owner,
+            to: spec,
+            file: relative(root, file),
+            line,
+          });
+          continue;
+        }
+        if (
+          !isTestScaffold(relative(root, file)) &&
+          isSecondArgvParser(spec, m[0], file, root)
+        ) {
+          violations.push({
+            kind: 'argv',
             from: owner,
             to: spec,
             file: relative(root, file),
@@ -290,7 +321,9 @@ if (isMain) {
         ? `relative import into package ${v.to} from ${v.from} (import it by name: @kubic/<pkg>/<subpath>)`
         : v.kind === 'folder'
           ? `deep import into ${v.to}/ from ${v.from}/ (import its entry: ../${v.to.split('/')[1]}/index.js)`
-          : `forbidden import ${v.from} -> ${v.to}`;
+          : v.kind === 'argv'
+            ? `second argv parser ${v.to} in ${v.from} (commander through @commander-js/extra-typings in apps/kubic/src is the only one)`
+            : `forbidden import ${v.from} -> ${v.to}`;
     console.log(`${v.file}:${v.line}: ${what}`);
   }
   if (violations.length > 0) {

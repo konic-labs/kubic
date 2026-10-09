@@ -1,11 +1,11 @@
 // Configuration: the TOML layers and their validation, the runtime load every
 // command runs on, comment-preserving edits, project trust, the MCP and ACP
 // stances, and the `kubic config`, `kubic setup` and `kubic trust` commands.
+export type { RoleModelEntry } from './checks.js';
 export type {
   AuditTableConfig,
   ConfigLayer,
   KubicConfig,
-  RoleModelEntry,
 } from './config.js';
 export {
   CONFIG_LAYERS,

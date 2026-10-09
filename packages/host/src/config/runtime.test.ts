@@ -31,7 +31,7 @@ import {
   isToolAllowed,
   isToolAllowedByEnterprise,
 } from '../policy/index.js';
-import { ConfigError, ProjectUntrustedError } from './config.js';
+import { ConfigError, ProjectUntrustedError } from './errors.js';
 import {
   checkWorkspaceIgnoreSplit,
   compactionSummaryLine,

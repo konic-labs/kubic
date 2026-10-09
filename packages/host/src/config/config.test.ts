@@ -4,19 +4,17 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import { describe, expect, it } from 'vitest';
-import { EXAMPLE_TOML } from '../test-support/config-fixtures.js';
+import { checkRoleModelRef } from './checks.js';
 import {
   CONFIG_LAYERS,
-  ConfigError,
   type ConfigLayer,
   checkGitignoreSplit,
-  checkRoleModelRef,
   defaultLayerPaths,
   GITIGNORE_REQUIRED_ENTRIES,
   mergeLayered,
-  ProjectUntrustedError,
   parseTomlConfig,
 } from './config.js';
+import { ConfigError, ProjectUntrustedError } from './errors.js';
 import { loadRuntimeConfig } from './runtime.js';
 import { McpUnsupportedError } from './stances.js';
 
@@ -33,6 +31,12 @@ function fakeBridge(files: Record<string, string>): BridgePick {
     },
   };
 }
+
+// The canonical example, as the schema generates it (scripts/gen-config-docs.mjs).
+const EXAMPLE_TOML = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'example.toml'),
+  'utf8',
+);
 
 describe('config layers', () => {
   it('orders precedence Enterprise > Product > Global > Project > Workspace > Session > Agent', () => {
@@ -139,12 +143,6 @@ describe('canonical TOML example', () => {
     expect(parsed.roles?.implementer?.model).toBe('local/llama3');
     expect(parsed.ui?.theme).toBe('dark');
     expect(parsed.session?.store).toBe('jsonl');
-  });
-
-  it('keeps example.toml in sync with EXAMPLE_TOML', () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const onDisk = readFileSync(join(here, 'example.toml'), 'utf8');
-    expect(parseTomlConfig(onDisk)).toEqual(parseTomlConfig(EXAMPLE_TOML));
   });
 
   it('rejects mcp sections with the unsupported error', () => {

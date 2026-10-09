@@ -30,7 +30,8 @@ npm run lint:deps             # package dependency direction, no relative cross-
 npm run lint:dead             # knip: unused files, exports, dependencies, types
 npm run lint:dead:prod        # knip, production code only: test imports count as no use
 npm run check:pi              # exact pins on every dependency
-npm run docs:check            # no dangling internal doc links
+npm run docs:check            # no dangling internal doc links; generated config docs current
+npm run docs:config           # regenerate the config docs and example from the schema
 npm test                      # repo gates: scripts/*.test.mjs via node --test
 npm run test:unit             # vitest
 npm run build
@@ -146,7 +147,11 @@ those is test restructuring for a later change; this gate does not report them.
 footer.
 
 A behaviour change ships its docs page in the same commit, and
-`npm run docs:check` must pass. The area map lives on the
+`npm run docs:check` must pass. Configuration keys are declared once, in
+`packages/host/src/config/schema.ts`: the parser's checks, the runtime's
+effect rows, `example.toml` and the key tables in
+[configuration.md](cli/configuration.md) all derive from it. After changing a
+key, run `npm run docs:config` to regenerate the docs and the example. The area map lives on the
 [docs index](README.md). The docs style rules (present tense, behaviour rather
 than history, no tracker references) are in
 [CONTRIBUTING.md](../CONTRIBUTING.md#docs-style).

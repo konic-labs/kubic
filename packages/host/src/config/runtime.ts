@@ -36,24 +36,31 @@ import {
 } from '../policy/index.js';
 import { parseSecretRef } from '../secret-refs/index.js';
 import {
-  type ApprovalsConfig,
-  ConfigError,
-  type ConfigLayer,
-  checkGitignoreSplit,
   checkOutOfScopeEntries,
   checkRoleModelRef,
-  checkSessionCompaction,
   checkThinkingLevel,
+} from './checks.js';
+import {
+  type ApprovalsConfig,
+  type ConfigLayer,
+  checkGitignoreSplit,
+  checkSessionCompaction,
   checkVerifyConfig,
   defaultLayerPaths,
   type KubicConfig,
   type LayerInput,
   mergeLayered,
-  ProjectUntrustedError,
   parseLayerConfig,
   resolveConfigSkills,
   VERIFY_COMMAND_KEYS,
 } from './config.js';
+import { ConfigError, ProjectUntrustedError } from './errors.js';
+import {
+  CONFIG_SECTIONS,
+  type ConfigKey,
+  configKey,
+  type KeyEffect,
+} from './schema.js';
 
 // Where an effective value came from: one of the six config layers, the
 // documented environment overrides, the explicit CLI flag, or the product's
@@ -65,37 +72,47 @@ export type ConfigValueSource = ConfigLayer | 'env' | 'cli' | 'defaults';
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Documented environment overrides, applied above every file layer and below
-// an explicit CLI flag. The names are part of the CLI contract
-// (docs/cli/configuration.md) and pinned by test.
+// an explicit CLI flag. The names are part of the CLI contract; the config
+// keys' own come from the schema.
 export const RUNTIME_ENV_OVERRIDES = {
-  model: 'KUBIC_MODEL',
-  modelThinking: 'KUBIC_MODEL_THINKING',
-  approvalsRoute: 'KUBIC_APPROVALS_ROUTE',
-  journalRetentionDays: 'KUBIC_JOURNAL_RETENTION_DAYS',
+  model: envOf('model', 'provider'),
+  modelThinking: envOf('model', 'thinking'),
+  approvalsRoute: envOf('approvals', 'route'),
+  journalRetentionDays: envOf('journal', 'retentionDays'),
   trustProject: 'KUBIC_TRUST_PROJECT',
 } as const;
 
-const RUNTIME_DEFAULTS = {
-  approvalsRoute: 'ask-user',
-} as const;
+function envOf(section: string, name: string): string {
+  const env = configKey(section, name).env;
+  if (env === undefined) throw new Error(`'${section}.${name}' has no env`);
+  return env;
+}
 
-// Every documented config key, with the observable effect it has at runtime —
-// or an explicit marker for a key the product deliberately does not consume.
-// docs/cli/configuration.md and example.toml are parsed against THIS table by
-// config-docs.test.ts, so a documented key can never quietly stop doing
-// anything. Three dispositions:
-//
-//   effect           — consumed: the value reaches a code path.
-//   kept             — a decision: the key is reserved and reported, and the
-//                      reason it is not consumed is stated here.
-//   notYetImplemented — pending work with a named follow-up; NEVER a pointer
-//                      at an issue, which is how the stale rows happened.
-export type RuntimeKeyEffect =
-  | { effect: string }
-  | { kept: string }
-  | { notYetImplemented: string };
+const DEFAULT_APPROVALS_ROUTE = configKey('approvals', 'route').default as
+  | 'ask-user'
+  | 'deny';
+
+// What the runtime does with each config key (`kubic config`, `kubic
+// doctor`): consumed, kept with the reason, or pending.
+export type RuntimeKeyEffect = KeyEffect;
 
 export type RuntimeKeyDisposition = 'consumed' | 'kept' | 'pending' | 'unknown';
+
+// The schema's runtime rows: one per `section.key`, plus a section's own row,
+// which the keys of an open-ended section resolve through.
+export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> =
+  Object.fromEntries(
+    CONFIG_SECTIONS.flatMap((section) => {
+      const rows: [string, KeyEffect][] = [];
+      if ('runtime' in section) rows.push([section.name, section.runtime]);
+      for (const key of section.keys as readonly ConfigKey[]) {
+        if (key.runtime !== undefined) {
+          rows.push([`${section.name}.${key.name}`, key.runtime]);
+        }
+      }
+      return rows;
+    }),
+  );
 
 // The table lookup is section-or-key (the rule): `roles.implementer.
 // model` resolves through `roles`. Undefined means the table has no row for
@@ -115,196 +132,6 @@ export function runtimeKeyDisposition(
   if ('kept' in entry) return 'kept';
   return 'pending';
 }
-
-export const RUNTIME_KEY_EFFECTS: Record<string, RuntimeKeyEffect> = {
-  'agent.systemPromptFile': {
-    effect:
-      'file whose contents the run, tui and replay lanes append to the assembled system prompt (ahead of the skills block)',
-  },
-  'agent.name': {
-    effect: 'agent id on the lane + journal attribution',
-  },
-  'model.provider': {
-    effect: 'provider selection for `kubic run` and `kubic tui` (selectModel)',
-  },
-  'model.id': {
-    effect: 'model selection for `kubic run` and `kubic tui` (selectModel)',
-  },
-  'model.thinking': {
-    effect:
-      'thinking level the run/tui lane boots with (clamped to the model); per-run override is --thinking, then KUBIC_MODEL_THINKING',
-  },
-  'model.timeoutMs': {
-    effect:
-      'per-request provider timeout on the lane (`settings.stream`), layered per role by `[roles.<name>].timeoutMs`',
-  },
-  'model.maxRetries': {
-    effect:
-      'provider/SDK retries inside one request attempt on the lane (`settings.stream`), layered per role by `[roles.<name>].maxRetries`',
-  },
-  'model.maxRetryDelayMs': {
-    effect:
-      'cap on the server-requested retry delay on the lane (`settings.stream`), layered per role by `[roles.<name>].maxRetryDelayMs`',
-  },
-  'model.cacheRetention': {
-    effect:
-      'prompt cache retention preference on the lane (`settings.stream`), layered per role by `[roles.<name>].cacheRetention`',
-  },
-  'model.escalate': {
-    effect:
-      'escalation ladder rungs the run/tui lane climbs one-way; a role escalate wins for that role',
-  },
-  'model.maxEscalations': {
-    effect:
-      'climbs allowed per run on the escalation ladder; unset means the ladder length',
-  },
-  'approvals.route': { effect: 'approval routing (ask-user | deny)' },
-  'approvals.maxPendingMs': {
-    effect:
-      'pending-approval bound on the lane; a pending ask denies on timeout',
-  },
-  'approvals.autoApprove': {
-    effect:
-      'explicit-only capability auto-approvals on the lane (never inferred)',
-  },
-  'approvals.sessionScoped': {
-    effect:
-      'per-session approval store (true only; false is refused — no shared store exists)',
-  },
-  'approvals.requireJustification': {
-    effect:
-      'installed on the lane: an approval without justification is denied',
-  },
-  'permissions.filesystem': {
-    effect: 'permission classes for the lane: derived tool allowlist',
-  },
-  'permissions.shell': {
-    effect: 'permission classes for the lane: derived tool allowlist',
-  },
-  'permissions.network': {
-    effect: 'permission classes for the lane: derived tool allowlist',
-  },
-  'permissions.git': {
-    effect: 'permission classes for the lane: derived tool allowlist',
-  },
-  'permissions.credentials': {
-    effect: 'permission classes for the lane: derived tool allowlist',
-  },
-  'journal.retentionDays': {
-    effect: 'journal age bound (maxAgeMs) enforced on every append',
-  },
-  'journal.maxBytes': {
-    effect:
-      'journal byte bound — index.jsonl plus the blobs it references — enforced on every append; unset ⇒ the 100 MiB default',
-  },
-  'journal.outOfScope': {
-    effect:
-      'paths excluded from the baseline and the end-of-run sweep (self + children)',
-  },
-  roles: {
-    effect:
-      'per-role model/tool/thinking/request-option defaults, requires and the allowed model set, layered under the role document',
-  },
-  'ui.theme': {
-    effect:
-      'TUI theme: a built-in name (`default`, `dark`, `light`, `terminal`) or a path to a JSON theme file, resolved and validated before the alt-screen opens (a missing or invalid file is a named `error:` line and exit 2)',
-  },
-  'ui.statusBar': {
-    kept: 'pi-tui owns presentation; the status bar belongs to the TUI — key parsed and reported for forward-compat only',
-  },
-  'session.store': {
-    kept: 'jsonl is the only store implemented; sqlite/memory are a separate decision — key parsed and reported for forward-compat only',
-  },
-  'session.dir': {
-    notYetImplemented:
-      'sessions stay under ~/.kubic/sessions; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first)',
-  },
-  'session.retentionDays': {
-    effect:
-      'default keep-window for `kubic sessions prune` (deletion stays explicit)',
-  },
-  'session.autoCompact': {
-    effect:
-      'threshold compaction on the lane (run, tui): false disables it, true is the automatic default',
-  },
-  'session.reserveTokens': {
-    effect:
-      'reserved-room tokens on the lane (run, tui), clamped per model to at most a quarter of its context window',
-  },
-  'session.keepRecentTokens': {
-    effect:
-      'verbatim recent-context window on the lane (run, tui), capped per model to a quarter of the room below its reserve',
-  },
-  'verify.tests': {
-    effect:
-      'tests gate command run in the worktree after each run settles; exit status → signal:tests',
-  },
-  'verify.build': {
-    effect:
-      'build gate command run in the worktree after each run settles; exit status → signal:build',
-  },
-  'verify.lint': {
-    effect:
-      'lint gate command run in the worktree after each run settles; exit status → signal:lint',
-  },
-  'verify.typecheck': {
-    effect:
-      'typecheck gate command run in the worktree after each run settles; exit status → signal:typecheck',
-  },
-  'verify.timeoutMs': {
-    effect: 'per-command bound for the [verify] gates (a timeout is a fail)',
-  },
-  // The top-level `skills` array — NOT a `[skills]`
-  // section. Entries resolve against their declaring file at load and
-  // reach `run` and `tui` with source 'settings'; project-layer entries
-  // apply only for a trusted project.
-  skills: {
-    effect:
-      'settings skills for `kubic run` and `kubic tui` (loaded with source `settings`)',
-  },
-  // Enterprise [policy]. The allow/deny and model keys reach
-  // the live path (lane tool intersection, model selection gate, `kubic
-  // policy`). The rest are resolved into the effective policy and only listed
-  // here (`kubic config`): parsing them is the contract, enforcement is not
-  // invented, and `kubic doctor` does not report them yet.
-  policy: {
-    kept: 'enterprise policy section: resolved once per process into the effective policy; the per-key rows below say what each key does',
-  },
-  'policy.allowed_models': {
-    effect:
-      'model selection gate (`provider/id`, `provider/*`, bare ids) before any provider call',
-  },
-  'policy.allowed_providers': {
-    effect:
-      'provider gate shared by model selection and the implicit fallback pick',
-  },
-  'policy.allowed_tools': {
-    effect:
-      'lane tool intersection (active tools and the prompt tools line); a lower layer cannot widen it',
-  },
-  'policy.denied_tools': {
-    effect:
-      'lane tool intersection; the deny holds against every lower layer, role document and model grant',
-  },
-  'policy.network_policy': {
-    kept: 'resolved into the effective policy but NOT enforced: proxy-mediated enforcement is a named follow-up, listed here rather than silently ignored (doctor does not report it yet)',
-  },
-  'policy.allowed_domains': {
-    kept: 'resolved into the effective policy alongside network_policy; no live network enforcement exists yet',
-  },
-  'policy.filesystem_policy': {
-    kept: 'resolved into the effective policy but NOT enforced as its own gate: the lane derives filesystem reach from [permissions] classes today',
-  },
-  'policy.data_policy': {
-    kept: 'carried and reported; no local mechanism can promise a provider-side training policy, so it is never claimed as enforced',
-  },
-  'policy.logging_policy': {
-    kept: 'carried and reported; the one shipped audit ledger is not (yet) selected by this key',
-  },
-  audit: {
-    kept: '[[audit]] sinks are parsed, validated and built: appendToLedger fans every audit row out to the configured sinks plus the mandatory repo ledger (level = privileged keeps decisions and privileged actions only)',
-  },
-};
 
 interface RuntimeModelSelection {
   provider: string;
@@ -776,8 +603,7 @@ function approvalsFrom(
       "'approvals': 'sessionScoped = false' is not supported — approval decisions are always stored per session (<session>/approvals.json); remove the key or set it to true",
     );
   }
-  const route =
-    routeOverride ?? approvals.route ?? RUNTIME_DEFAULTS.approvalsRoute;
+  const route = routeOverride ?? approvals.route ?? DEFAULT_APPROVALS_ROUTE;
   const source: ConfigValueSource =
     routeOverride !== undefined
       ? 'env'

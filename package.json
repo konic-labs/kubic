@@ -26,7 +26,8 @@
     "check:pi": "node scripts/check-pinned-deps.mjs",
     "test:unit": "vitest run",
     "test": "node --test \"scripts/*.test.mjs\"",
-    "docs:check": "node scripts/check-docs-links.mjs",
+    "docs:check": "node scripts/check-docs-links.mjs && node scripts/gen-config-docs.mjs --check",
+    "docs:config": "node scripts/gen-config-docs.mjs",
     "test:binary-contract": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs"
   },
   "devDependencies": {

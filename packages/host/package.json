@@ -21,6 +21,10 @@
       "source": "./src/config/index.ts",
       "default": "./src/config/index.ts"
     },
+    "./config/schema": {
+      "source": "./src/config/schema.ts",
+      "default": "./src/config/schema.ts"
+    },
     "./cost": {
       "source": "./src/cost/index.ts",
       "default": "./src/cost/index.ts"

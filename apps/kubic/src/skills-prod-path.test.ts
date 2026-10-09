@@ -37,8 +37,8 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { runRunCommand } from '@kubic/host/run-cli';
-import { bootSkills } from '@kubic/host/skills-boot';
+import { runRunCommand } from '@kubic/host/run';
+import { bootSkills } from '@kubic/host/skills';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 
@@ -633,7 +633,7 @@ describe('the role/capability gate reaches the live prompt', () => {
       join(dir, 'SKILL.md'),
       '---\nname: impl-only\ndescription: Implementers only\nroles: [implementer]\n---\n\nBody.\n',
     );
-    const { skillsDoctorProbe } = await import('@kubic/host/skills-boot');
+    const { skillsDoctorProbe } = await import('@kubic/host/skills');
     const checks = skillsDoctorProbe({
       bridge: createNodeFileBridge(home),
       cwd: home,

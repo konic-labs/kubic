@@ -301,7 +301,7 @@ Writes code.
 `;
 
   it('refuses a role declaring an enterprise-denied tool, naming the reason', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
     ]).policy;
@@ -315,7 +315,7 @@ Writes code.
   });
 
   it('refuses a role tool outside an enterprise allow list, never widening it', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -329,7 +329,7 @@ Writes code.
   });
 
   it('keeps a role whose tools the policy allows, never adding any', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -345,7 +345,7 @@ Writes code.
   });
 
   it('leaves a role alone when the enterprise layer has no tool policy', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
     ]).policy;
@@ -374,7 +374,7 @@ Reads only.
 
   it('a deny-only policy does not refuse a role that declares no denied tool', async () => {
     const { resolveEffectivePolicy, isToolAllowedByEnterprise } = await import(
-      '../policy/enterprise.js'
+      '../policy/index.js'
     );
     const policy = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
@@ -393,7 +393,7 @@ Reads only.
   });
 
   it('a deny-only policy still refuses a role declaring the denied tool, case-insensitively', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { tools: { deny: ['Bash'] } } },
     ]).policy;
@@ -405,7 +405,7 @@ Reads only.
   });
 
   it('a denied tool stays refused when an allow list names it too', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       {
         layer: 'enterprise',

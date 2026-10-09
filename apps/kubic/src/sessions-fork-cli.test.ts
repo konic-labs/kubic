@@ -19,7 +19,7 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   runSessionsCommand,
   type SessionsInvocation,
-} from '@kubic/host/sessions-cli';
+} from '@kubic/host/sessions';
 import { afterEach, describe, expect, it } from 'vitest';
 import { dispatchCommand } from './dispatch.js';
 import { createProdRunners } from './prod-runners.js';

@@ -4,16 +4,18 @@
 
 import type { Command } from '@commander-js/extra-typings';
 import type { CommandResult } from '@kubic/core/cli/exit-codes';
-import type { ConfigCommandOptions } from '@kubic/host/config/config-cli';
+import type {
+  ConfigCommandOptions,
+  SetupCommandOptions,
+  TrustCommandOptions,
+} from '@kubic/host/config';
 import type { DoctorCommandOptions } from '@kubic/host/doctor';
-import type { GitRequest } from '@kubic/host/git-cli';
-import type { JournalRequest } from '@kubic/host/journal-cli';
-import type { ModelsCommandOptions } from '@kubic/host/models-cli';
-import type { RunCommandOptions } from '@kubic/host/run-cli';
-import type { SessionsInvocation } from '@kubic/host/sessions-cli';
-import type { SetupCommandOptions } from '@kubic/host/setup-cli';
-import type { SkillsCommandOptions } from '@kubic/host/skills-cli';
-import type { TrustCommandOptions } from '@kubic/host/trust-cli';
+import type { GitRequest } from '@kubic/host/git';
+import type { JournalRequest } from '@kubic/host/journal';
+import type { ModelsCommandOptions } from '@kubic/host/models';
+import type { RunCommandOptions } from '@kubic/host/run';
+import type { SessionsInvocation } from '@kubic/host/sessions';
+import type { SkillsCommandOptions } from '@kubic/host/skills';
 import type { AnalysisRunners } from '../commands/analysis.js';
 import type { CliConfigResult } from '../config-runtime.js';
 import type { TuiCommandOptions } from '../tui-run.js';

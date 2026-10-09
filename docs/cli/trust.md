@@ -3,7 +3,7 @@
 > Project-local configuration requires project trust (`.kubic/config.toml`
 > is committed). Implementation:
 > `packages/host/src/config/trust-store.ts` (the store + the one trust
-> report), `packages/host/src/trust-cli.ts` (`kubic trust`),
+> report), `packages/host/src/config/trust-cli.ts` (`kubic trust`),
 > `apps/kubic/src/config-runtime.ts` (the prompt and the load gate).
 
 A repository can commit `.kubic/config.toml`, and that file is

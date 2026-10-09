@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { KubicLaneEvent, LaneEventSink } from '@kubic/agent/lane/events';
 import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { TurnSpans, type TurnSpansSink } from '@kubic/host/run-spans';
+import { TurnSpans, type TurnSpansSink } from '@kubic/host/run';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type TuiLaneLoop, TuiTurnRunner } from './tui-run.js';

@@ -17,15 +17,15 @@ import {
   toolsForClasses,
   validateClasses,
 } from '@kubic/agent/permissions';
-import type { ConfigLayer, RoleModelEntry } from '../config/config.js';
-import { CONFIG_LAYERS } from '../config/config.js';
-import type { DoctorCheck } from '../doctor.js';
+import type { ConfigLayer, RoleModelEntry } from '../config/index.js';
+import { CONFIG_LAYERS } from '../config/index.js';
+import type { DoctorCheck } from '../doctor/index.js';
 import {
   assertToolGrantable,
   type EffectivePolicy,
   hasToolPolicy,
   PolicyDeniedError,
-} from '../policy/enterprise.js';
+} from '../policy/index.js';
 
 export class RoleParseError extends Error {
   constructor(message: string) {

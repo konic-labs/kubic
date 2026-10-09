@@ -10,11 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExitCode } from '@kubic/core/cli/exit-codes';
 import { FileJournalStore } from '@kubic/exec/journal';
-import type { GitRequest } from '@kubic/host/git-cli';
-import {
-  type JournalRequest,
-  runJournalCommand,
-} from '@kubic/host/journal-cli';
+import type { GitRequest } from '@kubic/host/git';
+import { type JournalRequest, runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';

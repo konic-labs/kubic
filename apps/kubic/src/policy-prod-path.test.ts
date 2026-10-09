@@ -37,7 +37,7 @@ import {
   NO_ANSWER_SURFACE_REASON,
 } from '@kubic/host/approvals';
 import { runDoctorCommand } from '@kubic/host/doctor';
-import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

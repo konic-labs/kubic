@@ -26,7 +26,7 @@ import {
   visibleWidth,
 } from '@kubic/core/cli/width';
 import { runRoleLabel } from '@kubic/core/run-role';
-import type { HeadlessRunResult, RunProgressSink } from '@kubic/host/run-cli';
+import type { HeadlessRunResult, RunProgressSink } from '@kubic/host/run';
 import {
   summarizeToolArguments,
   summarizeToolOutcome,

@@ -13,10 +13,7 @@ import {
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import {
-  AUDIT_LEDGER_FILE,
-  auditLedgerDirFor,
-} from '@kubic/host/policy/audit-ledger';
+import { AUDIT_LEDGER_FILE, auditLedgerDirFor } from '@kubic/host/audit';
 import { bootScreen } from '@kubic/tui/screen';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

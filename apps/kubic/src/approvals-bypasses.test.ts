@@ -42,10 +42,12 @@ import {
   effectiveConfigView,
   loadRuntimeConfig,
   renderEffectiveConfig,
-} from '@kubic/host/config/runtime';
+} from '@kubic/host/config';
 import type { DoctorDeps } from '@kubic/host/doctor';
-import { runDoctorCommand } from '@kubic/host/doctor';
-import { policyEnforceabilityCheck } from '@kubic/host/limits/doctor-limits';
+import {
+  policyEnforceabilityCheck,
+  runDoctorCommand,
+} from '@kubic/host/doctor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

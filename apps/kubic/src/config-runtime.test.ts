@@ -37,13 +37,11 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   effectiveConfigView,
   loadRuntimeConfig,
-  renderEffectiveConfig,
-} from '@kubic/host/config/runtime';
-import {
   NO_PROJECT_TRUST,
   ProjectTrustStore,
   projectTrustStorePath,
-} from '@kubic/host/config/trust-store';
+  renderEffectiveConfig,
+} from '@kubic/host/config';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   configRefusalExit,

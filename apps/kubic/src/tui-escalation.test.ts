@@ -15,8 +15,7 @@ import {
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { loadRuntimeConfig } from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

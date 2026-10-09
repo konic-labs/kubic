@@ -10,8 +10,8 @@
 
 import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
 import { CliUsageError } from '@kubic/core/cli/exit-codes';
-import type { GitRequest } from '@kubic/host/git-cli';
-import type { JournalRequest } from '@kubic/host/journal-cli';
+import type { GitRequest } from '@kubic/host/git';
+import type { JournalRequest } from '@kubic/host/journal';
 import type {
   CommandContext,
   CommandRegistrar,

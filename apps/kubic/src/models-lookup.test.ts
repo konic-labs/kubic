@@ -11,8 +11,8 @@ import {
   ProjectTrustStore,
   projectTrustCheck,
   projectTrustStorePath,
-} from '@kubic/host/config/trust-store';
-import { assembleModels, findModelsProjectRoot } from '@kubic/host/models-cli';
+} from '@kubic/host/config';
+import { assembleModels, findModelsProjectRoot } from '@kubic/host/models';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

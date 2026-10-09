@@ -22,7 +22,7 @@ import {
   EXIT_OK,
 } from '@kubic/core/cli/exit-codes';
 import { FileJournalStore, sha256Hex } from '@kubic/exec/journal';
-import { runJournalCommand } from '@kubic/host/journal-cli';
+import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { journalRetentionDays, loadCliConfig } from './config-runtime.js';
 

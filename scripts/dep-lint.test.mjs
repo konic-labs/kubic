@@ -275,6 +275,29 @@ describe('dep-lint', () => {
     assert.deepEqual(checkTree(dir), []);
   });
 
+  it('fails when a host folder imports another folder past its entry', () => {
+    const dir = fixtureTree({
+      'packages/host/src/doctor/doctor.ts': `import { runRunCommand } from '../run/run-cli.js';\n`,
+    });
+    assert.deepEqual(checkTree(dir), [
+      {
+        kind: 'folder',
+        from: 'host/doctor',
+        to: 'host/run',
+        file: join('packages', 'host', 'src', 'doctor', 'doctor.ts'),
+        line: 1,
+      },
+    ]);
+  });
+
+  it('allows a host folder to import another folder through its entry, and its own modules', () => {
+    const dir = fixtureTree({
+      'packages/host/src/doctor/doctor.ts': `import { runRunCommand } from '../run/index.js';\nimport { render } from './doctor-render.js';\n`,
+      'packages/host/src/doctor/checks/limits.ts': `import { DoctorCheck } from '../doctor.js';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
   it('allows a relative import within the same package', () => {
     const dir = fixtureTree({
       'packages/tui/src/a.ts': `import { b } from './b.js';\n`,

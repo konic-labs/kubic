@@ -21,16 +21,13 @@ import {
 import { EXIT_PROVIDER } from '@kubic/core/cli/exit-codes';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FileJournalStore } from '@kubic/exec/journal';
+import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import {
   loadRuntimeConfig,
+  NO_PROJECT_TRUST,
   type RuntimeConfig,
-} from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
-import { runJournalCommand } from '@kubic/host/journal-cli';
-import {
-  auditLedgerDir,
-  readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
+} from '@kubic/host/config';
+import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
 import { runtimeLaneDeps, runtimeModelPin } from '../config-runtime.js';

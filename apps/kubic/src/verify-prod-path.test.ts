@@ -32,8 +32,7 @@ import {
   disposeAllGitSandboxes,
   type GitSandbox,
 } from '@kubic/exec/test-support/git-sandbox';
-import { loadRuntimeConfig } from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,

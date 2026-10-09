@@ -17,12 +17,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { effectiveConfigView } from '@kubic/host/config/runtime';
+import { effectiveConfigView } from '@kubic/host/config';
 import {
+  planSessionPrune,
   runSessionsCommand,
   type SessionsInvocation,
-} from '@kubic/host/sessions-cli';
-import { planSessionPrune } from '@kubic/host/sessions-prune';
+} from '@kubic/host/sessions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadCliConfig, sessionRetentionDays } from './config-runtime.js';
 

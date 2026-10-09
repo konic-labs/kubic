@@ -25,12 +25,9 @@ import {
   installedPolicyPosture,
   installPolicy,
 } from '@kubic/host/approvals';
+import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import { collectDoctorChecks } from '@kubic/host/doctor';
-import {
-  auditLedgerDir,
-  readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
-import { mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   installedPolicyDeps,

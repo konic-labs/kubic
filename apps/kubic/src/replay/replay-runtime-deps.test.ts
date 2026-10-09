@@ -33,14 +33,13 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { loadRuntimeConfig } from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import {
+  createProdReplayRun,
   type ReplayRunRequest,
   type ReplayRuntimeDeps,
   runReplayCommand,
-} from '@kubic/host/replay/replay';
-import { createProdReplayRun } from '@kubic/host/replay/run-prod';
+} from '@kubic/host/replay';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

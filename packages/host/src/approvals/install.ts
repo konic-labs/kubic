@@ -12,7 +12,7 @@ import {
   auditLedgerDirFor,
   decisionAudit,
   postureChangedAudit,
-} from '../policy/audit-ledger.js';
+} from '../audit/index.js';
 import type { ControlPlaneRoots } from './control-plane.js';
 import { controlPlaneRefusal } from './control-plane.js';
 import { recordFullAccessChange } from './full-access.js';

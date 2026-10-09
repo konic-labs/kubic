@@ -21,17 +21,17 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { createLedgerModelKeyResolver } from '@kubic/host/config/model-key-audit';
+import {
+  auditLedgerDir,
+  createLedgerModelKeyResolver,
+  readAuditLedger,
+  runAuditCommand,
+} from '@kubic/host/audit';
+import { assembleModels } from '@kubic/host/models';
 import {
   createModelKeyResolver,
   parseSecretRef,
-} from '@kubic/host/config/secrets';
-import { assembleModels } from '@kubic/host/models-cli';
-import { runAuditCommand } from '@kubic/host/policy/audit-cli';
-import {
-  auditLedgerDir,
-  readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
+} from '@kubic/host/secret-refs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

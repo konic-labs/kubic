@@ -21,7 +21,7 @@ import {
   parseRunMaxTurns,
   parseRunTimeout,
   runRunCommand,
-} from '@kubic/host/run-cli';
+} from '@kubic/host/run';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';

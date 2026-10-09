@@ -13,11 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runExportCommand } from '@kubic/eval/export-cli';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import {
-  AUDIT_LEDGER_FILE,
-  auditLedgerDirFor,
-} from '@kubic/host/policy/audit-ledger';
-import { runReplayCommand } from '@kubic/host/replay/replay';
+import { AUDIT_LEDGER_FILE, auditLedgerDirFor } from '@kubic/host/audit';
+import { runReplayCommand } from '@kubic/host/replay';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';

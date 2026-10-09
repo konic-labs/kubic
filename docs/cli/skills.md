@@ -2,8 +2,8 @@
 
 > Skills discovery, gating and prompt injection.
 > Implementation: `packages/agent/src/skills/skills.ts` (the loader),
-> `packages/host/src/skills-boot.ts` (lane boot + listing summary),
-> `packages/host/src/skills-cli.ts` (`kubic skills`),
+> `packages/host/src/skills/skills-boot.ts` (lane boot + listing summary),
+> `packages/host/src/skills/skills-cli.ts` (`kubic skills`),
 > `apps/kubic/src/prod-runners.ts` (prod wiring).
 
 Skills are markdown documents (`SKILL.md`) the agent can read: reusable

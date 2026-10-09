@@ -14,7 +14,7 @@ import {
   fauxToolCall,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import type { RunProgressSink } from '@kubic/host/run-cli';
+import type { RunProgressSink } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

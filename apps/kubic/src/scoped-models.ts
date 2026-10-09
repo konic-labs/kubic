@@ -1,7 +1,7 @@
 // The `/scoped-models` report: the role's resolved
 // allowed set as one transcript line. Pure (no lane, no app) so the
 // wording is pinned next to the code; the loop case only appends it.
-import type { RoleModelEntry } from '@kubic/host/config/config';
+import type { RoleModelEntry } from '@kubic/host/config';
 
 export function formatScopedModels(
   role: string | undefined,

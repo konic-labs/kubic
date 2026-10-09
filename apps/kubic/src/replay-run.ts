@@ -18,13 +18,13 @@
 import { ModelSelectError, parseModelFlag } from '@kubic/agent/model-select';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { assembleModels } from '@kubic/host/models-cli';
+import { assembleModels } from '@kubic/host/models';
 import type {
   ReplayRunRequest,
   ReplayRunResult,
   ReplayRuntimeDeps,
-} from '@kubic/host/replay/replay';
-import { createProdReplayRun } from '@kubic/host/replay/run-prod';
+} from '@kubic/host/replay';
+import { createProdReplayRun } from '@kubic/host/replay';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { runHeadlessPrompt } from './headless-run.js';
 

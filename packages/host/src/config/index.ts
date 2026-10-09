@@ -1,0 +1,52 @@
+// Configuration: the TOML layers and their validation, the runtime load every
+// command runs on, comment-preserving edits, project trust, the MCP and ACP
+// stances, and the `kubic config`, `kubic setup` and `kubic trust` commands.
+export type {
+  AuditTableConfig,
+  ConfigLayer,
+  KubicConfig,
+  RoleModelEntry,
+} from './config.js';
+export {
+  CONFIG_LAYERS,
+  checkModelStreamTuning,
+  /** @internal */ parseTomlConfig,
+} from './config.js';
+export type { ConfigCommandOptions } from './config-cli.js';
+export { runConfigCommand } from './config-cli.js';
+export { buildConfigDoctorInput, configDoctorProbe } from './config-doctor.js';
+export type {
+  RuntimeConfig,
+  RuntimeEscalation,
+  RuntimeThinking,
+  RuntimeVerify,
+} from './runtime.js';
+export {
+  checkWorkspaceIgnoreSplit,
+  compactionSummaryLine,
+  effectiveConfigView,
+  loadRuntimeConfig,
+  MS_PER_DAY,
+  /** @internal */ renderEffectiveConfig,
+} from './runtime.js';
+export type {
+  SetupCommandOptions,
+  SetupDeps,
+  SetupProviderChoice,
+  SetupUi,
+} from './setup-cli.js';
+export { runSetupCommand } from './setup-cli.js';
+export {
+  /** @internal */ MCP_ARRIVAL_REQUIREMENTS,
+  mcpRefusalMessage,
+} from './stances.js';
+export type { TrustCommandOptions } from './trust-cli.js';
+export { runTrustCommand } from './trust-cli.js';
+export type { ProjectTrustCheck, ProjectTrustReport } from './trust-store.js';
+export {
+  NO_PROJECT_TRUST,
+  ProjectTrustStore,
+  projectTrustCheck,
+  projectTrustReport,
+  projectTrustStorePath,
+} from './trust-store.js';

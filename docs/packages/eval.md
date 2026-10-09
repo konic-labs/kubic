@@ -113,7 +113,7 @@ success.
 
 ### Signals and patch quality
 
-The shipped producer of the gate labels is the run verifier (`packages/host/src/verify/verifier.ts`). The `[verify]` commands (see
+The shipped producer of the gate labels is the run verifier (`packages/host/src/run/verifier.ts`). The `[verify]` commands (see
 [configuration](../cli/configuration.md#gate-verification-verify)) run in
 the worktree after `kubic run` settles, and their exit statuses become
 `signal:tests|build|lint|typecheck`. A baseline run at the base revision

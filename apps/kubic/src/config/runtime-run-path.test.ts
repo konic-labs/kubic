@@ -31,10 +31,10 @@ import {
 } from '@kubic/exec/journal';
 import {
   loadRuntimeConfig,
+  NO_PROJECT_TRUST,
   type RuntimeConfig,
-} from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
-import { runJournalCommand } from '@kubic/host/journal-cli';
+} from '@kubic/host/config';
+import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runtimeLaneDeps, runtimeRunDeps } from '../config-runtime.js';
 import { runHeadlessPrompt } from '../headless-run.js';

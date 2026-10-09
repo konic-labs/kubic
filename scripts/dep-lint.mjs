@@ -43,6 +43,19 @@ const IMPORT_RE =
 const TEST_SUPPORT_SPEC = /(^|\/)test-support(\/|$)/;
 const TEST_FILE = /\.test\.m?[jt]sx?$/;
 
+// Packages organised into concern folders, each with an index.ts entry: a
+// module in one folder reaches another folder only through that entry, never
+// into its internal modules. test-support/ holds shared test fixtures, not a
+// concern, so tests import its modules directly.
+const FOLDER_ENTRY_PACKAGES = new Set(['host']);
+
+// The concern folder a file under packages/<owner>/src/ belongs to, or null
+// for a file at the src root (or outside src).
+function concernFolder(owner, file, root) {
+  const parts = relative(join(root, 'packages', owner, 'src'), file).split(sep);
+  return parts.length > 1 && parts[0] !== '..' ? parts[0] : null;
+}
+
 // The app's manifest is `@kubic/cli`; its directory, apps/kubic, is the
 // `kubic` owner in FORBIDDEN.
 const OWNER_OF_PACKAGE_NAME = { cli: 'kubic' };
@@ -189,6 +202,32 @@ export function checkTree(root) {
           }
           continue;
         }
+        if (FOLDER_ENTRY_PACKAGES.has(owner) && spec.startsWith('.')) {
+          const from = concernFolder(owner, file, root);
+          const abs = resolve(dirname(file), spec);
+          const to = concernFolder(owner, abs, root);
+          const entry =
+            to !== null &&
+            relative(join(root, 'packages', owner, 'src', to), abs) ===
+              'index.js';
+          if (
+            from !== null &&
+            to !== null &&
+            from !== to &&
+            to !== 'test-support' &&
+            !entry
+          ) {
+            // A deep import into another concern folder: go through its entry.
+            violations.push({
+              kind: 'folder',
+              from: `${owner}/${from}`,
+              to: `${owner}/${to}`,
+              file: relative(root, file),
+              line,
+            });
+            continue;
+          }
+        }
         const target = resolveTarget(owner, file, spec, root);
         if (target === null) continue;
         if (spec.startsWith('.')) {
@@ -240,7 +279,9 @@ if (isMain) {
     const what =
       v.kind === 'relative'
         ? `relative import into package ${v.to} from ${v.from} (import it by name: @kubic/<pkg>/<subpath>)`
-        : `forbidden import ${v.from} -> ${v.to}`;
+        : v.kind === 'folder'
+          ? `deep import into ${v.to}/ from ${v.from}/ (import its entry: ../${v.to.split('/')[1]}/index.js)`
+          : `forbidden import ${v.from} -> ${v.to}`;
     console.log(`${v.file}:${v.line}: ${what}`);
   }
   if (violations.length > 0) {

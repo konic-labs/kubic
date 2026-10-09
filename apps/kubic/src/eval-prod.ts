@@ -23,8 +23,8 @@ import { type EvalSuite, findSuite } from '@kubic/eval/suites';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { gitHeadOf, withDetachedCheckout } from '@kubic/exec/git-clean';
-import { assembleModels } from '@kubic/host/models-cli';
-import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
+import { assembleModels } from '@kubic/host/models';
+import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import {
   type CliConfigResult,

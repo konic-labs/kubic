@@ -13,10 +13,7 @@ import {
   DEFAULT_PERMISSIONS,
   type PermissionClasses,
 } from '@kubic/agent/permissions';
-import type {
-  ReplayRunRequest,
-  ReplayRuntimeDeps,
-} from '@kubic/host/replay/replay';
+import type { ReplayRunRequest, ReplayRuntimeDeps } from '@kubic/host/replay';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

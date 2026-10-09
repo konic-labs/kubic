@@ -19,7 +19,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileJournalStore } from '@kubic/exec/journal';
-import { runJournalCommand } from '@kubic/host/journal-cli';
+import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadCliConfig, sessionRetentionDays } from './config-runtime.js';
 

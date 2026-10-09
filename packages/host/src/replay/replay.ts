@@ -56,8 +56,8 @@ import {
   TrajectorySchemaError,
 } from '@kubic/trajectory/schema';
 import type { ApprovalConfig } from '../approvals/index.js';
-import type { EffectivePolicy } from '../policy/enterprise.js';
-import type { RoleLayerInput } from '../roles/resolver.js';
+import type { EffectivePolicy } from '../policy/index.js';
+import type { RoleLayerInput } from '../roles/index.js';
 
 type ReplayTier = 'recorded' | 'deterministic' | 'live';
 

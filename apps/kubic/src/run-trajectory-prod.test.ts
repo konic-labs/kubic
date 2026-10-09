@@ -7,9 +7,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NodeExecutionEnv, toolSpawnEnv } from '@kubic/exec/env';
-import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from '@kubic/host/faux-provider';
-import { runRunCommand } from '@kubic/host/run-cli';
-import { trajectoryResultFor } from '@kubic/host/trajectory/run-trajectory';
+import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from '@kubic/host/models';
+import { runRunCommand, trajectoryResultFor } from '@kubic/host/run';
 import {
   parseTrajectoryExportJSON,
   type TrajectoryExport,

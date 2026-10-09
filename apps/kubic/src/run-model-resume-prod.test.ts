@@ -25,7 +25,7 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane } from './tui-run.js';

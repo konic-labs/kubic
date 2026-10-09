@@ -3,7 +3,7 @@
 // parity flags; this pins what reaches `bootTuiLane` — including the model
 // pin — without opening a terminal.
 
-import { resolveEffectivePolicy } from '@kubic/host/policy/enterprise';
+import { resolveEffectivePolicy } from '@kubic/host/policy';
 import { describe, expect, it } from 'vitest';
 import { tuiBootOptions, tuiDepsWithDefaults } from './tui-run.js';
 

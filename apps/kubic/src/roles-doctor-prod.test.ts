@@ -18,9 +18,9 @@ import { type DoctorDeps, runDoctorCommand } from '@kubic/host/doctor';
 import {
   type EffectivePolicy,
   resolveEffectivePolicy,
-} from '@kubic/host/policy/enterprise';
-import type { RoleLayerInput } from '@kubic/host/roles/resolver';
-import { rolesDoctorProbe } from '@kubic/host/roles/roles-boot';
+} from '@kubic/host/policy';
+import type { RoleLayerInput } from '@kubic/host/roles';
+import { rolesDoctorProbe } from '@kubic/host/roles';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const roots: string[] = [];

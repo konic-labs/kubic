@@ -14,7 +14,7 @@ import {
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/env';
-import { mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 import { bootTuiLane } from './tui-run.js';

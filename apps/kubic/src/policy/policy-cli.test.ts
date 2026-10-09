@@ -7,12 +7,10 @@ import { REDACTED_SECRET } from '@kubic/core/secret-shapes';
 import {
   type EffectivePolicy,
   isToolAllowed,
-  resolveEffectivePolicy,
-} from '@kubic/host/policy/enterprise';
-import {
   policyWithInstalledAllowlist,
+  resolveEffectivePolicy,
   runPolicyCommand,
-} from '@kubic/host/policy/policy-cli';
+} from '@kubic/host/policy';
 import { describe, expect, it } from 'vitest';
 
 // stdout (`lines`) and stderr (`errs`) captured separately.

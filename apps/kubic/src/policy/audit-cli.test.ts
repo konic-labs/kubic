@@ -7,12 +7,13 @@ import {
   containsSecretShape,
   REDACTED_SECRET,
 } from '@kubic/core/secret-shapes';
-import { AUDIT_FIELDS, type OrgAuditRecord } from '@kubic/host/policy/audit';
-import { runAuditCommand } from '@kubic/host/policy/audit-cli';
 import {
+  AUDIT_FIELDS,
   fullAccessEnabledAudit,
+  type OrgAuditRecord,
+  runAuditCommand,
   undoRestoreAudit,
-} from '@kubic/host/policy/audit-ledger';
+} from '@kubic/host/audit';
 import { EXAMPLE_AUDIT_RECORD } from '@kubic/host/test-support/audit-fixtures';
 import { describe, expect, it } from 'vitest';
 

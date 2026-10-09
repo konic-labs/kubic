@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import type { CommandResult } from '@kubic/core/cli/exit-codes';
 import { createCliTheme } from '@kubic/core/cli/theme';
 import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { NO_PROJECT_TRUST } from '@kubic/host/config';
 import {
   afterAll,
   afterEach,

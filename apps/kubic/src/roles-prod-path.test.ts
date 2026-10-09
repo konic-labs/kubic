@@ -22,10 +22,10 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { projectTrustCheck } from '@kubic/host/config/trust-store';
+import { projectTrustCheck } from '@kubic/host/config';
 import { runDoctorCommand } from '@kubic/host/doctor';
-import { rolesDoctorProbe } from '@kubic/host/roles/roles-boot';
-import { runRunCommand } from '@kubic/host/run-cli';
+import { rolesDoctorProbe } from '@kubic/host/roles';
+import { runRunCommand } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

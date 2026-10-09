@@ -19,7 +19,7 @@ import {
   parseRunMaxTurns,
   parseRunTimeout,
   parseSessionIdArg,
-} from '@kubic/host/run-cli';
+} from '@kubic/host/run';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
 
 // The `--model` help: one sentence per behaviour the

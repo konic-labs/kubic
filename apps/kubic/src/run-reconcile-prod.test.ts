@@ -26,7 +26,7 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FileJournalStore, restoreEntry } from '@kubic/exec/journal';
-import { runJournalCommand } from '@kubic/host/journal-cli';
+import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

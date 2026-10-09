@@ -25,12 +25,12 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { resolveEffectivePolicy } from '@kubic/host/policy/enterprise';
+import { resolveEffectivePolicy } from '@kubic/host/policy';
 import {
   buildRunEnvelope,
   mapTerminusToExitCode,
   runRunCommand,
-} from '@kubic/host/run-cli';
+} from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

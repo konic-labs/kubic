@@ -18,11 +18,8 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import {
-  auditLedgerDirFor,
-  readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
-import { buildRunEnvelope } from '@kubic/host/run-cli';
+import { auditLedgerDirFor, readAuditLedger } from '@kubic/host/audit';
+import { buildRunEnvelope } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

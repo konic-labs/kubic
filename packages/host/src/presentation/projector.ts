@@ -1,4 +1,4 @@
-// 's host-side projector: folds the replicated event stream
+// The host-side projector: folds the replicated event stream
 // into a `KubicPresentationState`, so the presentation renders state instead
 // of folding raw events ("The presentation does not fold raw events").
 //

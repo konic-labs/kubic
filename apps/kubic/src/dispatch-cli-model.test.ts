@@ -6,7 +6,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ConfigCommandOptions } from '@kubic/host/config/config-cli';
+import type { ConfigCommandOptions } from '@kubic/host/config';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { DispatchRunners } from './cli/context.js';
 import {

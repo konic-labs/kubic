@@ -33,12 +33,9 @@ import {
   FULL_ACCESS_FLAG,
   installPolicy,
 } from '@kubic/host/approvals';
-import {
-  auditLedgerDir,
-  readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
-import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run-cli';
-import { runSessionsCommand } from '@kubic/host/sessions-cli';
+import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
+import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run';
+import { runSessionsCommand } from '@kubic/host/sessions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { loadCliConfig } from './config-runtime.js';

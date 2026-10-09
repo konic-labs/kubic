@@ -24,10 +24,7 @@ import {
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { installPolicy } from '@kubic/host/approvals';
-import {
-  auditLedgerDir,
-  readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
+import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';

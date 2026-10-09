@@ -15,10 +15,7 @@ import {
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import {
-  auditLedgerDir,
-  readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
+import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { bootTuiLane, runTuiCommand, type TuiRunDeps } from './tui-run.js';

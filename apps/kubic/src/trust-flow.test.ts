@@ -10,8 +10,8 @@ import { join } from 'node:path';
 import {
   ProjectTrustStore,
   projectTrustStorePath,
-} from '@kubic/host/config/trust-store';
-import { runTrustCommand } from '@kubic/host/trust-cli';
+  runTrustCommand,
+} from '@kubic/host/config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadCliConfig } from './config-runtime.js';
 

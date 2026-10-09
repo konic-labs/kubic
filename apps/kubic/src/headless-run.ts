@@ -101,74 +101,63 @@ import {
   installPolicy,
   TIMEOUT_REASON_MARKER,
 } from '@kubic/host/approvals';
-import { createLedgerModelKeyResolver } from '@kubic/host/config/model-key-audit';
-import type {
-  RuntimeThinking,
-  RuntimeVerify,
-} from '@kubic/host/config/runtime';
-import {
-  matchableSecrets,
-  redactBridgeWrites,
-  redactingSink,
-  redactSecretValues,
-} from '@kubic/host/config/secrets';
-import {
-  FAUX_NOTICE,
-  invalidProviderMessage,
-  providerOverrideFromEnv,
-} from '@kubic/host/faux-provider';
-import {
-  emitNoIsolationNotice,
-  shouldEmitNotice,
-} from '@kubic/host/limits/no-isolation-notice';
-import { assembleModels } from '@kubic/host/models-cli';
-import { readSessionRunUsage } from '@kubic/host/ops/cost/cost-cli';
 import {
   appendToLedger,
   auditLedgerDirFor,
+  createLedgerModelKeyResolver,
   resolveRunBaseRevision,
   runStartAudit,
-} from '@kubic/host/policy/audit-ledger';
+} from '@kubic/host/audit';
+import { findProjectRoot } from '@kubic/host/cli';
+import type { RuntimeThinking, RuntimeVerify } from '@kubic/host/config';
+import { readSessionRunUsage } from '@kubic/host/cost';
+import { emitNoIsolationNotice, shouldEmitNotice } from '@kubic/host/doctor';
+import {
+  assembleModels,
+  FAUX_NOTICE,
+  invalidProviderMessage,
+  providerOverrideFromEnv,
+} from '@kubic/host/models';
 import {
   type EffectivePolicy,
   hasModelPolicy,
   hasToolPolicy,
   isModelAllowed,
   isToolAllowedByEnterprise,
-} from '@kubic/host/policy/enterprise';
-import { findProjectRoot } from '@kubic/host/project-root';
-import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles/resolver';
-import { effectiveRoleClasses } from '@kubic/host/roles/resolver';
+} from '@kubic/host/policy';
+import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles';
 import {
+  effectiveRoleClasses,
   rolePromptFor,
   type SelectedRole,
   selectRole,
-} from '@kubic/host/roles/roles-boot';
-import type { RunProgressSink } from '@kubic/host/run-cli';
+} from '@kubic/host/roles';
+import type { DebugSink, RunOutcome, RunProgressSink } from '@kubic/host/run';
 import {
   DEFAULT_RUN_TIMEOUT_MS,
   type HeadlessRunResult,
+  hasVerifyCommands,
+  hookErrorLine,
   type LaneOutcomeTerminus,
   MAX_RUN_TIMEOUT_MS,
   mapCaughtErrorToTerminus,
   mapLaneOutcomeToFailure,
+  modelLine,
   type RetryRecord,
-} from '@kubic/host/run-cli';
-import {
   RunSpans,
   runSpanHooks,
-  serializeSpanArtifact,
-} from '@kubic/host/run-spans';
-import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
-import { bootSkills } from '@kubic/host/skills-boot';
-import type { DebugSink } from '@kubic/host/spans';
-import { hookErrorLine, modelLine } from '@kubic/host/spans';
-import type { RunOutcome } from '@kubic/host/trajectory/run-trajectory';
-import {
-  hasVerifyCommands,
   runVerifier,
+  serializeSpanArtifact,
   verifierLabels,
-} from '@kubic/host/verify/verifier';
+} from '@kubic/host/run';
+import {
+  matchableSecrets,
+  redactBridgeWrites,
+  redactingSink,
+  redactSecretValues,
+} from '@kubic/host/secret-refs';
+import { defaultSessionsRoot } from '@kubic/host/sessions';
+import { bootSkills } from '@kubic/host/skills';
 import {
   resolveRoleThinking,
   roleModelScope,

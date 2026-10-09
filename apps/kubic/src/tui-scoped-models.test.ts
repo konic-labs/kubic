@@ -13,8 +13,7 @@ import {
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { loadRuntimeConfig } from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import type { CliConfigResult } from './config-runtime.js';

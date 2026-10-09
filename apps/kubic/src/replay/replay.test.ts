@@ -10,7 +10,7 @@ import {
   type ReplayCommandOptions,
   type ReplayRunResult,
   runReplayCommand,
-} from '@kubic/host/replay/replay';
+} from '@kubic/host/replay';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { afterEach, describe, expect, it, vi } from 'vitest';

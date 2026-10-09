@@ -139,55 +139,62 @@ import {
   installPolicy,
   type SessionFullAccessGrant,
 } from '@kubic/host/approvals';
-import type { RoleModelEntry } from '@kubic/host/config/config';
-import { createLedgerModelKeyResolver } from '@kubic/host/config/model-key-audit';
+import {
+  createLedgerModelKeyResolver,
+  resolveRunBaseRevision,
+} from '@kubic/host/audit';
+import { findProjectRoot } from '@kubic/host/cli';
 import type {
+  RoleModelEntry,
   RuntimeEscalation,
   RuntimeThinking,
-} from '@kubic/host/config/runtime';
-import {
-  FAUX_FOOTER,
-  FAUX_MODEL_ID,
-  FAUX_PROVIDER_ID,
-  fauxProviderActive,
-} from '@kubic/host/faux-provider';
+} from '@kubic/host/config';
 import {
   noIsolationNoticeLines,
   noIsolationTuiLine,
   shouldEmitNotice,
-} from '@kubic/host/limits/no-isolation-notice';
-import { type AssembledModels, assembleModels } from '@kubic/host/models-cli';
-import { resolveRunBaseRevision } from '@kubic/host/policy/audit-ledger';
+} from '@kubic/host/doctor';
+import {
+  type AssembledModels,
+  assembleModels,
+  FAUX_FOOTER,
+  FAUX_MODEL_ID,
+  FAUX_PROVIDER_ID,
+  fauxProviderActive,
+  providerKeyHints,
+} from '@kubic/host/models';
 import {
   type EffectivePolicy,
   hasModelPolicy,
   hasToolPolicy,
   isModelAllowed,
   isToolAllowedByEnterprise,
-} from '@kubic/host/policy/enterprise';
-import { PresentationProjector } from '@kubic/host/presentation/projector';
-import { findProjectRoot } from '@kubic/host/project-root';
-import { providerKeyHints } from '@kubic/host/provider-key-hints';
-import type { RoleLayerInput } from '@kubic/host/roles/resolver';
-import { effectiveRoleClasses } from '@kubic/host/roles/resolver';
-import { rolePromptFor, selectRole } from '@kubic/host/roles/roles-boot';
+} from '@kubic/host/policy';
+import { PresentationProjector } from '@kubic/host/presentation';
+import type { RoleLayerInput } from '@kubic/host/roles';
 import {
+  effectiveRoleClasses,
+  rolePromptFor,
+  selectRole,
+} from '@kubic/host/roles';
+import type { DebugSink, RunOutcome } from '@kubic/host/run';
+import {
+  hookErrorLine,
   mapCaughtErrorToTerminus,
+  modelLine,
   type RunTerminusKind,
-} from '@kubic/host/run-cli';
-import { TurnSpans, type TurnSpansSink } from '@kubic/host/run-spans';
+  TurnSpans,
+  type TurnSpansSink,
+} from '@kubic/host/run';
+import type { SessionUsageRow } from '@kubic/host/sessions';
 import {
+  defaultSessionsRoot,
+  readSessionUsage,
   type SessionSummary,
   summarizeProjectSessions,
-} from '@kubic/host/session-summaries';
-import type { SessionUsageRow } from '@kubic/host/session-usage';
-import { readSessionUsage } from '@kubic/host/session-usage';
-import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
-import type { SkippedSkill } from '@kubic/host/skills-boot';
-import { bootSkills, describeSkillSkips } from '@kubic/host/skills-boot';
-import type { DebugSink } from '@kubic/host/spans';
-import { hookErrorLine, modelLine } from '@kubic/host/spans';
-import type { RunOutcome } from '@kubic/host/trajectory/run-trajectory';
+} from '@kubic/host/sessions';
+import type { SkippedSkill } from '@kubic/host/skills';
+import { bootSkills, describeSkillSkips } from '@kubic/host/skills';
 import { createApprovalSurface } from '@kubic/tui/approval-surface';
 import {
   type AttachmentImage,

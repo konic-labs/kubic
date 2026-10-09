@@ -3,7 +3,7 @@ import {
   auditLedgerDirFor,
   fullAccessDisabledAudit,
   fullAccessEnabledAudit,
-} from '../policy/audit-ledger.js';
+} from '../audit/index.js';
 import type { AccessPosture } from './stores.js';
 import { FileApprovalStore } from './stores.js';
 

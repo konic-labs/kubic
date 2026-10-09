@@ -27,7 +27,7 @@ import {
   hasToolPolicy,
   isToolAllowed,
   isToolAllowedByEnterprise,
-} from '../policy/enterprise.js';
+} from '../policy/index.js';
 import { ConfigError, ProjectUntrustedError } from './config.js';
 import {
   checkWorkspaceIgnoreSplit,

@@ -12,18 +12,18 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { gitHeadOf } from '@kubic/exec/git-clean';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { diffEntries, type FileChange } from '@kubic/exec/journal-diff';
-import type { OrgAuditRecord } from '@kubic/host/policy/audit';
+import type { OrgAuditRecord } from '@kubic/host/audit';
 import {
   AUDIT_LEDGER_FILE,
   auditLedgerDirFor,
   readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
+} from '@kubic/host/audit';
 import {
   assembleRunTrajectory,
   type RunOutcome,
   TRAJECTORY_FILE,
   writeRunTrajectory,
-} from '@kubic/host/trajectory/run-trajectory';
+} from '@kubic/host/run';
 import type { TrajectoryEscalation } from '@kubic/trajectory/schema';
 
 // Recorded when the workspace is not a git checkout: the journal, not git,

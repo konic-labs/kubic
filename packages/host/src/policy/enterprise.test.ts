@@ -29,7 +29,7 @@ logging_policy = "full-audit"
 
   it('translates the policy example into engine leaves', async () => {
     const mod = await import('./enterprise.js');
-    const { parseTomlConfig } = await import('../config/config.js');
+    const { parseTomlConfig } = await import('../config/index.js');
     const layer = mod.layerPolicyFromConfig(parseTomlConfig(POLICY_EXAMPLE));
     expect(layer.tools?.allow).toContain('bash');
     expect(layer.tools?.deny).toEqual(['network_fetch']);

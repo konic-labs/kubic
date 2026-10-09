@@ -33,26 +33,17 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { JournalRetention } from '@kubic/exec/journal';
 import { gitSync } from '@kubic/exec/runtime-exclude';
 import type { ApprovalConfig } from '@kubic/host/approvals';
-import type { RoleModelEntry } from '@kubic/host/config/config';
-import {
-  CONFIG_LAYERS,
-  checkModelStreamTuning,
-} from '@kubic/host/config/config';
+import { findProjectRoot } from '@kubic/host/cli';
+import type { RoleModelEntry, RuntimeEscalation } from '@kubic/host/config';
 import {
   buildConfigDoctorInput,
-  configDoctorProbe,
-} from '@kubic/host/config/config-doctor';
-import type { RuntimeEscalation } from '@kubic/host/config/runtime';
-import {
+  CONFIG_LAYERS,
+  checkModelStreamTuning,
   checkWorkspaceIgnoreSplit,
   compactionSummaryLine,
+  configDoctorProbe,
   effectiveConfigView,
   loadRuntimeConfig,
-  type RuntimeConfig,
-  type RuntimeThinking,
-  type RuntimeVerify,
-} from '@kubic/host/config/runtime';
-import {
   NO_PROJECT_TRUST,
   type ProjectTrustCheck,
   type ProjectTrustReport,
@@ -60,18 +51,20 @@ import {
   projectTrustCheck,
   projectTrustReport,
   projectTrustStorePath,
-} from '@kubic/host/config/trust-store';
+  type RuntimeConfig,
+  type RuntimeThinking,
+  type RuntimeVerify,
+} from '@kubic/host/config';
 import type { DepProbe } from '@kubic/host/doctor';
-import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from '@kubic/host/faux-provider';
+import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from '@kubic/host/models';
 import {
   type EffectivePolicy,
   hasModelPolicy,
   isModelAllowed,
   isProviderAllowed,
-} from '@kubic/host/policy/enterprise';
-import { findProjectRoot } from '@kubic/host/project-root';
-import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles/resolver';
-import { roleModelAllowed, roleModelEntry } from '@kubic/host/roles/resolver';
+} from '@kubic/host/policy';
+import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles';
+import { roleModelAllowed, roleModelEntry } from '@kubic/host/roles';
 import {
   roleModelSelection,
   selectionOrigin,

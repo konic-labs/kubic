@@ -23,7 +23,7 @@ import {
 } from '@kubic/agent/lane/interceptors';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseTomlConfig } from '../config/config.js';
+import { parseTomlConfig } from '../config/index.js';
 import { installPolicy } from './install.js';
 import { CAPABILITIES, validatePolicy } from './policy.js';
 import { ApprovalService } from './service.js';

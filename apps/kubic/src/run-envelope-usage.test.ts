@@ -14,8 +14,8 @@ import {
   fauxToolCall,
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/env';
-import { loadSessionCostRows } from '@kubic/host/ops/cost/cost-cli';
-import { buildRunEnvelope } from '@kubic/host/run-cli';
+import { loadSessionCostRows } from '@kubic/host/cost';
+import { buildRunEnvelope } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

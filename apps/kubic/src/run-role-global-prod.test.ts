@@ -15,8 +15,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadRuntimeConfig } from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliConfigResult } from './config-runtime.js';
 import { createProdRunners } from './prod-runners.js';

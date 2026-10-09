@@ -25,15 +25,12 @@ import {
   createGitSandbox,
   disposeAllGitSandboxes,
 } from '@kubic/exec/test-support/git-sandbox';
+import { auditLedgerDirFor, readAuditLedger } from '@kubic/host/audit';
 import {
   colorizeDiffLine,
   type JournalRequest,
   runJournalCommand,
-} from '@kubic/host/journal-cli';
-import {
-  auditLedgerDirFor,
-  readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
+} from '@kubic/host/journal';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const made: string[] = [];

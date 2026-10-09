@@ -16,7 +16,7 @@ import {
 } from '@kubic/core/cli/exit-codes';
 import { formatJson } from '@kubic/core/cli/output';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
-import { type CliIo, diagnosticsOf } from '../cli-io.js';
+import { type CliIo, diagnosticsOf } from '../cli/index.js';
 import {
   effectiveConfigView,
   type RuntimeConfig,

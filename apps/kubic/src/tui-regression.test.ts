@@ -15,7 +15,7 @@ import {
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/env';
-import { runRunCommand } from '@kubic/host/run-cli';
+import { runRunCommand } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';

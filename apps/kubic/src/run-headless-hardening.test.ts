@@ -14,7 +14,7 @@ import {
   type MutableModels,
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/env';
-import { mapTerminusToExitCode } from '@kubic/host/run-cli';
+import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

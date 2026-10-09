@@ -17,9 +17,9 @@ import {
 } from '@kubic/host/approvals';
 import {
   loadRuntimeConfig,
+  NO_PROJECT_TRUST,
   type RuntimeConfig,
-} from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+} from '@kubic/host/config';
 import { describe, expect, it } from 'vitest';
 import { type CliConfigResult, installedPolicyDeps } from './config-runtime.js';
 

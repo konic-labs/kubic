@@ -23,7 +23,7 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FileJournalStore } from '@kubic/exec/journal';
-import { runJournalCommand } from '@kubic/host/journal-cli';
+import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it } from 'vitest';
 import { bootTuiLane } from './tui-run.js';
 

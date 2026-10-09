@@ -34,17 +34,15 @@ import {
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { REDACTED_SECRET } from '@kubic/core/secret-shapes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { FAUX_PROVIDER_ID } from '@kubic/host/faux-provider';
 import {
   loadSessionCostRows,
   readSessionRunUsage,
   runCostCommand,
-} from '@kubic/host/ops/cost/cost-cli';
-import {
   summarizeSessionCost,
   toCostJson,
-} from '@kubic/host/ops/cost/session-cost';
-import { readSessionUsage, totalSessionUsage } from '@kubic/host/session-usage';
+} from '@kubic/host/cost';
+import { FAUX_PROVIDER_ID } from '@kubic/host/models';
+import { readSessionUsage, totalSessionUsage } from '@kubic/host/sessions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const attached = vi.hoisted(() => ({

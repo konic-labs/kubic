@@ -24,8 +24,8 @@ import {
 import { FakeExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { collectDoctorChecks } from '@kubic/host/doctor';
-import { mapTerminusToExitCode } from '@kubic/host/run-cli';
-import { runSessionsCommand } from '@kubic/host/sessions-cli';
+import { mapTerminusToExitCode } from '@kubic/host/run';
+import { runSessionsCommand } from '@kubic/host/sessions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './headless-run.js';
 

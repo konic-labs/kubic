@@ -7,7 +7,7 @@
 // overlay and its evaluation. Faux-only, zero network; no node:fs (FileBridge
 // owns I/O).
 
-import type { KubicConfig } from '../config/config.js';
+import type { KubicConfig } from '../config/index.js';
 
 export const POLICY_LAYERS = [
   'enterprise',
@@ -1010,9 +1010,9 @@ export interface EnterpriseDoctorEnv {
 export function enterpriseDoctorChecks(
   policy: EffectivePolicy,
   env: EnterpriseDoctorEnv,
-): import('../doctor.js').DoctorCheck[] {
+): import('../doctor/index.js').DoctorCheck[] {
   const sinks = policy.audit.sinks;
-  let sinksCheck: import('../doctor.js').DoctorCheck;
+  let sinksCheck: import('../doctor/index.js').DoctorCheck;
   if (sinks.length === 0) {
     sinksCheck = {
       id: 'policy:enterprise-sinks',
@@ -1053,7 +1053,7 @@ export function enterpriseDoctorChecks(
     policy.network.mode === 'allowlist' &&
     (policy.network.domains === undefined ||
       policy.network.domains.length === 0);
-  const networkCheck: import('../doctor.js').DoctorCheck = allowlistEmpty
+  const networkCheck: import('../doctor/index.js').DoctorCheck = allowlistEmpty
     ? {
         id: 'policy:enterprise-network',
         label: 'policy enterprise network',
@@ -1071,7 +1071,7 @@ export function enterpriseDoctorChecks(
   const failed = [sinksCheck, networkCheck].filter(
     (check) => check.status === 'fail',
   ).length;
-  const enforceability: import('../doctor.js').DoctorCheck =
+  const enforceability: import('../doctor/index.js').DoctorCheck =
     failed === 0
       ? {
           id: 'policy:enterprise-enforceability',

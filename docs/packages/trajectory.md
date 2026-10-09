@@ -28,7 +28,7 @@ latest settled run, and the `trajectory` ref `kubic run` prints is its
 absolute path. The producers are `kubic run -p` and each settled
 `kubic tui` turn.
 
-The pure assembler is `packages/host/src/trajectory/run-trajectory.ts`
+The pure assembler is `packages/host/src/run/run-trajectory.ts`
 (`assembleRunTrajectory`, `trajectoryResultFor`, `taskIdForPrompt`,
 `writeRunTrajectory`). The composition root gathers the I/O evidence in
 `apps/kubic/src/run-trajectory.ts` (`persistRunTrajectory`,

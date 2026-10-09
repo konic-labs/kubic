@@ -17,8 +17,8 @@ import {
   effectiveConfigView,
   loadRuntimeConfig,
   renderEffectiveConfig,
-} from '@kubic/host/config/runtime';
-import { mapTerminusToExitCode } from '@kubic/host/run-cli';
+} from '@kubic/host/config';
+import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadCliConfig, runtimeModelPin } from './config-runtime.js';
 import { runHeadlessPrompt } from './headless-run.js';

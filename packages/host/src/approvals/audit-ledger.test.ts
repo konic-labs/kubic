@@ -18,14 +18,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runAuditCommand } from '../policy/audit-cli.js';
 import {
   AUDIT_LEDGER_FILE,
   auditLedgerDir,
   auditLedgerDirFor,
   readAuditLedger,
   resolveRepoRuntimeRoot,
-} from '../policy/audit-ledger.js';
+  runAuditCommand,
+} from '../audit/index.js';
 import { installPolicy } from './install.js';
 
 const made: string[] = [];

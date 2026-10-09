@@ -29,16 +29,13 @@ import type { CliTheme } from '@kubic/core/cli/theme';
 import { formatVersionLine } from '@kubic/core/license';
 import { suggest } from '@kubic/core/suggest';
 import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
-import {
-  buildConfiguredSinks,
-  setAuditSinks,
-} from '@kubic/host/policy/audit-ledger';
-import { refusedReplayEnvelope } from '@kubic/host/replay/replay';
+import { buildConfiguredSinks, setAuditSinks } from '@kubic/host/audit';
+import { refusedReplayEnvelope } from '@kubic/host/replay';
 import {
   buildRunEnvelope,
   refusedRunResult,
   shellQuote,
-} from '@kubic/host/run-cli';
+} from '@kubic/host/run';
 import type {
   CommandContext,
   CommandRegistrar,

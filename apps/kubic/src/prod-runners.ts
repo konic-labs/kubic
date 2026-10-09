@@ -47,65 +47,54 @@ import { isGitWorktreeClean } from '@kubic/exec/git-clean';
 import { looseStateDirMode } from '@kubic/exec/lock-file';
 import { readStdinText } from '@kubic/exec/stdin';
 import { installedPolicyPosture } from '@kubic/host/approvals';
-import { runConfigCommand } from '@kubic/host/config/config-cli';
-import {
-  ProjectTrustStore,
-  projectTrustStorePath,
-} from '@kubic/host/config/trust-store';
-import type { SessionOverlapProbe } from '@kubic/host/doctor';
-import { runDoctorCommand } from '@kubic/host/doctor';
-import {
-  describeFullAccessSession,
-  type FullAccessSession,
-  listFullAccessSessions,
-} from '@kubic/host/doctor-full-access';
-import { FAUX_NOTICE, fauxProviderActive } from '@kubic/host/faux-provider';
-import { runGitCommand } from '@kubic/host/git-cli';
-import { runJournalCommand } from '@kubic/host/journal-cli';
-import {
-  assembleModels,
-  contextRoomProbeOf,
-  modelsSourcesProbe,
-  providerProbesOf,
-  runModelsCommand,
-} from '@kubic/host/models-cli';
-import {
-  loadSessionCostRows,
-  runCostCommand,
-} from '@kubic/host/ops/cost/cost-cli';
-import {
-  loadProdAuditSecrets,
-  runAuditCommand,
-} from '@kubic/host/policy/audit-cli';
 import {
   auditLedgerDirFor,
   auditSinkSnapshot,
   auditSinksDoctorChecks,
   buildConfiguredSinks,
   isSyslogTargetAvailable,
+  loadProdAuditSecrets,
   readAuditLedger,
-} from '@kubic/host/policy/audit-ledger';
-import { enterpriseDoctorChecks } from '@kubic/host/policy/enterprise';
+  runAuditCommand,
+} from '@kubic/host/audit';
+import { findProjectRoot } from '@kubic/host/cli';
 import {
+  ProjectTrustStore,
+  projectTrustStorePath,
+  runConfigCommand,
+  runSetupCommand,
+  runTrustCommand,
+} from '@kubic/host/config';
+import { loadSessionCostRows, runCostCommand } from '@kubic/host/cost';
+import type { SessionOverlapProbe } from '@kubic/host/doctor';
+import {
+  describeFullAccessSession,
+  type FullAccessSession,
+  listFullAccessSessions,
+  runDoctorCommand,
+} from '@kubic/host/doctor';
+import { runGitCommand } from '@kubic/host/git';
+import { runJournalCommand } from '@kubic/host/journal';
+import {
+  assembleModels,
+  contextRoomProbeOf,
+  FAUX_NOTICE,
+  fauxProviderActive,
+  modelsSourcesProbe,
+  providerProbesOf,
+  runModelsCommand,
+} from '@kubic/host/models';
+import {
+  enterpriseDoctorChecks,
   policyFromInstalledAllowlist,
   policyWithInstalledAllowlist,
   runPolicyCommand,
-} from '@kubic/host/policy/policy-cli';
-import { findProjectRoot } from '@kubic/host/project-root';
-import {
-  type ReplayRuntimeDeps,
-  runReplayCommand,
-} from '@kubic/host/replay/replay';
-import { rolesDoctorProbe, selectRole } from '@kubic/host/roles/roles-boot';
-import { runRunCommand } from '@kubic/host/run-cli';
-import {
-  defaultSessionsRoot,
-  runSessionsCommand,
-} from '@kubic/host/sessions-cli';
-import { runSetupCommand } from '@kubic/host/setup-cli';
-import { skillsDoctorProbe } from '@kubic/host/skills-boot';
-import { runSkillsCommand } from '@kubic/host/skills-cli';
-import { runTrustCommand } from '@kubic/host/trust-cli';
+} from '@kubic/host/policy';
+import { type ReplayRuntimeDeps, runReplayCommand } from '@kubic/host/replay';
+import { rolesDoctorProbe, selectRole } from '@kubic/host/roles';
+import { runRunCommand } from '@kubic/host/run';
+import { defaultSessionsRoot, runSessionsCommand } from '@kubic/host/sessions';
+import { runSkillsCommand, skillsDoctorProbe } from '@kubic/host/skills';
 import {
   type CliConfigResult,
   doctorConfigProbe,

@@ -17,8 +17,7 @@ import {
   disposeAllGitSandboxes,
   type GitSandbox,
 } from '@kubic/exec/test-support/git-sandbox';
-import { loadRuntimeConfig } from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliConfigResult } from './config-runtime.js';

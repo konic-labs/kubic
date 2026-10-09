@@ -9,8 +9,8 @@
 
 import type { PermissionClasses } from '@kubic/agent/permissions';
 import type { FileBridge } from '@kubic/exec/file-bridge';
-import type { DoctorCheck } from '../doctor.js';
-import type { EffectivePolicy } from '../policy/enterprise.js';
+import type { DoctorCheck } from '../doctor/index.js';
+import type { EffectivePolicy } from '../policy/index.js';
 import {
   BUILTIN_PRESET_SOURCE,
   BUILTIN_ROLE_PRESETS,

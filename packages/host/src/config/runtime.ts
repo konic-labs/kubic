@@ -27,13 +27,14 @@ import {
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals/index.js';
+import { findProjectRoot } from '../cli/index.js';
 import {
   type EffectivePolicy,
   layerPolicyFromConfig,
   type PolicyInput,
   resolveEffectivePolicy,
-} from '../policy/enterprise.js';
-import { findProjectRoot } from '../project-root.js';
+} from '../policy/index.js';
+import { parseSecretRef } from '../secret-refs/index.js';
 import {
   type ApprovalsConfig,
   ConfigError,
@@ -53,7 +54,6 @@ import {
   resolveConfigSkills,
   VERIFY_COMMAND_KEYS,
 } from './config.js';
-import { parseSecretRef } from './secrets.js';
 
 // Where an effective value came from: one of the six config layers, the
 // documented environment overrides, the explicit CLI flag, or the product's

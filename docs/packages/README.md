@@ -81,9 +81,11 @@ path under `src/` without its extension.
 
 `compaction`, `lane/abort`, `lane/boot`, `lane/events`, `lane/failures`, `lane/interceptors`, `lane/pending`, `lane/policy`, `lane/session-fs`, `lane/session-store`, `lane/settle`, `lane/test-harness`, `lane/transcript`, `lane/turn`, `lane/wrap`, `model-select`, `models-config`, `ops/display-diff`, `ops/git`, `ops/memos`, `ops/registry`, `ops/types`, `ops/walk`, `permissions`, `pi-boundary`, `prompts`, `skills/skills`, `stream-options`, `test-support/models-fixtures`
 
-### `@kubic/host` (44)
+### `@kubic/host` (18)
 
-`approvals`, `config/config`, `config/config-cli`, `config/config-doctor`, `config/model-key-audit`, `config/runtime`, `config/secrets`, `config/trust-store`, `doctor`, `doctor-full-access`, `faux-provider`, `git-cli`, `journal-cli`, `limits/doctor-limits`, `limits/no-isolation-notice`, `models-cli`, `ops/cost/cost-cli`, `ops/cost/session-cost`, `policy/audit`, `policy/audit-cli`, `policy/audit-ledger`, `policy/enterprise`, `policy/policy-cli`, `presentation/projector`, `project-root`, `provider-key-hints`, `replay/replay`, `replay/run-prod`, `roles/resolver`, `roles/roles-boot`, `run-cli`, `run-spans`, `session-summaries`, `sessions-cli`, `sessions-prune`, `setup-cli`, `skills-boot`, `skills-cli`, `spans`, `test-support/audit-fixtures`, `trajectory/run-trajectory`, `trust-cli`, `verify/verifier`
+One entry per concern folder (see [host.md](host.md#layout-packageshostsrc)):
+
+`approvals`, `audit`, `cli`, `config`, `cost`, `doctor`, `git`, `journal`, `models`, `policy`, `presentation`, `replay`, `roles`, `run`, `secret-refs`, `sessions`, `skills`, `test-support/audit-fixtures`
 
 ### `@kubic/trajectory` (2)
 

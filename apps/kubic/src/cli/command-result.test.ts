@@ -6,20 +6,22 @@
 import type { CommandResult, ExitCode } from '@kubic/core/cli/exit-codes';
 import { runBenchmarkCommand, runEvalCommand } from '@kubic/eval/cli';
 import { runExportCommand } from '@kubic/eval/export-cli';
-import { runConfigCommand } from '@kubic/host/config/config-cli';
+import { runAuditCommand } from '@kubic/host/audit';
+import {
+  runConfigCommand,
+  runSetupCommand,
+  runTrustCommand,
+} from '@kubic/host/config';
+import { runCostCommand } from '@kubic/host/cost';
 import { runDoctorCommand } from '@kubic/host/doctor';
-import { runGitCommand } from '@kubic/host/git-cli';
-import { runJournalCommand } from '@kubic/host/journal-cli';
-import { runModelsCommand } from '@kubic/host/models-cli';
-import { runCostCommand } from '@kubic/host/ops/cost/cost-cli';
-import { runAuditCommand } from '@kubic/host/policy/audit-cli';
-import { runPolicyCommand } from '@kubic/host/policy/policy-cli';
-import { runReplayCommand } from '@kubic/host/replay/replay';
-import { runRunCommand } from '@kubic/host/run-cli';
-import { runSessionsCommand } from '@kubic/host/sessions-cli';
-import { runSetupCommand } from '@kubic/host/setup-cli';
-import { runSkillsCommand } from '@kubic/host/skills-cli';
-import { runTrustCommand } from '@kubic/host/trust-cli';
+import { runGitCommand } from '@kubic/host/git';
+import { runJournalCommand } from '@kubic/host/journal';
+import { runModelsCommand } from '@kubic/host/models';
+import { runPolicyCommand } from '@kubic/host/policy';
+import { runReplayCommand } from '@kubic/host/replay';
+import { runRunCommand } from '@kubic/host/run';
+import { runSessionsCommand } from '@kubic/host/sessions';
+import { runSkillsCommand } from '@kubic/host/skills';
 import { describe, expectTypeOf, it } from 'vitest';
 import { prodFirstRunSetup } from '../setup-prod.js';
 import { runTuiCommand } from '../tui-run.js';

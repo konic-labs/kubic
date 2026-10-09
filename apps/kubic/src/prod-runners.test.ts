@@ -17,16 +17,16 @@ import {
 } from '@kubic/exec/test-support/git-sandbox';
 import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
-  NO_PROJECT_TRUST,
-  ProjectTrustStore,
-  projectTrustStorePath,
-} from '@kubic/host/config/trust-store';
-import {
   appendToLedger,
   auditLedgerDir,
   decisionAudit,
-} from '@kubic/host/policy/audit-ledger';
-import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
+} from '@kubic/host/audit';
+import {
+  NO_PROJECT_TRUST,
+  ProjectTrustStore,
+  projectTrustStorePath,
+} from '@kubic/host/config';
+import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CliConfigResult } from './config-runtime.js';

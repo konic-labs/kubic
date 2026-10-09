@@ -1,5 +1,5 @@
 // Production wiring of `kubic setup` and the first-run setup of a bare
-// `kubic`. The command logic is packages/host/src/setup-cli.ts;
+// `kubic`. The command logic is packages/host/src/config/setup-cli.ts;
 // this module supplies the real providers (the same assembly `kubic models`
 // reads), the prompt frame, the trust resolver and the config file.
 
@@ -19,13 +19,13 @@ import {
 } from '@kubic/core/cli/prompt';
 import type { CliTheme } from '@kubic/core/cli/theme';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { assembleModels } from '@kubic/host/models-cli';
 import {
   runSetupCommand,
   type SetupDeps,
   type SetupProviderChoice,
   type SetupUi,
-} from '@kubic/host/setup-cli';
+} from '@kubic/host/config';
+import { assembleModels } from '@kubic/host/models';
 import {
   type CliConfigResult,
   projectTrustFor,

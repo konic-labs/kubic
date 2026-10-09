@@ -10,36 +10,44 @@ role resolution, `kubic doctor`, the audit ledger, spans and the debug
 channel, and the implementations behind the CLI commands. Kubic has
 no isolation — docs and code must never imply otherwise.
 
-## Public API (`packages/host/src`)
+## Layout (`packages/host/src`)
 
-| Module | Owns |
+The package is a set of concern folders. Each folder's `index.ts` is its
+public entry and the package export `@kubic/host/<folder>`; a module in one
+folder reaches another folder only through that entry (`npm run lint:deps`
+rejects a deep import into another folder's modules). Tests import the
+modules of their own folder directly; entry exports that exist only for the
+composition-root tests are tagged `@internal`.
+
+| Folder | Owns |
 | --- | --- |
-| `approvals/` | The approval system, entry `approvals/index.ts`: `installPolicy` (`install.ts`) and its input and posture (`installed-policy.ts`), capabilities and `validatePolicy` (`policy.ts`), requests and keys (`request.ts`), the stores (`stores.ts`), the decider service (`service.ts`), the full-access posture (`full-access.ts`), the trigger detectors (`triggers.ts`) over the shell lexer, git, `cd` and glob helpers (`shell/`), control-plane refusal (`control-plane.ts`), the credential-path detector (`credentials.ts`) and what a dialog shows (`display.ts`, `preview.ts`) |
-| `config/config.ts` | `CONFIG_LAYERS`, `KubicConfig` and its section types, `parseTomlConfig`, `mergeLayered`, the per-key checks, `GITIGNORE_REQUIRED_ENTRIES`, `checkGitignoreSplit` |
-| `config/runtime.ts` | `loadRuntimeConfig` — the load the binary actually runs on — plus `effectiveConfigView`, `renderEffectiveConfig`, `RUNTIME_KEY_EFFECTS`, `RUNTIME_ENV_OVERRIDES` |
-| `config/config-cli.ts`, `config/config-doctor.ts` | `kubic config [--json]` and doctor's config check |
-| `config/trust-store.ts` | The per-user project-trust store (`~/.kubic/trust.json`) |
-| `config/secrets.ts`, `config/model-key-audit.ts` | Request-time secret references and the audit record each provider-key use appends |
-| `config/stances.ts` | `assertNoMcpConfig` (`McpUnsupportedError`) and the ACP edge types |
-| `config/toml-model.ts` | The line-based `[model]` update `kubic setup` writes |
-| `doctor.ts`, `doctor-render.ts`, `doctor-full-access.ts` | `collectDoctorChecks`, `runDoctorCommand`, the grouped terminal summary and the live full-access session list |
-| `limits/` | The honest-limit doctor checks and the no-isolation notice every process start prints |
-| `roles/` | `builtin-presets.ts` (the five built-in roles), `resolver.ts` (role documents, layer merge, tool guard), `roles-boot.ts` (loading `.kubic/roles/*.md`) |
-| `skills-boot.ts`, `skills-cli.ts` | The skills boot the lane runs and `kubic skills` |
-| `spans.ts`, `run-spans.ts` | The span recorder, the debug vocabulary and the run/turn span wiring (see below) |
-| `ops/cost/` | `kubic cost`: per-session usage rows and the prompt-cache hit rate |
-| `policy/` | `enterprise.ts` (the effective enterprise policy), `policy-cli.ts` (`kubic policy`), `audit.ts` / `audit-ledger.ts` / `audit-cli.ts` (the audit ledger and `kubic audit`), `syslog-transport.ts` |
-| `presentation/projector.ts` | Folds lane events and approval facts into the `KubicPresentationState` the TUI renders |
-| `replay/` | `kubic replay` over trajectory exports |
-| `trajectory/run-trajectory.ts` | The pure assembler of a run's trajectory record |
-| `verify/verifier.ts` | The `[verify]` gates (tests, build, lint, typecheck) run after `kubic run` settles; their results become the trajectory's `signal:<gate>` labels |
-| `run-cli.ts`, `sessions-cli.ts`, `sessions-prune.ts`, `session-read.ts`, `session-summaries.ts`, `journal-cli.ts`, `models-cli.ts`, `models-render.ts`, `git-cli.ts`, `trust-cli.ts`, `setup-cli.ts` | The command implementations |
-| `cli-io.ts`, `faux-provider.ts`, `project-root.ts`, `provider-key-hints.ts` | Shared command seams, the `KUBIC_PROVIDER=faux` testing provider, project-root discovery and provider key hints |
-| `index.ts` | No barrel — import a module by its subpath, `@kubic/host/<subpath>` |
+| `approvals/` | The approval system: `installPolicy` and its posture, capabilities and `validatePolicy`, the stores, the decider service, full access, the trigger detectors over the shell lexer, git, `cd` and glob helpers (`shell/`), control-plane refusal, the credential-path detector and what an approval dialog shows |
+| `audit/` | The audit ledger and its records, the configured sinks and the syslog transport, the provider-key audit record, and `kubic audit` |
+| `cli/` | Shared command plumbing: the output channels and theme (`cli-io.ts`) and project-root discovery |
+| `config/` | Layered TOML config and its validation (`config.ts`), the runtime load every command runs on (`runtime.ts`), comment-preserving edits (`toml-model.ts`), project trust (`trust-store.ts`), the MCP and ACP stances, and `kubic config`, `kubic setup` and `kubic trust` |
+| `cost/` | `kubic cost`: per-session cost rows, the prompt-cache hit rate and the usage a headless run reports |
+| `doctor/` | `kubic doctor`: the checks and probes, the grouped summary, the honest-limit checks, the no-isolation notice and the live full-access session list |
+| `git/` | `kubic git` (status, log, stage, commit) over the agent git operations |
+| `journal/` | `kubic diff`, `undo`, `log`, `status` and `journal prune` |
+| `models/` | The model catalogue (built-ins plus `models.json`), provider probes, the `KUBIC_PROVIDER=faux` testing provider, provider key hints and `kubic models` |
+| `policy/` | The effective enterprise policy (`enterprise.ts`) and `kubic policy` |
+| `presentation/` | Folds lane events and approval facts into the `KubicPresentationState` the TUI renders |
+| `replay/` | `kubic replay` over trajectory exports, and the re-execution runner |
+| `roles/` | The five built-in roles, role documents and their layer merge, and role loading from `.kubic/roles/*.md` |
+| `run/` | `kubic run`: argument parsing, the result envelope and exit-code mapping (`run-cli.ts`), the span recorder and run and turn spans, the run trajectory assembler, and the `[verify]` gates whose results become the trajectory's `signal:<gate>` labels |
+| `secret-refs/` | Request-time secret references (`$ENV_VAR`, `!command`), the model key resolver and the redaction of resolved secrets |
+| `sessions/` | `kubic sessions` and its pruning, read-only session access for listings and cost, and per-session summaries and usage |
+| `skills/` | The skills boot the lane runs and `kubic skills` |
+| `test-support/` | Fixtures for tests only (the dependency lint keeps them out of production code) |
+
+`config/` and `approvals/` stay folders rather than packages of their own:
+`config/` validates the `[approvals]` table with the approval policy and
+reads enterprise policy, and `approvals/` writes the audit ledger, so
+either package would depend back on the rest of the host.
 
 ## Contracts
 
-### Spans and the debug channel (`spans.ts`, `run-spans.ts`)
+### Spans and the debug channel (`run/spans.ts`, `run/run-spans.ts`)
 
 `spans.ts` is the span recorder (`SpanRecorder` over `SPAN_NAMES`), the
 `--debug` vocabulary (seven classes) and the transcript
@@ -120,7 +128,7 @@ a user repo's local `.git/info/exclude` under a rewritable marker block.
 committable. Pinned by `config.test.ts` and gated repo-wide by
 `scripts/runtime-exclude.test.mjs`.
 
-### Doctor (`doctor.ts`)
+### Doctor (`doctor/`)
 
 Exit codes: 0 ok, 1 fail, 2 usage, 6 provider. `DoctorStatus` is
 `pass|warn|fail|skip`; `collectDoctorChecks` folds `DoctorDeps` (provider
@@ -133,7 +141,7 @@ naming a group- or world-accessible sessions root (its mode and the
 `chmod 700` that closes it), a `pass` when it is private or absent, and
 `state permissions unverified` when the probe itself throws.
 
-### Session retention (`sessions-cli.ts`, `sessions-prune.ts`)
+### Session retention (`sessions/`)
 
 `kubic sessions prune` is the only thing that deletes whole session state
 dirs, and it is opt-in twice over: dry-run is the default (deletion needs

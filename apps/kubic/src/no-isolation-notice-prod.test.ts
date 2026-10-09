@@ -31,12 +31,12 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
-import { FAUX_MODEL_REF } from '@kubic/host/faux-provider';
 import {
   NOTICE_OPT_OUT_ENV,
   noIsolationNoticeLines,
   noIsolationTuiLine,
-} from '@kubic/host/limits/no-isolation-notice';
+} from '@kubic/host/doctor';
+import { FAUX_MODEL_REF } from '@kubic/host/models';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './headless-run.js';
@@ -446,7 +446,7 @@ describe('the notice text has exactly one source', () => {
     return out;
   }
 
-  it('appears only in packages/host/src/limits/no-isolation-notice.ts', () => {
+  it('appears only in packages/host/src/doctor/no-isolation-notice.ts', () => {
     const roots = ['apps', 'packages'].map((name) =>
       productionSources(join(REPO_ROOT, name)),
     );
@@ -457,6 +457,6 @@ describe('the notice text has exactly one source', () => {
         hits.push(file.slice(REPO_ROOT.length + 1));
       }
     }
-    expect(hits).toEqual(['packages/host/src/limits/no-isolation-notice.ts']);
+    expect(hits).toEqual(['packages/host/src/doctor/no-isolation-notice.ts']);
   });
 });

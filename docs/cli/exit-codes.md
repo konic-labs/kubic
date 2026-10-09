@@ -3,14 +3,14 @@
 > The table below covers the failure codes
 > (plus 0) and matches the `kubic doctor` fixture behaviour:
 > clean matrix → 0, provider-down → 6, any other fail → 1,
-> usage error → 2 (verified in `packages/host/src/doctor.test.ts`).
+> usage error → 2 (verified in `packages/host/src/doctor/doctor.test.ts`).
 
 ## The failure codes
 
 `kubic run` derives its exit code from the settled lane outcome
-(`mapTerminusToExitCode` in `packages/host/src/run-cli.ts`); codes 0–6 are
+(`mapTerminusToExitCode` in `packages/host/src/run/run-cli.ts`); codes 0–6 are
 its six termini. `kubic doctor` exits through the same mapper shape
-(`limitsDoctorExit` in `packages/host/src/limits/doctor-limits.ts`).
+(`limitsDoctorExit` in `packages/host/src/doctor/doctor-limits.ts`).
 
 Two signal-driven exits sit outside the six codes, using the POSIX
 convention `kubic tui` also pins: a `kubic run` interrupted by

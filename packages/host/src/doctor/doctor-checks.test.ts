@@ -1,29 +1,16 @@
 // kubic doctor: providers, deps, policy
 // mismatches, skip flag — with --json parity. Faux-only: probes are
 // injected, never network.
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   FileApprovalStore,
   installedPolicyPosture,
 } from '../approvals/index.js';
 import { runDoctorCommand } from './command.js';
 import type { DoctorDeps } from './types.js';
-
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function cleanDeps(out: (line: string) => void): DoctorDeps {
   return {
@@ -254,7 +241,7 @@ describe('full-access sessions', () => {
   });
 
   it('installedPolicy over a full-access session dir reports FULL ACCESS (doctor --session)', async () => {
-    const root = mkTmp('kubic-doctor-session-');
+    const root = tempDir('kubic-doctor-session-');
     const dir = join(root, 'abc');
     mkdirSync(dir, { recursive: true });
     new FileApprovalStore(dir).savePosture({

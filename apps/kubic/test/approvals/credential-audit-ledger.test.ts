@@ -8,16 +8,13 @@
 // shape, owned and closed by the test: no external network, no paid tokens.
 import {
   chmodSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
@@ -28,19 +25,12 @@ import {
 } from '@kubic/host/audit';
 import { assembleModels } from '@kubic/host/models';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 
 const SECRET = 'sk-live-kubic-do-not-leak';
 
-const roots: string[] = [];
-
 const servers: Server[] = [];
-
-function tmpRoot(prefix = 'kubic-credential-audit-'): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -52,9 +42,6 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   for (const server of servers.splice(0)) {
     await new Promise<void>((done) => server.close(() => done()));
-  }
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -182,7 +169,7 @@ function filesUnder(dir: string): string[] {
 
 describe('createLedgerModelKeyResolver with a short or provider-named key', () => {
   it('appends a ledger row for EVERY use — a dummy key named like its provider is not a secret to refuse over', async () => {
-    const workspace = tmpRoot('ws-credential-short-');
+    const workspace = tempDir('ws-credential-short-');
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
       // Env-only tests: the runner must never fire for $VAR uses.
@@ -219,8 +206,8 @@ describe('createLedgerModelKeyResolver with a short or provider-named key', () =
 describe('kubic run: models.json key use is audited', () => {
   it('appends one ledger record per request; kubic audit shows it without the value; nothing persisted carries it', async () => {
     const provider = await fakeProvider();
-    const workspace = tmpRoot('ws-credential-');
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir('ws-credential-');
+    const sessionsRoot = tempDir();
     writeModelsJson(workspace, provider.url);
     const debugLines: string[] = [];
     const run = async (): Promise<string> => {
@@ -294,8 +281,8 @@ describe('kubic run: models.json key use is audited', () => {
   // holds one value-less record for the use.
   it('a !command apiKey resolves through the runner; the ledger holds the ref, never the value', async () => {
     const provider = await fakeProvider();
-    const workspace = tmpRoot('ws-credential-');
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir('ws-credential-');
+    const sessionsRoot = tempDir();
     vi.stubEnv('KUBIC_TEST_KEY_224', SECRET);
     const command = `!${process.execPath} -e console.log(process.env.KUBIC_TEST_KEY_224)`;
     writeFileSync(
@@ -344,8 +331,8 @@ describe('kubic run: models.json key use is audited', () => {
 
   it('a provider error that echoes the key never reaches the debug channel, the envelope or a persisted file', async () => {
     const provider = await fakeProvider({ rejectEchoingKey: true });
-    const workspace = tmpRoot('ws-credential-echo-');
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir('ws-credential-echo-');
+    const sessionsRoot = tempDir();
     writeModelsJson(workspace, provider.url);
     const debugLines: string[] = [];
     const result = await runHeadlessPrompt(
@@ -381,8 +368,8 @@ describe('kubic run: models.json key use is audited', () => {
   // getting a key into a diagnostic. Without the wrapper the key would reach
   // stderr.
   it('a run-generated debug line that carries the key reaches the debug sink redacted', async () => {
-    const workspace = tmpRoot('ws-credential-dbg-');
-    const sessionsRoot = tmpRoot(`sessions-${SECRET}-`);
+    const workspace = tempDir('ws-credential-dbg-');
+    const sessionsRoot = tempDir(`sessions-${SECRET}-`);
     const journalDirs = (): string[] =>
       readdirSync(sessionsRoot)
         .map((name) => join(sessionsRoot, name, 'journal'))
@@ -427,8 +414,8 @@ describe('kubic run: models.json key use is audited', () => {
 
   it('a completed run whose answer echoes the key persists it nowhere (session, trajectory, envelope)', async () => {
     const provider = await fakeProvider({ answerEchoingKey: true });
-    const workspace = tmpRoot('ws-credential-answer-');
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir('ws-credential-answer-');
+    const sessionsRoot = tempDir();
     writeModelsJson(workspace, provider.url);
     const result = await runHeadlessPrompt(
       'say hello',
@@ -459,8 +446,8 @@ describe('kubic run: models.json key use is audited', () => {
   // run and are scrubbed of every resolved value.
   it('a prompt that quotes the key is scrubbed from the trajectory and the result', async () => {
     const provider = await fakeProvider();
-    const workspace = tmpRoot('ws-credential-prompt-');
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir('ws-credential-prompt-');
+    const sessionsRoot = tempDir();
     writeModelsJson(workspace, provider.url);
     const result = await runHeadlessPrompt(
       `use ${SECRET} please`,
@@ -479,7 +466,7 @@ describe('kubic run: models.json key use is audited', () => {
   });
 
   it('assembleModels without a resolver keeps the plain env auth (no audit)', async () => {
-    const workspace = tmpRoot('ws-credential-');
+    const workspace = tempDir('ws-credential-');
     writeModelsJson(workspace, 'http://127.0.0.1:9/v1');
     // A trusted project file without a resolver: the plain
     // env-key auth stays in place and nothing is audited.

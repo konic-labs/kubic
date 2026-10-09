@@ -4,8 +4,7 @@
 // prompt instead of failing with LaneBusy, and `kubic sessions attach` must
 // name the pending operation. Faux provider only; pid liveness is stubbed —
 // no test signals a real process.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bootLane } from '@kubic/agent/lane/boot';
 import {
@@ -25,9 +24,8 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { runSessionsCommand } from '@kubic/host/sessions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -36,15 +34,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-pending-prod-'));
-  made.push(dir);
-  return dir;
-}
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -120,7 +110,7 @@ function count(haystack: string, needle: string): number {
 
 describe('kubic run --session after a crash', () => {
   it('resumes the pending op, then accepts the new prompt without LaneBusy', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-pending-prod-');
     const { id, submissionId } = await crashAfterAccept(root, 'first task');
     stubDeadHolder();
     const notices: string[] = [];
@@ -154,7 +144,7 @@ describe('kubic run --session after a crash', () => {
   });
 
   it('resumes instead of re-prompting when the new prompt is the pending one', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-pending-prod-');
     const { id, submissionId } = await crashAfterAccept(root, 'plan prompt');
     stubDeadHolder();
     const notices: string[] = [];
@@ -179,7 +169,7 @@ describe('kubic run --session after a crash', () => {
     // Pi keeps the admitted prompt both as the queued entry and on the
     // branch, so the baseline is an uninterrupted run of the same prompt:
     // a resume must leave exactly as many copies, never one more.
-    const clean = tmpRoot();
+    const clean = tempDir('kubic-pending-prod-');
     const cleanStore = openSessionStore(clean, createNodeFileBridge(clean));
     const fresh = await createSession(
       cleanStore,
@@ -205,7 +195,7 @@ describe('kubic run --session after a crash', () => {
   });
 
   it('a session with no pending op runs exactly as before (no notice)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-pending-prod-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const session = await createSession(
       store,
@@ -232,7 +222,7 @@ describe('kubic run --session after a crash', () => {
 
 describe('kubic sessions attach with a pending op', () => {
   it('prints the pending operation line', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-pending-prod-');
     const { id, submissionId } = await crashAfterAccept(root, 'first task');
     stubDeadHolder();
     const lines: string[] = [];
@@ -255,7 +245,7 @@ describe('kubic sessions attach with a pending op', () => {
   });
 
   it('prints no pending line for a settled session', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-pending-prod-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const session = await createSession(
       store,

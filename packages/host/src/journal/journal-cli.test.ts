@@ -4,32 +4,20 @@ import {
   appendFileSync,
   chmodSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { auditLedgerDirFor, readAuditLedger } from '../audit/index.js';
 import { runJournalCommand } from './index.js';
 
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
 afterEach(() => {
   disposeAllGitSandboxes();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function setup(): {
@@ -37,8 +25,8 @@ function setup(): {
   root: string;
   out: { lines: string[]; write: (line: string) => void };
 } {
-  const journalDir = mkTmp('j-');
-  const root = mkTmp('ws-');
+  const journalDir = tempDir('j-');
+  const root = tempDir('ws-');
   writeFileSync(join(root, 'a.txt'), 'v1\n');
   const store = new FileJournalStore(journalDir);
   store.append({
@@ -232,8 +220,8 @@ describe('journal CLI undo staleness', () => {
     journalDir: string;
     root: string;
   } {
-    const journalDir = mkTmp('j-');
-    const root = mkTmp('ws-');
+    const journalDir = tempDir('j-');
+    const root = tempDir('ws-');
     // Journaled v1→v2, then a manual edit landed v3 after the fact.
     writeFileSync(join(root, 'stale.txt'), 'v3\n');
     new FileJournalStore(journalDir).append({
@@ -312,8 +300,8 @@ describe('journal CLI undo staleness', () => {
 // marker and exit 0 — a readable journal is worth more than a crash.
 describe('journal CLI corrupt content', () => {
   function seedTornDelta(): { journalDir: string; root: string } {
-    const journalDir = mkTmp('j-');
-    const root = mkTmp('ws-');
+    const journalDir = tempDir('j-');
+    const root = tempDir('ws-');
     const store = new FileJournalStore(journalDir);
     const before = 'b\n'.repeat(40_000);
     const after = 'c\n'.repeat(40_000);
@@ -372,8 +360,8 @@ describe('journal CLI corrupt content', () => {
 // does not read the loss as an empty journal.
 describe('journal CLI corrupt index lines', () => {
   function seed(seedTorn: boolean): { journalDir: string; root: string } {
-    const journalDir = mkTmp('j-');
-    const root = mkTmp('ws-');
+    const journalDir = tempDir('j-');
+    const root = tempDir('ws-');
     new FileJournalStore(journalDir).append({
       path: 'a.txt',
       op: 'create',
@@ -431,8 +419,8 @@ describe('journal CLI default store fallback', () => {
     oldId: string;
     newId: string;
   } {
-    const sessionsRoot = mkTmp('sr-');
-    const root = mkTmp('ws-');
+    const sessionsRoot = tempDir('sr-');
+    const root = tempDir('ws-');
     const oldId = 'sess-old';
     const newId = 'sess-new';
     const seed = (
@@ -666,8 +654,8 @@ describe('journal CLI default store fallback', () => {
   });
 
   it('empty everywhere prints the nothing-anywhere hint and exits 0', async () => {
-    const sessionsRoot = mkTmp('sr-');
-    const root = mkTmp('ws-');
+    const sessionsRoot = tempDir('sr-');
+    const root = tempDir('ws-');
     const lines: string[] = [];
     const errs: string[] = [];
     const code = (
@@ -710,8 +698,8 @@ describe('journal CLI default store fallback', () => {
   });
 
   it('a missing sessions root is the same empty path, no throw', async () => {
-    const sessionsRoot = join(mkTmp('sr-'), 'absent');
-    const root = mkTmp('ws-');
+    const sessionsRoot = join(tempDir('sr-'), 'absent');
+    const root = tempDir('ws-');
     const lines: string[] = [];
     const errs: string[] = [];
     const code = (

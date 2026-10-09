@@ -3,8 +3,7 @@
 // need an overlay that is not on screen yet, and the operator is present to
 // re-send) and names that outcome in the editor footer from the first
 // render. Faux provider only; pid liveness is stubbed.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bootLane } from '@kubic/agent/lane/boot';
 import {
@@ -22,11 +21,10 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -35,15 +33,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-pending-'));
-  made.push(dir);
-  return dir;
-}
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -111,7 +101,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
 
 describe('kubic tui --session after a crash', () => {
   it('boot aborts the pending work, names it, and the loop takes a prompt', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-pending-');
     const { id, submissionId } = await crashAfterAccept(root);
     vi.spyOn(process, 'kill').mockImplementation((() => {
       throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });

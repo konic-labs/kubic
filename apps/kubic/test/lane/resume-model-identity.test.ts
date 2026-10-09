@@ -4,9 +4,6 @@
 // the session keeps its own model. Either way the result/envelope, the
 // status bar and the usage rows name the model the lane actually runs, and
 // a stored model that is not available fails closed by name.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   attachSession,
   createSession,
@@ -27,10 +24,9 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
-
-const made: string[] = [];
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -39,15 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-model-resume-'));
-  made.push(dir);
-  return dir;
-}
 
 // Two faux models; the default (unpinned) pick is the first, `big`.
 function catalog(texts: string[], provider = 'faux'): MutableModels {
@@ -115,7 +103,7 @@ async function lastAssistantModel(root: string, id: string): Promise<string> {
 
 describe('kubic run --session model identity', () => {
   it('an explicit pin switches the resumed session, says so, and reports the live model', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-model-resume-');
     const id = await sessionOnSmall(root);
     const notices: string[] = [];
     const result = await runHeadlessPrompt(
@@ -140,7 +128,7 @@ describe('kubic run --session model identity', () => {
   });
 
   it('without a pin the session keeps its model and every report names it', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-model-resume-');
     const id = await sessionOnSmall(root);
     const notices: string[] = [];
     const result = await runHeadlessPrompt(
@@ -163,7 +151,7 @@ describe('kubic run --session model identity', () => {
   });
 
   it('a stored model whose provider is gone fails closed with a named error (exit 6)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-model-resume-');
     const id = await sessionOnSmall(root);
     const result = await runHeadlessPrompt(
       'second',
@@ -192,7 +180,7 @@ describe('kubic run --session model identity', () => {
     const result = await runHeadlessPrompt(
       'x',
       { sessionId: 'no-such-session' },
-      { sessionsRoot: tmpRoot(), models: catalog([]) },
+      { sessionsRoot: tempDir('kubic-model-resume-'), models: catalog([]) },
     );
     expect(result.model).toBeUndefined();
     expect('model' in buildRunEnvelope(result, 5)).toBe(false);
@@ -201,7 +189,7 @@ describe('kubic run --session model identity', () => {
 
 describe('kubic tui --session model identity', () => {
   it('boots on the session model and reports it to the status bar', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-model-resume-');
     const id = await sessionOnSmall(root);
     const boot = await bootTuiLane(id, {
       sessionsRoot: root,

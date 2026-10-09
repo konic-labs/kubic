@@ -5,15 +5,7 @@
 // the journal the run wrote and the lane allowlist it installed.
 //
 // Faux provider only: zero network, zero paid tokens.
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import {
@@ -36,19 +28,12 @@ import {
 } from '@kubic/host/config';
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   runtimeLaneDeps,
   runtimeRunDeps,
 } from '../../src/config/projections.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const tempDirs: string[] = [];
-
-function tmpRoot(prefix = 'kubic-run-path-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   // The no-isolation notice goes straight to process.stderr (its text
@@ -59,14 +44,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 describe('config feeds the live run path', () => {
   it('projects [journal] retentionDays into a journal bound that prunes on append', () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const runtime = loadRuntimeConfig({
       bridge: createNodeFileBridge(root),
       home: '/nonexistent-home',
@@ -121,7 +103,7 @@ describe('config feeds the live run path', () => {
   });
 
   it('drives a real lane whose allowlist comes from the loaded classes', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     // Config narrows the lane to read-only tools; the run must honour it.
     const runtime = loadRuntimeConfig({
       bridge: {
@@ -145,7 +127,7 @@ describe('config feeds the live run path', () => {
 
     // The model asks for a shell write; with `shell = false` the lane never
     // installed bash, so the call is refused and the workspace is untouched.
-    const workspace = tmpRoot('kubic-run-path-ws-');
+    const workspace = tempDir('kubic-run-path-ws-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -183,8 +165,8 @@ describe('config feeds the live run path', () => {
     // headless lane's reconciliation, not merely parse. `vendor/` is declared
     // out of scope; a change under it during the run is never baselined,
     // never swept, and never shown by `kubic diff`.
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-run-path-ws-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('kubic-run-path-ws-');
     mkdirSync(join(workspace, 'vendor'));
     writeFileSync(join(workspace, 'vendor', 'out.js'), 'gen\n');
     writeFileSync(join(workspace, 'in-scope.txt'), 'v1\n');
@@ -259,7 +241,7 @@ describe('config feeds the live run path', () => {
   });
 
   it('leaves the lane on its own defaults when no config value is set', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const runtime = loadRuntimeConfig({
       bridge: createNodeFileBridge(root),
       home: '/nonexistent-home',
@@ -276,7 +258,7 @@ describe('config feeds the live run path', () => {
     expect(runtime.permissions.source).toBe('defaults');
     // The same shell write the narrowed lane refused goes through on the
     // defaults: the refusal above came from the config, not the lane.
-    const workspace = tmpRoot('kubic-run-path-ws-');
+    const workspace = tempDir('kubic-run-path-ws-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -325,7 +307,7 @@ describe('lane projections reach the live path', () => {
     // and an entry that cannot fit is refused (journal_failed, file
     // untouched) instead of landing a record the same append's pruning would
     // delete.
-    const workspace = tmpRoot('kubic-run-path-bound-');
+    const workspace = tempDir('kubic-run-path-bound-');
     const runtime = namedRuntime(workspace, '[journal]\nmaxBytes = 1048576\n');
     expect(runtime.journal.maxBytes).toBe(1_048_576);
     const deps = runtimeRunDeps({
@@ -336,7 +318,7 @@ describe('lane projections reach the live path', () => {
     });
     expect(deps.journalRetention).toEqual({ maxBytes: 1_048_576 });
 
-    const store = new FileJournalStore(tmpRoot('kubic-run-path-store-'), {
+    const store = new FileJournalStore(tempDir('kubic-run-path-store-'), {
       ...(deps.journalRetention ?? {}),
       durable: false,
     });
@@ -355,8 +337,8 @@ describe('lane projections reach the live path', () => {
   });
 
   it('names the lane from [agent].name and journals the session change', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-run-path-agent-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('kubic-run-path-agent-');
     writeFileSync(join(workspace, 'note.txt'), 'v1\n');
     const runtime = namedRuntime(
       workspace,
@@ -459,8 +441,8 @@ describe('lane projections reach the live path', () => {
   });
 
   it('layers [roles.<name>] model + tools under the role document', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-run-path-roles-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('kubic-run-path-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'implementer.md'),

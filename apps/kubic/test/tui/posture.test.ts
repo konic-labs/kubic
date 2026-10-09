@@ -6,8 +6,6 @@
 // Real code end to end: the prod bootTuiLane (re-rooted onto temp state), a
 // recording fake Terminal under the real alt-screen, and the real policy.
 // Faux provider only: zero network, zero paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createModels,
@@ -18,18 +16,12 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { enableFullAccess, FileApprovalStore } from '@kubic/host/approvals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 
 const WARNING = 'approvals OFF (full-access)';
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tui-posture-'));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_PROVIDER', undefined);
@@ -38,8 +30,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function recordingTerminal() {
@@ -89,8 +79,8 @@ async function firstFrame(
 
 describe('the TUI indicator follows the installed posture', () => {
   it('a full-access session renders the OFF warning in its first frame', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot();
+    const sessionsRoot = tempDir('tui-posture-');
+    const workspace = tempDir('tui-posture-');
     const created = await prodBoot(sessionsRoot, workspace)();
     await created.close?.();
     enableFullAccess(
@@ -103,14 +93,17 @@ describe('the TUI indicator follows the installed posture', () => {
   });
 
   it("a fresh session renders 'approvals on'", async () => {
-    const frame = await firstFrame(tmpRoot(), tmpRoot());
+    const frame = await firstFrame(
+      tempDir('tui-posture-'),
+      tempDir('tui-posture-'),
+    );
     expect(frame).toContain('approvals on');
     expect(frame).not.toContain(WARNING);
   });
 
   it('the boot reports the same predicate the installed ask auto-approves on', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot();
+    const sessionsRoot = tempDir('tui-posture-');
+    const workspace = tempDir('tui-posture-');
     const boot = await prodBoot(sessionsRoot, workspace)();
     expect(boot.approvalsSkipped?.()).toBe(false);
     enableFullAccess(

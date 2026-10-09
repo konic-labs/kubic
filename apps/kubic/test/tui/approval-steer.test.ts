@@ -4,8 +4,6 @@
 // fake terminal driving the real alt-screen, and the real key path; a clean
 // quit still restores the main screen. Faux provider only: zero network, zero
 // paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootLane } from '@kubic/agent/lane/boot';
 import {
@@ -24,25 +22,13 @@ import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { tuiLoop } from '../../src/tui/lane-loop.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiApprovalSeat } from '../../src/tui/types.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-approval-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 
@@ -130,7 +116,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
 
 describe('steering an approval in the TUI', () => {
   it('`e` runs the edited command instead of the proposed one', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const fake = fakeTerminal(110);
     const env = new FakeExecutionEnv({});
     const { models } = fauxModels([
@@ -169,7 +155,7 @@ describe('steering an approval in the TUI', () => {
   });
 
   it('`c` denies with a comment the model reads', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const fake = fakeTerminal(110);
     const env = new FakeExecutionEnv({});
     const { models } = fauxModels([

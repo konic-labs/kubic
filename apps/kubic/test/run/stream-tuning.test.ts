@@ -3,8 +3,7 @@
 // lane's `settings.stream`, observed at the faux provider's own request
 // options. Full headless runs on injected faux models; temp sessions root
 // and workspace, env restored after each test.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -14,15 +13,8 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 const seen: Array<Record<string, unknown> | undefined> = [];
 
@@ -33,8 +25,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function capturingModels(): MutableModels {
@@ -64,12 +54,12 @@ function writeRoleDoc(ws: string, name: string): void {
 
 describe('headless stream tuning', () => {
   it('hands the [model] tuning to the lane as settings.stream', async () => {
-    const ws = tmp('stream-model-ws-');
+    const ws = tempDir('stream-model-ws-');
     const result = await runHeadlessPrompt(
       'hi',
       {},
       {
-        sessionsRoot: tmp('stream-model-sessions-'),
+        sessionsRoot: tempDir('stream-model-sessions-'),
         env: new NodeExecutionEnv(ws),
         models: capturingModels(),
         model: { provider: 'faux', id: 'echo' },
@@ -95,13 +85,13 @@ describe('headless stream tuning', () => {
   });
 
   it('layers the run role over [model] per key', async () => {
-    const ws = tmp('stream-role-ws-');
+    const ws = tempDir('stream-role-ws-');
     writeRoleDoc(ws, 'reader');
     const result = await runHeadlessPrompt(
       'hi',
       { role: 'reader' },
       {
-        sessionsRoot: tmp('stream-role-sessions-'),
+        sessionsRoot: tempDir('stream-role-sessions-'),
         env: new NodeExecutionEnv(ws),
         models: capturingModels(),
         model: { provider: 'faux', id: 'echo' },
@@ -119,12 +109,12 @@ describe('headless stream tuning', () => {
   });
 
   it('an untuned run sends no tuning keys (provider defaults stand)', async () => {
-    const ws = tmp('stream-plain-ws-');
+    const ws = tempDir('stream-plain-ws-');
     const result = await runHeadlessPrompt(
       'hi',
       {},
       {
-        sessionsRoot: tmp('stream-plain-sessions-'),
+        sessionsRoot: tempDir('stream-plain-sessions-'),
         env: new NodeExecutionEnv(ws),
         models: capturingModels(),
         model: { provider: 'faux', id: 'echo' },

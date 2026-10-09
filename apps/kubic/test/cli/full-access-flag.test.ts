@@ -9,13 +9,10 @@
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createModels,
@@ -38,6 +35,7 @@ import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run';
 import { runSessionsCommand } from '@kubic/host/sessions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from '../../src/config/load.js';
 import { dispatchCommand } from '../../src/dispatch.js';
 import { createProdRunners } from '../../src/prod-runners.js';
@@ -46,12 +44,8 @@ import { bootTuiLane } from '../../src/tui/boot.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
 
-const made: string[] = [];
-
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-full-access-${prefix}`));
-  made.push(dir);
-  return dir;
+  return tempDir(`kubic-full-access-${prefix}`);
 }
 
 beforeEach(() => {
@@ -61,8 +55,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function modelsWith(

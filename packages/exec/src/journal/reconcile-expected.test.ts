@@ -3,16 +3,10 @@
 // the boot baseline when there is none — never against the whole journal
 // history. A same-run revert, a resumed session's change back to an older
 // hash, and a repeat delete must all be journaled.
-import {
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { type BridgeFileInfo, createNodeFileBridge } from '../file-bridge.js';
 import { captureBaseline } from './baseline.js';
 import { sha256Hex } from './hash.js';
@@ -22,18 +16,6 @@ import { FileJournalStore } from './store.js';
 import { reconcile } from './sweep.js';
 
 const NOW = 1_700_000_000_000;
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 function begin(store: Store, root: string, runId: string) {
   return beginReconciliation({
@@ -66,8 +48,8 @@ function toolWrite(
 
 describe('reconcile expected state', () => {
   it('journals a same-run out-of-band revert to the baseline content', () => {
-    const root = tmpRoot('ws-reconcile-a-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-a-'));
+    const root = tempDir('ws-reconcile-a-');
+    const store = new FileJournalStore(tempDir('j-reconcile-a-'));
     writeFileSync(join(root, 'a.txt'), 'H0\n');
     const run = begin(store, root, 'run-1');
     // A tool writes H0 → H1 …
@@ -86,8 +68,8 @@ describe('reconcile expected state', () => {
   });
 
   it('journals a resumed-session change back to a prior run’s after-hash', () => {
-    const root = tmpRoot('ws-reconcile-b-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-b-'));
+    const root = tempDir('ws-reconcile-b-');
+    const store = new FileJournalStore(tempDir('j-reconcile-b-'));
     writeFileSync(join(root, 'a.txt'), 'H0\n');
     // Run 1: a tool writes H.
     const run1 = begin(store, root, 'run-1');
@@ -107,8 +89,8 @@ describe('reconcile expected state', () => {
   });
 
   it('journals a run-2 delete of a file deleted in run 1 and recreated in between', () => {
-    const root = tmpRoot('ws-reconcile-c-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-c-'));
+    const root = tempDir('ws-reconcile-c-');
+    const store = new FileJournalStore(tempDir('j-reconcile-c-'));
     writeFileSync(join(root, 'a.txt'), 'v1\n');
     const run1 = begin(store, root, 'run-1');
     rmSync(join(root, 'a.txt'));
@@ -126,8 +108,8 @@ describe('reconcile expected state', () => {
   });
 
   it('journals the out-of-band delete of a file a tool created this run', () => {
-    const root = tmpRoot('ws-reconcile-d-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-d-'));
+    const root = tempDir('ws-reconcile-d-');
+    const store = new FileJournalStore(tempDir('j-reconcile-d-'));
     const run = begin(store, root, 'run-1');
     writeFileSync(join(root, 'made.txt'), 'new\n');
     toolWrite(store, 'made.txt', null, 'new\n');
@@ -139,8 +121,8 @@ describe('reconcile expected state', () => {
   });
 
   it('journals the out-of-band recreation of a file a tool deleted this run', () => {
-    const root = tmpRoot('ws-reconcile-e-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-e-'));
+    const root = tempDir('ws-reconcile-e-');
+    const store = new FileJournalStore(tempDir('j-reconcile-e-'));
     writeFileSync(join(root, 'a.txt'), 'v1\n');
     const run = begin(store, root, 'run-1');
     rmSync(join(root, 'a.txt'));
@@ -154,8 +136,8 @@ describe('reconcile expected state', () => {
   });
 
   it('records nothing for a path whose last same-run entry matches the tree', () => {
-    const root = tmpRoot('ws-reconcile-f-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-f-'));
+    const root = tempDir('ws-reconcile-f-');
+    const store = new FileJournalStore(tempDir('j-reconcile-f-'));
     writeFileSync(join(root, 'a.txt'), 'H0\n');
     const run = begin(store, root, 'run-1');
     writeFileSync(join(root, 'a.txt'), 'H1\n');
@@ -164,8 +146,8 @@ describe('reconcile expected state', () => {
   });
 
   it('still scopes to this run when retention dropped older entries', () => {
-    const root = tmpRoot('ws-reconcile-g-');
-    const dir = tmpRoot('j-reconcile-g-');
+    const root = tempDir('ws-reconcile-g-');
+    const dir = tempDir('j-reconcile-g-');
     const store = new FileJournalStore(dir);
     writeFileSync(join(root, 'a.txt'), 'H0\n');
     // Prior history in the journal (an older run's write to H1).
@@ -185,8 +167,8 @@ describe('reconcile expected state', () => {
     // write/edit journal args.path verbatim, so an absolute
     // in-workspace path or a './' prefix must not become a phantom delete
     // candidate nor miss the expected state for its relative path.
-    const root = tmpRoot('ws-reconcile-h-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-h-'));
+    const root = tempDir('ws-reconcile-h-');
+    const store = new FileJournalStore(tempDir('j-reconcile-h-'));
     writeFileSync(join(root, 'a.txt'), 'H0\n');
     const run = begin(store, root, 'run-1');
     writeFileSync(join(root, 'a.txt'), 'H1\n');
@@ -194,7 +176,7 @@ describe('reconcile expected state', () => {
     writeFileSync(join(root, 'b.txt'), 'new\n');
     toolWrite(store, './b.txt', null, 'new\n');
     // An entry outside the workspace is never a sweep candidate.
-    toolWrite(store, join(tmpRoot('out-reconcile-h-'), 'x.txt'), null, 'x\n');
+    toolWrite(store, join(tempDir('out-reconcile-h-'), 'x.txt'), null, 'x\n');
     expect(run.sweep()).toBe(0);
   });
 
@@ -203,8 +185,8 @@ describe('reconcile expected state', () => {
     // sweep walk never sees gitignored / `.git/` / `.kubic/` files, so they
     // read as absent from `current` — a FALSE unattributed delete for a
     // file that is right there on disk.
-    const root = tmpRoot('ws-reconcile-i-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-i-'));
+    const root = tempDir('ws-reconcile-i-');
+    const store = new FileJournalStore(tempDir('j-reconcile-i-'));
     writeFileSync(join(root, '.gitignore'), 'dist/\n*.log\n');
     writeFileSync(join(root, 'keep.txt'), 'k\n');
     const run = begin(store, root, 'run-1');
@@ -225,8 +207,8 @@ describe('reconcile expected state', () => {
   });
 
   it('still journals the delete of a skipped tool-written path once it is really gone', () => {
-    const root = tmpRoot('ws-reconcile-j-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-j-'));
+    const root = tempDir('ws-reconcile-j-');
+    const store = new FileJournalStore(tempDir('j-reconcile-j-'));
     writeFileSync(join(root, '.gitignore'), 'dist/\n');
     const run = begin(store, root, 'run-1');
     mkdirSync(join(root, 'dist'));
@@ -245,8 +227,8 @@ describe('reconcile expected state', () => {
   it('journals the delete of a skipped tool-written path whose parent directory became a file (ENOTDIR)', () => {
     // lstat reports ENOTDIR — not ENOENT — when a path component is a regular
     // file. The path cannot exist, so this is a proven delete, not "cannot tell".
-    const root = tmpRoot('ws-reconcile-n-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-n-'));
+    const root = tempDir('ws-reconcile-n-');
+    const store = new FileJournalStore(tempDir('j-reconcile-n-'));
     writeFileSync(join(root, '.gitignore'), 'dist/\n');
     const run = begin(store, root, 'run-1');
     mkdirSync(join(root, 'dist'));
@@ -269,8 +251,8 @@ describe('reconcile expected state', () => {
   it('keeps the old rule for baseline paths: a regular file replaced by a link the walk skips is a delete', () => {
     // The still-exists guard is for paths ONLY a tool journaled; a boot
     // baseline key that the sweep walk does not see is journaled.
-    const root = tmpRoot('ws-reconcile-l-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-l-'));
+    const root = tempDir('ws-reconcile-l-');
+    const store = new FileJournalStore(tempDir('j-reconcile-l-'));
     writeFileSync(join(root, 'a.txt'), 'v1\n');
     writeFileSync(join(root, 'keep.txt'), 'k\n');
     const run = begin(store, root, 'run-1');
@@ -286,8 +268,8 @@ describe('reconcile expected state', () => {
   it('records no delete for a tool-written path whose existence probe cannot answer', () => {
     // EACCES on a parent (not ENOENT) means "cannot tell": never record a
     // delete the sweep cannot prove.
-    const root = tmpRoot('ws-reconcile-k-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-k-'));
+    const root = tempDir('ws-reconcile-k-');
+    const store = new FileJournalStore(tempDir('j-reconcile-k-'));
     writeFileSync(join(root, '.gitignore'), 'dist/\n');
     const inner = createNodeFileBridge('/');
     const bridge = {
@@ -310,8 +292,8 @@ describe('reconcile expected state', () => {
   });
 
   it('journals the delete of a tool-written file replaced by a directory', () => {
-    const root = tmpRoot('ws-reconcile-o-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-o-'));
+    const root = tempDir('ws-reconcile-o-');
+    const store = new FileJournalStore(tempDir('j-reconcile-o-'));
     const run = begin(store, root, 'run-1');
     writeFileSync(join(root, 'x'), 'built\n');
     toolWrite(store, 'x', null, 'built\n');
@@ -327,8 +309,8 @@ describe('reconcile expected state', () => {
   });
 
   it('journals the delete of a tool-written file replaced by a symlink', () => {
-    const root = tmpRoot('ws-reconcile-p-');
-    const store = new FileJournalStore(tmpRoot('j-reconcile-p-'));
+    const root = tempDir('ws-reconcile-p-');
+    const store = new FileJournalStore(tempDir('j-reconcile-p-'));
     writeFileSync(join(root, 'keep.txt'), 'k\n');
     const run = begin(store, root, 'run-1');
     writeFileSync(join(root, 'y.txt'), 'built\n');
@@ -346,8 +328,8 @@ describe('reconcile expected state', () => {
   describe('the still-a-regular-file probe for a skipped tool-written path', () => {
     // dist/ is ignored, so the walk never sees dist/out.js whatever it is.
     function setup(fileInfo: (path: string) => BridgeFileInfo) {
-      const root = tmpRoot('ws-reconcile-q-');
-      const store = new FileJournalStore(tmpRoot('j-reconcile-q-'));
+      const root = tempDir('ws-reconcile-q-');
+      const store = new FileJournalStore(tempDir('j-reconcile-q-'));
       writeFileSync(join(root, '.gitignore'), 'dist/\n');
       mkdirSync(join(root, 'dist'));
       writeFileSync(join(root, 'dist', 'out.js'), 'built\n');

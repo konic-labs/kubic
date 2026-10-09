@@ -3,9 +3,7 @@
 // into a NEW session and switch the TUI to it. The next prompt continues from
 // the fork; the abandoned path stays in the original session. Faux provider,
 // the real boot path; temp dirs cleaned up in afterEach.
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
 import {
   attachSession,
   openSessionStore,
@@ -20,24 +18,12 @@ import {
 import { bootFauxLane } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let i = 0; i < 5000 && !condition(); i += 1) {
@@ -133,8 +119,8 @@ describe('/fork and /tree in the TUI', () => {
   it('/fork <entry> switches to a new session; the next prompt continues from the fork', {
     timeout: 30000,
   }, async () => {
-    const sessionsRoot = tmpRoot('tui-fork-sessions-');
-    const workspace = tmpRoot('tui-fork-ws-');
+    const sessionsRoot = tempDir('tui-fork-sessions-');
+    const workspace = tempDir('tui-fork-ws-');
     const source = await twoTurnSource(sessionsRoot, workspace);
     const tui = openTui(sessionsRoot, workspace, source.id, ['three']);
     await waitFor(() => tui.fake.counts.started === 1);
@@ -163,8 +149,8 @@ describe('/fork and /tree in the TUI', () => {
   it('/tree forks before the picked prompt and puts it back in the editor', {
     timeout: 30000,
   }, async () => {
-    const sessionsRoot = tmpRoot('tui-fork-tree-sessions-');
-    const workspace = tmpRoot('tui-fork-tree-ws-');
+    const sessionsRoot = tempDir('tui-fork-tree-sessions-');
+    const workspace = tempDir('tui-fork-tree-ws-');
     const source = await twoTurnSource(sessionsRoot, workspace);
     const tui = openTui(sessionsRoot, workspace, source.id, ['retried']);
     await waitFor(() => tui.fake.counts.started === 1);

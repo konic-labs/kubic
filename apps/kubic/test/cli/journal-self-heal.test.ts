@@ -8,36 +8,21 @@
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   statSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from '../../src/config/load.js';
 import { sessionRetentionDays } from '../../src/config/projections.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -50,7 +35,7 @@ function out(): { lines: string[]; write: (line: string) => void } {
 function loadedWithRetention(
   retention?: string,
 ): ReturnType<typeof loadCliConfig> {
-  const home = tmpRoot('home-');
+  const home = tempDir('home-');
   mkdirSync(join(home, '.kubic'), { recursive: true });
   if (retention !== undefined) {
     writeFileSync(
@@ -58,7 +43,7 @@ function loadedWithRetention(
       `[session]\nretentionDays = ${retention}\n`,
     );
   }
-  const loaded = loadCliConfig({ home, cwd: tmpRoot('cwd-'), env: {} });
+  const loaded = loadCliConfig({ home, cwd: tempDir('cwd-'), env: {} });
   expect(loaded.error).toBeUndefined();
   return loaded;
 }
@@ -128,8 +113,8 @@ function seedCase(): {
   root: string;
   journalDir: string;
 } {
-  const sessionsRoot = tmpRoot('sess-root-');
-  const root = tmpRoot('ws-');
+  const sessionsRoot = tempDir('sess-root-');
+  const root = tempDir('ws-');
   const journalDir = join(sessionsRoot, 'sess-1', 'journal');
   seedAgedAndFresh(journalDir, 'sess-1');
   return { sessionsRoot, root, journalDir };
@@ -165,8 +150,8 @@ describe('read-time journal self-heal', () => {
   });
 
   it('the latest-session fallback (no --session) self-heals the same way', async () => {
-    const sessionsRoot = tmpRoot('sess-root-');
-    const root = tmpRoot('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     // Older session: a fresh entry only.
     const oldDir = join(sessionsRoot, 'sess-old', 'journal');
     new FileJournalStore(oldDir).append({
@@ -258,13 +243,13 @@ describe('read-time journal self-heal', () => {
     // exactly like the unset case — and writes nothing.
     const { sessionsRoot, root, journalDir } = seedCase();
     const before = treeSnapshot(journalDir);
-    const home = tmpRoot('home-');
+    const home = tempDir('home-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
       '[session]\nretentionDays = 30\n[nope]\nkey = 1\n',
     );
-    const loaded = loadCliConfig({ home, cwd: tmpRoot('cwd-'), env: {} });
+    const loaded = loadCliConfig({ home, cwd: tempDir('cwd-'), env: {} });
     expect(loaded.runtime).toBeUndefined();
     expect(loaded.error).toContain('nope');
     expect(sessionRetentionDays(loaded)).toBeUndefined();
@@ -313,8 +298,8 @@ describe('read-time journal self-heal', () => {
   });
 
   it('session retention never prunes a pinned workspace store (session-scoped only)', async () => {
-    const journalDir = tmpRoot('j-');
-    const root = tmpRoot('ws-');
+    const journalDir = tempDir('j-');
+    const root = tempDir('ws-');
     seedAgedAndFresh(journalDir, 'ws');
     const before = treeSnapshot(journalDir);
     const loaded = loadedWithRetention('7');
@@ -338,8 +323,8 @@ describe('read-time journal self-heal', () => {
   });
 
   it('a missing session journal stays a pure read and invalid ids stay refused', async () => {
-    const sessionsRoot = tmpRoot('sess-root-');
-    const root = tmpRoot('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     const loaded = loadedWithRetention('7');
 
     const o = out();

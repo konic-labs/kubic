@@ -8,9 +8,6 @@
 // runner is never signalled. Faux provider only; temp dirs and listeners are
 // cleaned up in afterEach.
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { OperationKillRegistry } from '@kubic/agent/lane/abort';
 import {
   createModels,
@@ -20,17 +17,10 @@ import {
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiProcessEvents, TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tui-restore-'));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_PROVIDER', undefined);
@@ -39,8 +29,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 // One ordered log shared by the terminal and the printer.
@@ -151,8 +139,8 @@ describe('terminal restore on every exit path', () => {
   });
 
   it('SIGHUP during a turn drains it and exits non-zero', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot();
+    const sessionsRoot = tempDir('tui-restore-');
+    const workspace = tempDir('tui-restore-');
     const events: string[] = [];
     let admitted: string | undefined;
     let kills: OperationKillRegistry | undefined;
@@ -319,8 +307,8 @@ describe('terminal restore on every exit path', () => {
 // screen — after `?1049l` — and carries the last assistant cell.
 describe('the final document reaches the main screen', () => {
   it('prints every document line after leaving the alt screen, including the last answer', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot();
+    const sessionsRoot = tempDir('tui-restore-');
+    const workspace = tempDir('tui-restore-');
     let settled = false;
     const bootLane: TuiRunDeps['bootLane'] = async (sessionId, answer) => {
       const faux = fauxProvider();

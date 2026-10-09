@@ -1,8 +1,8 @@
 // Journal diff core — attributed hunks from entries.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   clipChangeContent,
   clipContent,
@@ -15,21 +15,8 @@ import {
 } from './diff.js';
 import { FileJournalStore } from './store.js';
 
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'j-'));
-  roots.push(root);
-  return root;
-}
-
 function seed(): FileJournalStore {
-  const store = new FileJournalStore(tmpRoot());
+  const store = new FileJournalStore(tempDir('j-'));
   store.append({
     path: 'a.txt',
     op: 'write',
@@ -243,7 +230,7 @@ describe('corrupt journal content', () => {
     store: FileJournalStore;
     dir: string;
   } {
-    const dir = tmpRoot();
+    const dir = tempDir('j-');
     const store = new FileJournalStore(dir);
     const before = 'b\n'.repeat(40_000);
     const after = 'c\n'.repeat(40_000);
@@ -295,7 +282,7 @@ describe('corrupt journal content', () => {
   });
 
   it('a hash-corrupt before-blob marks the change corrupt', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('j-');
     const store = new FileJournalStore(dir);
     const recorded = store.append({
       path: 'a.txt',

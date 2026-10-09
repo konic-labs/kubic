@@ -3,22 +3,12 @@
 // (its catalog entry, its auth from the env key). Zero network: the built-in
 // keeps its id, catalog and auth, and only its stream is swapped for Pi's
 // faux stream, so the model call is answered locally.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { fauxAssistantMessage, fauxProvider } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { assembleModels } from '@kubic/host/models';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -26,16 +16,14 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('kubic run on a built-in provider', () => {
   it('selects the pinned built-in anthropic model when its key is set', async () => {
     const assembled = await assembleModels(
-      tmpRoot('builtin-cwd-'),
+      tempDir('builtin-cwd-'),
       { ANTHROPIC_API_KEY: 'x' },
-      { home: tmpRoot('builtin-home-') },
+      { home: tempDir('builtin-home-') },
     );
     const builtin = assembled.models.getProvider('anthropic');
     if (builtin === undefined) throw new Error('anthropic not registered');
@@ -53,7 +41,7 @@ describe('kubic run on a built-in provider', () => {
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot('builtin-root-'),
+        sessionsRoot: tempDir('builtin-root-'),
         env: new FakeExecutionEnv({}),
         models: assembled.models,
         // The `[model] provider="anthropic"` pin runtimeModelPin projects.

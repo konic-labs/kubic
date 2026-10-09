@@ -4,9 +4,7 @@
 // as the usage terminus (exit 2); unknown names are refused by name; the
 // mutual exclusion is a usage error. The lane-level narrowing itself is
 // pinned in packages/agent/src/lane/tools-line.test.ts.
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import {
   createModels,
@@ -16,21 +14,12 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'run-tools-'));
-  made.push(dir);
-  return dir;
-}
-
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 const READ_ONLY = {
@@ -46,7 +35,7 @@ function deps() {
   models.setProvider(faux.provider);
   faux.setResponses([fauxAssistantMessage('done')]);
   return {
-    sessionsRoot: tmpRoot(),
+    sessionsRoot: tempDir('run-tools-'),
     models,
     env: new FakeExecutionEnv({}),
   };
@@ -108,7 +97,7 @@ describe('kubic run tool selection', () => {
 
 describe('kubic tui tool selection', () => {
   it('refuses a class-contradicting selection before any session exists', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-tools-');
     await expect(
       bootTuiLane(undefined, {
         sessionsRoot: root,
@@ -124,7 +113,7 @@ describe('kubic tui tool selection', () => {
   it('refuses an unknown tool by name', async () => {
     await expect(
       bootTuiLane(undefined, {
-        sessionsRoot: tmpRoot(),
+        sessionsRoot: tempDir('run-tools-'),
         toolSelection: ['nope'],
       }),
     ).rejects.toThrow(/unknown tool "nope"/);

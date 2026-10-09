@@ -3,8 +3,7 @@
 // triple intact. Faux-only, real lane:
 // the wall clock, the turn count and the signal handlers all run for real —
 // zero network.
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -24,15 +23,8 @@ import {
 } from '@kubic/host/run';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'run-guard-'));
-  made.push(dir);
-  return dir;
-}
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -114,8 +106,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('run guard flags', () => {
@@ -215,7 +205,7 @@ describe('run guard mapping', () => {
   it('maps a never-settling turn to timeout (exit 1) with the ref triple intact', {
     timeout: 10_000,
   }, async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-guard-');
     const result = await runHeadlessPrompt(
       'think forever',
       { timeoutMs: 60 },
@@ -250,7 +240,7 @@ describe('run guard mapping', () => {
           out: o.write,
           run: (prompt, options) =>
             runHeadlessPrompt(prompt, options, {
-              sessionsRoot: tmpRoot(),
+              sessionsRoot: tempDir('run-guard-'),
               models: hangingModels(),
               env: new FakeExecutionEnv({}),
             }),
@@ -278,7 +268,7 @@ describe('run guard mapping', () => {
         'think forever',
         {},
         {
-          sessionsRoot: tmpRoot(),
+          sessionsRoot: tempDir('run-guard-'),
           models: hangingModels(),
           env: new FakeExecutionEnv({}),
         },
@@ -303,7 +293,7 @@ describe('run guard mapping', () => {
   it('maps a turn-spinning run to turn_limit once maxTurns is exceeded', {
     timeout: 10_000,
   }, async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-guard-');
     const result = await runHeadlessPrompt(
       'spin forever',
       { maxTurns: 3 },
@@ -324,7 +314,7 @@ describe('run guard mapping', () => {
   it.each([{ timeoutMs: -1 }, { timeoutMs: 0 }, { maxTurns: 0 }])(
     'rejects an invalid guard override %j with the usage terminus',
     async (override) => {
-      const root = tmpRoot();
+      const root = tempDir('run-guard-');
       const result = await runHeadlessPrompt('hi', override, {
         sessionsRoot: root,
         models: fauxModels(['unused']),
@@ -339,7 +329,7 @@ describe('run guard mapping', () => {
   );
 
   it('rejects a timeoutMs above the setTimeout ceiling (direct caller)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-guard-');
     const result = await runHeadlessPrompt(
       'hi',
       { timeoutMs: 3_000_000_000 },

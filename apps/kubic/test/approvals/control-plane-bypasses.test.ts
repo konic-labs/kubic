@@ -8,8 +8,7 @@
 // documented limits are pinned in the "still-documented misses" block so a
 // future fix is a conscious change.
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: `${HOME}` here is bash syntax under test, not a template literal
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   confinePath,
@@ -40,23 +39,14 @@ import {
   runDoctorCommand,
 } from '@kubic/host/doctor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 
 const WS = '/work';
 
 const HOME = '/home/tester';
 
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function ctx(overrides: Partial<TriggerContext> = {}): TriggerContext {
@@ -380,13 +370,13 @@ describe('control-plane detector: $HOME expands like ~', () => {
   });
 
   it('full access does not auto-approve an $HOME write into ~/.kubic', async () => {
-    const root = mkTmp('kubic-approvals-bypass-home-');
-    const workspace = mkTmp('kubic-approvals-bypass-ws-');
+    const root = tempDir('kubic-approvals-bypass-home-');
+    const workspace = tempDir('kubic-approvals-bypass-ws-');
     enableFullAccess(new FileApprovalStore(root), 'test');
     const policy = installPolicy({
       workspace,
       sessionDir: root,
-      home: mkTmp('kubic-approvals-bypass-h-'),
+      home: tempDir('kubic-approvals-bypass-h-'),
     });
     const verdict = await policy.ask({
       toolName: 'bash',
@@ -411,7 +401,7 @@ describe('still-documented misses stay misses (honest limits)', () => {
 
 describe('autoApprove never answers an always-ask capability', () => {
   function workspaceWithState(): string {
-    const workspace = mkTmp('kubic-approvals-bypass-ws-');
+    const workspace = tempDir('kubic-approvals-bypass-ws-');
     mkdirSync(join(workspace, '.kubic'), { recursive: true });
     return workspace;
   }

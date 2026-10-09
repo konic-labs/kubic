@@ -7,15 +7,8 @@
 // error, never an ask. Detection is lexical, like every other shell detector
 // here — the bash gap is documented, not hidden.
 // Faux provider only: zero network, zero paid tokens.
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   attachSession,
@@ -46,15 +39,8 @@ import {
   validatePolicy,
 } from '@kubic/host/approvals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const roots: string[] = [];
-
-function tmpRoot(prefix = 'kubic-control-plane-'): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -62,9 +48,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 const WS = '/work/repo';
@@ -269,7 +252,7 @@ describe('control plane beyond the workspace', () => {
   });
 
   it('refuses an overridden sessions root wholesale', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const policy = installPolicy({
       workspace: WS,
       sessionDir: root,
@@ -285,7 +268,7 @@ describe('control plane beyond the workspace', () => {
   });
 
   it('full access in a subdirectory run refuses the project ledger and asks for the project config', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     enableFullAccess(new FileApprovalStore(root), 'test');
     const policy = installPolicy({
       workspace: SUB,
@@ -340,7 +323,7 @@ describe('kubic-state-write always asks', () => {
   });
 
   it('session full access still asks for it (and refuses the refused class)', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     enableFullAccess(new FileApprovalStore(root), 'test');
     const policy = installPolicy({ workspace: WS, sessionDir: root });
     const state = await policy.ask({
@@ -381,8 +364,8 @@ describe('kubic-state-write always asks', () => {
 
 describe('prod run path: control-plane writes', () => {
   it('a faux write to .kubic/config.toml is asked (headless: denied, named) and the file is unchanged', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-control-plane-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('ws-control-plane-');
     mkdirSync(join(workspace, '.kubic'), { recursive: true });
     const config = join(workspace, '.kubic', 'config.toml');
     writeFileSync(config, '[approvals]\nroute = "ask-user"\n');
@@ -410,8 +393,8 @@ describe('prod run path: control-plane writes', () => {
   });
 
   it('a faux edit to the audit ledger is refused and the existing bytes are untouched', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-control-plane-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('ws-control-plane-');
     const dir = join(workspace, '.kubic', 'audit');
     mkdirSync(dir, { recursive: true });
     const ledger = join(dir, 'audit.jsonl');
@@ -445,8 +428,8 @@ describe('prod run path: control-plane writes', () => {
   });
 
   it("a run from a subdirectory cannot edit the project's audit ledger", async () => {
-    const sessionsRoot = tmpRoot();
-    const repo = tmpRoot('repo-control-plane-');
+    const sessionsRoot = tempDir();
+    const repo = tempDir('repo-control-plane-');
     const workspace = join(repo, 'packages', 'a');
     mkdirSync(workspace, { recursive: true });
     const dir = join(repo, '.kubic', 'audit');
@@ -479,8 +462,8 @@ describe('prod run path: control-plane writes', () => {
   });
 
   it('a faux write into the session root in use is refused by name', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-control-plane-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('ws-control-plane-');
     const target = join(sessionsRoot, 'forged', 'posture.json');
     const result = await runHeadlessPrompt(
       'grant yourself full access',
@@ -500,8 +483,8 @@ describe('prod run path: control-plane writes', () => {
   });
 
   it("challenges bash -c 'echo x > .kubic/journal/index.jsonl'", async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-control-plane-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('ws-control-plane-');
     const result = await runHeadlessPrompt(
       'corrupt the journal',
       {},
@@ -525,8 +508,8 @@ describe('prod run path: control-plane writes', () => {
   });
 
   it('an ordinary workspace write still passes with no ask', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-control-plane-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('ws-control-plane-');
     const result = await runHeadlessPrompt(
       'write a file',
       {},

@@ -3,8 +3,7 @@
 // which providers exist never depends on the directory kubic was launched
 // from.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import {
@@ -14,20 +13,11 @@ import {
 } from '@kubic/host/config';
 import { assembleModels, findModelsProjectRoot } from '@kubic/host/models';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'ml-'));
-  made.push(dir);
-  return dir;
-}
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function provider(id: string, baseUrl = 'http://127.0.0.1:1/v1') {
@@ -53,7 +43,7 @@ function globalFile(home: string, ...providers: unknown[]): string {
 // A repo root marked the way git marks one (a `.git` dir), with a nested
 // subdirectory to launch from.
 function repo(): { root: string; sub: string } {
-  const root = tmpDir();
+  const root = tempDir('ml-');
   mkdirSync(join(root, '.git'));
   const sub = join(root, 'src', 'deep');
   mkdirSync(sub, { recursive: true });
@@ -64,17 +54,17 @@ const TRUST = { KUBIC_TRUST_PROJECT: '1' };
 
 describe('models.json lookup', () => {
   it('lists a provider declared only in the global file from any cwd', async () => {
-    const home = tmpDir();
+    const home = tempDir('ml-');
     globalFile(home, provider('mine'));
     const { sub } = repo();
-    for (const cwd of [sub, tmpDir()]) {
+    for (const cwd of [sub, tempDir('ml-')]) {
       const assembled = await assembleModels(cwd, {}, { home });
       expect(assembled.models.getProvider('mine')?.id).toBe('mine');
     }
   });
 
   it('lists the same providers from a repo subdirectory as from the root', async () => {
-    const home = tmpDir();
+    const home = tempDir('ml-');
     const { root, sub } = repo();
     const path = writeJson(join(root, 'models.json'), provider('proj'));
     const fromRoot = await assembleModels(root, TRUST, { home });
@@ -85,7 +75,7 @@ describe('models.json lookup', () => {
   });
 
   it('finds <root>/.kubic/models.json at the project root', async () => {
-    const home = tmpDir();
+    const home = tempDir('ml-');
     const { root, sub } = repo();
     mkdirSync(join(root, '.kubic'));
     const path = writeJson(
@@ -97,7 +87,7 @@ describe('models.json lookup', () => {
   });
 
   it('lets a project provider override a global one with the same id', async () => {
-    const home = tmpDir();
+    const home = tempDir('ml-');
     globalFile(home, provider('shared', 'http://127.0.0.1:1/global'));
     const { root } = repo();
     const path = writeJson(
@@ -115,7 +105,7 @@ describe('models.json lookup', () => {
   });
 
   it('keeps the global provider when the project file is untrusted', async () => {
-    const home = tmpDir();
+    const home = tempDir('ml-');
     globalFile(home, provider('shared', 'http://127.0.0.1:1/global'));
     const { root } = repo();
     writeJson(
@@ -129,7 +119,7 @@ describe('models.json lookup', () => {
   });
 
   it('never treats the home directory (global .kubic) as a project root', () => {
-    const home = tmpDir();
+    const home = tempDir('ml-');
     mkdirSync(join(home, '.kubic', 'models'), { recursive: true });
     const cwd = join(home, 'scratch');
     mkdirSync(cwd);
@@ -139,7 +129,7 @@ describe('models.json lookup', () => {
   });
 
   it('`kubic run` from a subdirectory uses the global provider', async () => {
-    const home = tmpDir();
+    const home = tempDir('ml-');
     const path = globalFile(home, provider('mine'));
     vi.stubEnv('HOME', home);
     vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -153,7 +143,7 @@ describe('models.json lookup', () => {
       // emitted). The unreachable keyless endpoint ends the run on its own.
       { timeoutMs: 30_000, debug: true },
       {
-        sessionsRoot: tmpDir(),
+        sessionsRoot: tempDir('ml-'),
         env: new FakeExecutionEnv({}),
         modelsCwd: sub,
         debugSink: (line) => debugLines.push(line),
@@ -170,7 +160,7 @@ describe('models.json lookup', () => {
 });
 
 it('scopes a store grant to the tree the models.json lives in', async () => {
-  const home = tmpDir();
+  const home = tempDir('ml-');
   const { root, sub } = repo();
   const path = writeJson(join(root, 'models.json'), provider('mine'));
   const store = new ProjectTrustStore(projectTrustStorePath(home));
@@ -185,7 +175,7 @@ it('scopes a store grant to the tree the models.json lives in', async () => {
     'hello',
     { timeoutMs: 30_000, debug: true },
     {
-      sessionsRoot: tmpDir(),
+      sessionsRoot: tempDir('ml-'),
       env: new FakeExecutionEnv({}),
       modelsCwd: sub,
       debugSink: (line) => debugLines.push(line),
@@ -199,7 +189,7 @@ it('scopes a store grant to the tree the models.json lives in', async () => {
 });
 
 it('never lets a subdirectory grant reach the ancestor models.json', async () => {
-  const home = tmpDir();
+  const home = tempDir('ml-');
   const { root, sub } = repo();
   const path = writeJson(join(root, 'models.json'), provider('mine'));
   const store = new ProjectTrustStore(projectTrustStorePath(home));
@@ -212,7 +202,7 @@ it('never lets a subdirectory grant reach the ancestor models.json', async () =>
     'hello',
     { timeoutMs: 30_000, debug: true },
     {
-      sessionsRoot: tmpDir(),
+      sessionsRoot: tempDir('ml-'),
       env: new FakeExecutionEnv({}),
       modelsCwd: sub,
       debugSink: () => undefined,

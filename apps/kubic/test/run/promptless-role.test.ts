@@ -2,21 +2,13 @@
 // closed with the named refusal instead of booting an instruction-less
 // role. Full headless run on the faux provider (zero network, zero paid
 // tokens); temp dirs and env restored in afterEach.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createModels, fauxProvider } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -25,8 +17,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function models(): ReturnType<typeof createModels> {
@@ -41,8 +31,8 @@ function models(): ReturnType<typeof createModels> {
 
 describe('run --role with a prompt-less document', () => {
   it('exits failed with the named refusal, never booting the lane', async () => {
-    const sessionsRoot = tmp('kubic-role-prompt-sessions-');
-    const ws = tmp('kubic-role-prompt-ws-');
+    const sessionsRoot = tempDir('kubic-role-prompt-sessions-');
+    const ws = tempDir('kubic-role-prompt-ws-');
     mkdirSync(join(ws, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(ws, '.kubic', 'roles', 'promptless.md'),

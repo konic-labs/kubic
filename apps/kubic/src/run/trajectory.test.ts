@@ -2,14 +2,7 @@
 // and replay read <sessions-root>/<id>/trajectory.json, so the printed ref
 // and the session id are both ways back to the record. Faux provider only;
 // temp sessions root and workspace.
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runExportCommand } from '@kubic/eval/export-cli';
 import { NodeExecutionEnv } from '@kubic/exec/env';
@@ -17,19 +10,12 @@ import { AUDIT_LEDGER_FILE, auditLedgerDirFor } from '@kubic/host/audit';
 import { runReplayCommand } from '@kubic/host/replay';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from './command.js';
 import {
   persistRunTrajectory,
   resolveSessionTrajectory,
 } from './trajectory.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -38,8 +24,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('persistRunTrajectory', () => {
@@ -47,8 +31,8 @@ describe('persistRunTrajectory', () => {
     processEnv: NodeJS.ProcessEnv,
     extra: Partial<Parameters<typeof persistRunTrajectory>[0]> = {},
   ) {
-    const root = tmp('traj-persist-root-');
-    const cwd = tmp('traj-persist-cwd-');
+    const root = tempDir('traj-persist-root-');
+    const cwd = tempDir('traj-persist-cwd-');
     const path = persistRunTrajectory({
       sessionsRoot: root,
       sessionId: 'sess-1',
@@ -133,8 +117,8 @@ describe('persistRunTrajectory', () => {
   });
 
   it('names an unreadable audit ledger on the warn channel and still writes the trajectory', () => {
-    const root = tmp('traj-persist-root-');
-    const cwd = tmp('traj-persist-cwd-');
+    const root = tempDir('traj-persist-root-');
+    const cwd = tempDir('traj-persist-cwd-');
     const ledgerDir = auditLedgerDirFor(cwd);
     const ledgerPath = join(ledgerDir, AUDIT_LEDGER_FILE);
     mkdirSync(ledgerDir, { recursive: true });
@@ -169,8 +153,8 @@ describe('persistRunTrajectory', () => {
   });
 
   it('names an unreadable journal on the warn channel and still writes the trajectory', () => {
-    const root = tmp('traj-persist-root-');
-    const cwd = tmp('traj-persist-cwd-');
+    const root = tempDir('traj-persist-root-');
+    const cwd = tempDir('traj-persist-cwd-');
     const journalDir = join(root, 'sess-1', 'journal');
     // A directory where the journal's index file belongs: the journal exists
     // but cannot be read.
@@ -239,8 +223,8 @@ describe('resolveSessionTrajectory', () => {
   });
 
   it('export and replay read a run-produced trajectory by session id', async () => {
-    const root = tmp('traj-session-root-');
-    const ws = tmp('traj-session-ws-');
+    const root = tempDir('traj-session-root-');
+    const ws = tempDir('traj-session-ws-');
     const run = await runHeadlessPrompt(
       'hello',
       {},

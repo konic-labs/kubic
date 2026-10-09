@@ -7,10 +7,8 @@
 // tool that blocks until its invocation is cancelled; the crash is simulated by
 // abandoning the first Harness mid-turn (never closing it) and reopening the
 // same storage.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,
@@ -33,19 +31,9 @@ import {
   settlePending,
 } from './pending.js';
 
-const dirs: string[] = [];
-
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
-
-function scratch(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-pending-'));
-  dirs.push(dir);
-  return dir;
-}
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -176,7 +164,7 @@ function guard(): { context: Context; cancel: () => void } {
 describe('inspectPending', () => {
   it('reports nothing on a fresh session and does not start the scheduler', async () => {
     const fixture = laneFixture();
-    const lane = await openLane(fixture, scratch());
+    const lane = await openLane(fixture, tempDir('kubic-pending-'));
     expect(await inspectPending(lane.lane, BACKGROUND_CONTEXT)).toEqual({
       pending: false,
     });
@@ -195,7 +183,7 @@ describe('inspectPending', () => {
       toolCall('work'),
       fauxAssistantMessage('finished'),
     ]);
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const first = await openLane(fixture, dir);
     const submission = await blockTurn(first, work);
     // `first` is abandoned, never closed: the process died mid-turn.
@@ -228,7 +216,7 @@ describe('settlePending', () => {
       fauxAssistantMessage('answered after resume'),
       fauxAssistantMessage('second reply'),
     ]);
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const first = await openLane(fixture, dir);
     const submission = await blockTurn(first, work);
     const second = await openLane(fixture, dir);
@@ -268,7 +256,7 @@ describe('settlePending', () => {
       defineExtension({ name: 'kubic', tools: [work.tool] }),
     );
     fixture.faux.setResponses([toolCall('work'), fauxAssistantMessage('x')]);
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const first = await openLane(fixture, dir);
     await blockTurn(first, work);
     // No durable retry here: the provider failure must land in one attempt.
@@ -312,7 +300,7 @@ describe('settlePending', () => {
       toolCall('work'),
       fauxAssistantMessage('second reply'),
     ]);
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const first = await openLane(fixture, dir);
     const submission = await blockTurn(first, work);
     const second = await openLane(fixture, dir);
@@ -353,7 +341,7 @@ describe('settlePending', () => {
       fauxAssistantMessage('after abort'),
       fauxAssistantMessage('second reply'),
     ]);
-    const lane = await openLane(fixture, scratch());
+    const lane = await openLane(fixture, tempDir('kubic-pending-'));
     await blockTurn(lane, work);
     const kill = vi.fn();
     lane.kills.track(String(lane.conversation.id), kill);
@@ -387,7 +375,7 @@ describe('settlePending', () => {
       toolCall('work'),
       fauxAssistantMessage('second reply'),
     ]);
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const first = await openLane(fixture, dir);
     const submission = await blockTurn(first, work);
     const second = await openLane(fixture, dir);
@@ -437,7 +425,7 @@ describe('settlePending', () => {
       toolCall('work'),
       fauxAssistantMessage('second reply'),
     ]);
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const first = await openLane(fixture, dir);
     await blockTurn(first, work);
     const second = await openLane(fixture, dir);
@@ -478,7 +466,7 @@ describe('settlePending', () => {
       fauxAssistantMessage('after abort'),
       fauxAssistantMessage('second reply'),
     ]);
-    const lane = await openLane(fixture, scratch());
+    const lane = await openLane(fixture, tempDir('kubic-pending-'));
     await blockTurn(lane, work);
     const bound = guard();
     const kill = vi.fn();
@@ -520,7 +508,7 @@ describe('settlePending', () => {
       toolCall('work'),
       fauxAssistantMessage('must not run'),
     ]);
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const first = await openLane(fixture, dir);
     await blockTurn(first, work);
     const second = await openLane(fixture, dir);
@@ -562,7 +550,7 @@ describe('settlePending', () => {
 
   it('returns none when nothing is pending', async () => {
     const fixture = laneFixture();
-    const lane = await openLane(fixture, scratch());
+    const lane = await openLane(fixture, tempDir('kubic-pending-'));
     for (const policy of ['resume', 'abort'] as const) {
       expect(
         await settlePending(lane.lane, policy, {

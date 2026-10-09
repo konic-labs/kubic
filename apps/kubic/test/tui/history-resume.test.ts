@@ -1,33 +1,19 @@
 // `kubic tui --session <id>` seeds the prompt editor's
 // history from the resumed session's committed user prompts, so Up recalls
 // what the previous process sent. Faux provider; the real boot path.
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
 import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let i = 0; i < 5000 && !condition(); i += 1) {
@@ -40,8 +26,8 @@ describe('resumed prompt history', () => {
   it('Up recalls the last prompt from the previous process', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-history-resume-ws-');
-    const sessionsRoot = tmpRoot('tui-history-resume-sessions-');
+    const workspace = tempDir('tui-history-resume-ws-');
+    const sessionsRoot = tempDir('tui-history-resume-sessions-');
     const models = createModels();
     const faux = fauxProvider();
     faux.setResponses([fauxAssistantMessage('noted')]);

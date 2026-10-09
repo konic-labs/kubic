@@ -8,27 +8,14 @@
 // half of the hole is an entry whose own content cannot fit any journal: it
 // must be refused up front, with the target file untouched, instead of
 // landing a record that the same append's retention pass then deletes.
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { encodeDelta } from './delta.js';
 import { FileJournalStore } from './store.js';
 import type { JournalEntry, JournalEntryInput } from './types.js';
 import { JournalEntryTooLargeError } from './types.js';
-
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'journal-bound-'));
-  roots.push(root);
-  return root;
-}
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   return {
@@ -46,7 +33,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
 
 describe('journal entry bound', () => {
   it('refuses an entry whose own blobs exceed the bound, writing nothing', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-bound-');
     const store = new FileJournalStore(dir, { maxBytes: 1000 });
     store.append(entry({ path: 'small.txt', after: 'ok\n' }));
     const before = 'x'.repeat(2000);
@@ -65,7 +52,9 @@ describe('journal entry bound', () => {
   });
 
   it('reports the bound on the error itself', () => {
-    const store = new FileJournalStore(tmpRoot(), { maxBytes: 1000 });
+    const store = new FileJournalStore(tempDir('journal-bound-'), {
+      maxBytes: 1000,
+    });
     try {
       store.append(entry({ before: 'x'.repeat(2000), after: null }));
       throw new Error('expected the append to refuse');
@@ -79,7 +68,7 @@ describe('journal entry bound', () => {
   });
 
   it('measures the delta shape: a large after-side counts as its delta', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-bound-');
     // Similar large contents: the after-side is stored as a small delta, so
     // the entry fits a bound far below the content size...
     const before = 'line\n'.repeat(20_000); // 100 KB
@@ -95,7 +84,7 @@ describe('journal entry bound', () => {
     expect(store.readAfter(recorded)).toBe(after);
     // ...and one byte less refuses it, naming the bound: the measure is the
     // delta that is actually stored, not the content it encodes.
-    const tighter = new FileJournalStore(tmpRoot(), {
+    const tighter = new FileJournalStore(tempDir('journal-bound-'), {
       maxBytes: bound - 1,
       durable: false,
     });
@@ -105,7 +94,7 @@ describe('journal entry bound', () => {
   });
 
   it('keeps the newest entry and reports how far over the bound it is', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-bound-');
     const store = new FileJournalStore(dir, { maxBytes: 10_000 });
     store.append(entry({ path: 'a.txt', after: `${'a'.repeat(50)}\n` }));
     store.append(entry({ path: 'b.txt', after: `${'b'.repeat(50)}\n` }));
@@ -126,7 +115,7 @@ describe('journal entry bound', () => {
   });
 
   it('an overflowing sequence always keeps the newest entry', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-bound-');
     const store = new FileJournalStore(dir, { maxBytes: 100 });
     for (const name of ['a', 'b', 'c', 'd']) {
       store.append(
@@ -140,7 +129,7 @@ describe('journal entry bound', () => {
   });
 
   it('reports no over-bound bytes when the kept set fits', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-bound-');
     const store = new FileJournalStore(dir, { maxBytes: 10_000 });
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));

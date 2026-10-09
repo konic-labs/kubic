@@ -4,8 +4,7 @@
 // the fake terminal satisfies the seam structurally, and the assertions read
 // the restored main-screen document the loop prints. A real faux lane end to
 // end: no network, no paid tokens.
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bootLane, type Lane } from '@kubic/agent/lane/boot';
 import {
@@ -26,8 +25,9 @@ import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { tuiLoop } from '../../src/tui/lane-loop.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
@@ -42,19 +42,6 @@ type FauxStep =
   | FauxContent
   | (() => Promise<FauxMessage>)
   | ((context: { messages: readonly unknown[] }) => FauxMessage);
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tui-loop-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function fauxModels(steps: FauxStep[]): {
   models: MutableModels;
@@ -180,7 +167,7 @@ async function waitFor(
 
 describe('kubic tui prompt loop', () => {
   it('drives a faux prompt end-to-end into the transcript view', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels(['all done, boss']);
@@ -210,7 +197,7 @@ describe('kubic tui prompt loop', () => {
   });
 
   it('feeds tool calls into the tree and usage rows into the status bar', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([
@@ -261,7 +248,7 @@ describe('kubic tui prompt loop', () => {
     // escapes as an unhandledRejection (example:
     // "lane abort failed for <id>: {\"message\":\"lane refuses abort\"}") and
     // the operator sees nothing happen at all.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const rejections: unknown[] = [];
@@ -348,7 +335,7 @@ describe('kubic tui prompt loop', () => {
   });
 
   it('cancels the in-flight turn on Ctrl-C without killing the process', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     let release: () => void = () => {};
@@ -399,7 +386,7 @@ describe('kubic tui prompt loop', () => {
     // frame shows a dim `queued:` row, and the harness delivers the prompt
     // after the running turn settles — its own user entry and answer, on the
     // same settlement path as any other submit.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     let release: () => void = () => {};
@@ -454,7 +441,7 @@ describe('kubic tui prompt loop', () => {
     // needs the loop's in-place queue map too: its projector otherwise keeps
     // its own empty map, resolves every inbox id to nothing and never renders
     // the row. The tests above only ever drive the initial runner.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     let release: () => void = () => {};
@@ -508,7 +495,7 @@ describe('kubic tui prompt loop', () => {
     // goes to pi-durable with `whenBusy: 'steer'`, which places it after the
     // current tool round — so the model request that follows the tool round
     // carries it, inside the SAME turn.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     let release: () => void = () => {};
@@ -560,7 +547,7 @@ describe('kubic tui prompt loop', () => {
   });
 
   it('an empty Enter during a busy turn is a no-op with no queue entry', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     let release: () => void = () => {};
@@ -605,7 +592,7 @@ describe('kubic tui prompt loop', () => {
     // The documented cancel rule: Esc/Ctrl-C aborts the running turn, and
     // pi-durable's abort withdraws every queued input with it — the footer
     // says how many prompts went, so nothing vanishes silently.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     let release: () => void = () => {};
@@ -657,7 +644,7 @@ describe('kubic tui prompt loop', () => {
     // lane admits Pi's manual compaction task with the focus as the
     // summarizer's instructions, exactly one `pi.compaction` entry lands, and
     // the footer reports what the cut did.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const seen: string[] = [];

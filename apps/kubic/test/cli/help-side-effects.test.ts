@@ -2,14 +2,7 @@
 // the production runners in a scratch git repository. A help request must
 // print usage and exit 0 without writing the runtime exclude rules,
 // building lane deps or touching the repo.
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
 import {
@@ -17,24 +10,15 @@ import {
   disposeAllGitSandboxes,
 } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from '../../src/config/load.js';
 import { dispatchCommand } from '../../src/dispatch.js';
 import { createProdRunners } from '../../src/prod-runners.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 afterEach(() => {
   disposeAllGitSandboxes();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function repo(): string {
@@ -43,7 +27,7 @@ function repo(): string {
   // dispatch shells inherits the same scrubbed view (the per-run HOME stub
   // in kubic() only narrows further).
   const sandbox = createGitSandbox({ injectProcessEnv: true });
-  const root = tmpRoot('kubic-help-');
+  const root = tempDir('kubic-help-');
   const git = (args: string[]): void => {
     sandbox.git(args, { cwd: root });
   };
@@ -64,7 +48,7 @@ async function kubic(
   args: string[],
   cwd: string,
 ): Promise<{ code: number; lines: string[]; errs: string[] }> {
-  const home = tmpRoot('kubic-help-home-');
+  const home = tempDir('kubic-help-home-');
   vi.stubEnv('HOME', home);
   vi.stubEnv('NO_COLOR', '1');
   const lines: string[] = [];

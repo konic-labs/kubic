@@ -4,10 +4,10 @@
 // a provider (and the user's key) at an arbitrary URL. The user-global
 // ~/.kubic/models/models.json is the trusted default location.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 
 const registered = vi.hoisted(() => ({ calls: [] as string[][] }));
 vi.mock('@kubic/agent/models-config', async (importOriginal) => {
@@ -26,18 +26,8 @@ vi.mock('@kubic/agent/models-config', async (importOriginal) => {
 
 const { assembleModels, modelsSourcesProbe } = await import('./models-cli.js');
 
-const made: string[] = [];
-
-function tmpDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'mt-'));
-  made.push(dir);
-  return dir;
-}
-
 afterEach(() => {
   registered.calls.splice(0);
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function provider(id: string, baseUrl = 'http://127.0.0.1:8000/v1') {
@@ -65,9 +55,9 @@ function writeGlobal(home: string, ...providers: unknown[]): string {
 
 describe('models.json trust gate', () => {
   it('ignores an untrusted project models.json by name and registers none of it', async () => {
-    const cwd = tmpDir();
+    const cwd = tempDir('mt-');
     const path = writeProject(cwd, provider('evil'));
-    const assembled = await assembleModels(cwd, {}, { home: tmpDir() });
+    const assembled = await assembleModels(cwd, {}, { home: tempDir('mt-') });
     expect(assembled.models.getProvider('evil')).toBe(undefined);
     expect(registered.calls).toEqual([]);
     const note = assembled.notes.join('\n');
@@ -77,12 +67,12 @@ describe('models.json trust gate', () => {
   });
 
   it('registers the project models.json under KUBIC_TRUST_PROJECT=1', async () => {
-    const cwd = tmpDir();
+    const cwd = tempDir('mt-');
     const path = writeProject(cwd, provider('local'));
     const assembled = await assembleModels(
       cwd,
       { KUBIC_TRUST_PROJECT: '1' },
-      { home: tmpDir() },
+      { home: tempDir('mt-') },
     );
     expect(assembled.models.getProvider('local')?.id).toBe('local');
     expect(assembled.providers.get('local')?.origin).toBe(path);
@@ -92,20 +82,20 @@ describe('models.json trust gate', () => {
   });
 
   it('registers the project models.json on an explicit trust decision', async () => {
-    const cwd = tmpDir();
+    const cwd = tempDir('mt-');
     writeProject(cwd, provider('local'));
     const assembled = await assembleModels(
       cwd,
       {},
-      { home: tmpDir(), projectTrust: () => true },
+      { home: tempDir('mt-'), projectTrust: () => true },
     );
     expect(assembled.models.getProvider('local')?.id).toBe('local');
   });
 
   it('loads ~/.kubic/models/models.json with no trust prompt', async () => {
-    const home = tmpDir();
+    const home = tempDir('mt-');
     const path = writeGlobal(home, provider('mine'));
-    const assembled = await assembleModels(tmpDir(), {}, { home });
+    const assembled = await assembleModels(tempDir('mt-'), {}, { home });
     expect(assembled.models.getProvider('mine')?.id).toBe('mine');
     expect(assembled.providers.get('mine')?.origin).toBe(path);
     expect(assembled.notes.join('\n')).toContain(
@@ -116,14 +106,14 @@ describe('models.json trust gate', () => {
 
   it("leaves the built-in anthropic baseUrl unchanged under an untrusted 'anthropic' entry", async () => {
     const pristine = (
-      await assembleModels(tmpDir(), {}, { home: tmpDir() })
+      await assembleModels(tempDir('mt-'), {}, { home: tempDir('mt-') })
     ).models.getProvider('anthropic')?.baseUrl;
-    const cwd = tmpDir();
+    const cwd = tempDir('mt-');
     writeProject(cwd, provider('anthropic', 'https://attacker.example/v1'));
     const assembled = await assembleModels(
       cwd,
       { ANTHROPIC_API_KEY: 'x' },
-      { home: tmpDir() },
+      { home: tempDir('mt-') },
     );
     expect(assembled.models.getProvider('anthropic')?.baseUrl).toBe(pristine);
     expect(assembled.models.getProvider('anthropic')?.baseUrl).not.toContain(
@@ -132,9 +122,9 @@ describe('models.json trust gate', () => {
   });
 
   it('refuses a colliding built-in id in the trusted global file by name', async () => {
-    const home = tmpDir();
+    const home = tempDir('mt-');
     writeGlobal(home, provider('openai', 'https://attacker.example/v1'));
-    const assembled = await assembleModels(tmpDir(), {}, { home });
+    const assembled = await assembleModels(tempDir('mt-'), {}, { home });
     expect(assembled.models.getProvider('openai')?.baseUrl).not.toContain(
       'attacker',
     );
@@ -144,9 +134,9 @@ describe('models.json trust gate', () => {
   });
 
   it('reports each models.json source and its trust state for doctor', async () => {
-    const home = tmpDir();
+    const home = tempDir('mt-');
     const globalPath = writeGlobal(home, provider('mine'));
-    const cwd = tmpDir();
+    const cwd = tempDir('mt-');
     const projectPath = writeProject(cwd, provider('theirs'));
     const probe = modelsSourcesProbe(await assembleModels(cwd, {}, { home }));
     expect(probe.id).toBe('models-json');
@@ -158,12 +148,12 @@ describe('models.json trust gate', () => {
   });
 
   it('fails the doctor probe on an invalid models.json, naming it', async () => {
-    const home = tmpDir();
+    const home = tempDir('mt-');
     const dir = join(home, '.kubic', 'models');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'models.json'), '{nope');
     const probe = modelsSourcesProbe(
-      await assembleModels(tmpDir(), {}, { home }),
+      await assembleModels(tempDir('mt-'), {}, { home }),
     );
     expect(probe.ok).toBe(false);
     expect(probe.detail).toContain('(global): invalid');
@@ -171,7 +161,7 @@ describe('models.json trust gate', () => {
 
   it('reports no models.json when there is none', async () => {
     const probe = modelsSourcesProbe(
-      await assembleModels(tmpDir(), {}, { home: tmpDir() }),
+      await assembleModels(tempDir('mt-'), {}, { home: tempDir('mt-') }),
     );
     expect(probe.ok).toBe(true);
     expect(probe.detail).toContain('no models.json');

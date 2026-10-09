@@ -12,15 +12,13 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
-  rmSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { FileBridge } from '../file-bridge.js';
 import { sha256Hex } from './hash.js';
 import { FileJournalStore, journalMutationLockPath } from './store.js';
@@ -62,21 +60,11 @@ vi.mock('../file-bridge.js', async (importOriginal) => {
   };
 });
 
-const roots: string[] = [];
-
 afterEach(() => {
   hooks.onWrite = null;
   hooks.onAppendDurably = null;
   hooks.onReadText = null;
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
 });
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'journal-lock-'));
-  roots.push(root);
-  return root;
-}
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   return {
@@ -94,7 +82,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
 
 describe('journal mutation lock', () => {
   it('holds the mutation lock while it appends, and releases it after', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-lock-');
     // Durable on purpose: the index append goes through `appendDurably`,
     // which is where the hook can look at the lock mid-mutation.
     const store = new FileJournalStore(dir);
@@ -110,7 +98,7 @@ describe('journal mutation lock', () => {
   });
 
   it('steals a stale lock instead of wedging on it', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-lock-');
     const store = new FileJournalStore(dir, { durable: false });
     const lock = journalMutationLockPath(join(dir, 'index.jsonl'));
     mkdirSync(dir, { recursive: true });
@@ -124,7 +112,7 @@ describe('journal mutation lock', () => {
   });
 
   it('keeps a line appended between the retention read and its rename', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-lock-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));
@@ -177,7 +165,7 @@ describe('journal mutation lock', () => {
   });
 
   it('keeps a line appended while the retention pass is reading the index', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-lock-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));
@@ -214,7 +202,7 @@ describe('journal mutation lock', () => {
   });
 
   it('never removes a blob that appeared after the pass started', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-lock-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));
@@ -234,7 +222,7 @@ describe('journal mutation lock', () => {
     // `Date.now()` is whole milliseconds and a blob's `mtimeMs` is not: an
     // orphan written in the pass's own millisecond read as newer than the
     // pass and survived it (a flake on a fast CI runner).
-    const dir = tmpRoot();
+    const dir = tempDir('journal-lock-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));
@@ -252,7 +240,7 @@ describe('journal mutation lock', () => {
   });
 
   it('never removes an in-flight `*.pid.tmp` blob', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-lock-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));

@@ -3,12 +3,12 @@
 // run's worktree: exit 0 is pass, anything else (a timeout included) is
 // fail, an unconfigured gate is absent (unknown). Real temp dirs and local
 // shell builtins only — no network.
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type ExecutionEnv, NodeExecutionEnv } from '@kubic/exec/env';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   DEFAULT_VERIFY_TIMEOUT_MS,
   hasVerifyCommands,
@@ -17,23 +17,9 @@ import {
   verifierLabels,
 } from './verifier.js';
 
-const made: string[] = [];
-
-function tmp(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'verifier-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 describe('runVerifier', () => {
   it('maps exit 0 to pass and a non-zero exit to fail, in the worktree', async () => {
-    const dir = tmp();
+    const dir = tempDir('verifier-');
     writeFileSync(join(dir, 'ok.txt'), 'yes\n');
     const results = await runVerifier(new NodeExecutionEnv(dir), {
       tests: 'test -f ok.txt',
@@ -43,16 +29,19 @@ describe('runVerifier', () => {
   });
 
   it('leaves an unconfigured (or blank) gate out — it stays unknown', async () => {
-    const results = await runVerifier(new NodeExecutionEnv(tmp()), {
-      build: '   ',
-    });
+    const results = await runVerifier(
+      new NodeExecutionEnv(tempDir('verifier-')),
+      {
+        build: '   ',
+      },
+    );
     expect(results).toEqual({});
   });
 
   it('fails a command that outlives its timeout, and kills it', {
     timeout: 20_000,
   }, async () => {
-    const dir = tmp();
+    const dir = tempDir('verifier-');
     const started = Date.now();
     const results = await runVerifier(
       new NodeExecutionEnv(dir),

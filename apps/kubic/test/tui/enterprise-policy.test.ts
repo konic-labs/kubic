@@ -8,8 +8,7 @@
 //
 // Faux provider only: zero network, zero paid tokens.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ModelSelectError } from '@kubic/agent/model-select';
 import {
@@ -25,6 +24,7 @@ import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
 import { runtimeModelPin } from '../../src/config/model-selection.js';
 import { runtimeApprovalDeps } from '../../src/config/projections.js';
@@ -34,14 +34,6 @@ import { tuiBootOptions, tuiDepsWithDefaults } from '../../src/tui/deps.js';
 import type { TuiBootFlags, TuiRunOptions } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 
-const tempDirs: string[] = [];
-
-function tmpRoot(prefix = 'kubic-tui-policy-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
-
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });
@@ -50,9 +42,6 @@ afterEach(() => {
   disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
@@ -236,8 +225,8 @@ describe('the prod tui builder enforces the enterprise gates on the real boot', 
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
       rerooted(
-        tmpRoot(),
-        tmpRoot(),
+        tempDir(),
+        tempDir(),
         providers([{ provider: 'fx', models: ['a', 'b'] }]),
       ),
     );
@@ -253,7 +242,7 @@ describe('the prod tui builder enforces the enterprise gates on the real boot', 
     const models = providers([{ provider: 'fx', models: ['a', 'b'] }]);
     const gated = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(tmpRoot(), tmpRoot(), models),
+      rerooted(tempDir(), tempDir(), models),
     );
     // With no explicit pin the pool of implicit providers is empty under the
     // policy, so the boot refuses with the named no-models error (the
@@ -264,7 +253,7 @@ describe('the prod tui builder enforces the enterprise gates on the real boot', 
     // Control: with no policy the same catalog boots on the first provider.
     const open = tuiDepsWithDefaults(
       prodTuiDeps(IO, cliConfig({})),
-      rerooted(tmpRoot(), tmpRoot(), models),
+      rerooted(tempDir(), tempDir(), models),
     );
     const boot = await open.bootLane();
     await boot.close?.();
@@ -279,8 +268,8 @@ describe('the prod tui builder enforces the enterprise gates on the real boot', 
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
       rerooted(
-        tmpRoot(),
-        tmpRoot(),
+        tempDir(),
+        tempDir(),
         providers([{ provider: 'fx', models: ['a'] }], captured),
       ),
     );
@@ -308,8 +297,8 @@ describe('the prod tui builder enforces the enterprise gates on the real boot', 
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cliConfig({})),
       rerooted(
-        tmpRoot(),
-        tmpRoot(),
+        tempDir(),
+        tempDir(),
         providers([{ provider: 'fx', models: ['a'] }], captured),
       ),
     );
@@ -326,7 +315,7 @@ describe('the prod tui builder enforces the enterprise gates on the real boot', 
   });
 
   it('refuses a --role that declares an enterprise-denied tool', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'implementer.md'),
@@ -339,7 +328,7 @@ describe('the prod tui builder enforces the enterprise gates on the real boot', 
       prodTuiDeps(IO, cfg),
       rerooted(
         workspace,
-        tmpRoot(),
+        tempDir(),
         providers([{ provider: 'fx', models: ['a'] }]),
       ),
     );
@@ -418,7 +407,7 @@ describe('/model switch under the enterprise policy', () => {
     });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+      rerooted(tempDir(), tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane();
     const loop = boot.loop;
@@ -444,7 +433,7 @@ describe('/model switch under the enterprise policy', () => {
   it('switches freely when the config declares no model policy (control)', async () => {
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cliConfig({})),
-      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+      rerooted(tempDir(), tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane();
     const loop = boot.loop;
@@ -460,7 +449,7 @@ describe('/model switch under the enterprise policy', () => {
   it('still names an unknown model on an allowed provider (the catalog check stands)', async () => {
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cliConfig(POLICY)),
-      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+      rerooted(tempDir(), tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane();
     const loop = boot.loop;
@@ -489,7 +478,7 @@ describe('/model cannot leave a frozen enterprise model pin', () => {
   it('refuses a switch away from the frozen pin by name and keeps the live model', async () => {
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cliConfig({ [ENTERPRISE]: FROZEN })),
-      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+      rerooted(tempDir(), tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane();
     const loop = boot.loop;
@@ -516,7 +505,7 @@ describe('/model cannot leave a frozen enterprise model pin', () => {
   it('keeps `/model` free under a pin nobody froze (control)', async () => {
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cliConfig({ [PROJECT]: FROZEN })),
-      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+      rerooted(tempDir(), tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane();
     const loop = boot.loop;
@@ -538,7 +527,7 @@ describe('/model cannot leave a frozen enterprise model pin', () => {
           { cliModel: { provider: 'other', id: 'm1' } },
         ),
       ),
-      rerooted(tmpRoot(), tmpRoot(), twoProviders()),
+      rerooted(tempDir(), tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane();
     const loop = boot.loop;
@@ -566,8 +555,8 @@ describe('advertised skills outside the workspace stay readable on the tui lane'
   }
 
   it('reads a user skill by its absolute path; an unrelated outside read stays re-rooted', async () => {
-    const home = tmpRoot('kubic-tui-skill-home-');
-    const workspace = tmpRoot('kubic-tui-skill-ws-');
+    const home = tempDir('kubic-tui-skill-home-');
+    const workspace = tempDir('kubic-tui-skill-ws-');
     const skillFile = writeSkill(join(home, '.agents', 'skills'), 'a');
     writeFileSync(join(home, 'secret.txt'), 'top secret\n');
     const faux = fauxProvider({ provider: 'fx', models: [{ id: 'a' }] });
@@ -581,7 +570,7 @@ describe('advertised skills outside the workspace stay readable on the tui lane'
     const models = createModels();
     models.setProvider(faux.provider);
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot(),
+      sessionsRoot: tempDir(),
       models,
       env: new NodeExecutionEnv(workspace),
       skills: { homeDir: home, cwd: workspace, trusted: false },
@@ -648,7 +637,7 @@ describe('a refused /model switch is named in the footer and the lane keeps its 
     models.setProvider(other.provider);
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(tmpRoot(), tmpRoot(), models),
+      rerooted(tempDir(), tempDir(), models),
     );
     const fake = fakeTerminal();
     const pending = runTuiCommand(
@@ -678,8 +667,8 @@ describe('a refused /model switch is named in the footer and the lane keeps its 
 
 describe('a resumed TUI session never keeps a model the enterprise gate refuses', () => {
   it('boots the resumed session on the gated selection, not its stored provider', async () => {
-    const workspace = tmpRoot();
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir();
+    const sessionsRoot = tempDir();
     const models = providers([
       { provider: 'faux', models: ['a'] },
       { provider: 'other', models: ['m1'] },
@@ -712,8 +701,8 @@ describe('a resumed TUI session never keeps a model the enterprise gate refuses'
   });
 
   it('keeps the stored model when it is allowed (control)', async () => {
-    const workspace = tmpRoot();
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir();
+    const sessionsRoot = tempDir();
     const models = providers([
       { provider: 'faux', models: ['a'] },
       { provider: 'other', models: ['m1'] },

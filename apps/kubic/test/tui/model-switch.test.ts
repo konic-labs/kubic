@@ -3,8 +3,7 @@
 // (bootTuiLane) is driven through the real alt-screen key path with two
 // faux providers, so the switch is proven by the NEXT request being answered
 // on the new provider — not only by a label. Zero network, zero paid tokens.
-import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -16,24 +15,12 @@ import {
 import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 
@@ -136,8 +123,8 @@ async function storedModel(
 
 describe('/model on the kubic tui path', () => {
   it('switches the live lane and the frame shows the new model', async () => {
-    const workspace = tmpRoot('tui-model-switch-ws-');
-    const sessionsRoot = tmpRoot('tui-model-switch-sessions-');
+    const workspace = tempDir('tui-model-switch-ws-');
+    const sessionsRoot = tempDir('tui-model-switch-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     let sessionId = '';
@@ -187,8 +174,8 @@ describe('/model on the kubic tui path', () => {
     // Alt+Enter submits like Enter when idle. A `/model` steer the loop
     // ACCEPTED ran the command, so the draft must not come back as if it had
     // been refused: a draft is restored only when the steer was 'queued'.
-    const workspace = tmpRoot('tui-model-switch-steer-ws-');
-    const sessionsRoot = tmpRoot('tui-model-switch-steer-sessions-');
+    const workspace = tempDir('tui-model-switch-steer-ws-');
+    const sessionsRoot = tempDir('tui-model-switch-steer-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const pending = runTuiCommand(
@@ -220,8 +207,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('switches the thinking level and sends it with the next request', async () => {
-    const workspace = tmpRoot('tui-model-switch-thinking-ws-');
-    const sessionsRoot = tmpRoot('tui-model-switch-thinking-sessions-');
+    const workspace = tempDir('tui-model-switch-thinking-ws-');
+    const sessionsRoot = tempDir('tui-model-switch-thinking-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const seen: Array<string | undefined> = [];
@@ -281,8 +268,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('picks a model from the Alt+M overlay', async () => {
-    const workspace = tmpRoot('tui-model-switch-picker-ws-');
-    const sessionsRoot = tmpRoot('tui-model-switch-picker-sessions-');
+    const workspace = tempDir('tui-model-switch-picker-ws-');
+    const sessionsRoot = tempDir('tui-model-switch-picker-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     let sessionId = '';
@@ -327,8 +314,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('switches the model from the ^P palette', async () => {
-    const workspace = tmpRoot('tui-model-switch-palette-ws-');
-    const sessionsRoot = tmpRoot('tui-model-switch-palette-sessions-');
+    const workspace = tempDir('tui-model-switch-palette-ws-');
+    const sessionsRoot = tempDir('tui-model-switch-palette-sessions-');
     const fake = fakeTerminal(120);
     let sessionId = '';
     const pending = runTuiCommand(
@@ -378,8 +365,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('re-clamps the thinking level when /model moves to a shorter ladder', async () => {
-    const workspace = tmpRoot('tui-model-switch-clamp-ws-');
-    const sessionsRoot = tmpRoot('tui-model-switch-clamp-sessions-');
+    const workspace = tempDir('tui-model-switch-clamp-ws-');
+    const sessionsRoot = tempDir('tui-model-switch-clamp-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const pending = runTuiCommand(
@@ -417,8 +404,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('cancels the picker with Esc, leaving the model alone', async () => {
-    const workspace = tmpRoot('tui-model-switch-cancel-ws-');
-    const sessionsRoot = tmpRoot('tui-model-switch-cancel-sessions-');
+    const workspace = tempDir('tui-model-switch-cancel-ws-');
+    const sessionsRoot = tempDir('tui-model-switch-cancel-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const pending = runTuiCommand(
@@ -450,8 +437,8 @@ describe('/model on the kubic tui path', () => {
   });
 
   it('reports the current model and refuses an unknown one by name', async () => {
-    const workspace = tmpRoot('tui-model-switch-report-ws-');
-    const sessionsRoot = tmpRoot('tui-model-switch-report-sessions-');
+    const workspace = tempDir('tui-model-switch-report-ws-');
+    const sessionsRoot = tempDir('tui-model-switch-report-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const pending = runTuiCommand(
@@ -502,8 +489,8 @@ describe('/model on the kubic tui path', () => {
 
 describe('tui audit identity', () => {
   it('an approval record carries the model provider/id the lane runs', async () => {
-    const workspace = tmpRoot('tui-model-switch-audit-ws-');
-    const sessionsRoot = tmpRoot('tui-model-switch-audit-sessions-');
+    const workspace = tempDir('tui-model-switch-audit-ws-');
+    const sessionsRoot = tempDir('tui-model-switch-audit-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     let sessionId = '';

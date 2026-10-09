@@ -12,13 +12,11 @@
 //   (memos are durable and first-writer-wins)
 //
 // Folds this boot into the shared faux harness-test factory.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { ProcessHandle, ShellResult, SpawnOptions } from '@kubic/exec/env';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -44,19 +42,6 @@ import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 type Models = ReturnType<typeof createModels>;
 type Registry = ReturnType<typeof createRegistry>;
 type Faux = ReturnType<typeof fauxProvider>;
-
-const scratchDirs: string[] = [];
-afterEach(() => {
-  for (const dir of scratchDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-function scratch(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  scratchDirs.push(dir);
-  return dir;
-}
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -217,9 +202,9 @@ const toolUse = (calls: Parameters<typeof fauxAssistantMessage>[0]) =>
 
 describe('Kubic tools on the pi-durable harness', () => {
   it('journals a lane write under the pi-durable call id', async () => {
-    const dir = scratch('kubic-durable-journal-');
+    const dir = tempDir('kubic-durable-journal-');
     const env = new FakeExecutionEnv({});
-    const journal = new FileJournalStore(scratch('kubic-durable-j-'));
+    const journal = new FileJournalStore(tempDir('kubic-durable-j-'));
     const context = toolContext({ env, journal });
     const setup = chat();
     setup.registry.install(
@@ -253,7 +238,7 @@ describe('Kubic tools on the pi-durable harness', () => {
   });
 
   it("keeps Kubic's own truncation and result text intact past the harness bound", async () => {
-    const dir = scratch('kubic-durable-read-');
+    const dir = tempDir('kubic-durable-read-');
     const env = new FakeExecutionEnv({});
     const line = (n: number) =>
       `${String(n).padStart(5, '0')} ${'y'.repeat(93)}`;
@@ -299,7 +284,7 @@ describe('Kubic tools on the pi-durable harness', () => {
   });
 
   it('answers an interrupted unsafe call with its committed output instead of rerunning it', async () => {
-    const dir = scratch('kubic-durable-unsafe-');
+    const dir = tempDir('kubic-durable-unsafe-');
     const spawned = deferred();
     const shell = crashableEnv({ spawned: spawned.resolve });
     const setup = chat();
@@ -352,7 +337,7 @@ describe('Kubic tools on the pi-durable harness', () => {
   });
 
   it('bounds an interrupted call to the op cap and keeps the stream tail', async () => {
-    const dir = scratch('kubic-durable-bounded-');
+    const dir = tempDir('kubic-durable-bounded-');
     const spawned = deferred();
     // ~360 KB of output — well past the 4×64 KiB window bash retains — with
     // a marker line at each end.
@@ -416,7 +401,7 @@ describe('Kubic tools on the pi-durable harness', () => {
   });
 
   it('reruns a safe call interrupted the same way', async () => {
-    const dir = scratch('kubic-durable-safe-');
+    const dir = tempDir('kubic-durable-safe-');
     const spawned = deferred();
     const shell = crashableEnv({ spawned: spawned.resolve });
     const setup = chat();
@@ -460,7 +445,7 @@ describe('Kubic tools on the pi-durable harness', () => {
   });
 
   it('answers a replayed invocation with the memo the crashed attempt stored', async () => {
-    const dir = scratch('kubic-durable-memo-');
+    const dir = tempDir('kubic-durable-memo-');
     const stored = deferred();
     const setup = chat();
     let runs = 0;

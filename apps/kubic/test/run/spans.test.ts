@@ -7,8 +7,7 @@
 //   - stderr debug: the `[tool]` in/out and `[agent]` lane lines behind
 //     `--debug` (injected sink here, console.error in prod).
 // Faux provider only: zero network, zero paid tokens.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -19,15 +18,8 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const roots: string[] = [];
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'run-spans-prod-'));
-  roots.push(root);
-  return root;
-}
 
 // The no-isolation notice is pinned by approvals/no-isolation-notice.test.ts; here it
 // is only stderr noise, silenced through its documented opt-out.
@@ -37,9 +29,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 // A faux model that makes exactly one real tool call, then answers — so the
@@ -86,7 +75,7 @@ function readSpans(root: string, id: string): SpanLine[] {
 
 describe('live run emits lane/tool spans', () => {
   it('writes run → lane accept/drive → tool spans to <sessions>/<id>/spans.jsonl', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-spans-prod-');
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'spans read this\n');
     const result = await runHeadlessPrompt(
@@ -128,7 +117,7 @@ describe('live run emits lane/tool spans', () => {
   });
 
   it('emits the tool/agent debug lines on the injected sink', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-spans-prod-');
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'spans read this\n');
     const lines: string[] = [];
@@ -158,7 +147,7 @@ describe('live run emits lane/tool spans', () => {
   });
 
   it('stays silent on the sink when --debug is not set', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-spans-prod-');
     const lines: string[] = [];
     const result = await runHeadlessPrompt(
       'no tools needed',
@@ -178,7 +167,7 @@ describe('live run emits lane/tool spans', () => {
   });
 
   it('keeps the recorded spans on a failed run', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-spans-prod-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -195,7 +184,7 @@ describe('live run emits lane/tool spans', () => {
   });
 
   it('defaults to the stderr sink in prod when --debug is set without an injected sink', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-spans-prod-');
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'spans read this\n');
     const written: string[] = [];

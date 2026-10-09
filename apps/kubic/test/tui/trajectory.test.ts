@@ -2,8 +2,7 @@
 // same record `kubic run` writes, at <sessions-root>/<id>/trajectory.json,
 // holding the session's latest settled turn. Real booted TUI lane, faux
 // models only: zero network; temp sessions root and workspace.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -17,16 +16,9 @@ import {
   type TrajectoryExport,
 } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { TuiTurnRunner } from '../../src/tui/turn-runner.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -58,14 +50,12 @@ beforeEach(() => {});
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('kubic tui writes a trajectory per settled turn', () => {
   it('each settled turn writes <root>/<id>/trajectory.json for that turn', async () => {
-    const root = tmp('tui-traj-root-');
-    const ws = tmp('tui-traj-ws-');
+    const root = tempDir('tui-traj-root-');
+    const ws = tempDir('tui-traj-ws-');
     const boot = await bootTuiLane(undefined, {
       sessionsRoot: root,
       models: fauxModels(['first answer', 'second answer']),

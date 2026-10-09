@@ -1,36 +1,18 @@
 // The content-addressed blob store over a temp directory: writes, verified
 // reads, healing a torn blob, and the sweep after a retention rewrite.
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { createNodeFileBridge } from '../file-bridge.js';
 import { BlobStore } from './blobs.js';
 import { sha256Hex } from './hash.js';
-
-const made: string[] = [];
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function blobDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'journal-blobs-'));
-  made.push(dir);
-  return dir;
-}
 
 const bridge = createNodeFileBridge('/');
 
 describe('BlobStore', () => {
   it('stores content under its hash, private, and reads it back verified', () => {
-    const dir = blobDir();
+    const dir = tempDir('journal-blobs-');
     const blobs = new BlobStore(dir, true);
     const hash = sha256Hex('hello');
     blobs.put(bridge, hash, 'hello');
@@ -42,7 +24,7 @@ describe('BlobStore', () => {
   });
 
   it('refuses a blob whose content no longer matches its name', () => {
-    const dir = blobDir();
+    const dir = tempDir('journal-blobs-');
     const blobs = new BlobStore(dir, true);
     const hash = sha256Hex('original');
     blobs.put(bridge, hash, 'original');
@@ -55,7 +37,7 @@ describe('BlobStore', () => {
   });
 
   it('rewrites a torn blob found at its address from the bytes in hand', () => {
-    const dir = blobDir();
+    const dir = tempDir('journal-blobs-');
     const hash = sha256Hex('content');
     // A crash left a zero-length file under the right name.
     writeFileSync(join(dir, hash), '');
@@ -64,7 +46,7 @@ describe('BlobStore', () => {
   });
 
   it('measures each referenced blob once', () => {
-    const dir = blobDir();
+    const dir = tempDir('journal-blobs-');
     const blobs = new BlobStore(dir, false);
     const a = sha256Hex('aaaa');
     const b = sha256Hex('bb');
@@ -87,7 +69,7 @@ describe('BlobStore', () => {
   });
 
   it('sweeps unreferenced blobs, keeps referenced and in-flight ones', () => {
-    const dir = blobDir();
+    const dir = tempDir('journal-blobs-');
     const blobs = new BlobStore(dir, false);
     const kept = sha256Hex('kept');
     const dropped = sha256Hex('dropped');

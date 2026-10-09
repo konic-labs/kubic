@@ -8,15 +8,14 @@
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   rmSync,
   statSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { FileBridge } from '../file-bridge.js';
 import { sha256Hex } from './hash.js';
 import { FileJournalStore } from './store.js';
@@ -48,19 +47,6 @@ vi.mock('../file-bridge.js', async (importOriginal) => {
     },
   };
 });
-
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'journal-retention-'));
-  roots.push(root);
-  return root;
-}
 
 // These tests count retention I/O (stats, index reads), which the fsync'd
 // index append does not touch — `durable: false` drops ~one fsync per append
@@ -117,7 +103,7 @@ describe('swept orphan blobs', () => {
     now: number,
     withOrphan: boolean,
   ): { store: FileJournalStore; dir: string } {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-retention-');
     const store = new FileJournalStore(dir, FAST);
     store.append(
       entry({
@@ -160,7 +146,7 @@ describe('swept orphan blobs', () => {
 
   it('a pass that drops nothing sweeps nothing, so an orphan survives it', () => {
     const now = Date.now();
-    const dir = tmpRoot();
+    const dir = tempDir('journal-retention-');
     const store = new FileJournalStore(dir, FAST);
     store.append(
       entry({
@@ -185,7 +171,7 @@ describe('swept orphan blobs', () => {
 
 describe('blob size cache', () => {
   it('append over 50 entries and 30 unique blobs stats zero times', () => {
-    const store = new FileJournalStore(tmpRoot(), FAST);
+    const store = new FileJournalStore(tempDir('journal-retention-'), FAST);
     for (let i = 0; i < 50; i++) {
       store.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
     }
@@ -202,7 +188,7 @@ describe('blob size cache', () => {
 
 describe('retention reference counting', () => {
   it('dropping the older of two entries sharing a before-blob keeps the shared blob', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir('journal-retention-'));
     store.append(
       entry({
         path: 'a.txt',
@@ -235,7 +221,7 @@ describe('retention reference counting', () => {
   });
 
   it('dropping both entries sharing a before-blob frees it, counted once in bytes', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir('journal-retention-'));
     store.append(
       entry({
         path: 'a.txt',
@@ -270,7 +256,7 @@ describe('retention reference counting', () => {
 
 describe('retention fast path', () => {
   it('100 appends far under the bound pay zero per-append retention I/O', () => {
-    const store = new FileJournalStore(tmpRoot(), {
+    const store = new FileJournalStore(tempDir('journal-retention-'), {
       ...FAST,
       maxBytes: 10 * 1024 * 1024,
     });
@@ -289,7 +275,7 @@ describe('retention fast path', () => {
   });
 
   it('a forced prune takes the slow path and drops down to the whole-store bound', () => {
-    const store = new FileJournalStore(tmpRoot(), {
+    const store = new FileJournalStore(tempDir('journal-retention-'), {
       ...FAST,
       maxBytes: 10 * 1024 * 1024,
     });
@@ -312,7 +298,7 @@ describe('retention fast path with an age policy', () => {
   const DAY_MS = 24 * 60 * 60 * 1000;
 
   it('100 appends with an age policy read the index at most once', () => {
-    const store = new FileJournalStore(tmpRoot(), {
+    const store = new FileJournalStore(tempDir('journal-retention-'), {
       ...FAST,
       maxBytes: 10 * 1024 * 1024,
       maxAgeMs: 7 * DAY_MS,
@@ -335,7 +321,7 @@ describe('retention fast path with an age policy', () => {
   });
 
   it('prunes an entry that crosses the age boundary on the next append', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-retention-');
     const store = new FileJournalStore(dir, {
       maxBytes: 10 * 1024 * 1024,
       maxAgeMs: 1000,
@@ -361,7 +347,7 @@ describe('retention fast path with an age policy', () => {
   });
 
   it('folds an out-of-order append into the cached oldest timestamp', () => {
-    const store = new FileJournalStore(tmpRoot(), {
+    const store = new FileJournalStore(tempDir('journal-retention-'), {
       maxBytes: 10 * 1024 * 1024,
       maxAgeMs: 1000,
     });
@@ -393,7 +379,7 @@ describe('retention fast path with an age policy', () => {
   });
 
   it('keeps pruning on later appends once the boundary has been crossed', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-retention-');
     const store = new FileJournalStore(dir, {
       maxBytes: 10 * 1024 * 1024,
       maxAgeMs: 15_000,
@@ -434,7 +420,7 @@ describe('retention fast path with an age policy', () => {
 
 describe('prune stats bound', () => {
   it('a genuine prune on a cold store stats at most once per unique blob', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-retention-');
     const seed = new FileJournalStore(dir, FAST);
     for (let i = 0; i < 50; i++) {
       seed.append(entry({ path: `f${i}.txt`, after: uniqueContent(i) }));
@@ -465,7 +451,7 @@ describe('prune stats bound', () => {
 // passes while the journal grew past its bound. Every append keeps it bounded.
 describe('hash-only before refs are tracked', () => {
   it('reconcile-shaped appends over unaccounted orphan blobs stay within maxBytes after every append', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-retention-');
     mkdirSync(join(dir, 'blobs'), { recursive: true });
     // Orphans: blobs on disk no pass ever accounted — 50 bytes each.
     const orphanHashes: string[] = [];
@@ -507,7 +493,7 @@ describe('hash-only before refs are tracked', () => {
 // A slow pass must re-derive its truth by live-statting every referenced blob.
 describe('slow passes re-stat referenced blobs', () => {
   it('external blob mutation never corrupts the drop set or the reported freed bytes', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-retention-');
     const store = new FileJournalStore(dir);
     const c0 = 'c0'.padEnd(100, '0'); // exactly 100 bytes
     const c1 = 'c1'.padEnd(100, '1');

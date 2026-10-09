@@ -11,15 +11,13 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { captureBaseline } from './baseline.js';
 import { sha256Hex } from './hash.js';
 import type { RestoreResult } from './restore.js';
@@ -31,19 +29,6 @@ import {
 } from './restore.js';
 import { FileJournalStore } from './store.js';
 import type { JournalEntry, JournalEntryInput } from './types.js';
-
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   return {
@@ -63,7 +48,7 @@ function seed(input: JournalEntryInput): {
   store: FileJournalStore;
   entry: JournalEntry;
 } {
-  const store = new FileJournalStore(tmpRoot('j-'), { durable: false });
+  const store = new FileJournalStore(tempDir('j-'), { durable: false });
   return { store, entry: store.append(input) };
 }
 
@@ -76,8 +61,8 @@ function refusal(result: RestoreResult): string {
 
 describe('removeCreatedEntry containment', () => {
   it('refuses a parent-relative escape and the outside file survives', () => {
-    const root = tmpRoot('ws-');
-    const outside = tmpRoot('outside-');
+    const root = tempDir('ws-');
+    const outside = tempDir('outside-');
     writeFileSync(join(outside, 'outside.txt'), 'keep me\n');
     const { entry: created } = seed(
       entry({ path: '../outside/outside.txt', after: 'keep me\n' }),
@@ -90,8 +75,8 @@ describe('removeCreatedEntry containment', () => {
   });
 
   it('refuses an absolute path and the outside file survives', () => {
-    const root = tmpRoot('ws-');
-    const outside = tmpRoot('outside-');
+    const root = tempDir('ws-');
+    const outside = tempDir('outside-');
     const target = join(outside, 'absolute.txt');
     writeFileSync(target, 'keep me\n');
     const { entry: created } = seed(
@@ -103,8 +88,8 @@ describe('removeCreatedEntry containment', () => {
   });
 
   it('refuses a path under a symlinked directory and the outside file survives', () => {
-    const root = tmpRoot('ws-');
-    const outside = tmpRoot('outside-');
+    const root = tempDir('ws-');
+    const outside = tempDir('outside-');
     writeFileSync(join(outside, 'linked.txt'), 'keep me\n');
     symlinkSync(outside, join(root, 'linked'));
     const { entry: created } = seed(
@@ -116,7 +101,7 @@ describe('removeCreatedEntry containment', () => {
   });
 
   it('refuses a non-create entry and the file survives', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'edited.txt'), 'edited\n');
     // (a) a write entry with a before-side is an edit, not a create
     const edited = seed(
@@ -147,7 +132,7 @@ describe('removeCreatedEntry containment', () => {
   });
 
   it('removes a genuine create and nothing else', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'new.txt'), 'made\n');
     writeFileSync(join(root, 'sibling.txt'), 'sibling\n');
     const { entry: created } = seed(entry());
@@ -178,8 +163,8 @@ describe('isUndoableCreate', () => {
 
 describe('baseline symlink handling', () => {
   it('ignores a symlink to a file and a symlink to a directory outside root', () => {
-    const root = tmpRoot('ws-');
-    const outside = tmpRoot('outside-');
+    const root = tempDir('ws-');
+    const outside = tempDir('outside-');
     writeFileSync(join(root, 'real.txt'), 'real\n');
     writeFileSync(join(outside, 'secret.txt'), 'secret\n');
     mkdirSync(join(outside, 'dir'));
@@ -196,8 +181,8 @@ describe('baseline symlink handling', () => {
 
 describe('probeFileState shapes', () => {
   it('follows a symlink for its content hash, and stays inside on restore', () => {
-    const root = tmpRoot('ws-');
-    const outside = tmpRoot('outside-');
+    const root = tempDir('ws-');
+    const outside = tempDir('outside-');
     writeFileSync(join(outside, 'secret.txt'), 'secret\n');
     symlinkSync(join(outside, 'secret.txt'), join(root, 'link.txt'));
     // Documented posture: the probe reads CONTENT (a verdict input), it is
@@ -213,13 +198,13 @@ describe('probeFileState shapes', () => {
   });
 
   it('reports a directory as present with no hash', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     mkdirSync(join(root, 'sub'));
     expect(probeFileState(root, 'sub')).toEqual({ missing: false, hash: null });
   });
 
   it('reports an unreadable file as present with no hash', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'secret.txt'), 'secret\n');
     chmodSync(join(root, 'secret.txt'), 0o000);
     try {
@@ -233,7 +218,7 @@ describe('probeFileState shapes', () => {
   });
 
   it('reports a missing path as missing', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     expect(probeFileState(root, 'nope.txt')).toEqual({
       missing: true,
       hash: null,
@@ -243,8 +228,8 @@ describe('probeFileState shapes', () => {
 
 describe('restore through a symlinked parent', () => {
   it('refuses a journaled edit reached through a symlink, with the reason', () => {
-    const root = tmpRoot('ws-');
-    const outside = tmpRoot('outside-');
+    const root = tempDir('ws-');
+    const outside = tempDir('outside-');
     writeFileSync(join(outside, 'real.txt'), 'outside\n');
     symlinkSync(outside, join(root, 'linked'));
     const { store, entry: journaled } = seed(

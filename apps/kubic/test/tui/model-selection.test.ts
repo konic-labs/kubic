@@ -4,8 +4,7 @@
 // registered provider while `kubic run` in the same directory ran the
 // configured model. These tests drive the PROD boot (bootTuiLane) over the
 // real config load with two faux providers: zero network, zero paid tokens.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createSession,
@@ -21,17 +20,10 @@ import {
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from '../../src/config/load.js';
 import { runtimeModelPin } from '../../src/config/model-selection.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -40,8 +32,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 // Two faux providers: the default (unpinned) pick is the first registered
@@ -68,8 +58,8 @@ function twoProviders(): MutableModels {
 
 // A workspace whose committed config pins `alt/m1`.
 function pinnedWorkspace(): { cwd: string; home: string } {
-  const cwd = tmpRoot('tui-model-override-cwd-');
-  const home = tmpRoot('tui-model-override-home-');
+  const cwd = tempDir('tui-model-override-cwd-');
+  const home = tempDir('tui-model-override-home-');
   mkdirSync(join(cwd, '.kubic'), { recursive: true });
   writeFileSync(
     join(cwd, '.kubic', 'config.toml'),
@@ -92,7 +82,7 @@ async function newSession(root: string): Promise<string> {
 
 describe('kubic tui model selection', () => {
   it('a config [model] pin selects the pinned model, not the first provider', async () => {
-    const sessionsRoot = tmpRoot('tui-model-override-sessions-');
+    const sessionsRoot = tempDir('tui-model-override-sessions-');
     const { cwd, home } = pinnedWorkspace();
     const config = loadCliConfig({
       cwd,
@@ -116,7 +106,7 @@ describe('kubic tui model selection', () => {
   });
 
   it('KUBIC_MODEL overrides the config pin, exactly as it does for kubic run', async () => {
-    const sessionsRoot = tmpRoot('tui-model-override-sessions2-');
+    const sessionsRoot = tempDir('tui-model-override-sessions2-');
     const { cwd, home } = pinnedWorkspace();
     const config = loadCliConfig({
       cwd,
@@ -140,7 +130,7 @@ describe('kubic tui model selection', () => {
   });
 
   it('without a pin the first usable provider still answers', async () => {
-    const sessionsRoot = tmpRoot('tui-model-override-sessions3-');
+    const sessionsRoot = tempDir('tui-model-override-sessions3-');
     const boot = await bootTuiLane(undefined, {
       sessionsRoot,
       models: twoProviders(),
@@ -154,7 +144,7 @@ describe('kubic tui model selection', () => {
   });
 
   it('a pin switches a resumed session whose stored model differs', async () => {
-    const sessionsRoot = tmpRoot('tui-model-override-sessions4-');
+    const sessionsRoot = tempDir('tui-model-override-sessions4-');
     const id = await newSession(sessionsRoot);
     // First boot stored faux/small (an explicit pin on a fresh session).
     const first = await bootTuiLane(id, {

@@ -1,7 +1,6 @@
 // `kubic diff / undo / log / status` CLI.
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CliUsageError } from '@kubic/core/cli/exit-codes';
 import { createCliTheme } from '@kubic/core/cli/theme';
@@ -11,24 +10,15 @@ import {
   disposeAllGitSandboxes,
 } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   colorizeDiffLine,
   type JournalRequest,
   runJournalCommand,
 } from './index.js';
 
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
 afterEach(() => {
   disposeAllGitSandboxes();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function setup(): {
@@ -36,8 +26,8 @@ function setup(): {
   root: string;
   out: { lines: string[]; write: (line: string) => void };
 } {
-  const journalDir = mkTmp('j-');
-  const root = mkTmp('ws-');
+  const journalDir = tempDir('j-');
+  const root = tempDir('ws-');
   writeFileSync(join(root, 'a.txt'), 'v1\n');
   const store = new FileJournalStore(journalDir);
   store.append({
@@ -220,9 +210,9 @@ describe('journal CLI undo record + redo', () => {
 // for a live branch.
 describe('journal CLI worktree status', () => {
   it('status names the worktree branch from the gitdir pointer', async () => {
-    const journalDir = mkTmp('j-');
-    const root = mkTmp('wt-');
-    const gitdir = mkTmp('gd-');
+    const journalDir = tempDir('j-');
+    const root = tempDir('wt-');
+    const gitdir = tempDir('gd-');
     writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/wt-feature\n');
     writeFileSync(join(root, '.git'), `gitdir: ${gitdir}\n`);
     const lines: string[] = [];
@@ -244,7 +234,7 @@ describe('journal CLI worktree status', () => {
   // ahead/behind plus conflicts when they exist). Real git runs
   // through the shared sandbox, never raw execFileSync.
   it('status names the repo root on a real repository', async () => {
-    const journalDir = mkTmp('j-');
+    const journalDir = tempDir('j-');
     const repo = createGitSandbox({
       prefix: 'kubic-journal-status-',
       injectProcessEnv: true,
@@ -268,8 +258,8 @@ describe('journal CLI worktree status', () => {
   // The ahead/behind and conflicts parts of the repo line, rendered from a
   // real repository.
   it('status renders ahead/behind and conflicts on a real repository', async () => {
-    const journalDir = mkTmp('j-');
-    const origin = mkTmp('origin-');
+    const journalDir = tempDir('j-');
+    const origin = tempDir('origin-');
     const repo = createGitSandbox({
       prefix: 'kubic-journal-status-',
       injectProcessEnv: true,
@@ -323,8 +313,8 @@ describe('journal CLI diff --json content bounds', () => {
     before: string;
     after: string;
   } {
-    const journalDir = mkTmp('j-');
-    const root = mkTmp('ws-');
+    const journalDir = tempDir('j-');
+    const root = tempDir('ws-');
     const before = `${'a'.repeat(bytes)}\n`;
     const after = `${'b'.repeat(bytes)}\n`;
     new FileJournalStore(journalDir).append({
@@ -532,8 +522,8 @@ describe('journal CLI --json parity', () => {
   });
 
   it('diff and log --json on an empty journal carry empty arrays', async () => {
-    const root = mkTmp('ws-');
-    const journalDir = mkTmp('j-');
+    const root = tempDir('ws-');
+    const journalDir = tempDir('j-');
     expect(
       (await runJson({ command: 'diff', json: true }, { journalDir, root }))
         .doc,
@@ -656,8 +646,8 @@ describe('journal CLI presentation (themes, tables)', () => {
   });
 
   it('diagnostics carry the logger prefix and colour only with errTheme', async () => {
-    const sessionsRoot = mkTmp('sr-');
-    const root = mkTmp('ws-');
+    const sessionsRoot = tempDir('sr-');
+    const root = tempDir('ws-');
     const errs: string[] = [];
     await runJournalCommand(
       { command: 'diff' },

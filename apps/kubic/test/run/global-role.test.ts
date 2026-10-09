@@ -6,27 +6,13 @@
 // Temp dirs and env restored in afterEach. The observable is the role's tool
 // set: the objective asks for bash, so a marker file appears in the workspace
 // only when the winning document registers bash.
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
 import { createProdRunners } from '../../src/prod-runners.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -36,8 +22,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function runners(workspace: string) {
@@ -85,8 +69,8 @@ function roleDoc(tools: string, shell: boolean, prompt: string): string {
 
 describe('run --role resolves the global layer', () => {
   it('a role defined only in ~/.kubic/roles runs with its tool set', async () => {
-    const home = tmp('kubic-role-global-home-');
-    const ws = tmp('kubic-role-global-ws-');
+    const home = tempDir('kubic-role-global-home-');
+    const ws = tempDir('kubic-role-global-ws-');
     mkdirSync(join(home, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'roles', 'helper.md'),
@@ -108,8 +92,8 @@ describe('run --role resolves the global layer', () => {
   });
 
   it('a project document with the same name wins over the global one', async () => {
-    const home = tmp('kubic-role-global-home-');
-    const ws = tmp('kubic-role-global-ws-');
+    const home = tempDir('kubic-role-global-home-');
+    const ws = tempDir('kubic-role-global-ws-');
     mkdirSync(join(home, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'roles', 'helper.md'),

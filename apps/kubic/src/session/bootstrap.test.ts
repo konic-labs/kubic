@@ -1,7 +1,6 @@
 // The shared session bootstrap: its refusals, the order of its steps and its
 // teardown, over a faux catalog (no network, no paid tokens).
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ModelSelectError } from '@kubic/agent/model-select';
 import {
@@ -12,6 +11,7 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../tui/boot.js';
 import {
   SessionBoot,
@@ -19,18 +19,9 @@ import {
   type SessionBootRequest,
 } from './bootstrap.js';
 
-const made: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 function catalog() {
   const models = createModels();
@@ -48,18 +39,18 @@ function newBoot(
   config: SessionBootConfig = {},
 ) {
   const events: string[] = [];
-  const workspace = tmp('bootstrap-ws-');
+  const workspace = tempDir('bootstrap-ws-');
   const boot = new SessionBoot(
     { command: 'run', context: BACKGROUND_CONTEXT, ...request },
     {
-      sessionsRoot: tmp('bootstrap-sessions-'),
+      sessionsRoot: tempDir('bootstrap-sessions-'),
       env: new NodeExecutionEnv(workspace),
       models: catalog(),
       modelsCwd: workspace,
       roles: { cwd: workspace },
       skills: {
         cwd: workspace,
-        homeDir: tmp('bootstrap-home-'),
+        homeDir: tempDir('bootstrap-home-'),
         trusted: false,
       },
       ...config,
@@ -124,7 +115,7 @@ describe('session bootstrap refusals', () => {
   });
 
   it('warns about a refused models.json before refusing a boot with no usable model', async () => {
-    const workspace = tmp('bootstrap-models-');
+    const workspace = tempDir('bootstrap-models-');
     mkdirSync(join(workspace, '.kubic'), { recursive: true });
     writeFileSync(join(workspace, '.kubic', 'models.json'), '{ not json');
     const { boot, events } = newBoot(
@@ -226,10 +217,10 @@ describe('session bootstrap order and teardown', () => {
 describe('kubic tui on the shared bootstrap', () => {
   it('maps a refused provider to the provider error the command exits 6 on', async () => {
     vi.stubEnv('KUBIC_PROVIDER', 'bogus');
-    const workspace = tmp('bootstrap-tui-ws-');
+    const workspace = tempDir('bootstrap-tui-ws-');
     await expect(
       bootTuiLane(undefined, {
-        sessionsRoot: tmp('bootstrap-tui-sessions-'),
+        sessionsRoot: tempDir('bootstrap-tui-sessions-'),
         models: catalog(),
         env: new NodeExecutionEnv(workspace),
       }),

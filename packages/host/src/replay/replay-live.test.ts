@@ -1,32 +1,18 @@
 // `kubic replay` at declared determinism tiers. Faux-only: the re-execution
 // runner is injected (zero network); trajectory fixtures are built with the
 // versioned exporter so tests always run against the current stable contract.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import type { TrajectoryExport } from '@kubic/trajectory/schema';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   type ReplayCommandDeps,
   type ReplayCommandOptions,
   type ReplayRunResult,
   runReplayCommand,
 } from './index.js';
-
-const roots: string[] = [];
-
-function tmpRoot(prefix = 'replay-'): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
-afterEach(() => {
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
 
 // stdout (`lines`) and stderr (`errs`) captured separately.
 interface Capture {
@@ -144,7 +130,7 @@ describe('replay live', () => {
   }
 
   it('refuses without a pinned role config (exit 2, runner never called)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const o = out();
     let called = false;
@@ -172,7 +158,7 @@ describe('replay live', () => {
   });
 
   it('refuses model/lockfile pins under live (pins come from the role)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const role = writeRoleConfig(dir, 'role.md');
     const lock = writeLockfile(dir, 'pins.json');
@@ -193,7 +179,7 @@ describe('replay live', () => {
   });
 
   it('exits 5 when the role config is unreadable', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const o = out();
     const exit = (
@@ -215,7 +201,7 @@ describe('replay live', () => {
   });
 
   it('exits 2 when the role config is empty', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const role = writeRoleConfig(dir, 'empty.md', '   \n');
     const o = out();
@@ -231,7 +217,7 @@ describe('replay live', () => {
   });
 
   it('re-executes live: tier live, invocation live-exact, runner gets role config', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const role = writeRoleConfig(dir, 'role.md');
     const seen: unknown[] = [];
@@ -266,10 +252,10 @@ describe('replay live', () => {
   });
 
   it('live with --worktree override is a different-worktree invocation (experimental)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const role = writeRoleConfig(dir, 'role.md');
-    const wt = tmpRoot('replay-wt-');
+    const wt = tempDir('replay-wt-');
     const seen: unknown[] = [];
     const o = out();
     const exit = (
@@ -334,7 +320,7 @@ describe('replay compare/regression (diff-against)', () => {
   }
 
   it('identical trajectories: exit 0, changed empty, regression false, runner never called', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const other = writeVariant(dir, 'other.json', 'same');
     const o = out();
@@ -369,7 +355,7 @@ describe('replay compare/regression (diff-against)', () => {
   });
 
   it('names each changed var and exits 1 as the regression signal', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     for (const [variant, want] of [
       ['model', ['model']],
@@ -398,7 +384,7 @@ describe('replay compare/regression (diff-against)', () => {
   });
 
   it('prints the changed vars in text output', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const other = writeVariant(dir, 'other.json', 'model');
     const o = out();
@@ -413,7 +399,7 @@ describe('replay compare/regression (diff-against)', () => {
   });
 
   it('exits 5 when the --diff-against file is unreadable, 2 when malformed', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const missing = out();
     const exitMissing = (
@@ -448,7 +434,7 @@ describe('replay compare/regression (diff-against)', () => {
   });
 
   it('refuses --diff-against under re-execution tiers', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const other = writeVariant(dir, 'other.json', 'same');
     const lock = writeLockfile(dir, 'pins.json');
@@ -473,7 +459,7 @@ describe('replay compare/regression (diff-against)', () => {
 
 describe('replay tier honesty (negative tests)', () => {
   it('recorded refuses execution flags — it replays the trajectory alone', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     for (const extra of [
       { model: 'acme/m1' },
@@ -498,7 +484,7 @@ describe('replay tier honesty (negative tests)', () => {
   });
 
   it('the published tier always equals the declared tier (never inflated)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const lock = writeLockfile(dir, 'pins.json');
     const rolePath = join(dir, 'role.json');
@@ -547,7 +533,7 @@ describe('replay tier honesty (negative tests)', () => {
   });
 
   it('rejects lockfiles that are not a pinned models record', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const notJson = join(dir, 'not-json.json');
     writeFileSync(notJson, 'nope');
@@ -576,7 +562,7 @@ describe('replay tier honesty (negative tests)', () => {
   });
 
   it('rejects an unknown --tier and a missing --worktree target', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const lock = writeLockfile(dir, 'pins.json');
     const badTier = out();
@@ -612,10 +598,10 @@ describe('replay tier honesty (negative tests)', () => {
   });
 
   it('deterministic --worktree success names worktree as the changed var (experimental)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const lock = writeLockfile(dir, 'pins.json');
-    const wt = tmpRoot('replay-wt-');
+    const wt = tempDir('replay-wt-');
     const o = out();
     const exit = (
       await runReplayCommand(
@@ -681,7 +667,7 @@ describe('replay semantic-error envelopes (exit 2 with tier; --json)', () => {
   });
 
   it('publishes tier unknown when --tier names an unknown tier', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const o = out();
     const exit = (

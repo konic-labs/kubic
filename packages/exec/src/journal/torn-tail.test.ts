@@ -8,16 +8,14 @@
 // append truncates the partial write back so the repair is never half-done.
 import {
   appendFileSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { FileBridge } from '../file-bridge.js';
 import { FileJournalStore } from './store.js';
 import type { JournalEntryInput } from './types.js';
@@ -78,22 +76,12 @@ vi.mock('../file-bridge.js', async (importOriginal) => {
   };
 });
 
-const roots: string[] = [];
-
 afterEach(() => {
   hooks.failAppend = null;
   hooks.failFileInfo = null;
   hooks.failReadRange = null;
   hooks.withoutReadFileRange = false;
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
 });
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'journal-torn-'));
-  roots.push(root);
-  return root;
-}
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   return {
@@ -111,7 +99,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
 
 describe('journal torn tail', () => {
   it('closes a trailing fragment on its own line so the next entry is readable', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-torn-');
     const store = new FileJournalStore(dir);
     store.append(entry({ path: 'first.txt' }));
     const indexPath = join(dir, 'index.jsonl');
@@ -131,7 +119,7 @@ describe('journal torn tail', () => {
   });
 
   it('repairs the tail through the plain append seam too (durable: false)', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-torn-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ path: 'first.txt' }));
     const indexPath = join(dir, 'index.jsonl');
@@ -145,7 +133,7 @@ describe('journal torn tail', () => {
   });
 
   it('leaves no blank line when the tail is already terminated', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-torn-');
     const store = new FileJournalStore(dir);
     store.append(entry({ path: 'first.txt' }));
     const indexPath = join(dir, 'index.jsonl');
@@ -158,7 +146,7 @@ describe('journal torn tail', () => {
   });
 
   it('truncates a partially written append back to the pre-append length', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-torn-');
     const store = new FileJournalStore(dir);
     store.append(entry({ path: 'first.txt' }));
     const indexPath = join(dir, 'index.jsonl');
@@ -179,8 +167,8 @@ describe('journal torn tail', () => {
   });
 
   it('never truncates a symlinked index through its link', () => {
-    const dir = tmpRoot();
-    const outside = tmpRoot();
+    const dir = tempDir('journal-torn-');
+    const outside = tempDir('journal-torn-');
     const target = join(outside, 'target.jsonl');
     writeFileSync(target, 'x'.repeat(500));
     symlinkSync(target, join(dir, 'index.jsonl'));
@@ -199,7 +187,7 @@ describe('journal torn tail', () => {
   });
 
   it('starts a fresh index at the first entry, with no repair byte', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-torn-');
     const store = new FileJournalStore(dir);
     store.append(entry({ path: 'first.txt' }));
     // Nothing to repair on an index that does not exist yet: the file
@@ -209,7 +197,7 @@ describe('journal torn tail', () => {
   });
 
   it('repairs the tail when the index length cannot be read', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-torn-');
     const store = new FileJournalStore(dir);
     store.append(entry({ path: 'first.txt' }));
     const indexPath = join(dir, 'index.jsonl');
@@ -228,7 +216,7 @@ describe('journal torn tail', () => {
   });
 
   it('repairs the tail when the last byte cannot be read', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-torn-');
     const store = new FileJournalStore(dir);
     store.append(entry({ path: 'first.txt' }));
     const indexPath = join(dir, 'index.jsonl');
@@ -246,7 +234,7 @@ describe('journal torn tail', () => {
   });
 
   it('repairs the tail when the bridge cannot read a byte range', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-torn-');
     const store = new FileJournalStore(dir);
     hooks.withoutReadFileRange = true;
     store.append(entry({ path: 'first.txt' }));
@@ -264,7 +252,7 @@ describe('journal torn tail', () => {
   });
 
   it('leaves a torn index exactly as it was when the repairing append fails', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-torn-');
     const store = new FileJournalStore(dir);
     const indexPath = join(dir, 'index.jsonl');
     store.append(entry({ path: 'first.txt' }));

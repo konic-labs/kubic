@@ -2,13 +2,11 @@
 // Every test drives the production entry point (`loadRuntimeConfig`) over
 // a fake FileBridge: zero network, zero real files, dummy $ENV_VAR refs.
 
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { ConfigError, ProjectUntrustedError } from './errors.js';
 import {
   compactionSummaryLine,
@@ -42,20 +40,6 @@ const CWD = '/repo';
 const GLOBAL = `${HOME}/.kubic/config.toml`;
 
 const PROJECT = `${CWD}/.kubic/config.toml`;
-
-const tempDirs: string[] = [];
-
-function tempDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
 
 function load(
   files: Record<string, string>,

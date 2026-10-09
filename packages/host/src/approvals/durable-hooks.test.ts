@@ -7,8 +7,6 @@
 // commits the tool's intent, so a crash while a seat is deciding re-runs the
 // ask on resume — a resumed process never inherits a stand-down it did not
 // grant, and the tool never runs unapproved.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { policyInterceptorHooks } from '@kubic/agent/lane/interceptors';
 import {
@@ -27,7 +25,8 @@ import {
   type Storage,
   Type,
 } from '@kubic/agent/pi-boundary';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { installPolicy } from './install.js';
 import type { ApprovalVerdict } from './policy.js';
 import type { ApprovalRequest } from './request.js';
@@ -36,19 +35,6 @@ import { FileApprovalStore } from './stores.js';
 import { TIMEOUT_REASON_MARKER } from './timeout.js';
 
 const COMMAND = 'rm -rf /tmp/x';
-
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 interface World {
   calls: Array<Record<string, unknown>>;
@@ -165,7 +151,7 @@ async function waitUntil(predicate: () => boolean, ms = 2_000): Promise<void> {
 
 describe('approval hooks on a real harness', () => {
   it('lets an allow-once seat answer the challenged call through', async () => {
-    const workspace = mkTmp('kubic-approval-allow-');
+    const workspace = tempDir('kubic-approval-allow-');
     let asks = 0;
     const booted = await bootHarness({
       workspace,
@@ -185,7 +171,7 @@ describe('approval hooks on a real harness', () => {
   });
 
   it('blocks the call when the seat denies it', async () => {
-    const workspace = mkTmp('kubic-approval-deny-');
+    const workspace = tempDir('kubic-approval-deny-');
     let asks = 0;
     const booted = await bootHarness({
       workspace,
@@ -207,7 +193,7 @@ describe('approval hooks on a real harness', () => {
   });
 
   it('a seat that never answers times out to deny and stops tracking the ask', async () => {
-    const workspace = mkTmp('kubic-approval-timeout-');
+    const workspace = tempDir('kubic-approval-timeout-');
     let asks = 0;
     const booted = await bootHarness({
       workspace,
@@ -239,7 +225,7 @@ describe('approval hooks on a real harness', () => {
 
 describe('approval resume after a crash', () => {
   it('re-asks on resume and never runs the tool unapproved', async () => {
-    const workspace = mkTmp('kubic-approval-crash-');
+    const workspace = tempDir('kubic-approval-crash-');
     const sessions = join(workspace, 'session');
     let asks = 0;
 
@@ -296,7 +282,7 @@ describe('approval resume after a crash', () => {
   });
 
   it('reuses a remembered decision on resume instead of asking again', async () => {
-    const workspace = mkTmp('kubic-approval-remembered-');
+    const workspace = tempDir('kubic-approval-remembered-');
     const sessions = join(workspace, 'session');
     let asks = 0;
 

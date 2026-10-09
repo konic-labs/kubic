@@ -5,9 +5,6 @@
 // carries the timeout marker) unless session-scoped full access was
 // explicitly recorded, and doctor reports the INSTALLED policy object rather
 // than a literal. Faux provider only: zero network, zero paid tokens.
-
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   attachSession,
@@ -39,15 +36,8 @@ import {
 import { runDoctorCommand } from '@kubic/host/doctor';
 import { buildRunEnvelope, mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const roots: string[] = [];
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'kubic-policy-run-'));
-  roots.push(root);
-  return root;
-}
 
 // The no-isolation notice is pinned by approvals/no-isolation-notice.test.ts; here it
 // is only stderr noise, silenced through its documented opt-out.
@@ -57,9 +47,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 function modelsWith(
@@ -93,7 +80,7 @@ async function transcriptOf(root: string, sessionId: string): Promise<string> {
 
 describe('prod run path: destructive call', () => {
   it('refuses with approval_denied (exit 4) — a refusal is not a timeout', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-policy-run-');
     const result = await runHeadlessPrompt(
       'clean the tmp dir',
       {},
@@ -124,7 +111,7 @@ describe('prod run path: destructive call', () => {
   });
 
   it('keeps approval_timed_out for a denial whose reason names the bound elapsing', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-policy-run-');
     // A seat is attached but cannot answer: the service's own bound is what
     // elapses, and the recorded reason says so — the timeout label stays
     // truthful, exit 4 unchanged (pinned in both directions).
@@ -156,7 +143,7 @@ describe('prod run path: destructive call', () => {
   });
 
   it('runs it when session-scoped full access was explicitly recorded', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-policy-run-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const created = await createSession(
       store,
@@ -183,7 +170,7 @@ describe('prod run path: destructive call', () => {
   });
 
   it('runs an ordinary (non-destructive) command without an approval refusal', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-policy-run-');
     const result = await runHeadlessPrompt(
       'say hi',
       {},
@@ -205,7 +192,7 @@ describe('prod run path: destructive call', () => {
 
 describe('prod run path: second-segment outside redirect', () => {
   it('refuses a later `> /etc/...` after an inside redirect with approval_denied (exit 4)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-policy-run-');
     const result = await runHeadlessPrompt(
       'write two files',
       {},
@@ -231,7 +218,7 @@ describe('prod run path: second-segment outside redirect', () => {
 
 describe('prod run path: allowlist', () => {
   it('refuses a tool outside the allowlist at execute time, not merely silently', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-policy-run-');
     // shell:false removes bash from the class-derived allowlist.
     const installed = installPolicy({
       workspace: '/',
@@ -263,7 +250,7 @@ describe('prod run path: allowlist', () => {
   });
 
   it('serves the same tool when the allowlist covers it (control)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-policy-run-');
     const result = await runHeadlessPrompt(
       'call echo',
       {},
@@ -299,7 +286,7 @@ describe('prod run path: allowlist', () => {
   });
 
   it('a network command is refused under the default (network=none)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-policy-run-');
     const result = await runHeadlessPrompt(
       'fetch something',
       {},

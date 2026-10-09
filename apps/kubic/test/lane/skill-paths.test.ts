@@ -3,8 +3,7 @@
 // sessions-rooted) and `kubic tui` — and an unresolvable value warns on stderr
 // without --debug. Live lanes with the faux provider (zero network, zero paid
 // tokens) over real temp dirs; temp dirs are removed in `afterEach`.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BACKGROUND_CONTEXT,
@@ -16,18 +15,11 @@ import {
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { tuiBootOptions } from '../../src/tui/deps.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 function writeSkill(cwd: string, rel: string, name: string): void {
   const dir = join(cwd, rel);
@@ -85,22 +77,19 @@ beforeEach(() => {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 describe('explicit --skill paths anchor at the invoking cwd', () => {
   it('kubic run loads rel/SKILL.md from the cwd, not the sessions root', async () => {
-    const home = tmpRoot('skills-cwd-home-');
-    const cwd = tmpRoot('skills-cwd-work-');
+    const home = tempDir('skills-cwd-home-');
+    const cwd = tempDir('skills-cwd-work-');
     writeSkill(cwd, 'rel', 'relcwd');
     const debug: string[] = [];
     const result = await runHeadlessPrompt(
       'hi',
       { skills: ['rel/SKILL.md'] },
       {
-        sessionsRoot: tmpRoot('skills-cwd-sessions-'),
+        sessionsRoot: tempDir('skills-cwd-sessions-'),
         models: fauxModels(['done']),
         env: new NodeExecutionEnv(cwd),
         debug: (line: string) => debug.push(line),
@@ -115,14 +104,14 @@ describe('explicit --skill paths anchor at the invoking cwd', () => {
   });
 
   it('kubic run warns on stderr for an unresolvable --skill without --debug', async () => {
-    const home = tmpRoot('skills-cwd-home-');
-    const cwd = tmpRoot('skills-cwd-work-');
+    const home = tempDir('skills-cwd-home-');
+    const cwd = tempDir('skills-cwd-work-');
     const warned: string[] = [];
     const result = await runHeadlessPrompt(
       'hi',
       { skills: ['ghost-skill'] },
       {
-        sessionsRoot: tmpRoot('skills-cwd-sessions-'),
+        sessionsRoot: tempDir('skills-cwd-sessions-'),
         models: fauxModels(['done']),
         env: new NodeExecutionEnv(cwd),
         // No debug sink: the warning must still surface.
@@ -136,12 +125,12 @@ describe('explicit --skill paths anchor at the invoking cwd', () => {
   });
 
   it('kubic tui loads rel/SKILL.md from the cwd', async () => {
-    const home = tmpRoot('skills-cwd-home-');
-    const cwd = tmpRoot('skills-cwd-work-');
+    const home = tempDir('skills-cwd-home-');
+    const cwd = tempDir('skills-cwd-work-');
     writeSkill(cwd, 'rel', 'reltui');
     const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('skills-cwd-sessions-'),
+      sessionsRoot: tempDir('skills-cwd-sessions-'),
       models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, cwd, trusted: false },
@@ -153,10 +142,10 @@ describe('explicit --skill paths anchor at the invoking cwd', () => {
   });
 
   it('kubic tui queues an unresolvable --skill as a transcript notice', async () => {
-    const home = tmpRoot('skills-cwd-home-');
-    const cwd = tmpRoot('skills-cwd-work-');
+    const home = tempDir('skills-cwd-home-');
+    const cwd = tempDir('skills-cwd-work-');
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('skills-cwd-sessions-'),
+      sessionsRoot: tempDir('skills-cwd-sessions-'),
       models: fauxModels(['done']),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, cwd, trusted: false },
@@ -183,14 +172,14 @@ describe('explicit --skill paths anchor at the invoking cwd', () => {
 
 describe('settings skills from config on the tui lane', () => {
   it('kubic tui loads a settings skill dir with source settings', async () => {
-    const home = tmpRoot('skills-settings-tui-home-');
-    const cwd = tmpRoot('skills-settings-tui-work-');
+    const home = tempDir('skills-settings-tui-home-');
+    const cwd = tempDir('skills-settings-tui-work-');
     // Outside every discovery root: only the settings projection loads it.
-    const settingsDir = tmpRoot('skills-settings-tui-dir-');
+    const settingsDir = tempDir('skills-settings-tui-dir-');
     writeSkill(settingsDir, 'team-helper', 'team-helper');
     const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('skills-settings-tui-sessions-'),
+      sessionsRoot: tempDir('skills-settings-tui-sessions-'),
       models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       skills: {
@@ -211,8 +200,8 @@ describe('settings skills from config on the tui lane', () => {
 
 describe('the role gate on the tui lane', () => {
   it('kubic tui withholds a skill outside the resolved role', async () => {
-    const home = tmpRoot('skills-tui-gate-home-');
-    const cwd = tmpRoot('skills-tui-gate-work-');
+    const home = tempDir('skills-tui-gate-home-');
+    const cwd = tempDir('skills-tui-gate-work-');
     const dir = join(cwd, '.agents', 'skills', 'impl-only');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -222,7 +211,7 @@ describe('the role gate on the tui lane', () => {
     const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
       role: 'reviewer',
-      sessionsRoot: tmpRoot('skills-tui-gate-sessions-'),
+      sessionsRoot: tempDir('skills-tui-gate-sessions-'),
       models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, cwd, trusted: true },

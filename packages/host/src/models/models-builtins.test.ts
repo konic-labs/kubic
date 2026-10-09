@@ -3,35 +3,22 @@
 // outcome, and nothing is dialled (auth checks read the stubbed env only;
 // streams are never opened).
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ModelSelectError, selectModel } from '@kubic/agent/model-select';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   assembleModels,
   providerProbesOf,
   runModelsCommand,
 } from './models-cli.js';
 
-const made: string[] = [];
-
-function tmpDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'mb-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
 function assemble(
   env: Record<string, string | undefined>,
-  cwd: string = tmpDir(),
+  cwd: string = tempDir('mb-'),
 ) {
-  return assembleModels(cwd, env, { home: tmpDir() });
+  return assembleModels(cwd, env, { home: tempDir('mb-') });
 }
 
 describe('built-in providers', () => {
@@ -90,7 +77,7 @@ describe('built-in providers', () => {
   });
 
   it('prefers a models.json provider over built-ins for the default pick', async () => {
-    const cwd = tmpDir();
+    const cwd = tempDir('mb-');
     writeFileSync(
       join(cwd, 'models.json'),
       JSON.stringify({
@@ -107,14 +94,14 @@ describe('built-in providers', () => {
     const assembled = await assembleModels(
       cwd,
       { ANTHROPIC_API_KEY: 'x', KUBIC_TRUST_PROJECT: '1' },
-      { home: tmpDir() },
+      { home: tempDir('mb-') },
     );
     expect(assembled.fallbackProviders[0]).toBe('local');
     expect(assembled.providers.get('local')?.usable).toBe(true);
   });
 
   it('refuses a models.json provider whose id collides with a built-in, by name', async () => {
-    const cwd = tmpDir();
+    const cwd = tempDir('mb-');
     writeFileSync(
       join(cwd, 'models.json'),
       JSON.stringify({
@@ -134,7 +121,7 @@ describe('built-in providers', () => {
     const assembled = await assembleModels(
       cwd,
       { KUBIC_TRUST_PROJECT: '1' },
-      { home: tmpDir() },
+      { home: tempDir('mb-') },
     );
     expect(assembled.models.getProvider('anthropic')?.baseUrl).toBe(before);
     expect(assembled.notes.join('\n')).toMatch(
@@ -206,7 +193,7 @@ describe('built-in providers', () => {
   });
 
   it('`kubic models --json` carries a custom model cache cost and input modalities', async () => {
-    const cwd = tmpDir();
+    const cwd = tempDir('mb-');
     writeFileSync(
       join(cwd, 'models.json'),
       JSON.stringify({
@@ -228,7 +215,7 @@ describe('built-in providers', () => {
     const assembled = await assembleModels(
       cwd,
       { KUBIC_TRUST_PROJECT: '1' },
-      { home: tmpDir() },
+      { home: tempDir('mb-') },
     );
     const lines: string[] = [];
     await runModelsCommand(

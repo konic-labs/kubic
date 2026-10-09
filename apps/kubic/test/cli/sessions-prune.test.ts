@@ -6,15 +6,7 @@
 // the root are never touched, and a keep window must be supplied (flag or
 // config) — never invented. Hermetic: tmp dirs only, liveness is stubbed
 // (`process.kill`, fake pids), zero network.
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { effectiveConfigView } from '@kubic/host/config';
@@ -23,7 +15,8 @@ import {
   runSessionsCommand,
   type SessionsInvocation,
 } from '@kubic/host/sessions';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from '../../src/config/load.js';
 import { sessionRetentionDays } from '../../src/config/projections.js';
 
@@ -33,19 +26,6 @@ const FAKE_PID = 424243;
 // the passes, one stays dead throughout.
 const FLIP_PID = 424251;
 const DEAD_PID = 424252;
-
-const made: string[] = [];
-
-function tmpRoot(prefix = 'prune-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -117,7 +97,7 @@ function prune(
 
 describe('sessions prune, dry-run default', () => {
   it('lists candidates and deletes nothing without --yes', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-one', 31 * DAY_MS);
     sessionDir(root, 'fresh-one', 60 * 60 * 1000);
     const { code, lines } = await prune(root, { keepDays: 30 });
@@ -131,7 +111,7 @@ describe('sessions prune, dry-run default', () => {
   });
 
   it('--dry-run is the explicit synonym: nothing removed, ids + bytes listed', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 40 * DAY_MS);
     sessionDir(root, 'aged-b', 90 * DAY_MS);
     const { code, lines } = await prune(root, { dryRun: true, keepDays: 30 });
@@ -145,7 +125,7 @@ describe('sessions prune, dry-run default', () => {
   });
 
   it('--yes deletes exactly the listed set', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 40 * DAY_MS);
     sessionDir(root, 'aged-b', 90 * DAY_MS);
     sessionDir(root, 'fresh-one', 0);
@@ -163,7 +143,7 @@ describe('sessions prune, dry-run default', () => {
   });
 
   it('--dry-run and --yes contradict: refused by name, nothing deleted', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 40 * DAY_MS);
     const o = out();
     const code = (
@@ -180,7 +160,7 @@ describe('sessions prune, dry-run default', () => {
 
 describe('sessions prune, interactive confirmation', () => {
   it('asks once on a terminal and deletes on yes', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 40 * DAY_MS);
     const asked: string[] = [];
     const { code, lines } = await prune(
@@ -202,7 +182,7 @@ describe('sessions prune, interactive confirmation', () => {
 
   it('keeps everything on no or cancel (the dry-run report)', async () => {
     for (const answer of [false, null]) {
-      const root = tmpRoot();
+      const root = tempDir();
       sessionDir(root, 'aged-a', 40 * DAY_MS);
       const { code, lines } = await prune(
         root,
@@ -216,7 +196,7 @@ describe('sessions prune, interactive confirmation', () => {
   });
 
   it('never asks under --dry-run or --yes', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 40 * DAY_MS);
     const never = async (): Promise<boolean> => {
       throw new Error('must not prompt');
@@ -240,7 +220,7 @@ describe('sessions prune, interactive confirmation', () => {
 
 describe('sessions prune, age window', () => {
   it('the boundary is exact: at the cutoff is eligible, past it is not', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const now = Date.UTC(2026, 0, 15);
     const cutoff = now - 30 * DAY_MS;
     sessionDir(root, 'at-cutoff', 0);
@@ -264,7 +244,7 @@ describe('sessions prune, age window', () => {
   });
 
   it('a session whose dir mtime is recent survives even with aged content', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const dir = sessionDir(root, 'recently-attached', 0);
     const old = (Date.now() - 90 * DAY_MS) / 1000;
     utimesSync(join(dir, 'spans.jsonl'), old, old);
@@ -282,7 +262,7 @@ describe('sessions prune, age window', () => {
   });
 
   it('a missing sessions root is a fresh machine: nothing to prune, exit 0', async () => {
-    const root = join(tmpRoot(), 'not-created-yet');
+    const root = join(tempDir(), 'not-created-yet');
     const o = out();
     const code = (
       await runSessionsCommand(
@@ -298,7 +278,7 @@ describe('sessions prune, age window', () => {
   });
 
   it('a malformed sessions root refuses by name, exit 1', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const notADir = join(root, 'sessions');
     writeFileSync(notADir, 'not a directory');
     const o = out();
@@ -319,7 +299,7 @@ describe('sessions prune, age window', () => {
 
 describe('sessions prune, one bucket per session', () => {
   it('a locked session whose header cannot be statted is locked, not unreadable', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'locked-dark', 90 * DAY_MS);
     lockFile(root, 'locked-dark', FAKE_PID, 90 * DAY_MS);
     const kill = stubKill(true);
@@ -348,7 +328,7 @@ describe('sessions prune, one bucket per session', () => {
 
 describe('sessions prune, protection rails', () => {
   it('a live lock protects an aged session and is reported', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const dir = sessionDir(root, 'held-live', 90 * DAY_MS);
     lockFile(root, 'held-live', FAKE_PID, 90 * DAY_MS);
     const secs = (Date.now() - 90 * DAY_MS) / 1000;
@@ -374,7 +354,7 @@ describe('sessions prune, protection rails', () => {
   });
 
   it('a stale lock (dead holder) does not protect', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const dir = sessionDir(root, 'held-dead', 90 * DAY_MS);
     lockFile(root, 'held-dead', FAKE_PID, 91 * DAY_MS);
     const secs = (Date.now() - 90 * DAY_MS) / 1000;
@@ -397,7 +377,7 @@ describe('sessions prune, protection rails', () => {
   });
 
   it('--keep-session protects the named session even when aged', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'keep-me', 90 * DAY_MS);
     sessionDir(root, 'prune-me', 90 * DAY_MS);
     const o = out();
@@ -414,7 +394,7 @@ describe('sessions prune, protection rails', () => {
   });
 
   it('never touches non-session-shaped entries in the root', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     writeFileSync(join(root, 'stray.txt'), 'hello');
     writeFileSync(join(root, 'lock.json'), JSON.stringify({ pid: 1 }));
     mkdirSync(join(root, 'not a session'));
@@ -450,7 +430,7 @@ describe('sessions prune, bash spill files', () => {
   // session — pinned here through the real CLI path (runSessionsCommand →
   // deleteSessionPruneCandidates), not by reproducing the remove.
   it('removes a session together with its spill files', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const dir = sessionDir(root, 'with-spills', 90 * DAY_MS);
     mkdirSync(join(dir, 'spill'), { recursive: true });
     const spill = join(dir, 'spill', `0001-stdout-${FAKE_PID}.log`);
@@ -489,7 +469,7 @@ describe('sessions prune, the plan→delete window', () => {
   }
 
   it('a lock acquired between planning and the delete stops that delete and is reported', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const flipDir = sessionDir(root, 'flip-live', 90 * DAY_MS);
     const deadDir = sessionDir(root, 'stays-dead', 90 * DAY_MS);
     const flippedAt = lockFile(root, 'flip-live', FLIP_PID, 90 * DAY_MS);
@@ -532,7 +512,7 @@ describe('sessions prune, the plan→delete window', () => {
 
 describe('sessions prune, keep-window resolution', () => {
   it('refuses without a window: no flag, no config, no invented default', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
     const code = (
@@ -550,7 +530,7 @@ describe('sessions prune, keep-window resolution', () => {
   });
 
   it('keep-days 0 means retention off — never prune', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
     const code = (
@@ -565,7 +545,7 @@ describe('sessions prune, keep-window resolution', () => {
   });
 
   it('config retentionDays flows in as the default window', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-31d', 31 * DAY_MS);
     sessionDir(root, 'aged-29d', 29 * DAY_MS);
     const viaConfig = out();
@@ -585,7 +565,7 @@ describe('sessions prune, keep-window resolution', () => {
   });
 
   it('the explicit flag beats config', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-31d', 31 * DAY_MS);
     const o = out();
     const code = (
@@ -599,7 +579,7 @@ describe('sessions prune, keep-window resolution', () => {
   });
 
   it('config retentionDays = 0 is retention off, never prune', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
     const code = (
@@ -622,7 +602,7 @@ describe('sessions prune, config flow', () => {
   // A real config load (global layer under a tmp home), the composition
   // root's seam, then the CLI — the same chain `kubic sessions prune` runs.
   function loadedHome(retention?: string): string {
-    const home = tmpRoot('home-');
+    const home = tempDir('home-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     if (retention !== undefined) {
       writeFileSync(
@@ -634,12 +614,12 @@ describe('sessions prune, config flow', () => {
   }
 
   it('session.retentionDays becomes the default window', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-31d', 31 * DAY_MS);
     sessionDir(root, 'aged-29d', 29 * DAY_MS);
     const loaded = loadCliConfig({
       home: loadedHome('30'),
-      cwd: tmpRoot('cwd-'),
+      cwd: tempDir('cwd-'),
       env: {},
     });
     expect(loaded.error).toBeUndefined();
@@ -662,7 +642,7 @@ describe('sessions prune, config flow', () => {
   it('reports the key through the effective-config view (kubic config)', () => {
     const loaded = loadCliConfig({
       home: loadedHome('30'),
-      cwd: tmpRoot('cwd-'),
+      cwd: tempDir('cwd-'),
       env: {},
     });
     const runtime = loaded.runtime;
@@ -678,11 +658,11 @@ describe('sessions prune, config flow', () => {
   it('unset config means no window: prune refuses, deletes nothing', async () => {
     const loaded = loadCliConfig({
       home: loadedHome(),
-      cwd: tmpRoot('cwd-'),
+      cwd: tempDir('cwd-'),
       env: {},
     });
     expect(sessionRetentionDays(loaded)).toBeUndefined();
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
     const code = (
@@ -703,7 +683,7 @@ describe('sessions prune, config flow', () => {
   it('a refused config leaves no window either: prune refuses, deletes nothing', async () => {
     // A typo refuses the whole load, so sessionRetentionDays is undefined
     // exactly like the unset case — prune still demands --keep-days.
-    const home = tmpRoot('home-');
+    const home = tempDir('home-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
@@ -711,13 +691,13 @@ describe('sessions prune, config flow', () => {
     );
     const loaded = loadCliConfig({
       home,
-      cwd: tmpRoot('cwd-'),
+      cwd: tempDir('cwd-'),
       env: {},
     });
     expect(loaded.runtime).toBeUndefined();
     expect(loaded.error).toContain('nope');
     expect(sessionRetentionDays(loaded)).toBeUndefined();
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
     const code = (
@@ -738,11 +718,11 @@ describe('sessions prune, config flow', () => {
   it('retentionDays = 0 flows through as retention off', async () => {
     const loaded = loadCliConfig({
       home: loadedHome('0'),
-      cwd: tmpRoot('cwd-'),
+      cwd: tempDir('cwd-'),
       env: {},
     });
     expect(sessionRetentionDays(loaded)).toBe(0);
-    const root = tmpRoot();
+    const root = tempDir();
     sessionDir(root, 'aged-a', 90 * DAY_MS);
     const o = out();
     const code = (

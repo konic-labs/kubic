@@ -2,14 +2,13 @@
 import {
   appendFileSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { captureBaseline } from './baseline.js';
 import { applyDelta, encodeDelta } from './delta.js';
 import type { GitCommand } from './git.js';
@@ -18,19 +17,6 @@ import { restoreEntry } from './restore.js';
 import { FileJournalStore } from './store.js';
 import { reconcile } from './sweep.js';
 import type { JournalEntry, JournalEntryInput } from './types.js';
-
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix = 'journal-'): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   return {
@@ -48,7 +34,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
 
 describe('journal store', () => {
   it('appends entries and reads them back with hashes and toolCallId', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir());
     const recorded = store.append(entry());
     expect(recorded.beforeHash).toBe(null);
     expect(recorded.afterHash).toMatch(/^[0-9a-f]{64}$/);
@@ -59,14 +45,14 @@ describe('journal store', () => {
   });
 
   it('stores blobs content-addressed: identical content written once', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir());
     store.append(entry({ path: 'a.txt', after: 'same\n' }));
     store.append(entry({ path: 'b.txt', after: 'same\n' }));
     expect(store.blobCount()).toBe(1);
   });
 
   it('tolerates corrupt index lines', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir());
     store.append(entry());
     appendFileSync(store.indexPath, '{torn\n');
     store.append(entry({ path: 'b.txt' }));
@@ -86,7 +72,7 @@ describe('journal store', () => {
   });
 
   it('stores a delta — never a full after-blob — for large files', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir());
     const before = `${'line\n'.repeat(20_000)}tail\n`;
     const after = `${'line\n'.repeat(20_000)}TAIL\n`;
     const recorded = store.append(
@@ -101,7 +87,7 @@ describe('journal store', () => {
   });
 
   it('restores before-content for undo, including delta-recorded edits', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir());
     const before = `${'line\n'.repeat(20_000)}tail\n`;
     const after = `${'line\n'.repeat(20_000)}changed\n`;
     const recorded = store.append(
@@ -126,7 +112,7 @@ describe('journal store', () => {
   });
 
   it('bounds growth by default: appends enforce the store limits', () => {
-    const store = new FileJournalStore(tmpRoot(), { maxBytes: 12 });
+    const store = new FileJournalStore(tempDir(), { maxBytes: 12 });
     store.append(entry({ path: 'a.txt', after: 'aaaaaa\n' }));
     store.append(entry({ path: 'b.txt', after: 'bbbbbb\n' }));
     const paths = store.entries().map((e) => e.path);
@@ -135,7 +121,7 @@ describe('journal store', () => {
   });
 
   it('enforces retention: size evicts oldest, age evicts stale, blobs unreferenced are dropped', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir());
     store.append(entry({ path: 'old.txt', after: 'old\n', timestamp: 1000 }));
     store.append(entry({ path: 'new.txt', after: 'new\n', timestamp: 2000 }));
     const pruned = store.enforceRetention({ maxAgeMs: 500, now: 2000 });
@@ -161,7 +147,7 @@ describe('deltaBaseEmpty schema', () => {
   const big = `${'line\n'.repeat(20_000)}tail\n`;
 
   it('append records deltaBaseEmpty when the delta is encoded against an empty before', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir());
     const recorded = store.append(
       entry({ path: 'big.txt', before: null, after: big, bytesDelta: 0 }),
     );
@@ -171,7 +157,7 @@ describe('deltaBaseEmpty schema', () => {
   });
 
   it('append leaves deltaBaseEmpty absent on tool-authored deltas with real before-content', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir());
     const recorded = store.append(
       entry({
         path: 'big.txt',
@@ -193,7 +179,7 @@ describe('readAfter delta bases', () => {
 
   it('a reconcile-authored large-file entry reconstructs from its recorded empty base', () => {
     // reconcile's record() shape: no before-content, hash-only pre-image.
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir());
     const recorded = store.append(
       entry({
         path: 'big.txt',
@@ -213,7 +199,7 @@ describe('readAfter delta bases', () => {
     // A pre-schema entry: same data as a reconcile large-file find, but
     // written before deltaBaseEmpty existed. Correct-by-construction today
     // (reconcile is the only writer of that shape) and must stay so.
-    const dir = tmpRoot();
+    const dir = tempDir();
     const delta = encodeDelta('', big);
     const deltaHash = sha256Hex(delta);
     mkdirSync(join(dir, 'blobs'), { recursive: true });
@@ -244,7 +230,7 @@ describe('readAfter delta bases', () => {
     // SHARED blob (another entry journaled the same bytes), applying the
     // base-'' delta against the shared content silently serves wrong
     // after-content with no corruption reported.
-    const dir = tmpRoot();
+    const dir = tempDir();
     const shared = 'shared\ncontent\n';
     const after = 'real\nafter\n';
     const delta = encodeDelta('', after);
@@ -276,7 +262,7 @@ describe('readAfter delta bases', () => {
   });
 
   it('a deltaBaseEmpty reconstruction never reads its before-blob (no corrupt report for an unused torn blob)', () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const store = new FileJournalStore(dir);
     const recorded = store.append(
       entry({
@@ -304,7 +290,7 @@ describe('readAfter delta bases', () => {
   it('a tool-authored delta entry with a missing before-blob refuses to reconstruct', () => {
     // Reconstructing from '' here silently fabricates after-content that
     // never existed on disk — refuse instead.
-    const dir = tmpRoot();
+    const dir = tempDir();
     const store = new FileJournalStore(dir);
     const before = 'b\n'.repeat(40_000);
     const after = 'c\n'.repeat(40_000);
@@ -322,7 +308,7 @@ describe('readAfter delta bases', () => {
 // content does not hash to its name must read as missing — never as truth.
 describe('blob hash verification', () => {
   it('a blob whose content does not hash to its name reads as missing', () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const store = new FileJournalStore(dir);
     const recorded = store.append(entry({ path: 'a.txt', after: 'hello\n' }));
     writeFileSync(join(dir, 'blobs', recorded.afterHash ?? ''), 'tampered\n');
@@ -330,7 +316,7 @@ describe('blob hash verification', () => {
   });
 
   it('corrupt blobs are reported through the onCorrupt hook', () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const store = new FileJournalStore(dir);
     const recorded = store.append(
       entry({ path: 'a.txt', before: 'v1\n', after: 'v2\n', bytesDelta: 0 }),
@@ -347,7 +333,7 @@ describe('blob hash verification', () => {
     // Defense in depth: if a base is ever mis-guessed again,
     // the reconstruction will not hash to entry.afterHash — fail closed to
     // null with a named report instead of serving wrong after-content.
-    const dir = tmpRoot();
+    const dir = tempDir();
     const after = 'real\nafter\n';
     const foreign = 'foreign\nbase\n';
     // The delta is encoded against '' but the entry claims a before-blob
@@ -379,12 +365,12 @@ describe('blob hash verification', () => {
   });
 
   it('undo never restores content from a hash-corrupt before-blob', () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const store = new FileJournalStore(dir);
     const recorded = store.append(
       entry({ path: 'f.txt', before: 'v1\n', after: 'v2\n', bytesDelta: 0 }),
     );
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'f.txt'), 'v2\n');
     writeFileSync(join(dir, 'blobs', recorded.beforeHash ?? ''), 'evil\n');
     const result = restoreEntry(store, recorded, root);
@@ -396,11 +382,11 @@ describe('blob hash verification', () => {
 
 describe('sweep bytesDelta', () => {
   it('is nonzero for a sweep entry that changed size', () => {
-    const root = tmpRoot('journal-delta-');
+    const root = tempDir('journal-delta-');
     writeFileSync(join(root, 'grown.ts'), 'before\n');
     const baseline = captureBaseline(root);
     writeFileSync(join(root, 'grown.ts'), 'before, and much more\n');
-    const store = new FileJournalStore(tmpRoot('j-delta-'));
+    const store = new FileJournalStore(tempDir('j-delta-'));
     // Scripted object store answering the boot blob (the file was clean at
     // baseline): the sweep stores the pre-image and sizes the delta.
     const before = Buffer.from('before\n', 'utf8');

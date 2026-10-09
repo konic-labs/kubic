@@ -4,9 +4,6 @@
 // @kubic/tui (dep-lint): the fake terminal satisfies the seam structurally.
 // Faux lane boot only — zero network.
 
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   createModels,
   fauxAssistantMessage,
@@ -17,16 +14,9 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { runRunCommand } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tui-entry-'));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   // The no-isolation notice is not under test here (approvals/no-isolation-notice.test.ts owns
@@ -36,8 +26,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function fauxModels(texts: string[]): MutableModels {
@@ -119,7 +107,7 @@ describe('the tui entry', () => {
     // boot with. NOTE: run-cli's `onScreenMount` hook is never invoked
     // (`void deps.onScreenMount`), so the alt-screen invariant is asserted on
     // the emitted output — the only thing a user could actually observe.
-    const root = tmpRoot();
+    const root = tempDir('tui-entry-');
     const lines: string[] = [];
     const code = (
       await runRunCommand(

@@ -3,8 +3,7 @@
 // failing unknown-role. Live headless run with the faux provider (zero network,
 // zero paid tokens) over real temp dirs — the prod path resolves through the
 // real FileBridge, so a fake bridge would not prove it.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -13,15 +12,8 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -29,14 +21,12 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('run --role resolves at the project root', () => {
   it('boots a root role document from a nested cwd', async () => {
-    const home = tmpRoot('roles-subdir-home-');
-    const root = tmpRoot('roles-subdir-repo-');
+    const home = tempDir('roles-subdir-home-');
+    const root = tempDir('roles-subdir-repo-');
     // A repository: the walk stops here, so the nested cwd below still
     // resolves the root's documents.
     mkdirSync(join(root, '.git'), { recursive: true });
@@ -47,7 +37,7 @@ describe('run --role resolves at the project root', () => {
     );
     const sub = join(root, 'a', 'b');
     mkdirSync(sub, { recursive: true });
-    const sessionsRoot = tmpRoot('roles-subdir-sessions-');
+    const sessionsRoot = tempDir('roles-subdir-sessions-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);

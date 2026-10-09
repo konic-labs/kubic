@@ -10,11 +10,11 @@
 // `.kubic/roles/` tree — not a stub — because the gap this closes was exactly
 // "the piece exists but nothing calls it".
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { type DoctorDeps, runDoctorCommand } from '../doctor/index.js';
 import {
   type EffectivePolicy,
@@ -23,22 +23,8 @@ import {
 import type { RoleLayerInput } from './index.js';
 import { rolesDoctorProbe } from './index.js';
 
-const roots: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
-afterEach(() => {
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 function roleDir(role: string, frontmatter: string, prompt = 'Go.'): string {
-  const cwd = tmpRoot('kubic-doctor-roles-');
+  const cwd = tempDir('kubic-doctor-roles-');
   mkdirSync(join(cwd, '.kubic', 'roles'), { recursive: true });
   writeFileSync(
     join(cwd, '.kubic', 'roles', `${role}.md`),
@@ -214,7 +200,7 @@ describe('doctor reports the role posture on the production path', () => {
     // Most workspaces have no `.kubic/roles/`; doctor must stay green there,
     // and it must name what the run would actually assign — the five presets
     // that ship with the binary, each marked `builtin`.
-    const cwd = tmpRoot('kubic-doctor-noroles-');
+    const cwd = tempDir('kubic-doctor-noroles-');
     const parsed = await report(cwd);
     const roles = parsed.checks.filter((c) => c.id.startsWith('role:'));
     expect(roles.filter((c) => c.status === 'fail')).toEqual([]);

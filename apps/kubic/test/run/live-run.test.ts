@@ -1,8 +1,7 @@
 // `kubic run -p` end to end: drives the composition-root run against a real
 // lane with faux models, as a black-box caller that never reaches into lane
 // internals. Faux provider only: zero network.
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   attachSession,
@@ -30,15 +29,8 @@ import {
   runRunCommand,
 } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'run-prod-path-'));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   // The no-isolation notice is not under test here (approvals/no-isolation-notice.test.ts owns
@@ -48,8 +40,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function fauxModels(texts: string[]): MutableModels {
@@ -115,7 +105,7 @@ async function readTranscript(
 
 describe('prod run path, live lane', () => {
   it('drives a faux lane to completed with the assistant summary', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const result = await runHeadlessPrompt(
       'do it',
       {},
@@ -134,7 +124,7 @@ describe('prod run path, live lane', () => {
   });
 
   it('maps a starved lane drive to failed', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -150,7 +140,7 @@ describe('prod run path, live lane', () => {
 
 describe('prod run path, resume chain', () => {
   it('resumes the same session and keeps one user entry per prompt', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const env = new FakeExecutionEnv({});
     const first = await runHeadlessPrompt(
       'first prompt',
@@ -183,7 +173,7 @@ describe('prod run path, durable retry', () => {
   it('settles completed after a transient provider error, with both attempts counted', {
     timeout: 20_000,
   }, async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -224,7 +214,7 @@ describe('prod run path, durable retry', () => {
 
 describe('exactly one user entry per kubic run prompt', () => {
   it('writes ONE user entry for a turn that calls a tool', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const env = new FakeExecutionEnv({});
     env.fs.writeFile('a.txt', 'one entry reads this\n');
     const faux = fauxProvider();
@@ -250,7 +240,7 @@ describe('exactly one user entry per kubic run prompt', () => {
   });
 
   it('writes ONE user entry per prompt across a resume', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const env = new FakeExecutionEnv({});
     const first = await runHeadlessPrompt(
       'first prompt',
@@ -268,7 +258,7 @@ describe('exactly one user entry per kubic run prompt', () => {
   });
 
   it('writes the prompt once even when the turn never started (no model)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const result = await runHeadlessPrompt(
       'durable no-model prompt',
       {},
@@ -309,7 +299,7 @@ describe('prod run path, empty summary honesty', () => {
   }
 
   it('prints the named non-answer instead of echoing the prompt (text)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const o = out();
     const exit = (
       await runRunCommand(
@@ -328,7 +318,7 @@ describe('prod run path, empty summary honesty', () => {
   });
 
   it('carries the same named non-answer in the --json envelope', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const o = out();
     const exit = (
       await runRunCommand(
@@ -353,7 +343,7 @@ describe('prod run path, empty summary honesty', () => {
   });
 
   it('still reports one empty-summary run as the envelope built from its result', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const result = await runHeadlessPrompt(
       PROMPT_FIXTURE,
       {},
@@ -372,7 +362,7 @@ describe('prod run path, empty summary honesty', () => {
   });
 
   it('passes real assistant text through byte-identical (control)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const result = await runHeadlessPrompt(
       'do it',
       {},
@@ -389,7 +379,7 @@ describe('prod run path, empty summary honesty', () => {
 
 describe('enterprise policy gate on model selection', () => {
   it('refuses a model outside allowed_models before any provider call', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const allowed = fauxProvider();
     const denied = fauxProvider({ provider: 'other' });
     const models = createModels();
@@ -422,7 +412,7 @@ describe('enterprise policy gate on model selection', () => {
   });
 
   it('skips a policy-denied provider for the implicit fallback pick', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const allowed = fauxProvider();
     const denied = fauxProvider({ provider: 'other' });
     const models = createModels();
@@ -452,7 +442,7 @@ describe('enterprise policy gate on model selection', () => {
   });
 
   it('does not let a resumed session keep a stored model the policy refuses', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const allowed = fauxProvider();
     const other = fauxProvider({ provider: 'other' });
     const models = createModels();
@@ -496,7 +486,7 @@ describe('enterprise policy gate on model selection', () => {
   });
 
   it('runs a model the policy allows, unchanged (control)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const result = await runHeadlessPrompt(
       'hello',
       {},
@@ -516,7 +506,7 @@ describe('enterprise policy gate on model selection', () => {
 
 describe('prod run path, result refs', () => {
   it('points journal/usage/trajectory refs at the live session', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const result = await runHeadlessPrompt(
       'do it',
       {},
@@ -537,7 +527,7 @@ describe('prod run path, result refs', () => {
   });
 
   it('maps an unknown --session attach to workspace_unavailable, keeping the id in every ref', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const result = await runHeadlessPrompt(
       'hello',
       { sessionId: 'sess-nope' },
@@ -557,7 +547,7 @@ describe('prod run path, result refs', () => {
   });
 
   it('maps an empty model registry to provider_probe_failed with that kind', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const result = await runHeadlessPrompt(
       'hello',
       {},
@@ -574,7 +564,7 @@ describe('prod run path, result refs', () => {
   });
 
   it('persists the prompt even when no model can run it', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-prod-path-');
     const result = await runHeadlessPrompt(
       'durable hello',
       {},
@@ -630,7 +620,7 @@ describe('prod run path, failure code in the envelope', () => {
         { prompt: 'rate limited', json: true },
         {
           out: o.write,
-          run: envelopeRun(tmpRoot(), [
+          run: envelopeRun(tempDir('run-prod-path-'), [
             fauxAssistantMessage('refused', {
               stopReason: 'error',
               errorMessage: 'provider capacity exhausted',
@@ -658,7 +648,7 @@ describe('prod run path, failure code in the envelope', () => {
         { prompt: 'tool fails', json: true },
         {
           out: o.write,
-          run: envelopeRun(tmpRoot(), [
+          run: envelopeRun(tempDir('run-prod-path-'), [
             fauxAssistantMessage('failed', {
               stopReason: 'error',
               errorMessage: "tool 'read' failed: ENOENT",
@@ -684,7 +674,7 @@ describe('prod run path, failure code in the envelope', () => {
         { prompt: 'model fails', json: true },
         {
           out: o.write,
-          run: envelopeRun(tmpRoot(), [
+          run: envelopeRun(tempDir('run-prod-path-'), [
             fauxAssistantMessage('failed', {
               stopReason: 'error',
               errorMessage: 'the model produced nothing',

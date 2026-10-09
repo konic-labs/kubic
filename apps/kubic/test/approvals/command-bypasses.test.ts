@@ -8,8 +8,7 @@
 // documented limits are pinned in the "still-documented misses" block so a
 // future fix is a conscious change.
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: `${HOME}` here is bash syntax under test, not a template literal
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   confinePath,
@@ -34,24 +33,15 @@ import {
   validatePolicy,
 } from '@kubic/host/approvals';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 
 const WS = '/work';
 
 const HOME = '/home/tester';
 
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function ctx(overrides: Partial<TriggerContext> = {}): TriggerContext {
@@ -89,7 +79,7 @@ async function runBash(command: string, workspace: string) {
     'run it',
     {},
     {
-      sessionsRoot: mkTmp('kubic-bypass-sessions-'),
+      sessionsRoot: tempDir('kubic-bypass-sessions-'),
       models: modelsWith([
         fauxToolUse([fauxToolCall('bash', { command })]),
         fauxAssistantMessage('done'),
@@ -101,7 +91,7 @@ async function runBash(command: string, workspace: string) {
 
 describe('route=deny beats autoApprove on the lane', () => {
   it('denies an autoApprove capability the doctor says can never apply', async () => {
-    const workspace = mkTmp('kubic-approvals-bypass-deny-');
+    const workspace = tempDir('kubic-approvals-bypass-deny-');
     const policy = installPolicy({
       workspace,
       route: 'deny',
@@ -126,7 +116,7 @@ describe('route=deny beats autoApprove on the lane', () => {
   });
 
   it('denies a capability that no autoApprove entry names, without consulting a seat', async () => {
-    const workspace = mkTmp('kubic-approvals-bypass-deny-seat-');
+    const workspace = tempDir('kubic-approvals-bypass-deny-seat-');
     let asked = 0;
     const policy = installPolicy({
       workspace,
@@ -150,7 +140,7 @@ describe('route=deny beats autoApprove on the lane', () => {
   });
 
   it('headless with no autoApprove entry at all: the route is named, not the missing surface', async () => {
-    const workspace = mkTmp('kubic-approvals-bypass-deny-headless-');
+    const workspace = tempDir('kubic-approvals-bypass-deny-headless-');
     const policy = installPolicy({ workspace, route: 'deny' });
     const verdict = await policy.ask({
       toolName: 'bash',
@@ -164,7 +154,7 @@ describe('route=deny beats autoApprove on the lane', () => {
   });
 
   it('with route=ask-user the same autoApprove entry is approved (the control)', async () => {
-    const workspace = mkTmp('kubic-approvals-bypass-ask-');
+    const workspace = tempDir('kubic-approvals-bypass-ask-');
     const policy = installPolicy({
       workspace,
       route: 'ask-user',
@@ -478,7 +468,7 @@ describe('cd tracking recognises shell compound forms', () => {
 
 describe('prod run path: the bypasses are challenged', () => {
   it('cd into .kubic/roles then a plain redirect is denied, named, and writes nothing', async () => {
-    const workspace = mkTmp('kubic-bypass-ws-');
+    const workspace = tempDir('kubic-bypass-ws-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     const result = await runBash(
       'cd .kubic/roles && echo pwned > r.md',
@@ -490,8 +480,8 @@ describe('prod run path: the bypasses are challenged', () => {
   });
 
   it('a brace-group cd to an outside directory is an outside-write ask, not a silent write', async () => {
-    const workspace = mkTmp('kubic-bypass-ws-');
-    const outside = mkTmp('kubic-bypass-out-');
+    const workspace = tempDir('kubic-bypass-ws-');
+    const outside = tempDir('kubic-bypass-out-');
     const result = await runBash(
       `{ cd ${outside}; echo x > kubic-bypass-brace-z; }`,
       workspace,
@@ -502,14 +492,14 @@ describe('prod run path: the bypasses are challenged', () => {
   });
 
   it('an absolute-path git push is challenged before it runs', async () => {
-    const workspace = mkTmp('kubic-bypass-ws-');
+    const workspace = tempDir('kubic-bypass-ws-');
     const result = await runBash('/usr/bin/git push origin main', workspace);
     expect(result.terminus).toBe('approval_denied');
     expect(result.summary).toContain('git-push');
   });
 
   it('a 200-repeat option chain does not stall the run', async () => {
-    const workspace = mkTmp('kubic-bypass-ws-');
+    const workspace = tempDir('kubic-bypass-ws-');
     const started = Date.now();
     const result = await runBash(
       `echo git ${'--namespace '.repeat(200)}`,

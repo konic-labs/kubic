@@ -2,11 +2,10 @@
 // a NEW session (own directory, lock and journal) whose lane runs a
 // pi-durable fork of the source's lane at an entry. Faux provider, real
 // JSONL sessions under a temp root; everything is cleaned up in afterEach.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../../test/temp-dir.js';
 import {
   BACKGROUND_CONTEXT,
   fauxAssistantMessage,
@@ -18,19 +17,6 @@ import { forkSession } from './fork.js';
 import { SessionLockError } from './lock.js';
 import { openSessionStore, readSessionMetadata } from './meta.js';
 import { attachSession, createSession, listSessions } from './store.js';
-
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'kubic-fork-'));
-  roots.push(root);
-  return root;
-}
 
 function textOf(entry: { model?: unknown }): string {
   const message = (
@@ -69,7 +55,7 @@ async function twoTurnSource(root: string) {
 
 describe('kubic sessions fork: the store', () => {
   it('a branch fork sees history through the cut, not after it, and runs on its own', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-fork-');
     const source = await twoTurnSource(root);
     const store = openSessionStore(root, createNodeFileBridge(root));
     const fork = await forkSession(
@@ -109,7 +95,7 @@ describe('kubic sessions fork: the store', () => {
   });
 
   it('copies no usage: the fork starts at zero spend', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-fork-');
     const source = await twoTurnSource(root);
     const store = openSessionStore(root, createNodeFileBridge(root));
     const fork = await forkSession(
@@ -153,7 +139,7 @@ describe('kubic sessions fork: the store', () => {
   });
 
   it('--tree keeps every conversation and the whole lane history', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-fork-');
     const source = await twoTurnSource(root);
     const store = openSessionStore(root, createNodeFileBridge(root));
     const fork = await forkSession(
@@ -175,7 +161,7 @@ describe('kubic sessions fork: the store', () => {
   });
 
   it('refuses to fork a live-locked session, and writes nothing', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-fork-');
     const source = await twoTurnSource(root);
     const store = openSessionStore(root, createNodeFileBridge(root));
     const live = await attachSession(store, source.id, BACKGROUND_CONTEXT);
@@ -192,7 +178,7 @@ describe('kubic sessions fork: the store', () => {
   });
 
   it("a fork keeps the source's workspace and cwd", async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-fork-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const source = await createSession(
       store,

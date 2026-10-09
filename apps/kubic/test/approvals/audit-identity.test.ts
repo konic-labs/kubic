@@ -5,9 +5,7 @@
 //
 // Faux provider only: zero network, zero paid tokens. Real workspaces in temp
 // dirs (the ledger lives under <workspace>/.kubic/audit).
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import {
   createSession,
   openSessionStore,
@@ -28,18 +26,11 @@ import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -48,8 +39,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
@@ -112,7 +101,7 @@ async function sessionOnSmall(root: string): Promise<string> {
       sessionsRoot: root,
       models: catalog([fauxAssistantMessage('one')]),
       model: { provider: 'faux', id: 'small' },
-      ...hermetic(tmpRoot('audit-id-first-ws-')),
+      ...hermetic(tempDir('audit-id-first-ws-')),
     },
   );
   expect(first.model).toBe('faux/small');
@@ -121,8 +110,8 @@ async function sessionOnSmall(root: string): Promise<string> {
 
 describe('kubic run: the audit row and the trajectory name the model the lane runs', () => {
   it('an unpinned resume of a faux/small session records faux/small, not the selected default faux/big', async () => {
-    const root = tmpRoot('audit-id-root-');
-    const workspace = tmpRoot('audit-id-ws-');
+    const root = tempDir('audit-id-root-');
+    const workspace = tempDir('audit-id-ws-');
     const id = await sessionOnSmall(root);
     const result = await runHeadlessPrompt(
       'clean up',
@@ -149,8 +138,8 @@ describe('kubic run: the audit row and the trajectory name the model the lane ru
   });
 
   it('an explicit pin that switches the resumed session is what the audit row names', async () => {
-    const root = tmpRoot('audit-id-pin-root-');
-    const workspace = tmpRoot('audit-id-pin-ws-');
+    const root = tempDir('audit-id-pin-root-');
+    const workspace = tempDir('audit-id-pin-ws-');
     const id = await sessionOnSmall(root);
     const result = await runHeadlessPrompt(
       'clean up',
@@ -193,8 +182,8 @@ function type(fake: ReturnType<typeof fakeTerminal>, text: string): void {
 
 describe('kubic tui: the audit row names the model the lane runs', () => {
   it('after `/model alt/m1` the refused ask is recorded on alt/m1, not the boot model', async () => {
-    const workspace = tmpRoot('audit-id-tui-ws-');
-    const sessionsRoot = tmpRoot('audit-id-tui-root-');
+    const workspace = tempDir('audit-id-tui-ws-');
+    const sessionsRoot = tempDir('audit-id-tui-root-');
     const models = createModels();
     const faux = fauxProvider({
       provider: 'faux',
@@ -243,8 +232,8 @@ describe('kubic tui: the audit row names the model the lane runs', () => {
   });
 
   it('an unpinned resume of a faux/small session records faux/small', async () => {
-    const workspace = tmpRoot('audit-id-tui-resume-ws-');
-    const sessionsRoot = tmpRoot('audit-id-tui-resume-root-');
+    const workspace = tempDir('audit-id-tui-resume-ws-');
+    const sessionsRoot = tempDir('audit-id-tui-resume-root-');
     const id = await sessionOnSmall(sessionsRoot);
     const models = catalog([DESTRUCTIVE(), fauxAssistantMessage('after deny')]);
     const fake = fakeTerminal(120);
@@ -280,8 +269,8 @@ describe('kubic tui: the audit row names the model the lane runs', () => {
 
 describe('a run records its own identity', () => {
   it('a locally decided ask is one root row with the process pid', async () => {
-    const root = tmpRoot('audit-id-lane-root-');
-    const workspace = tmpRoot('audit-id-lane-ws-');
+    const root = tempDir('audit-id-lane-root-');
+    const workspace = tempDir('audit-id-lane-ws-');
     await runHeadlessPrompt(
       'clean up',
       {},
@@ -311,11 +300,11 @@ describe('installPolicy audit model', () => {
   });
 
   it('a string model is recorded as given; a function is read at RECORD time, per row', async () => {
-    const workspace = tmpRoot('audit-id-install-ws-');
+    const workspace = tempDir('audit-id-install-ws-');
     let live = 'faux/big';
     const withFn = installPolicy({
       workspace,
-      sessionDir: tmpRoot('audit-id-install-s1-'),
+      sessionDir: tempDir('audit-id-install-s1-'),
       sessionId: 'fn-session',
       route: 'deny',
       model: () => live,
@@ -325,7 +314,7 @@ describe('installPolicy audit model', () => {
     await withFn.ask(call('c2'));
     const withString = installPolicy({
       workspace,
-      sessionDir: tmpRoot('audit-id-install-s2-'),
+      sessionDir: tempDir('audit-id-install-s2-'),
       sessionId: 'str-session',
       route: 'deny',
       model: 'faux/small',
@@ -333,7 +322,7 @@ describe('installPolicy audit model', () => {
     await withString.ask(call('c3'));
     const withNone = installPolicy({
       workspace,
-      sessionDir: tmpRoot('audit-id-install-s3-'),
+      sessionDir: tempDir('audit-id-install-s3-'),
       sessionId: 'none-session',
       route: 'deny',
     });

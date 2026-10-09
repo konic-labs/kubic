@@ -3,30 +3,17 @@
 // proves the selection chain end-to-end. Zero network: catalog reads are
 // local (refresh is an explicit, separate concern).
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createModels, fauxProvider } from '@kubic/agent/pi-boundary';
 import { LOCAL_MODELS_EXAMPLE } from '@kubic/agent/test-support/models-fixtures';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   assembleModels,
   contextRoomProbeOf,
   runModelsCommand,
 } from './models-cli.js';
-
-const made: string[] = [];
-
-function tmpDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'm-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 describe('kubic models', () => {
   it('lists providers, models, and thinking support', async () => {
@@ -138,27 +125,27 @@ describe('kubic models', () => {
   });
 
   it('assembles models.json customs from cwd, reporting invalid files', async () => {
-    const dir = tmpDir();
+    const dir = tempDir('m-');
     writeFileSync(
       join(dir, 'models.json'),
       JSON.stringify(LOCAL_MODELS_EXAMPLE),
     );
     const env = { KUBIC_TRUST_PROJECT: '1' };
-    const home = tmpDir();
+    const home = tempDir('m-');
     const ok = await assembleModels(dir, env, { home });
     expect(ok.models.getProvider('local')?.id).toBe('local');
     expect(ok.notes.join('\n')).toContain('local');
-    const empty = await assembleModels(tmpDir(), env, { home });
+    const empty = await assembleModels(tempDir('m-'), env, { home });
     expect(empty.notes).toEqual([]);
-    const badDir = tmpDir();
+    const badDir = tempDir('m-');
     writeFileSync(join(badDir, 'models.json'), '{nope');
     const bad = await assembleModels(badDir, env, { home });
     expect(bad.notes.join('\n')).toContain('ignored');
   });
 
   it('adds the faux testing provider only under KUBIC_PROVIDER=faux', async () => {
-    const dir = tmpDir();
-    const home = tmpDir();
+    const dir = tempDir('m-');
+    const home = tempDir('m-');
     expect(
       (await assembleModels(dir, {}, { home })).models.getProvider('faux'),
     ).toBe(undefined);
@@ -188,12 +175,12 @@ describe('a models.json model whose contextWindow was defaulted', () => {
   };
 
   it('is recorded with the fallback window it was given, and only that model', async () => {
-    const dir = tmpDir();
+    const dir = tempDir('m-');
     writeFileSync(join(dir, 'models.json'), JSON.stringify(DEFAULTED));
     const assembled = await assembleModels(
       dir,
       { KUBIC_TRUST_PROJECT: '1' },
-      { home: tmpDir() },
+      { home: tempDir('m-') },
     );
     expect(assembled.defaultedWindows).toEqual([
       { provider: 'local', model: 'llama3', contextWindow: 8192 },
@@ -201,12 +188,12 @@ describe('a models.json model whose contextWindow was defaulted', () => {
   });
 
   it('marks the model in the --json catalogue, and only that model', async () => {
-    const dir = tmpDir();
+    const dir = tempDir('m-');
     writeFileSync(join(dir, 'models.json'), JSON.stringify(DEFAULTED));
     const assembled = await assembleModels(
       dir,
       { KUBIC_TRUST_PROJECT: '1' },
-      { home: tmpDir() },
+      { home: tempDir('m-') },
     );
     const lines: string[] = [];
     const code = (
@@ -254,13 +241,13 @@ describe('a later models.json that declares the window replaces the default', ()
     // The global file leaves llama3 without a window; the trusted project file
     // declares 32768 for the same model. The effective window is 32768, so the
     // model is not defaulted.
-    const home = tmpDir();
+    const home = tempDir('m-');
     mkdirSync(join(home, '.kubic', 'models'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'models', 'models.json'),
       JSON.stringify(LOCAL([{ id: 'llama3' }])),
     );
-    const dir = tmpDir();
+    const dir = tempDir('m-');
     writeFileSync(
       join(dir, 'models.json'),
       JSON.stringify(LOCAL([{ id: 'llama3', contextWindow: 32768 }])),
@@ -280,7 +267,7 @@ describe('a later models.json that declares the window replaces the default', ()
 
 describe('the room probe measures what the user can configure', () => {
   it('takes the models.json models and the pinned default, never a model outside them', async () => {
-    const dir = tmpDir();
+    const dir = tempDir('m-');
     writeFileSync(
       join(dir, 'models.json'),
       JSON.stringify({
@@ -298,7 +285,7 @@ describe('the room probe measures what the user can configure', () => {
     const assembled = await assembleModels(
       dir,
       { KUBIC_TRUST_PROJECT: '1' },
-      { home: tmpDir() },
+      { home: tempDir('m-') },
     );
     // A registered model the user cannot resize: it is not in models.json.
     assembled.models.setProvider(
@@ -319,7 +306,11 @@ describe('the room probe measures what the user can configure', () => {
   });
 
   it('has no default model when none is pinned, and no custom model without a models.json', async () => {
-    const assembled = await assembleModels(tmpDir(), {}, { home: tmpDir() });
+    const assembled = await assembleModels(
+      tempDir('m-'),
+      {},
+      { home: tempDir('m-') },
+    );
     expect(contextRoomProbeOf(assembled)).toEqual({ customModels: [] });
   });
 });

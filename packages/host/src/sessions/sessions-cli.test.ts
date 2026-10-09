@@ -4,8 +4,7 @@
 // into a pi-durable Harness over MemoryStorage-free JSONL storage with the
 // faux provider (zero network, zero paid tokens), and released before the
 // CLI attaches to it.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createSession,
@@ -25,22 +24,10 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { createLineLogger } from '@kubic/core/cli/logger';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { auditLedgerDirFor, readAuditLedger } from '../audit/index.js';
 import { runSessionsCommand } from './sessions-cli.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'cli-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -147,7 +134,7 @@ async function seededCompactedSession(root: string): Promise<string> {
 
 describe('sessions CLI', () => {
   it('creates and lists sessions', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     // Create refuses a missing cwd, so the fixture workspace
     // must exist.
     const work = join(root, 'work');
@@ -184,7 +171,7 @@ describe('sessions CLI', () => {
   });
 
   it('create --cwd resolves a relative path against the invoking directory', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const o = out();
     const code = (
       await runSessionsCommand(
@@ -208,7 +195,7 @@ describe('sessions CLI', () => {
   });
 
   it('create --cwd refuses a missing or non-directory path by name', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     writeFileSync(join(root, 'file'), 'not a directory\n');
     for (const [bad, reason] of [
       [join(root, 'does-not-exist'), 'no such directory'],
@@ -246,7 +233,7 @@ describe('sessions CLI', () => {
       await runSessionsCommand(
         { command: 'list', json: true },
         {
-          sessionsRoot: tmpRoot(),
+          sessionsRoot: tempDir('cli-'),
           out: o.write,
         },
       )
@@ -256,7 +243,7 @@ describe('sessions CLI', () => {
   });
 
   it('does not list a folder that holds a transcript but no session storage', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const dir = join(root, '--work--');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -275,7 +262,7 @@ describe('sessions CLI', () => {
   });
 
   it('list --json emits one {id, cwd} object per session', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const work = join(root, 'work');
     mkdirSync(work);
     const o = out();
@@ -300,7 +287,7 @@ describe('sessions CLI', () => {
   });
 
   it('attaches and shows the transcript tail as readable turn lines', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const id = await seededSession(root);
     const o = out();
     const code = (
@@ -321,7 +308,7 @@ describe('sessions CLI', () => {
   });
 
   it('shows a tool call and its result on their own lines', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const id = await seededSession(root, {
       responses: [
         fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
@@ -351,7 +338,7 @@ describe('sessions CLI', () => {
   });
 
   it('renders a compaction entry as a readable line under --tail', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const id = await seededCompactedSession(root);
     const o = out();
     const code = (
@@ -370,7 +357,7 @@ describe('sessions CLI', () => {
   });
 
   it('attach --json keeps the raw tail entries', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const id = await seededCompactedSession(root);
     const o = out();
     const code = (
@@ -394,7 +381,7 @@ describe('sessions CLI', () => {
   });
 
   it('honours --tail over the transcript items', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const id = await seededSession(root);
     const o = out();
     await runSessionsCommand(
@@ -408,7 +395,7 @@ describe('sessions CLI', () => {
   });
 
   it('strips terminal control sequences out of stored transcript text', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const session = await createSession(
       store,
@@ -494,7 +481,7 @@ describe('sessions CLI', () => {
   });
 
   it('names the unfinished durable work a crashed run left behind', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const session = await createSession(
       store,
@@ -547,7 +534,7 @@ describe('sessions CLI', () => {
   });
 
   it('fails cleanly for unknown sessions and unsafe ids', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const o = out();
     const e = out();
     expect(
@@ -581,7 +568,7 @@ describe('sessions CLI', () => {
 
 describe('sessions CLI approvals posture', () => {
   it('records full-access on create with the flag and indicates on attach', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const o = out();
     const created = (
       await runSessionsCommand(
@@ -609,8 +596,8 @@ describe('sessions CLI approvals posture', () => {
   });
 
   it('appends exactly one full-access ledger row on create with the flag', async () => {
-    const root = tmpRoot();
-    const ws = tmpRoot();
+    const root = tempDir('cli-');
+    const ws = tempDir('cli-');
     const o = out();
     const code = (
       await runSessionsCommand(
@@ -626,7 +613,7 @@ describe('sessions CLI approvals posture', () => {
   });
 
   it('defaults to approvals enforced and rejects bad ids', async () => {
-    const root = tmpRoot();
+    const root = tempDir('cli-');
     const o = out();
     expect(
       (

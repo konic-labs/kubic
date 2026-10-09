@@ -4,8 +4,6 @@
 // terminal driving the real alt-screen, and the real key path; a clean quit
 // still restores the main screen and exits 0. Faux provider only: zero
 // network, zero paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootLane } from '@kubic/agent/lane/boot';
 import {
@@ -24,25 +22,13 @@ import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { tuiLoop } from '../../src/tui/lane-loop.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiApprovalSeat } from '../../src/tui/types.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-approval-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
 
@@ -129,7 +115,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
 
 describe('allow once is not a session approval', () => {
   it("two identical destructive calls answered with 'a' produce two asks", async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([
@@ -183,7 +169,7 @@ describe('allow once is not a session approval', () => {
 
 describe('approval card on the kubic tui path', () => {
   it('shows the card for a gated call and runs it when approved', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([
@@ -230,7 +216,7 @@ describe('approval card on the kubic tui path', () => {
   });
 
   it('denies the gated call on Esc without quitting the session', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([
@@ -277,7 +263,7 @@ describe('approval card on the kubic tui path', () => {
   });
 
   it('quits cleanly with no approval ever asked', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([fauxAssistantMessage('hello there')]);
@@ -303,7 +289,7 @@ describe('approval card on the kubic tui path', () => {
   it('quits cleanly while an approval is still pending', async () => {
     // A quit mid-approval must not strand the turn: the seat denies, the
     // session closes, the screen restores, exit 0.
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([
@@ -342,7 +328,7 @@ describe('approval card on the kubic tui path', () => {
   });
 
   it('shows the card on a narrow terminal and stays answerable', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const lines: string[] = [];
     const fake = fakeTerminal(70);
     const { models } = fauxModels([
@@ -380,7 +366,7 @@ describe('approval card on the kubic tui path', () => {
   // an injected clock, an `a` typed 50 ms after the card appeared neither
   // answers the ask nor reaches the draft; the same key once armed does.
   it('ignores a decision key typed inside the arming window', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const fake = fakeTerminal(100);
     let now = 0;
     const { models } = fauxModels([
@@ -427,7 +413,7 @@ describe('approval card on the kubic tui path', () => {
   // seat receives the full command derived from the same args the key
   // hashes, and the card shows it wrapped instead of a 120-char slice.
   it('delivers the full padded command to the card', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-approval-');
     const fake = fakeTerminal(100);
     const padded = `echo 'running formatter' ${'x'.repeat(360)}; rm -rf /tmp/x`;
     const { models } = fauxModels([

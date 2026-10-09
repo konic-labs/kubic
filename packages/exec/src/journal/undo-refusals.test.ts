@@ -1,33 +1,14 @@
 // Undo core — reverse-chronological restore.
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { diffEntries } from './diff.js';
 import { sha256Hex, sha256HexOfBytes } from './hash.js';
 import { journalStatus } from './status.js';
 import { FileJournalStore } from './store.js';
 import { applyUndo } from './undo.js';
 import { planUndo } from './undo-plan.js';
-
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 // Undo must never overwrite a file whose current content no
 // longer matches the entry's recorded afterHash — any change that landed
@@ -41,8 +22,8 @@ const ENTRY_BASE = {
 } as const;
 
 function seedStale(): { store: FileJournalStore; root: string } {
-  const store = new FileJournalStore(tmpRoot('j-'));
-  const root = tmpRoot('ws-');
+  const store = new FileJournalStore(tempDir('j-'));
+  const root = tempDir('ws-');
   return { store, root };
 }
 
@@ -217,8 +198,8 @@ describe('undo of an agent-created file', () => {
 // measures the pre-undo content whole plus the restored pre-image.
 describe('undo refuses a step whose inverse record cannot fit', () => {
   it('leaves a restored file as it is when the record cannot fit', () => {
-    const dir = tmpRoot('j-');
-    const root = tmpRoot('ws-');
+    const dir = tempDir('j-');
+    const root = tempDir('ws-');
     const before = 'a\n'.repeat(20_000); // 40 KB, stored whole
     const after = `${before}${'b\n'.repeat(30_000)}`; // 100 KB
     // The entry is the sweep's hash-only-after shape, so its own blobs are
@@ -264,8 +245,8 @@ describe('undo refuses a step whose inverse record cannot fit', () => {
   });
 
   it('keeps a created file when its removal could not be recorded', () => {
-    const dir = tmpRoot('j-');
-    const root = tmpRoot('ws-');
+    const dir = tempDir('j-');
+    const root = tempDir('ws-');
     const content = 'c\n'.repeat(50_000); // 100 KB
     const store = new FileJournalStore(dir, {
       maxBytes: 80_000,
@@ -303,8 +284,8 @@ describe('undo refuses a step whose inverse record cannot fit', () => {
 // applies the byte-exact lossless rule; the restore path must too.
 describe('undo refuses to record a lossy pre-undo copy', () => {
   it('records the pre-undo state hash-only when it is not lossless utf-8', () => {
-    const dir = tmpRoot('j-');
-    const root = tmpRoot('ws-');
+    const dir = tempDir('j-');
+    const root = tempDir('ws-');
     const store = new FileJournalStore(dir, { durable: false });
     writeFileSync(join(root, 'bin.dat'), 'v1\n');
     store.append({
@@ -355,9 +336,9 @@ describe('HEAD-move barrier', () => {
   const MOVE_B = { head: 'b'.repeat(40), branch: 'feature', stash: 0 };
 
   function roots2(): { root: string; store: FileJournalStore } {
-    const root = tmpRoot('ws-head-undo-');
+    const root = tempDir('ws-head-undo-');
     writeFileSync(join(root, 'a.txt'), 'v2\n');
-    const store = new FileJournalStore(tmpRoot('j-head-undo-'));
+    const store = new FileJournalStore(tempDir('j-head-undo-'));
     // An entry older than the move: restoring it crosses the marker.
     store.append({
       path: 'a.txt',

@@ -2,9 +2,6 @@
 // records `autonomous` on the run's session; without the flag the session
 // carries `interactive` (off by default, never assumed). Faux provider,
 // scratch sessions root — zero network, zero paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   listSessions,
   openSessionStore,
@@ -21,15 +18,8 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { auditLedgerDirFor, readAuditLedger } from '@kubic/host/audit';
 import { buildRunEnvelope } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -37,8 +27,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function models(): MutableModels {
@@ -58,8 +46,8 @@ async function runModeOf(autonomous: boolean): Promise<{
   resultMode: string | undefined;
   envelopeMode: string | undefined;
 }> {
-  const sessionsRoot = tmp('autonomous-sessions-');
-  const cwd = tmp('autonomous-cwd-');
+  const sessionsRoot = tempDir('autonomous-sessions-');
+  const cwd = tempDir('autonomous-cwd-');
   const result = await runHeadlessPrompt(
     'hi',
     { autonomous },

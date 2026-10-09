@@ -6,14 +6,7 @@
 //
 // It drives the composition root as a real caller, plus the CLI the operator
 // runs. Faux provider only.
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -27,15 +20,8 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FileJournalStore, restoreEntry } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix = 'reconcile-prod-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   // The no-isolation notice is not under test here (approvals/no-isolation-notice.test.ts owns
@@ -45,8 +31,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 // bash-mutates-then-settles: the tool call writes a file Kubic never
@@ -77,8 +61,8 @@ function baselinePathFor(sessionsRoot: string, id: string): string {
 
 describe('end-of-run reconciliation, prod path', () => {
   it('captures a baseline at boot and sweeps a bash mutation into the journal', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('ws-');
     writeFileSync(join(workspace, 'untouched.txt'), 'same\n');
     const result = await runHeadlessPrompt(
       'mutate a file through bash',
@@ -180,8 +164,8 @@ describe('end-of-run reconciliation, prod path', () => {
   });
 
   it('journals nothing unattributed when the run changes no files', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-clean-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('ws-clean-');
     writeFileSync(join(workspace, 'stable.txt'), 'stable\n');
     const faux = fauxProvider();
     const models = createModels();
@@ -201,8 +185,8 @@ describe('end-of-run reconciliation, prod path', () => {
   });
 
   it('keeps the intercepted path journaled with its toolCallId, sweep adds nothing', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-write-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('ws-write-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -228,7 +212,7 @@ describe('end-of-run reconciliation, prod path', () => {
   });
 
   it('takes no baseline when the lane never boots', async () => {
-    const sessionsRoot = tmpRoot();
+    const sessionsRoot = tempDir();
     const result = await runHeadlessPrompt(
       'hello',
       {},

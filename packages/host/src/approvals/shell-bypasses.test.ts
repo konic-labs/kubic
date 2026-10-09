@@ -6,15 +6,13 @@
 // subshell, quoted or echoed `cd`s can then only over-trigger, never hide a
 // write. Production classifiers; no network.
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: `${HOME}` here is bash syntax under test, not a template literal
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
 } from '@kubic/agent/lane/interceptors';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { controlPlaneRefusal } from './control-plane.js';
 import { enableFullAccess } from './full-access.js';
 import { installPolicy } from './install.js';
@@ -25,19 +23,6 @@ import { detectTriggers } from './triggers.js';
 
 const WS = '/work';
 const HOME = '/home/tester';
-
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function ctx(overrides: Partial<TriggerContext> = {}): TriggerContext {
   return {
@@ -82,13 +67,13 @@ describe('a cd that does not change the directory at the write cannot hide it', 
   });
 
   it('full access does not approve any of them', async () => {
-    const root = mkTmp('kubic-rev-full-');
-    const workspace = mkTmp('kubic-rev-ws-');
+    const root = tempDir('kubic-rev-full-');
+    const workspace = tempDir('kubic-rev-ws-');
     enableFullAccess(new FileApprovalStore(root), 'test');
     const policy = installPolicy({
       workspace,
       sessionDir: root,
-      home: mkTmp('kubic-rev-home-'),
+      home: tempDir('kubic-rev-home-'),
     });
     for (const command of [
       '(cd x); echo pwned > .kubic/journal/index.jsonl',

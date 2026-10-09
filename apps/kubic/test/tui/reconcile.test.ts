@@ -5,15 +5,7 @@
 //
 // It drives the real composition-root boot as a black-box caller, faux
 // provider only.
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -24,21 +16,9 @@ import {
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function fauxModels(): MutableModels {
   const faux = fauxProvider();
@@ -50,8 +30,8 @@ function fauxModels(): MutableModels {
 
 describe('end-of-run reconciliation, tui path', () => {
   it('captures at boot and sweeps a non-tool mutation when the lane closes', async () => {
-    const sessionsRoot = tmpRoot('reconcile-tui-');
-    const workspace = tmpRoot('ws-tui-');
+    const sessionsRoot = tempDir('reconcile-tui-');
+    const workspace = tempDir('ws-tui-');
     writeFileSync(join(workspace, 'stable.txt'), 'stable\n');
     const boot = await bootTuiLane(undefined, {
       sessionsRoot,
@@ -99,8 +79,8 @@ describe('end-of-run reconciliation, tui path', () => {
   });
 
   it('appends nothing on a second close over an unchanged tree', async () => {
-    const sessionsRoot = tmpRoot('reconcile-tui-once-');
-    const workspace = tmpRoot('ws-tui-once-');
+    const sessionsRoot = tempDir('reconcile-tui-once-');
+    const workspace = tempDir('ws-tui-once-');
     writeFileSync(join(workspace, 'file.txt'), 'v1\n');
     const boot = await bootTuiLane(undefined, {
       sessionsRoot,
@@ -117,8 +97,8 @@ describe('end-of-run reconciliation, tui path', () => {
   });
 
   it('journals nothing when the session ends with no outside change', async () => {
-    const sessionsRoot = tmpRoot('reconcile-tui-clean-');
-    const workspace = tmpRoot('ws-tui-clean-');
+    const sessionsRoot = tempDir('reconcile-tui-clean-');
+    const workspace = tempDir('ws-tui-clean-');
     writeFileSync(join(workspace, 'file.txt'), 'v1\n');
     const boot = await bootTuiLane(undefined, {
       sessionsRoot,
@@ -139,8 +119,8 @@ describe('end-of-run reconciliation, tui path', () => {
     // bootTuiLane through the same runtimeRunDeps projection `kubic run`
     // uses, so a declared directory is never baselined and never swept here
     // either.
-    const sessionsRoot = tmpRoot('reconcile-tui-oos-');
-    const workspace = tmpRoot('ws-tui-oos-');
+    const sessionsRoot = tempDir('reconcile-tui-oos-');
+    const workspace = tempDir('ws-tui-oos-');
     mkdirSync(join(workspace, 'vendor'));
     writeFileSync(join(workspace, 'vendor', 'out.js'), 'gen\n');
     writeFileSync(join(workspace, 'in-scope.txt'), 'v1\n');

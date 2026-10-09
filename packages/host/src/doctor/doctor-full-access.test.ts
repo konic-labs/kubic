@@ -4,8 +4,6 @@
 // (createSession takes a real lock, so a created session is live until
 // released); posture through the prod FileApprovalStore. Faux only: no
 // network, no paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createSession,
@@ -15,20 +13,14 @@ import {
 import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { FileApprovalStore } from '../approvals/index.js';
 import {
   describeFullAccessSession,
   listFullAccessSessions,
 } from './doctor-full-access.js';
 
-const roots: string[] = [];
 const handles: SessionHandle[] = [];
-
-function tempRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-doctor-full-access-'));
-  roots.push(dir);
-  return dir;
-}
 
 afterEach(async () => {
   for (const handle of handles.splice(0)) {
@@ -37,9 +29,6 @@ afterEach(async () => {
     } catch {
       // A released-twice handle is not a test failure.
     }
-  }
-  for (const dir of roots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -64,7 +53,7 @@ function grantFullAccess(root: string, id: string, by = 'tester'): void {
 
 describe('listFullAccessSessions', () => {
   it('lists a live full-access session with its provenance', async () => {
-    const root = tempRoot();
+    const root = tempDir('kubic-doctor-full-access-');
     const workspace = join(root, 'repo');
     await create(root, 'live-full', workspace);
     grantFullAccess(root, 'live-full');
@@ -82,7 +71,7 @@ describe('listFullAccessSessions', () => {
   });
 
   it('skips a released session even with a full-access posture on disk', async () => {
-    const root = tempRoot();
+    const root = tempDir('kubic-doctor-full-access-');
     const workspace = join(root, 'repo');
     const handle = await create(root, 'ended-full', workspace);
     grantFullAccess(root, 'ended-full');
@@ -97,7 +86,7 @@ describe('listFullAccessSessions', () => {
   });
 
   it('skips live sessions that never left enforcement', async () => {
-    const root = tempRoot();
+    const root = tempDir('kubic-doctor-full-access-');
     const workspace = join(root, 'repo');
     await create(root, 'enforced', workspace);
     const sessions = await listFullAccessSessions({
@@ -108,7 +97,7 @@ describe('listFullAccessSessions', () => {
   });
 
   it('skips live full-access sessions of another workspace', async () => {
-    const root = tempRoot();
+    const root = tempDir('kubic-doctor-full-access-');
     await create(root, 'other-ws', join(root, 'elsewhere'));
     grantFullAccess(root, 'other-ws');
     const sessions = await listFullAccessSessions({
@@ -119,7 +108,7 @@ describe('listFullAccessSessions', () => {
   });
 
   it('reads one named session without the workspace filter', async () => {
-    const root = tempRoot();
+    const root = tempDir('kubic-doctor-full-access-');
     await create(root, 'named', join(root, 'elsewhere'));
     grantFullAccess(root, 'named');
     // The workspace enumeration skips it (other workspace)…
@@ -140,7 +129,7 @@ describe('listFullAccessSessions', () => {
   });
 
   it('never joins an id that is not a session id onto the sessions root', async () => {
-    const root = tempRoot();
+    const root = tempDir('kubic-doctor-full-access-');
     // A live full-access session one level up: `../<id>` would reach it.
     const outside = join(root, 'outside');
     await create(outside, 'escaped', join(root, 'repo'));
@@ -153,7 +142,7 @@ describe('listFullAccessSessions', () => {
   });
 
   it('treats a corrupt posture file as enforced, never a crash', async () => {
-    const root = tempRoot();
+    const root = tempDir('kubic-doctor-full-access-');
     const workspace = join(root, 'repo');
     await create(root, 'corrupt', workspace);
     const bridge = createNodeFileBridge('/');
@@ -167,7 +156,7 @@ describe('listFullAccessSessions', () => {
 
   it('reports nothing on an empty store', async () => {
     const sessions = await listFullAccessSessions({
-      sessionsRoot: tempRoot(),
+      sessionsRoot: tempDir('kubic-doctor-full-access-'),
       workspace: join('nowhere'),
     });
     expect(sessions).toEqual([]);

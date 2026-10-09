@@ -1,20 +1,12 @@
 // `kubic run` over a broken models.json: the config refusal must reach the
 // user on stderr (not only under --debug) instead of silently falling back
 // to "no providers". Faux-free: the run ends at model selection, no network.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -25,14 +17,12 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('kubic run surfaces the models.json note', () => {
   it('warns that an untrusted project models.json was ignored', async () => {
     vi.stubEnv('KUBIC_TRUST_PROJECT', '');
-    const cwd = tmpRoot('models-note-untrusted-');
+    const cwd = tempDir('models-note-untrusted-');
     writeFileSync(
       join(cwd, 'models.json'),
       JSON.stringify({
@@ -51,7 +41,7 @@ describe('kubic run surfaces the models.json note', () => {
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot('models-note-root-'),
+        sessionsRoot: tempDir('models-note-root-'),
         env: new FakeExecutionEnv({}),
         modelsCwd: cwd,
         skills: { cwd, homeDir: cwd, trusted: false },
@@ -68,14 +58,14 @@ describe('kubic run surfaces the models.json note', () => {
   });
 
   it('writes "models.json ignored: …" to the warning channel without --debug', async () => {
-    const cwd = tmpRoot('models-note-');
+    const cwd = tempDir('models-note-');
     writeFileSync(join(cwd, 'models.json'), '{ not json');
     const warnings: string[] = [];
     const result = await runHeadlessPrompt(
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot('models-note-root-'),
+        sessionsRoot: tempDir('models-note-root-'),
         env: new FakeExecutionEnv({}),
         modelsCwd: cwd,
         skills: { cwd, homeDir: cwd, trusted: false },
@@ -95,7 +85,7 @@ describe('kubic run surfaces the models.json note', () => {
     // network — the hermetic env guard exempts loopback, so a test that
     // dialed one would go unnoticed.
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
-    const cwd = tmpRoot('models-note-ok-');
+    const cwd = tempDir('models-note-ok-');
     writeFileSync(
       join(cwd, 'models.json'),
       JSON.stringify({
@@ -115,7 +105,7 @@ describe('kubic run surfaces the models.json note', () => {
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot('models-note-root-'),
+        sessionsRoot: tempDir('models-note-root-'),
         env: new FakeExecutionEnv({}),
         modelsCwd: cwd,
         skills: { cwd, homeDir: cwd, trusted: false },

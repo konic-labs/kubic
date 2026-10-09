@@ -2,9 +2,6 @@
 // the status bar the running model's context window and the compaction
 // threshold derived from it, and a `/model` switch moves both. Faux
 // provider only: zero network, zero paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
@@ -17,18 +14,11 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { contextLimitsOf } from '../../src/tui/lane-loop.js';
 import { TuiTurnRunner } from '../../src/tui/turn-runner.js';
 import type { TuiLaneLoop } from '../../src/tui/types.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-context-'));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_PROVIDER', undefined);
@@ -37,8 +27,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function fauxModels(): ReturnType<typeof createModels> {
@@ -63,7 +51,7 @@ describe('context gauge wiring', () => {
   });
 
   it('hands the running model limits to the boot', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-context-');
     const boot = await bootTuiLane(undefined, {
       sessionsRoot: root,
       models: fauxModels(),

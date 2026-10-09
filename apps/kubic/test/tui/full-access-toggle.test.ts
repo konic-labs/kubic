@@ -3,8 +3,6 @@
 // Ctrl-S confirms, and the posture file, the Ledger, the installed policy and
 // the status-bar indicator all move. Zero network, zero paid tokens; every temp
 // dir is removed in afterEach.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createModels,
@@ -17,24 +15,16 @@ import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FileApprovalStore } from '@kubic/host/approvals';
 import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { fakeTerminal } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 
-const made: string[] = [];
-
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-tui-full-access-${prefix}`));
-  made.push(dir);
-  return dir;
+  return tempDir(`kubic-tui-full-access-${prefix}`);
 }
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function models(): MutableModels {
   const models = createModels();

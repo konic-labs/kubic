@@ -3,9 +3,6 @@
 // The rows are seeded from the committed usage, so a resumed session that has
 // already spent money shows the spend at once, not $0.00 until its next turn.
 // Faux provider only: zero network, zero paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   BACKGROUND_CONTEXT,
   createModels,
@@ -22,17 +19,10 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane, statusRowsFromSessionUsage } from '../../src/tui/boot.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-usage-'));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_PROVIDER', undefined);
@@ -41,8 +31,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 // A faux answer that bills real tokens: the harness records the message's
@@ -147,7 +135,7 @@ describe('kubic tui --session seeds the committed spend', () => {
   });
 
   it('boots a resumed session with its pi.usage spend as status rows', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-usage-');
     const id = await billedSession(root);
     const boot = await bootTuiLane(id, {
       sessionsRoot: root,
@@ -172,7 +160,7 @@ describe('kubic tui --session seeds the committed spend', () => {
   });
 
   it('shows the seeded spend on the first frame and keeps it through a turn', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-usage-');
     const id = await billedSession(root);
     const fake = recordingTerminal();
     const boots: TuiLaneBoot[] = [];
@@ -209,7 +197,7 @@ describe('kubic tui --session seeds the committed spend', () => {
   });
 
   it('a fresh session still starts from zero rows', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-usage-');
     const boot = await bootTuiLane(undefined, {
       sessionsRoot: root,
       models: fauxModels(),

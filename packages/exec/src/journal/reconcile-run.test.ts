@@ -5,15 +5,14 @@ import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
@@ -28,22 +27,12 @@ import { planUndo } from './undo-plan.js';
 
 const NOW = 1_700_000_000_000;
 
-const roots: string[] = [];
-
 afterEach(() => {
   disposeAllGitSandboxes();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
 });
 
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
 function workspace(): string {
-  const root = tmpRoot('ws-reconcile-');
+  const root = tempDir('ws-reconcile-');
   writeFileSync(join(root, 'keep.txt'), 'v1\n');
   writeFileSync(join(root, 'gone.txt'), 'bye\n');
   writeFileSync(join(root, 'ignored.log'), 'noise\n');
@@ -52,7 +41,7 @@ function workspace(): string {
 }
 
 function journalStore(): FileJournalStore {
-  return new FileJournalStore(tmpRoot('j-reconcile-'));
+  return new FileJournalStore(tempDir('j-reconcile-'));
 }
 
 describe('run-scoped reconciliation lifecycle', () => {
@@ -208,7 +197,7 @@ describe('run-scoped reconciliation lifecycle', () => {
   // not even a test timeout fires, because the block is synchronous. The walk
   // must treat a special file as "not journalable" and keep going.
   it('does not block on a named pipe in the workspace (regression)', () => {
-    const root = tmpRoot('ws-fifo-');
+    const root = tempDir('ws-fifo-');
     writeFileSync(join(root, 'keep.txt'), 'v1\n');
     execFileSync('mkfifo', [join(root, 'pipe')]);
     const store = journalStore();
@@ -229,7 +218,7 @@ describe('run-scoped reconciliation lifecycle', () => {
   // baseline. When an earlier tool entry in the same run already stored that
   // pre-image, undo CAN restore it — and must, rather than refusing.
   it('reports a sweep entry reversible when a pre-image was stored earlier (regression)', () => {
-    const root = tmpRoot('ws-preimage-');
+    const root = tempDir('ws-preimage-');
     writeFileSync(join(root, 'f.txt'), 'v1-boot\n');
     const store = journalStore();
     const run = beginReconciliation({
@@ -366,7 +355,7 @@ describe('git pre-images end to end', () => {
   }
 
   function journalStore(): FileJournalStore {
-    return new FileJournalStore(tmpRoot('j-git-'));
+    return new FileJournalStore(tempDir('j-git-'));
   }
 
   it('records blob OIDs for stat-clean tracked files without copying content', () => {
@@ -488,7 +477,7 @@ describe('HEAD-move markers end to end', () => {
   }
 
   function journalStore(): FileJournalStore {
-    return new FileJournalStore(tmpRoot('j-head-'));
+    return new FileJournalStore(tempDir('j-head-'));
   }
 
   it('a bash checkout -b plus reset --hard produces one head-moved marker', () => {
@@ -561,7 +550,7 @@ describe('HEAD-move markers end to end', () => {
 describe('sweep attribution', () => {
   it('tags unattributed sweep entries with the run agent id', () => {
     const root = workspace();
-    const store = new FileJournalStore(tmpRoot('j-agent-'));
+    const store = new FileJournalStore(tempDir('j-agent-'));
     const run = beginReconciliation({
       store,
       root,

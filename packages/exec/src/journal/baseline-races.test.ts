@@ -12,15 +12,13 @@
 import {
   chmodSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { captureBaseline, UNREADABLE_HASH } from './baseline.js';
 import { sha256Hex } from './hash.js';
 import { FileJournalStore } from './store.js';
@@ -56,20 +54,10 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-const roots: string[] = [];
-
 afterEach(() => {
   hooks.vanishOnce = null;
   hooks.vanishDirOnce = null;
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
 });
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 function ctx(): {
   sessionId: string;
@@ -81,7 +69,7 @@ function ctx(): {
 
 describe('baseline walk races', () => {
   it('keeps siblings in the baseline when one entry vanishes mid-listing', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'a.txt'), 'a\n');
     writeFileSync(join(root, 'vanish.txt'), 'gone\n');
     hooks.vanishOnce = 'vanish.txt';
@@ -92,7 +80,7 @@ describe('baseline walk races', () => {
   });
 
   it('records a delete for a subtree that vanished before its listing', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     mkdirSync(join(root, 'src'), { recursive: true });
     writeFileSync(join(root, 'src', 'a.ts'), 'a\n');
     writeFileSync(join(root, 'top.txt'), 'top\n');
@@ -103,7 +91,7 @@ describe('baseline walk races', () => {
     // carrying the subtree forward would lose the deletes silently, and the
     // next baseline would not know those paths either.
     hooks.vanishDirOnce = 'src';
-    const store = new FileJournalStore(tmpRoot('j-'));
+    const store = new FileJournalStore(tempDir('j-'));
     const added = reconcile(store, baseline, root, ctx());
     expect(added).toBe(1);
     expect(store.entries().map((e) => [e.path, e.op])).toEqual([
@@ -112,14 +100,14 @@ describe('baseline walk races', () => {
   });
 
   it('does not record a delete for a baseline file that became unreadable', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'secret.txt'), 'secret\n');
     writeFileSync(join(root, 'public.txt'), 'public\n');
     const baseline = captureBaseline(root);
     expect(baseline['secret.txt']).toBe(sha256Hex('secret\n'));
     chmodSync(join(root, 'secret.txt'), 0o000);
     try {
-      const store = new FileJournalStore(tmpRoot('j-'));
+      const store = new FileJournalStore(tempDir('j-'));
       const added = reconcile(store, baseline, root, ctx());
       // The file is still there; only its content could not be observed.
       expect(added).toBe(0);
@@ -130,7 +118,7 @@ describe('baseline walk races', () => {
   });
 
   it('carries a subtree forward when its listing fails at sweep time', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     mkdirSync(join(root, 'src'), { recursive: true });
     writeFileSync(join(root, 'src', 'a.ts'), 'a\n');
     writeFileSync(join(root, 'src', 'b.ts'), 'b\n');
@@ -143,7 +131,7 @@ describe('baseline walk races', () => {
     ]);
     chmodSync(join(root, 'src'), 0o000);
     try {
-      const store = new FileJournalStore(tmpRoot('j-'));
+      const store = new FileJournalStore(tempDir('j-'));
       const added = reconcile(store, baseline, root, ctx());
       // The subtree's state is unknown, so its previous hashes stand in:
       // no delete, no invented change.
@@ -155,11 +143,11 @@ describe('baseline walk races', () => {
   });
 
   it('still records a delete for a file that really vanished', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'gone.txt'), 'gone\n');
     const baseline = captureBaseline(root);
     unlinkSync(join(root, 'gone.txt'));
-    const store = new FileJournalStore(tmpRoot('j-'));
+    const store = new FileJournalStore(tempDir('j-'));
     const added = reconcile(store, baseline, root, ctx());
     expect(added).toBe(1);
     expect(store.entries().map((e) => [e.path, e.op])).toEqual([
@@ -168,7 +156,7 @@ describe('baseline walk races', () => {
   });
 
   it('records an honest create when an unreadable path becomes readable', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'later.txt'), 'content\n');
     chmodSync(join(root, 'later.txt'), 0o000);
     let baseline: ReturnType<typeof captureBaseline>;
@@ -179,7 +167,7 @@ describe('baseline walk races', () => {
     }
     // At boot the path was seen but not read: the sentinel, never a hash.
     expect(baseline['later.txt']).toBe(UNREADABLE_HASH);
-    const store = new FileJournalStore(tmpRoot('j-'));
+    const store = new FileJournalStore(tempDir('j-'));
     const added = reconcile(store, baseline, root, ctx());
     expect(added).toBe(1);
     const entry = store.entries()[0];
@@ -196,12 +184,12 @@ describe('baseline walk races', () => {
   it('leaves the file content alone through every race', () => {
     // The races are read-side only: nothing on the baseline path may write, move or
     // delete a workspace file.
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');
     const baseline = captureBaseline(root);
     chmodSync(join(root, 'keep.txt'), 0o000);
     try {
-      const store = new FileJournalStore(tmpRoot('j-'));
+      const store = new FileJournalStore(tempDir('j-'));
       reconcile(store, baseline, root, ctx());
     } finally {
       chmodSync(join(root, 'keep.txt'), 0o644);

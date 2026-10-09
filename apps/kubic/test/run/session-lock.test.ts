@@ -2,8 +2,7 @@
 // `kubic run` and the operator CLIs as black-box callers. Faux provider only.
 // Hermetic by rule: pid liveness is stubbed (`process.kill`), fake pid
 // numbers only — no test here ever signals a real process.
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createSession,
@@ -26,17 +25,10 @@ import { collectDoctorChecks } from '@kubic/host/doctor';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { runSessionsCommand } from '@kubic/host/sessions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 
 const FAKE_PID = 424242;
-
-const made: string[] = [];
-
-function tmpRoot(prefix = 'lock-prod-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   // The no-isolation notice is not under test here (approvals/no-isolation-notice.test.ts owns
@@ -46,8 +38,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function fauxModels(texts: string[]): MutableModels {
@@ -104,7 +94,7 @@ async function closedSessionWithEntry(root: string): Promise<string> {
 
 describe('session lock, prod paths', () => {
   it('maps a live lock refusal to workspace_unavailable (exit 5), naming the holder', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const id = await closedSessionWithEntry(root);
     writeFileSync(
       join(root, id, 'lock.json'),
@@ -131,7 +121,7 @@ describe('session lock, prod paths', () => {
   });
 
   it('kubic sessions attach prints the lock refusal, exits 1, reads no transcript', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const id = await closedSessionWithEntry(root);
     writeFileSync(
       join(root, id, 'lock.json'),
@@ -160,8 +150,8 @@ describe('session lock, prod paths', () => {
   });
 
   it('a settled run leaves no lock.json behind in its session dir', async () => {
-    const root = tmpRoot();
-    const workspace = tmpRoot('ws-');
+    const root = tempDir();
+    const workspace = tempDir('ws-');
     const result = await runHeadlessPrompt(
       'hello',
       {},
@@ -180,8 +170,8 @@ describe('session lock, prod paths', () => {
 
 describe('repo-level overlap warning', () => {
   it('emits the overlap warning on the debug channel when another session touches the workspace', async () => {
-    const root = tmpRoot();
-    const workspace = tmpRoot('ws-');
+    const root = tempDir();
+    const workspace = tempDir('ws-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const sibling = await createSession(
       store,
@@ -210,8 +200,8 @@ describe('repo-level overlap warning', () => {
   });
 
   it('reaches the --debug sink when the caller wired no separate debug dep (the prod `kubic run` shape)', async () => {
-    const root = tmpRoot();
-    const workspace = tmpRoot('ws-');
+    const root = tempDir();
+    const workspace = tempDir('ws-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const sibling = await createSession(
       store,
@@ -239,12 +229,12 @@ describe('repo-level overlap warning', () => {
   });
 
   it('stays silent when the only other session touches a different workspace', async () => {
-    const root = tmpRoot();
-    const workspace = tmpRoot('ws-');
+    const root = tempDir();
+    const workspace = tempDir('ws-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const sibling = await createSession(
       store,
-      { cwd: tmpRoot('elsewhere-') },
+      { cwd: tempDir('elsewhere-') },
       BACKGROUND_CONTEXT,
     );
     await sibling.release(BACKGROUND_CONTEXT);

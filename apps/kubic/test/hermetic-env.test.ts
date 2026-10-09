@@ -7,15 +7,9 @@
 // that contract.
 //
 // Faux provider only (zero network, zero paid tokens).
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { connect, Socket } from 'node:net';
-import { homedir, tmpdir, userInfo } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { PROMPT_SECTION } from '@kubic/agent/lane/boot';
 import {
@@ -34,6 +28,7 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isLoopbackHost, isolateTestEnv } from '../../../test/hermetic-env.js';
+import { tempDir } from '../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../src/run/command.js';
 
 // The prompt the lane committed for this session (the reader).
@@ -62,14 +57,6 @@ async function committedPrompt(
   }
 }
 
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
 function writeSkill(root: string, name: string): void {
   const dir = join(root, name);
   mkdirSync(dir, { recursive: true });
@@ -82,8 +69,6 @@ function writeSkill(root: string, name: string): void {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('hermetic unit-test environment', () => {
@@ -98,7 +83,7 @@ describe('hermetic unit-test environment', () => {
 
   it("keeps a developer's installed skills and trust opt-in out of the prompt", async () => {
     // A developer machine: skills in both account roots, trust exported.
-    const devHome = tmpRoot('dev-home-');
+    const devHome = tempDir('dev-home-');
     writeSkill(join(devHome, '.agents', 'skills'), 'dev-agents-skill');
     writeSkill(join(devHome, '.pi', 'agent', 'skills'), 'dev-pi-skill');
     vi.stubEnv('HOME', devHome);
@@ -112,7 +97,7 @@ describe('hermetic unit-test environment', () => {
       const models = createModels();
       models.setProvider(faux.provider);
       faux.setResponses([fauxAssistantMessage('done')]);
-      const sessionsRoot = tmpRoot('hermetic-sessions-');
+      const sessionsRoot = tempDir('hermetic-sessions-');
       const result = await runHeadlessPrompt(
         'hello',
         {},

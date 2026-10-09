@@ -7,14 +7,7 @@
 // Faux provider only (zero network, zero paid tokens): the assertions are
 // about the committed prompt bytes, read back from the session
 // transcript (the reader) after a real `kubic run`.
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROMPT_SECTION } from '@kubic/agent/lane/boot';
 import {
@@ -41,15 +34,8 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { runRunCommand } from '@kubic/host/run';
 import { bootSkills } from '@kubic/host/skills';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -109,19 +95,17 @@ afterEach(() => {
   vi.restoreAllMocks();
   // Restores KUBIC_TRUST_PROJECT to the developer's own value too.
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('skills reach the live prompt', () => {
   it("injects a discovered skill's name, description and path into the assembled system prompt", async () => {
-    const home = tmpRoot('skills-home-');
+    const home = tempDir('skills-home-');
     const skillFile = writeSkill(
       join(home, '.agents', 'skills'),
       'deploy-widget',
       'Ship the widget to staging',
     );
-    const root = tmpRoot('skills-sessions-');
+    const root = tempDir('skills-sessions-');
     const result = await runHeadlessPrompt(
       'hello',
       {},
@@ -149,14 +133,14 @@ describe('skills reach the live prompt', () => {
   });
 
   it('excludes a project skill when the cwd is untrusted, and includes it once trusted', async () => {
-    const home = tmpRoot('skills-home-');
-    const cwd = tmpRoot('skills-cwd-');
+    const home = tempDir('skills-home-');
+    const cwd = tempDir('skills-cwd-');
     const skillFile = writeSkill(
       join(cwd, '.agents', 'skills'),
       'project-only',
       'Lives in the repo',
     );
-    const root = tmpRoot('skills-sessions-');
+    const root = tempDir('skills-sessions-');
     const untrusted = await runHeadlessPrompt(
       'hello',
       {},
@@ -190,13 +174,13 @@ describe('skills reach the live prompt', () => {
   });
 
   it('suppresses discovery under --no-skills', async () => {
-    const home = tmpRoot('skills-home-');
+    const home = tempDir('skills-home-');
     writeSkill(
       join(home, '.agents', 'skills'),
       'deploy-widget',
       'Ship the widget to staging',
     );
-    const root = tmpRoot('skills-sessions-');
+    const root = tempDir('skills-sessions-');
     const result = await runHeadlessPrompt(
       'hello',
       { noSkills: true },
@@ -267,10 +251,10 @@ describe('skills reach the live prompt', () => {
     // reads — not an always-on. With
     // the variable absent the project skill stays out; with it set the
     // skill lands, so the flag is genuinely read rather than hardcoded.
-    const home = tmpRoot('skills-home-');
-    const cwd = tmpRoot('skills-cwd-');
+    const home = tempDir('skills-home-');
+    const cwd = tempDir('skills-cwd-');
     writeSkill(join(cwd, '.agents', 'skills'), 'env-gated', 'Needs the opt-in');
-    const root = tmpRoot('skills-sessions-');
+    const root = tempDir('skills-sessions-');
     vi.stubEnv('KUBIC_TRUST_PROJECT', undefined);
     const untrusted = await runHeadlessPrompt(
       'hello',
@@ -310,7 +294,7 @@ describe('advertised skills outside the workspace are readable', () => {
     calls: { name: string; args: Parameters<typeof fauxToolCall>[1] }[],
     skills: { homeDir: string; cwd: string; trusted: boolean },
   ): Promise<{ toolName?: string; isError?: boolean; text: string }[]> {
-    const root = tmpRoot('skills-sessions-');
+    const root = tempDir('skills-sessions-');
     const faux = fauxProvider();
     const models = createModels();
     models.setProvider(faux.provider);
@@ -351,8 +335,8 @@ describe('advertised skills outside the workspace are readable', () => {
   }
 
   it('reads a user skill by its absolute path; an unrelated outside read stays re-rooted', async () => {
-    const home = tmpRoot('skills-home-');
-    const cwd = tmpRoot('skills-ws-');
+    const home = tempDir('skills-home-');
+    const cwd = tempDir('skills-ws-');
     const skillFile = writeSkill(
       join(home, '.agents', 'skills'),
       'a',
@@ -377,8 +361,8 @@ describe('advertised skills outside the workspace are readable', () => {
   });
 
   it('never lets write or edit reach the skill file', async () => {
-    const home = tmpRoot('skills-home-');
-    const cwd = tmpRoot('skills-ws-');
+    const home = tempDir('skills-home-');
+    const cwd = tempDir('skills-ws-');
     const skillFile = writeSkill(
       join(home, '.agents', 'skills'),
       'a',
@@ -398,8 +382,8 @@ describe('advertised skills outside the workspace are readable', () => {
   });
 
   it('reads a trusted ancestor project skill', async () => {
-    const home = tmpRoot('skills-home-');
-    const ancestor = tmpRoot('skills-ancestor-');
+    const home = tempDir('skills-home-');
+    const ancestor = tempDir('skills-ancestor-');
     // Ancestor project skills load inside a repository (the walk stops at the
     // git top level), so mark the ancestor root.
     mkdirSync(join(ancestor, '.git'), { recursive: true });
@@ -424,14 +408,14 @@ describe('advertised skills outside the workspace are readable', () => {
 // byte-identical (the block is undefined, not empty).
 describe('hidden skills stay out of the live prompt', () => {
   it('hides disable-model-invocation skills from the committed prompt', async () => {
-    const home = tmpRoot('skills-hidden-home-');
+    const home = tempDir('skills-hidden-home-');
     const dir = join(home, '.agents', 'skills', 'secret-helper');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, 'SKILL.md'),
       '---\nname: secret-helper\ndescription: Agent-invoked only\ndisable-model-invocation: true\n---\n\nHidden body.\n',
     );
-    const root = tmpRoot('skills-hidden-sessions-');
+    const root = tempDir('skills-hidden-sessions-');
     const result = await runHeadlessPrompt(
       'hello',
       {},
@@ -451,7 +435,7 @@ describe('hidden skills stay out of the live prompt', () => {
   });
 
   it('keeps a no-skill boot prompt byte-identical', () => {
-    const dir = tmpRoot('skills-empty-');
+    const dir = tempDir('skills-empty-');
     const boot = bootSkills({
       bridge: createNodeFileBridge(dir),
       homeDir: dir,
@@ -467,15 +451,15 @@ describe('hidden skills stay out of the live prompt', () => {
 
 describe('settings skills from config', () => {
   it('kubic run loads a settings skill dir with source settings', async () => {
-    const home = tmpRoot('skills-settings-home-');
+    const home = tempDir('skills-settings-home-');
     // Outside every discovery root: only the settings projection loads it.
-    const settingsDir = tmpRoot('skills-settings-dir-');
+    const settingsDir = tempDir('skills-settings-dir-');
     const skillFile = writeSkill(
       settingsDir,
       'team-helper',
       'Shared team helper',
     );
-    const root = tmpRoot('skills-settings-sessions-');
+    const root = tempDir('skills-settings-sessions-');
     const debug: string[] = [];
     const result = await runHeadlessPrompt(
       'hello',
@@ -515,14 +499,14 @@ describe('the role/capability gate reaches the live prompt', () => {
   }
 
   it('withholds a roles-scoped skill from the wrong role, and offers it to the named one', async () => {
-    const home = tmpRoot('skills-gate-home-');
-    const cwd = tmpRoot('skills-gate-cwd-');
+    const home = tempDir('skills-gate-home-');
+    const cwd = tempDir('skills-gate-cwd-');
     writeScopedSkill(
       join(cwd, '.agents', 'skills'),
       'ship-it',
       'roles: [implementer]',
     );
-    const root = tmpRoot('skills-gate-sessions-');
+    const root = tempDir('skills-gate-sessions-');
     const debug: string[] = [];
     const reviewer = await runHeadlessPrompt(
       'hello',
@@ -560,14 +544,14 @@ describe('the role/capability gate reaches the live prompt', () => {
   });
 
   it('withholds a bash-needing skill when shell is denied, with the reason logged', async () => {
-    const home = tmpRoot('skills-cap-home-');
-    const cwd = tmpRoot('skills-cap-cwd-');
+    const home = tempDir('skills-cap-home-');
+    const cwd = tempDir('skills-cap-cwd-');
     writeScopedSkill(
       join(cwd, '.agents', 'skills'),
       'shell-thing',
       'tools: [bash]',
     );
-    const root = tmpRoot('skills-cap-sessions-');
+    const root = tempDir('skills-cap-sessions-');
     const debug: string[] = [];
     const result = await runHeadlessPrompt(
       'hello',
@@ -596,8 +580,8 @@ describe('the role/capability gate reaches the live prompt', () => {
   });
 
   it("restricts the visible skills to the role document's skills list", async () => {
-    const home = tmpRoot('skills-doc-home-');
-    const cwd = tmpRoot('skills-doc-cwd-');
+    const home = tempDir('skills-doc-home-');
+    const cwd = tempDir('skills-doc-cwd-');
     const skillsDir = join(cwd, '.agents', 'skills');
     writeScopedSkill(skillsDir, 'kept-skill', '');
     writeScopedSkill(skillsDir, 'dropped-skill', '');
@@ -606,7 +590,7 @@ describe('the role/capability gate reaches the live prompt', () => {
       join(cwd, '.kubic', 'roles', 'custom.md'),
       '---\nrole: custom\ntools: [read, ls]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\nskills: [kept-skill]\n---\n# Custom\nA custom role.\n\n## Prompt\n\nBe custom.\n',
     );
-    const root = tmpRoot('skills-doc-sessions-');
+    const root = tempDir('skills-doc-sessions-');
     const result = await runHeadlessPrompt(
       'hello',
       { role: 'custom' },
@@ -627,7 +611,7 @@ describe('the role/capability gate reaches the live prompt', () => {
   });
 
   it('reports gate-withheld skills to the doctor probe with reasons', async () => {
-    const home = tmpRoot('skills-doctor-home-');
+    const home = tempDir('skills-doctor-home-');
     const dir = join(home, '.agents', 'skills', 'impl-only');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -676,7 +660,7 @@ describe('the invocable set gates explicit invocation', () => {
   }
 
   it('excludes role-withheld skills but keeps an admitted hidden one', () => {
-    const cwd = tmpRoot('skills-invocable-cwd-');
+    const cwd = tempDir('skills-invocable-cwd-');
     const skillsDir = join(cwd, '.agents', 'skills');
     writeRawSkill(skillsDir, 'kept-hidden', 'disableModelInvocation: true');
     writeRawSkill(skillsDir, 'dropped-visible', '');
@@ -692,7 +676,7 @@ describe('the invocable set gates explicit invocation', () => {
   });
 
   it('excludes capability-withheld skills', () => {
-    const cwd = tmpRoot('skills-invocable-cap-');
+    const cwd = tempDir('skills-invocable-cap-');
     const skillsDir = join(cwd, '.agents', 'skills');
     writeRawSkill(skillsDir, 'shell-thing', 'tools: [bash]');
     const boot = bootSkills({

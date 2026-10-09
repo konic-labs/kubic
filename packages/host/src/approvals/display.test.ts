@@ -3,10 +3,8 @@
 // therefore carries the FULL command (control characters neutralized,
 // secrets redacted) and the summary never truncates silently. Hermetic:
 // temp dirs only, cleaned in afterEach.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   approvalCommandText,
   SUMMARY_COMMAND_LIMIT,
@@ -15,19 +13,6 @@ import {
 import { installPolicy } from './install.js';
 import type { ApprovalRequest } from './request.js';
 import { approvalKey, summarizeRequest } from './request.js';
-
-const made: string[] = [];
-
-function tmp(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'approval-display-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 // A harmless prefix padded past every cap, then the destructive tail.
 const PADDED = `echo 'running formatter' ${'x'.repeat(380)}; rm -rf ~/work`;
@@ -69,8 +54,8 @@ describe('the request carries the full command', () => {
   it('the approval key and the displayed command come from the same args', async () => {
     const seen: ApprovalRequest[] = [];
     const installed = installPolicy({
-      workspace: tmp(),
-      sessionDir: tmp(),
+      workspace: tempDir('approval-display-'),
+      sessionDir: tempDir('approval-display-'),
       answer: async (request) => {
         seen.push(request);
         return { approved: false, reason: 'no' };

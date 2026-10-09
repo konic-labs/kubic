@@ -2,9 +2,7 @@
 // Faux-only: injected runner, zero network. Covers the exit-code
 // contract (0/1/2/3/4/5/6), the --json envelope, identical persistence,
 // no alt-screen in -p path, and attach-reopens-transcript.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import {
   attachSession,
   createSession,
@@ -19,21 +17,9 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { createLineLogger } from '@kubic/core/cli/logger';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { type HeadlessRunResult, runRunCommand } from './run-cli.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'run-cli-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -185,7 +171,7 @@ describe('run -p headless behavior', () => {
   });
 
   it('attach reopens the finished -p transcript', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-cli-');
     const store = openSessionStore(root, createNodeFileBridge(root));
     const o = out();
     let createdId: string | undefined;

@@ -3,8 +3,7 @@
 // rules hold on the live path, and the printed ref names that file. Faux
 // provider only (KUBIC_PROVIDER=faux, the shipped testing provider): zero
 // network; temp sessions root and workspace, never the real HOME.
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { NodeExecutionEnv, toolSpawnEnv } from '@kubic/exec/env';
 import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from '@kubic/host/models';
@@ -14,15 +13,8 @@ import {
   type TrajectoryExport,
 } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -32,16 +24,14 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function run(
   prompt: string,
   options: Parameters<typeof runHeadlessPrompt>[1] = {},
 ) {
-  const root = tmp('traj-root-');
-  const ws = tmp('traj-ws-');
+  const root = tempDir('traj-root-');
+  const ws = tempDir('traj-ws-');
   return {
     root,
     ws,
@@ -139,8 +129,8 @@ describe('kubic run writes a trajectory', () => {
   });
 
   it('`kubic run --json`: the envelope trajectory ref names the written file', async () => {
-    const root = tmp('traj-root-');
-    const ws = tmp('traj-ws-');
+    const root = tempDir('traj-root-');
+    const ws = tempDir('traj-ws-');
     const lines: string[] = [];
     const exit = (
       await runRunCommand(

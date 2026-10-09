@@ -10,8 +10,7 @@
 //
 // Faux provider only: zero network, zero paid tokens. Tmp dirs throughout.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   attachSession,
@@ -43,17 +42,10 @@ import {
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
 import { runtimeRunDeps } from '../../src/config/projections.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const roots: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 // The no-isolation notice is pinned by approvals/no-isolation-notice.test.ts; here it
 // is only stderr noise from the re-execution, silenced via its opt-out.
@@ -63,9 +55,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 function fixtureTrajectory(objective = 'Fix the widget') {
@@ -164,7 +153,7 @@ function configured(text: string) {
 
 describe('replay re-execution consumes the effective config', () => {
   it('threads the runtime projections through the run seam', async () => {
-    const root = tmpRoot('replay-deps-');
+    const root = tempDir('replay-deps-');
     const trajPath = join(root, 't.json');
     writeFileSync(trajPath, JSON.stringify(fixtureTrajectory()));
     const lockPath = join(root, 'pins.json');
@@ -253,7 +242,7 @@ describe('replay re-execution consumes the effective config', () => {
     expect(deps.policySource).toBe('config');
     expect(deps.policyClasses?.shell).toBe('read-only-allowlist');
 
-    const root = tmpRoot('replay-block-');
+    const root = tempDir('replay-block-');
     const trajPath = join(root, 't.json');
     writeFileSync(trajPath, JSON.stringify(fixtureTrajectory('fetch it')));
     const faux = fauxProvider();

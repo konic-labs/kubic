@@ -1,29 +1,17 @@
 // The settled result after the session closed: the report fields, the
 // secret scrub and the trajectory's failure path, over a RunState with no
 // lane behind it.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { finishRun } from './finish.js';
 import { runResult } from './outcome.js';
 import { RunState } from './state.js';
 
-const made: string[] = [];
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
 function newState(sessionsRoot: string, warnings: string[] = []): RunState {
-  const workspace = tmp('run-finish-ws-');
+  const workspace = tempDir('run-finish-ws-');
   return new RunState(
     'the prompt',
     {},
@@ -37,7 +25,7 @@ function newState(sessionsRoot: string, warnings: string[] = []): RunState {
 
 describe('finishRun', () => {
   it('names the live model, the posture and the mode on a run with no session, and writes no trajectory', async () => {
-    const state = newState(tmp('run-finish-sessions-'));
+    const state = newState(tempDir('run-finish-sessions-'));
     state.report.model = 'faux/big';
     state.report.posture = 'approvals';
     state.report.mode = 'interactive';
@@ -56,7 +44,7 @@ describe('finishRun', () => {
   });
 
   it('scrubs every live provider key out of the result', async () => {
-    const state = newState(tmp('run-finish-sessions-'));
+    const state = newState(tempDir('run-finish-sessions-'));
     state.capture.liveSecrets = () => ['sk-live-0123456789abcdef'];
     const settled = await finishRun(
       state,
@@ -70,7 +58,7 @@ describe('finishRun', () => {
   });
 
   it('keeps the result and warns when the trajectory cannot be written', async () => {
-    const root = tmp('run-finish-sessions-');
+    const root = tempDir('run-finish-sessions-');
     // A file where the sessions root should be: neither the usage nor the
     // trajectory can be read or written under it.
     const blocked = join(root, 'not-a-directory');

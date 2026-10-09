@@ -1,10 +1,10 @@
 // kubic doctor: providers, deps, policy
 // mismatches, skip flag — with --json parity. Faux-only: probes are
 // injected, never network.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { installedPolicyPosture } from '../approvals/index.js';
 import { assembleModels, providerProbesOf } from '../models/index.js';
 import {
@@ -13,19 +13,6 @@ import {
 } from '../policy/index.js';
 import { runDoctorCommand } from './command.js';
 import type { ContextRoomProbe, DoctorDeps } from './types.js';
-
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function cleanDeps(out: (line: string) => void): DoctorDeps {
   return {
@@ -430,7 +417,7 @@ describe('runDoctorCommand', () => {
   });
 
   it('main.ts-style wiring (assembled providers + node dep) passes clean', async () => {
-    const dir = mkTmp('doctor-');
+    const dir = tempDir('doctor-');
     // A provider must exist for a clean run: with zero providers the
     // honest-limits aggregate fails missing-provider.
     writeFileSync(

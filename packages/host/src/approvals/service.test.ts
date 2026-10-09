@@ -1,14 +1,8 @@
 // Approval policy + durable service.
-import {
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { enableFullAccess } from './full-access.js';
 import { installPolicy } from './install.js';
 import { validatePolicy } from './policy.js';
@@ -18,19 +12,6 @@ import { ApprovalService } from './service.js';
 import { FileApprovalStore, MemoryApprovalStore } from './stores.js';
 import type { TriggerContext } from './triggers.js';
 import { detectTriggers } from './triggers.js';
-
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function request(key = 'k1'): ApprovalRequest {
   return {
@@ -324,7 +305,7 @@ describe('approval service', () => {
 
 describe('approval adapter, file store, posture', () => {
   it('passes non-triggered calls without asking the seat', async () => {
-    const dir = mkTmp('approvals-');
+    const dir = tempDir('approvals-');
     const installed = installPolicy({
       workspace: dir,
       sessionDir: dir,
@@ -342,7 +323,7 @@ describe('approval adapter, file store, posture', () => {
   });
 
   it('denies triggered calls headless and approves on answer', async () => {
-    const dir = mkTmp('approvals-');
+    const dir = tempDir('approvals-');
     const headless = installPolicy({
       workspace: dir,
       sessionDir: dir,
@@ -372,7 +353,7 @@ describe('approval adapter, file store, posture', () => {
   });
 
   it('persists decisions and posture across restarts; fresh dirs start safe', async () => {
-    const dir = mkTmp('approvals-');
+    const dir = tempDir('approvals-');
     const first = new FileApprovalStore(dir);
     expect(first.loadPosture()).toEqual({ fullAccess: false });
     const service = new ApprovalService({
@@ -395,13 +376,13 @@ describe('approval adapter, file store, posture', () => {
       enabledAt: 1700000000000,
       enabledBy: 'cli',
     });
-    const fresh = new FileApprovalStore(mkTmp('approvals-'));
+    const fresh = new FileApprovalStore(tempDir('approvals-'));
     expect(fresh.load()).toEqual({});
     expect(fresh.loadPosture()).toEqual({ fullAccess: false });
   });
 
   it('tolerates corrupt files', async () => {
-    const dir = mkTmp('approvals-');
+    const dir = tempDir('approvals-');
     writeFileSync(join(dir, 'approvals.json'), '{torn');
     writeFileSync(join(dir, 'posture.json'), '[torn');
     const store = new FileApprovalStore(dir);
@@ -415,7 +396,7 @@ describe('approval adapter, file store, posture', () => {
   // corrupt-tolerant by contract — the fallback is the documented safe
   // default, and malformed individual entries are dropped, not the file.
   it('tolerates well-formed JSON of the wrong shape', () => {
-    const dir = mkTmp('approvals-');
+    const dir = tempDir('approvals-');
     const store = new FileApprovalStore(dir);
     for (const text of ['null', '[]', '"x"', '3', 'true']) {
       writeFileSync(join(dir, 'approvals.json'), text);
@@ -435,7 +416,7 @@ describe('approval adapter, file store, posture', () => {
   });
 
   it('drops malformed verdict entries and keeps the valid ones', () => {
-    const dir = mkTmp('approvals-');
+    const dir = tempDir('approvals-');
     writeFileSync(
       join(dir, 'approvals.json'),
       JSON.stringify({
@@ -456,8 +437,8 @@ describe('approval adapter, file store, posture', () => {
   });
 
   it('boots a policy and a service over wrong-shaped state files', () => {
-    const workspace = mkTmp('approvals-ws-');
-    const sessionDir = mkTmp('approvals-session-');
+    const workspace = tempDir('approvals-ws-');
+    const sessionDir = tempDir('approvals-session-');
     writeFileSync(join(sessionDir, 'approvals.json'), 'null');
     writeFileSync(join(sessionDir, 'posture.json'), '{"fullAccess":"yes"}');
     const installed = installPolicy({ workspace, sessionDir });
@@ -475,7 +456,7 @@ describe('approval adapter, file store, posture', () => {
   });
 
   it('cleans its tmp file when a posture rename fails, and rethrows', () => {
-    const dir = mkTmp('approvals-');
+    const dir = tempDir('approvals-');
     // A rename failure reachable without mocks: the destination exists as
     // a DIRECTORY, so the tmp write succeeds and rename(tmp, posture.json)
     // fails (EISDIR) — the disk-full/permission shape the cleanup exists

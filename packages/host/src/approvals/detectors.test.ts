@@ -13,35 +13,20 @@
 // sandbox parsing): the last-argument target heuristic for tee/cp/mv/install,
 // and word-boundary `sudo` matching that deliberately over-triggers — a raised
 // capability becomes an ask, never a silent grant.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
 } from '@kubic/agent/lane/interceptors';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { parseTomlConfig } from '../config/index.js';
 import { installPolicy } from './install.js';
 import { CAPABILITIES, validatePolicy } from './policy.js';
 import { ApprovalService } from './service.js';
 import type { TriggerContext } from './triggers.js';
 import { detectTriggers, triggerContextFor } from './triggers.js';
-
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function triggerContext(
   overrides: Partial<TriggerContext> = {},
@@ -401,7 +386,7 @@ describe('privilege escalation + indirection', () => {
   });
 
   it('requires every raised capability: autoApprove covers only what it names', async () => {
-    const dir = mkTmp('approvals-detectors-');
+    const dir = tempDir('approvals-detectors-');
     const installed = installPolicy({
       workspace: dir,
       sessionDir: dir,
@@ -543,7 +528,7 @@ describe('shell-expanded and cd-relative write targets', () => {
   });
 
   it('wires the home directory through triggerContextFor', () => {
-    const home = mkTmp('kubic-detectors-home-');
+    const home = tempDir('kubic-detectors-home-');
     const ctx = triggerContextFor(DEFAULT_PERMISSIONS, home, home);
     expect(ctx.home).toBe(home);
     expect(

@@ -8,13 +8,10 @@
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CliUsageError,
@@ -24,23 +21,14 @@ import {
 import { FileJournalStore, sha256Hex } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from '../../src/config/load.js';
 import { journalRetentionDays } from '../../src/config/projections.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function channel(): {
@@ -64,7 +52,7 @@ function channel(): {
 function loadedWithJournalRetention(
   retention?: string,
 ): ReturnType<typeof loadCliConfig> {
-  const home = tmpRoot('home-');
+  const home = tempDir('home-');
   mkdirSync(join(home, '.kubic'), { recursive: true });
   if (retention !== undefined) {
     writeFileSync(
@@ -72,7 +60,7 @@ function loadedWithJournalRetention(
       `[journal]\nretentionDays = ${retention}\n`,
     );
   }
-  const loaded = loadCliConfig({ home, cwd: tmpRoot('cwd-'), env: {} });
+  const loaded = loadCliConfig({ home, cwd: tempDir('cwd-'), env: {} });
   expect(loaded.error).toBeUndefined();
   return loaded;
 }
@@ -114,8 +102,8 @@ function seededSession(): {
   root: string;
   journalDir: string;
 } {
-  const sessionsRoot = tmpRoot('sess-root-');
-  const root = tmpRoot('ws-');
+  const sessionsRoot = tempDir('sess-root-');
+  const root = tempDir('ws-');
   const journalDir = join(sessionsRoot, 'sess-1', 'journal');
   seed(journalDir, 'sess-1');
   return { sessionsRoot, root, journalDir };
@@ -259,7 +247,7 @@ describe('journal prune', () => {
   });
 
   it('prunes a workspace store named by journalDir, with no session lock to check', async () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     const journalDir = join(root, '.kubic', 'journal');
     seed(journalDir, 'ws-session');
     const c = channel();
@@ -331,8 +319,8 @@ describe('journal prune: the keep window resolves like the runtime', () => {
   it('KUBIC_JOURNAL_RETENTION_DAYS sets the window when no flag or file key does', async () => {
     const { sessionsRoot, root, journalDir } = seededSession();
     const loaded = loadCliConfig({
-      home: tmpRoot('home-'),
-      cwd: tmpRoot('cwd-'),
+      home: tempDir('home-'),
+      cwd: tempDir('cwd-'),
       env: { KUBIC_JOURNAL_RETENTION_DAYS: '7' },
     });
     expect(loaded.error).toBeUndefined();
@@ -357,7 +345,7 @@ describe('journal prune: the keep window resolves like the runtime', () => {
   });
 
   it('the env value beats the file key, and a flag beats both', async () => {
-    const home = tmpRoot('home-');
+    const home = tempDir('home-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
@@ -365,7 +353,7 @@ describe('journal prune: the keep window resolves like the runtime', () => {
     );
     const loaded = loadCliConfig({
       home,
-      cwd: tmpRoot('cwd-'),
+      cwd: tempDir('cwd-'),
       env: { KUBIC_JOURNAL_RETENTION_DAYS: '7' },
     });
     expect(journalRetentionDays(loaded)).toBe(7);
@@ -419,13 +407,13 @@ describe('journal prune: the keep window resolves like the runtime', () => {
   });
 
   it('a refused config is named in the no-window refusal', async () => {
-    const home = tmpRoot('home-');
+    const home = tempDir('home-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
       '[journal]\nretentionDays = "seven"\n',
     );
-    const loaded = loadCliConfig({ home, cwd: tmpRoot('cwd-'), env: {} });
+    const loaded = loadCliConfig({ home, cwd: tempDir('cwd-'), env: {} });
     expect(loaded.error).toBeDefined();
     const { sessionsRoot, root, journalDir } = seededSession();
     const c = channel();
@@ -452,8 +440,8 @@ describe('journal prune: the keep window resolves like the runtime', () => {
 
 describe('journal prune: refusals come before any deletion', () => {
   it('an unknown --session is refused like cost --session (exit 1), creating nothing', async () => {
-    const sessionsRoot = tmpRoot('sess-root-');
-    const root = tmpRoot('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     const c = channel();
     const code = (
       await runJournalCommand(
@@ -539,8 +527,8 @@ describe('journal prune: swept orphan blobs', () => {
   });
 
   it('--yes leaves an orphan in place when nothing is listed', async () => {
-    const sessionsRoot = tmpRoot('sess-root-');
-    const root = tmpRoot('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     const journalDir = join(sessionsRoot, 'sess-1', 'journal');
     new FileJournalStore(journalDir).append({
       path: 'fresh.txt',
@@ -591,13 +579,13 @@ describe('journal prune: the order of the checks and the window exits', () => {
   });
 
   it('a file value the loader accepts (0.5) exits 2; an env value it refuses (0.5) exits 1', async () => {
-    const home = tmpRoot('home-');
+    const home = tempDir('home-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
       '[journal]\nretentionDays = 0.5\n',
     );
-    const fromFile = loadCliConfig({ home, cwd: tmpRoot('cwd-'), env: {} });
+    const fromFile = loadCliConfig({ home, cwd: tempDir('cwd-'), env: {} });
     expect(fromFile.error).toBeUndefined();
     expect(journalRetentionDays(fromFile)).toBe(0.5);
     const { sessionsRoot, root } = seededSession();
@@ -614,8 +602,8 @@ describe('journal prune: the order of the checks and the window exits', () => {
     ).rejects.toBeInstanceOf(CliUsageError);
 
     const fromEnv = loadCliConfig({
-      home: tmpRoot('home-'),
-      cwd: tmpRoot('cwd-'),
+      home: tempDir('home-'),
+      cwd: tempDir('cwd-'),
       env: { KUBIC_JOURNAL_RETENTION_DAYS: '0.5' },
     });
     expect(fromEnv.error).toContain('KUBIC_JOURNAL_RETENTION_DAYS');
@@ -678,8 +666,8 @@ describe('journal prune reports what the pass actually removed', () => {
   }
 
   it('reports the actual count and succeeds when fewer entries were removed than listed', async () => {
-    const sessionsRoot = tmpRoot('sess-root-');
-    const root = tmpRoot('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     const journalDir = join(sessionsRoot, 'sess-1', 'journal');
     seedTwoAged(journalDir);
     concurrentPrunerRemovesFirst(journalDir);
@@ -702,8 +690,8 @@ describe('journal prune reports what the pass actually removed', () => {
   });
 
   it('--json carries the actual pruned count next to the listed candidates', async () => {
-    const sessionsRoot = tmpRoot('sess-root-');
-    const root = tmpRoot('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     const journalDir = join(sessionsRoot, 'sess-1', 'journal');
     seedTwoAged(journalDir);
     concurrentPrunerRemovesFirst(journalDir);
@@ -731,8 +719,8 @@ describe('journal prune reports what the pass actually removed', () => {
   });
 
   it('a pass that removes nothing fails (exit 1) and says so, in text and JSON', async () => {
-    const sessionsRoot = tmpRoot('sess-root-');
-    const root = tmpRoot('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     const journalDir = join(sessionsRoot, 'sess-1', 'journal');
     seedTwoAged(journalDir);
     const before = indexLines(journalDir);

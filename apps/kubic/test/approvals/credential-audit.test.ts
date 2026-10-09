@@ -8,16 +8,13 @@
 // shape, owned and closed by the test: no external network, no paid tokens.
 import {
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import {
@@ -30,19 +27,12 @@ import {
   parseSecretRef,
 } from '@kubic/host/secret-refs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 
 const SECRET = 'sk-live-kubic-do-not-leak';
 
-const roots: string[] = [];
-
 const servers: Server[] = [];
-
-function tmpRoot(prefix = 'kubic-credential-audit-'): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -54,9 +44,6 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   for (const server of servers.splice(0)) {
     await new Promise<void>((done) => server.close(() => done()));
-  }
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -406,11 +393,11 @@ describe('a first-use audit failure never carries the value', () => {
     // taught the inventory about it. (The record itself carries the worktree
     // path, so it is not refused for material: the append really fails.)
     const value = 'zqxjvw-firstuse-value';
-    const main = tmpRoot(`main-${value}-`);
+    const main = tempDir(`main-${value}-`);
     mkdirSync(join(main, '.git', 'worktrees', 'wt'), { recursive: true });
     writeFileSync(join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..');
     writeFileSync(join(main, '.kubic'), 'not a directory');
-    const worktree = tmpRoot('wt-credential-');
+    const worktree = tempDir('wt-credential-');
     writeFileSync(
       join(worktree, '.git'),
       `gitdir: ${join(main, '.git', 'worktrees', 'wt')}\n`,
@@ -441,7 +428,7 @@ describe('a first-use audit failure never carries the value', () => {
 
   it('a record that would carry the value is refused on the first use, not written', async () => {
     const value = 'zqxjvw-firstuse-value';
-    const workspace = tmpRoot(`ws-${value}-`);
+    const workspace = tempDir(`ws-${value}-`);
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
       // Env-only tests: the runner must never fire for $VAR uses.
@@ -477,8 +464,8 @@ describe('a dummy key equal to its provider id', () => {
   it('a key matching its provider id does not blank identity, and its use is still audited', async () => {
     vi.stubEnv('LM_STUDIO_API_KEY', KEY);
     const provider = await fakeProvider();
-    const workspace = tmpRoot('ws-credential-lms-');
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir('ws-credential-lms-');
+    const sessionsRoot = tempDir();
     writeModelsJson(workspace, provider.url, {
       id: 'lm-studio',
       apiKeyEnv: 'LM_STUDIO_API_KEY',
@@ -523,7 +510,7 @@ describe('a dummy key equal to its provider id', () => {
   // `kubic tui` resolves keys without a catalog identity: the row's own
   // provider is still exempt, on the first use and every later one.
   it('the ledger resolver writes a row for every use even with no catalog identity', async () => {
-    const workspace = tmpRoot('ws-credential-lms-ledger-');
+    const workspace = tempDir('ws-credential-lms-ledger-');
     const errors: string[] = [];
     const resolver = createLedgerModelKeyResolver({
       // Env-only tests: the runner must never fire for $VAR uses.

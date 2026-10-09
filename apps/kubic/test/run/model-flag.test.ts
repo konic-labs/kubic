@@ -3,9 +3,6 @@
 // frozen enterprise key, and the projection (`runtimeModelPin`) is the same
 // one the lane boots from — so these tests go through the REAL load and the
 // REAL headless boot on faux models. Zero network, zero paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   createModels,
   fauxAssistantMessage,
@@ -20,17 +17,10 @@ import {
 } from '@kubic/host/config';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from '../../src/config/load.js';
 import { runtimeModelPin } from '../../src/config/model-selection.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -39,8 +29,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 // Two faux models; the default (unpinned) pick is the first, `big`.
@@ -61,8 +49,8 @@ function catalog(texts: string[]): MutableModels {
 describe('kubic run --model', () => {
   it('selects the model the flag names, over the first provider', async () => {
     const config = loadCliConfig({
-      cwd: tmpRoot('run-model-override-cwd-'),
-      home: tmpRoot('run-model-override-home-'),
+      cwd: tempDir('run-model-override-cwd-'),
+      home: tempDir('run-model-override-home-'),
       env: {},
       model: { provider: 'faux', id: 'small' },
     });
@@ -73,7 +61,7 @@ describe('kubic run --model', () => {
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot('run-model-override-sessions-'),
+        sessionsRoot: tempDir('run-model-override-sessions-'),
         env: new FakeExecutionEnv({}),
         models: catalog(['answered']),
         ...(pin === undefined ? {} : { model: pin }),
@@ -85,8 +73,8 @@ describe('kubic run --model', () => {
 
   it('beats the KUBIC_MODEL env pin, as the cli layer', () => {
     const config = loadCliConfig({
-      cwd: tmpRoot('run-model-override-cwd2-'),
-      home: tmpRoot('run-model-override-home2-'),
+      cwd: tempDir('run-model-override-cwd2-'),
+      home: tempDir('run-model-override-home2-'),
       env: { KUBIC_MODEL: 'faux/big' },
       model: { provider: 'faux', id: 'small' },
     });
@@ -95,8 +83,8 @@ describe('kubic run --model', () => {
 
   it('an unknown model fails closed by name with exit 6', async () => {
     const config = loadCliConfig({
-      cwd: tmpRoot('run-model-override-cwd3-'),
-      home: tmpRoot('run-model-override-home3-'),
+      cwd: tempDir('run-model-override-cwd3-'),
+      home: tempDir('run-model-override-home3-'),
       env: {},
       model: { provider: 'faux', id: 'nope' },
     });
@@ -105,7 +93,7 @@ describe('kubic run --model', () => {
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot('run-model-override-sessions3-'),
+        sessionsRoot: tempDir('run-model-override-sessions3-'),
         env: new FakeExecutionEnv({}),
         models: catalog([]),
         ...(pin === undefined ? {} : { model: pin }),
@@ -127,8 +115,8 @@ describe('kubic run --model', () => {
         exists: (path: string) => files.has(path),
         readTextFile: (path: string) => files.get(path) as string,
       },
-      home: tmpRoot('run-model-override-home4-'),
-      cwd: tmpRoot('run-model-override-cwd4-'),
+      home: tempDir('run-model-override-home4-'),
+      cwd: tempDir('run-model-override-cwd4-'),
       env: {},
       cli: { model: { provider: 'faux', id: 'small' } },
     });

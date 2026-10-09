@@ -2,9 +2,6 @@
 // the printed id is a real session usable at once, --json prints
 // {id, source, at}, a live-locked source exits 1 like attach, and the flags
 // reach the runner through commander. Faux provider; temp dirs cleaned up.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   attachSession,
   openSessionStore,
@@ -20,22 +17,10 @@ import {
   runSessionsCommand,
   type SessionsInvocation,
 } from '@kubic/host/sessions';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { dispatchCommand } from '../../src/dispatch.js';
 import { createProdRunners } from '../../src/prod-runners.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-sessions-fork-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 async function sourceSession(root: string): Promise<string> {
   const lane = await bootFauxLane({
@@ -65,7 +50,7 @@ function cli(root: string) {
 
 describe('kubic sessions fork', () => {
   it('prints a new session id that attaches at once', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-sessions-fork-');
     const source = await sourceSession(root);
     const c = cli(root);
     expect(await c.run({ command: 'fork', id: source })).toBe(0);
@@ -77,7 +62,7 @@ describe('kubic sessions fork', () => {
   });
 
   it('--json prints {id, source, at}', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-sessions-fork-');
     const source = await sourceSession(root);
     const c = cli(root);
     expect(await c.run({ command: 'fork', id: source, json: true })).toBe(0);
@@ -92,7 +77,7 @@ describe('kubic sessions fork', () => {
   });
 
   it('refuses a live-locked source with exit 1, naming the holder', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-sessions-fork-');
     const source = await sourceSession(root);
     const store = openSessionStore(root, createNodeFileBridge(root));
     const live = await attachSession(store, source, BACKGROUND_CONTEXT);
@@ -107,7 +92,7 @@ describe('kubic sessions fork', () => {
   });
 
   it('attach --ids shows the entry ids that fork --at takes', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-sessions-fork-');
     const source = await sourceSession(root);
     const c = cli(root);
     expect(await c.run({ command: 'attach', id: source, ids: true })).toBe(0);
@@ -131,7 +116,7 @@ describe('kubic sessions fork', () => {
   });
 
   it('--at with --tree is a usage error (exit 2)', async () => {
-    const c = cli(tmpRoot());
+    const c = cli(tempDir('kubic-sessions-fork-'));
     expect(
       await c.run({ command: 'fork', id: 'sess-1', at: 3, tree: true }),
     ).toBe(2);

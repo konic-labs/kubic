@@ -14,15 +14,13 @@
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../test/temp-dir.js';
 import {
   applyRuntimeExcludeBlock,
   ensureRuntimeExcludeRules,
@@ -37,20 +35,9 @@ import {
   type GitSandbox,
 } from './test-support/git-sandbox.js';
 
-const scratchDirs: string[] = [];
-
 afterEach(() => {
   disposeAllGitSandboxes();
-  for (const dir of scratchDirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
-
-// Plain temp dir, for the not-a-repo path that never touches git.
-function scratchDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  scratchDirs.push(dir);
-  return dir;
-}
 
 function isIgnored(repo: GitSandbox, path: string): boolean {
   return repo.gitResult(['check-ignore', '-q', path]).status === 0;
@@ -226,7 +213,7 @@ describe('ensureRuntimeExcludeRules', () => {
   });
 
   it('skips (never throws) outside a git repository', () => {
-    const dir = scratchDir('kubic-norepo-');
+    const dir = tempDir('kubic-norepo-');
     const result = ensureRuntimeExcludeRules({ cwd: dir });
     expect(result.skipped).toBe('not-a-git-repo');
     expect(result.changed).toBe(false);
@@ -237,7 +224,7 @@ describe('ensureRuntimeExcludeRules', () => {
     const repo = roleScratchRepo();
     // A linked worktree of the repository, checked out elsewhere: its
     // `.git` is a file pointing at the common dir.
-    const worktree = join(scratchDir('kubic-linked-'), 'linked');
+    const worktree = join(tempDir('kubic-linked-'), 'linked');
     repo.git(['worktree', 'add', '-q', worktree, '-b', 'linked']);
 
     const result = ensureRuntimeExcludeRules({ cwd: worktree });

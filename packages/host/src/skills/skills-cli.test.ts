@@ -3,26 +3,13 @@
 // the fixture shape, and a refusing `--role` fails closed. Real tmp dirs
 // through the node bridge (no git, no network); temp dirs removed in
 // `afterEach`.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { selectRole } from '../roles/index.js';
 import { runSkillsCommand, type SkillsCommandDeps } from './skills-cli.js';
-
-const made: string[] = [];
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 function writeSkillMd(dir: string, frontmatter: string): void {
   mkdirSync(dir, { recursive: true });
@@ -72,8 +59,8 @@ function depsOver(
 
 describe('runSkillsCommand', () => {
   it('lists user/project/settings sources and hidden skills', () => {
-    const home = tmpRoot('kubic-skills-home-');
-    const cwd = tmpRoot('kubic-skills-cwd-');
+    const home = tempDir('kubic-skills-home-');
+    const cwd = tempDir('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'lint'),
       'name: lint\ndescription: Lint skill',
@@ -82,7 +69,7 @@ describe('runSkillsCommand', () => {
       join(cwd, '.pi', 'skills', 'gem'),
       'name: gem\ndescription: Project skill',
     );
-    const settingsDir = join(tmpRoot('kubic-skills-settings-'), 'team');
+    const settingsDir = join(tempDir('kubic-skills-settings-'), 'team');
     writeSkillMd(settingsDir, 'name: team\ndescription: Team skill');
     const { deps, captured } = depsOver(cwd, home, true);
     const code = runSkillsCommand(
@@ -104,8 +91,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('marks disable-model-invocation skills hidden', () => {
-    const home = tmpRoot('kubic-skills-home-');
-    const cwd = tmpRoot('kubic-skills-cwd-');
+    const home = tempDir('kubic-skills-home-');
+    const cwd = tempDir('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'quiet'),
       'name: quiet\ndescription: Helper\ndisable-model-invocation: true',
@@ -116,8 +103,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('shows untrusted project skills as excluded with the reason', () => {
-    const home = tmpRoot('kubic-skills-home-');
-    const cwd = tmpRoot('kubic-skills-cwd-');
+    const home = tempDir('kubic-skills-home-');
+    const cwd = tempDir('kubic-skills-cwd-');
     writeSkillMd(
       join(cwd, '.pi', 'skills', 'gem'),
       'name: gem\ndescription: Left out',
@@ -131,8 +118,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('--role marks role-withheld skills as withheld', () => {
-    const home = tmpRoot('kubic-skills-home-');
-    const cwd = tmpRoot('kubic-skills-cwd-');
+    const home = tempDir('kubic-skills-home-');
+    const cwd = tempDir('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'deploy'),
       'name: deploy\ndescription: Deploy\nroles: [implementer]',
@@ -153,8 +140,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('--json parses and matches the fixture shape', () => {
-    const home = tmpRoot('kubic-skills-home-');
-    const cwd = tmpRoot('kubic-skills-cwd-');
+    const home = tempDir('kubic-skills-home-');
+    const cwd = tempDir('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'lint'),
       'name: lint\ndescription: Lint skill',
@@ -184,8 +171,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('a refusing --role fails closed with its reason', () => {
-    const home = tmpRoot('kubic-skills-home-');
-    const cwd = tmpRoot('kubic-skills-cwd-');
+    const home = tempDir('kubic-skills-home-');
+    const cwd = tempDir('kubic-skills-cwd-');
     const { deps, captured } = depsOver(cwd, home, false);
     const code = runSkillsCommand(
       { role: 'nope' },
@@ -201,8 +188,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('resolves --role through the real selectRole (builtin preset)', () => {
-    const home = tmpRoot('kubic-skills-home-');
-    const cwd = tmpRoot('kubic-skills-cwd-');
+    const home = tempDir('kubic-skills-home-');
+    const cwd = tempDir('kubic-skills-cwd-');
     writeSkillMd(
       join(home, '.agents', 'skills', 'deploy'),
       'name: deploy\ndescription: Deploy\nroles: [implementer]',
@@ -237,8 +224,8 @@ describe('runSkillsCommand', () => {
   });
 
   it('says so when nothing was discovered', () => {
-    const home = tmpRoot('kubic-skills-home-');
-    const cwd = tmpRoot('kubic-skills-cwd-');
+    const home = tempDir('kubic-skills-home-');
+    const cwd = tempDir('kubic-skills-cwd-');
     const { deps, captured } = depsOver(cwd, home, false);
     expect(runSkillsCommand({}, deps).exitCode).toBe(0);
     expect(captured.info.join('\n')).toContain('no skills discovered');

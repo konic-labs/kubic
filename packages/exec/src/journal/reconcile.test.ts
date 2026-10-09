@@ -1,29 +1,16 @@
 // Baseline capture + end-of-run reconciliation.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { captureBaseline } from './baseline.js';
 import { captureHeadState, type GitBaseline, type GitCommand } from './git.js';
 import { FileJournalStore } from './store.js';
 import { reconcile } from './sweep.js';
 import { MAX_SWEEP_CONTENT_BYTES } from './types.js';
 
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
 function workspace(): string {
-  const root = tmpRoot('ws-');
+  const root = tempDir('ws-');
   writeFileSync(join(root, 'keep.txt'), 'keep\n');
   writeFileSync(join(root, 'change.txt'), 'before\n');
   writeFileSync(join(root, 'skip.log'), 'noise\n');
@@ -47,7 +34,7 @@ describe('journal baseline + reconciliation', () => {
     // A leading slash anchors a directory rule to the workspace root. A
     // directory with the same name nested below the root is not excluded,
     // so its files stay in the baseline.
-    const root = tmpRoot('ws-anchored-');
+    const root = tempDir('ws-anchored-');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');
     mkdirSync(join(root, 'vendor'));
     writeFileSync(join(root, 'vendor', 'upstream.ts'), 'vendored\n');
@@ -76,7 +63,7 @@ describe('journal baseline + reconciliation', () => {
 
   it('marks externally changed files unattributed with after-content', () => {
     const root = workspace();
-    const journal = new FileJournalStore(tmpRoot('j-'));
+    const journal = new FileJournalStore(tempDir('j-'));
     const baseline = captureBaseline(root, { outOfScope: [] });
     // sed -i equivalent: bypasses Kubic ops entirely.
     writeFileSync(join(root, 'change.txt'), 'after\n');
@@ -100,7 +87,7 @@ describe('journal baseline + reconciliation', () => {
 
   it('adds nothing for intercepted-then-unmodified files, and reports deletes', () => {
     const root = workspace();
-    const journal = new FileJournalStore(tmpRoot('j-'));
+    const journal = new FileJournalStore(tempDir('j-'));
     const baseline = captureBaseline(root, { outOfScope: [] });
     journal.append({
       path: 'change.txt',
@@ -162,10 +149,10 @@ describe('git pre-images for sweep entries', () => {
   }
 
   function trackedRoot(): { root: string; journal: FileJournalStore } {
-    const root = tmpRoot('ws-git-');
+    const root = tempDir('ws-git-');
     writeFileSync(join(root, 'tracked.ts'), 'before\n');
     writeFileSync(join(root, 'keep.ts'), 'same\n');
-    return { root, journal: new FileJournalStore(tmpRoot('j-git-')) };
+    return { root, journal: new FileJournalStore(tempDir('j-git-')) };
   }
 
   it('stores the git pre-image as the before-blob for a bash-changed tracked file', () => {
@@ -360,9 +347,9 @@ describe('HEAD-move markers', () => {
   }
 
   function ws(): { root: string; journal: FileJournalStore } {
-    const root = tmpRoot('ws-head-');
+    const root = tempDir('ws-head-');
     writeFileSync(join(root, 'f.txt'), 'v1\n');
-    return { root, journal: new FileJournalStore(tmpRoot('j-head-')) };
+    return { root, journal: new FileJournalStore(tempDir('j-head-')) };
   }
 
   it('appends one marker when the run moved HEAD', () => {

@@ -6,14 +6,7 @@
 // Real code end to end: the prod bootTuiLane re-rooted onto temp state, the
 // real NodeExecutionEnv inside a temp workspace, a recording fake Terminal
 // under the real alt-screen. Faux provider only: zero network.
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -27,18 +20,11 @@ import { FileJournalStore } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { JournalPanelFeed } from '../../src/tui/commands/journal.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tui-journal-'));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_PROVIDER', undefined);
@@ -47,8 +33,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 type Step = Parameters<typeof fauxAssistantMessage>[0];
@@ -131,8 +115,8 @@ async function submit(
 
 describe('tool entries share the sweep turn numbering', () => {
   it("a TUI turn's write entry carries that turn", async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot();
+    const sessionsRoot = tempDir('tui-journal-');
+    const workspace = tempDir('tui-journal-');
     const { fake, exit } = await openTui(sessionsRoot, workspace, [
       [fauxToolCall('write', { path: 't.txt', content: 't\n' })],
       'wrote it',
@@ -165,8 +149,8 @@ describe('tool entries share the sweep turn numbering', () => {
   });
 
   it("kubic diff --stat shows the turn on the TUI turn's write entry", async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot();
+    const sessionsRoot = tempDir('tui-journal-');
+    const workspace = tempDir('tui-journal-');
     const { fake, exit } = await openTui(sessionsRoot, workspace, [
       [fauxToolCall('write', { path: 't.txt', content: 't\n' })],
       'wrote it',
@@ -197,8 +181,8 @@ describe('tool entries share the sweep turn numbering', () => {
 
 describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   it('after a write, Ctrl-O renders a hunk for the written path', async () => {
-    const workspace = tmpRoot();
-    const { fake, exit } = await openTui(tmpRoot(), workspace, [
+    const workspace = tempDir('tui-journal-');
+    const { fake, exit } = await openTui(tempDir('tui-journal-'), workspace, [
       [fauxToolCall('write', { path: 'hello.txt', content: 'hi there\n' })],
       'wrote it',
     ]);
@@ -213,8 +197,8 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   });
 
   it('the journal panel lists every change in the session', async () => {
-    const workspace = tmpRoot();
-    const { fake, exit } = await openTui(tmpRoot(), workspace, [
+    const workspace = tempDir('tui-journal-');
+    const { fake, exit } = await openTui(tempDir('tui-journal-'), workspace, [
       [
         fauxToolCall('write', { path: 'alpha.txt', content: 'a\n' }),
         fauxToolCall('write', { path: 'beta.txt', content: 'b\n' }),
@@ -234,8 +218,8 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   });
 
   it('the diff panel follows the most recent tool call that has journal rows', async () => {
-    const workspace = tmpRoot();
-    const { fake, exit } = await openTui(tmpRoot(), workspace, [
+    const workspace = tempDir('tui-journal-');
+    const { fake, exit } = await openTui(tempDir('tui-journal-'), workspace, [
       [fauxToolCall('write', { path: 'kept.txt', content: 'kept\n' })],
       // A read has no journal rows: the panel must not fall to 'no changes'.
       [fauxToolCall('read', { path: 'kept.txt' })],
@@ -255,8 +239,8 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   // it when the turn settles: never `no changes` (Ctrl-O) or an empty list (Ctrl-R)
   // for a change the user had just watched happen.
   it('a change made with bash shows in Ctrl-R and Ctrl-O when the turn settles, before any quit', async () => {
-    const workspace = tmpRoot();
-    const { fake, exit } = await openTui(tmpRoot(), workspace, [
+    const workspace = tempDir('tui-journal-');
+    const { fake, exit } = await openTui(tempDir('tui-journal-'), workspace, [
       [
         fauxToolCall('bash', {
           command: "printf 'made by bash\\n' > shellfile.txt",
@@ -286,7 +270,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   });
 
   it('the settlement sweep runs only after a turn that used the shell, once per such turn', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir('tui-journal-');
     let sweeps = 0;
     const fake = recordingTerminal();
     const steps: Step[] = [
@@ -297,7 +281,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
       [fauxToolCall('write', { path: 'again.txt', content: 'q\n' })],
       'wrote again',
     ];
-    const boot = prodBoot(tmpRoot(), workspace, steps);
+    const boot = prodBoot(tempDir('tui-journal-'), workspace, steps);
     const exit = runTuiCommand(
       {},
       {
@@ -333,9 +317,9 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   });
 
   it('a failing sweep never reaches the loop: the turn still settles and the panels keep working', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir('tui-journal-');
     const fake = recordingTerminal();
-    const boot = prodBoot(tmpRoot(), workspace, [
+    const boot = prodBoot(tempDir('tui-journal-'), workspace, [
       [fauxToolCall('bash', { command: 'true' })],
       'shell done',
     ]);
@@ -368,10 +352,10 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   // turn, not only at its settlement. Observed by counting the reads the
   // panel feed makes of the boot's journal store.
   it('a tool-end refreshes the panels while the turn is still running', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir('tui-journal-');
     const fake = recordingTerminal();
     let reads = 0;
-    const boot = prodBoot(tmpRoot(), workspace, [
+    const boot = prodBoot(tempDir('tui-journal-'), workspace, [
       [fauxToolCall('write', { path: 'early.txt', content: 'e\n' })],
       [fauxToolCall('bash', { command: 'sleep 1.5' })],
       'slept',
@@ -425,10 +409,10 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   // synchronous boot read: a TDZ ReferenceError would be swallowed by the feed's
   // catch. Nothing may be swallowed.
   it('the feed swallows nothing at boot or at a settlement (no TDZ in the apply path)', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir('tui-journal-');
     const failures: unknown[] = [];
     const { fake, exit } = await openTui(
-      tmpRoot(),
+      tempDir('tui-journal-'),
       workspace,
       [
         [fauxToolCall('write', { path: 'hello.txt', content: 'hi\n' })],
@@ -444,8 +428,8 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   });
 
   it('resuming a session shows its earlier journal entries on the first Ctrl-R', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot();
+    const sessionsRoot = tempDir('tui-journal-');
+    const workspace = tempDir('tui-journal-');
     const first = await prodBoot(sessionsRoot, workspace, ['unused'])();
     first.journal?.append({
       path: 'earlier.txt',
@@ -473,8 +457,8 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
   });
 
   it('journal rows are sanitized before they reach the panel', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot();
+    const sessionsRoot = tempDir('tui-journal-');
+    const workspace = tempDir('tui-journal-');
     const first = await prodBoot(sessionsRoot, workspace, ['unused'])();
     const store = first.journal as FileJournalStore;
     store.append({
@@ -582,8 +566,8 @@ describe('per-turn reconciliation in the TUI', () => {
   }
 
   it('an edit made between prompts is not attributed to the next turn; entries carry the turn', async () => {
-    const workspace = tmpRoot();
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir('tui-journal-');
+    const sessionsRoot = tempDir('tui-journal-');
     writeFileSync(join(workspace, 'mine.txt'), 'before\n');
     const { fake, exit } = await openTui(sessionsRoot, workspace, [
       [fauxToolCall('bash', { command: "printf 'one\\n' > one.txt" })],
@@ -615,8 +599,8 @@ describe('per-turn reconciliation in the TUI', () => {
   });
 
   it('the quit-time sweep after a settled turn adds no duplicates and no post-turn edits', async () => {
-    const workspace = tmpRoot();
-    const sessionsRoot = tmpRoot();
+    const workspace = tempDir('tui-journal-');
+    const sessionsRoot = tempDir('tui-journal-');
     const { fake, exit } = await openTui(sessionsRoot, workspace, [
       [fauxToolCall('bash', { command: "printf 'x\\n' > made.txt" })],
       'made',

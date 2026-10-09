@@ -2,8 +2,7 @@
 // Every test drives the production entry point (`loadRuntimeConfig`) over
 // a fake FileBridge: zero network, zero real files, dummy $ENV_VAR refs.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   bootFauxLane,
@@ -22,6 +21,7 @@ import {
   type GitSandbox,
 } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   hasToolPolicy,
   isToolAllowed,
@@ -57,20 +57,9 @@ const CWD = '/repo';
 
 const PROJECT = `${CWD}/.kubic/config.toml`;
 
-const tempDirs: string[] = [];
-
-function tempDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
-
 afterEach(() => {
   driver = undefined;
   disposeAllGitSandboxes();
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // The test's git driver: plain, never injected — production

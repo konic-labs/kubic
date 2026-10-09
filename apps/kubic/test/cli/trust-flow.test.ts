@@ -4,34 +4,21 @@
 // refusal back. The binary drives exactly these two halves (`runTrustCommand`
 // and `loadCliConfig`); no process is spawned, no network is touched.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ProjectTrustStore,
   projectTrustStorePath,
   runTrustCommand,
 } from '@kubic/host/config';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from '../../src/config/load.js';
-
-const made: string[] = [];
-
-function tmpDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 describe('kubic trust → kubic run → kubic trust --revoke', () => {
   it('makes a committed .kubic/config.toml usable, then refuses it again', () => {
-    const home = tmpDir('kubic-trust-flow-home-');
-    const project = tmpDir('kubic-trust-flow-repo-');
+    const home = tempDir('kubic-trust-flow-home-');
+    const project = tempDir('kubic-trust-flow-repo-');
     mkdirSync(join(project, '.kubic'), { recursive: true });
     writeFileSync(
       join(project, '.kubic', 'config.toml'),
@@ -78,8 +65,8 @@ describe('kubic trust → kubic run → kubic trust --revoke', () => {
   });
 
   it('trusting one directory never trusts a sibling', () => {
-    const home = tmpDir('kubic-trust-flow-home-');
-    const root = tmpDir('kubic-trust-flow-root-');
+    const home = tempDir('kubic-trust-flow-home-');
+    const root = tempDir('kubic-trust-flow-root-');
     const a = join(root, 'a');
     const sibling = join(root, 'a-sibling');
     for (const dir of [a, sibling]) {

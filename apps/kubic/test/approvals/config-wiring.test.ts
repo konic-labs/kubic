@@ -6,8 +6,7 @@
 //
 // Faux provider only: zero network, zero paid tokens. Every temp dir and env
 // stub is undone in afterEach.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BACKGROUND_CONTEXT,
@@ -29,6 +28,7 @@ import { auditLedgerDir, readAuditLedger } from '@kubic/host/audit';
 import { collectDoctorChecks } from '@kubic/host/doctor';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from '../../src/config/load.js';
 import {
   installedPolicyDeps,
@@ -38,12 +38,8 @@ import {
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 
-const made: string[] = [];
-
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-approvals-config-${prefix}`));
-  made.push(dir);
-  return dir;
+  return tempDir(`kubic-approvals-config-${prefix}`);
 }
 
 beforeEach(() => {
@@ -53,8 +49,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 // A home whose global config carries `approvalsToml` under [approvals],

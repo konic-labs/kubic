@@ -9,8 +9,7 @@
 // --model`, `kubic tui --model` and `kubic config --model` are one input to the
 // ONE load dispatch performs, so the model the projection hands the lane is the
 // same model `kubic config` reports — never two derivations that can drift.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   attachSession,
@@ -35,7 +34,8 @@ import {
   ProjectTrustStore,
   projectTrustStorePath,
 } from '@kubic/host/config';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { prodRunDeps } from '../prod-runners.js';
 import { runHeadlessPrompt } from '../run/command.js';
 import { composePromptSections } from '../session/bootstrap.js';
@@ -65,19 +65,6 @@ import {
   sessionRetentionDays,
 } from './projections.js';
 
-const made: string[] = [];
-
-function tmpDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
 function storeFor(home: string): ProjectTrustStore {
   return new ProjectTrustStore(projectTrustStorePath(home));
 }
@@ -88,16 +75,16 @@ function storeFor(home: string): ProjectTrustStore {
 // Helpers write one layer file at a time: the global layer needs no trust,
 // the project layer loads under KUBIC_TRUST_PROJECT=1.
 function globalHome(toml: string): { home: string; cwd: string } {
-  const home = tmpDir('kubic-proj-home-');
-  const cwd = tmpDir('kubic-proj-cwd-');
+  const home = tempDir('kubic-proj-home-');
+  const cwd = tempDir('kubic-proj-cwd-');
   mkdirSync(join(home, '.kubic'), { recursive: true });
   writeFileSync(join(home, '.kubic', 'config.toml'), toml);
   return { home, cwd };
 }
 
 function trustedProject(toml: string): { home: string; project: string } {
-  const home = tmpDir('kubic-proj-phome-');
-  const project = tmpDir('kubic-proj-project-');
+  const home = tempDir('kubic-proj-phome-');
+  const project = tempDir('kubic-proj-project-');
   mkdirSync(join(project, '.kubic'), { recursive: true });
   writeFileSync(join(project, '.kubic', 'config.toml'), toml);
   return { home, project };
@@ -167,14 +154,14 @@ describe('compaction disabled survives a threshold-crossing run', () => {
     // pins the summary reading the pre-u2 prefix), so a single exchange
     // can never compact — the second turn is what crosses.
     let summaries = 0;
-    const sessionsRoot = tmpDir('kubic-compact-off-sessions-');
+    const sessionsRoot = tempDir('kubic-compact-off-sessions-');
     const deps = {
       sessionsRoot,
       models: fauxSmallWindow((summary) => {
         if (summary) summaries += 1;
       }),
       model: { provider: 'faux', id: 'small' },
-      env: new NodeExecutionEnv(tmpDir('kubic-compact-off-cwd-')),
+      env: new NodeExecutionEnv(tempDir('kubic-compact-off-cwd-')),
       ...(compaction === undefined ? {} : { compaction }),
     };
     const first = await runHeadlessPrompt(text('u1', 1200), {}, deps);
@@ -256,8 +243,8 @@ describe('system prompt file section', () => {
 
   it('is undefined when nothing is configured', () => {
     const result = loadCliConfig({
-      cwd: tmpDir('kubic-sysprompt-absent-cwd-'),
-      home: tmpDir('kubic-sysprompt-absent-home-'),
+      cwd: tempDir('kubic-sysprompt-absent-cwd-'),
+      home: tempDir('kubic-sysprompt-absent-home-'),
       env: {},
     });
     expect(result.error).toBeUndefined();
@@ -372,8 +359,8 @@ describe('roleLayersFromConfig', () => {
   });
 
   it('orders layers by CONFIG_LAYERS: global before project', () => {
-    const home = tmpDir('kubic-layers-home-');
-    const project = tmpDir('kubic-layers-project-');
+    const home = tempDir('kubic-layers-home-');
+    const project = tempDir('kubic-layers-project-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
@@ -397,8 +384,8 @@ describe('roleLayersFromConfig', () => {
   });
 
   it('is empty when no layer declares a role leaf', () => {
-    const home = tmpDir('kubic-layers-empty-home-');
-    const cwd = tmpDir('kubic-layers-empty-cwd-');
+    const home = tempDir('kubic-layers-empty-home-');
+    const cwd = tempDir('kubic-layers-empty-cwd-');
     const result = loadCliConfig({ cwd, home, env: {} });
     expect(roleLayersFromConfig(requireRuntimeConfig(result))).toEqual([]);
   });
@@ -668,8 +655,8 @@ describe('request options projection', () => {
           throw new Error('no layers');
         },
       },
-      home: tmpDir('kubic-stream-fail-home-'),
-      cwd: tmpDir('kubic-stream-fail-cwd-'),
+      home: tempDir('kubic-stream-fail-home-'),
+      cwd: tempDir('kubic-stream-fail-cwd-'),
       projectTrusted: true,
       session: { model: { timeoutMs: 0 } },
     });
@@ -686,8 +673,8 @@ describe('request options projection', () => {
 
 describe('settings skills from config', () => {
   it('resolves a relative project entry against the config file directory', () => {
-    const home = tmpDir('kubic-skills-home-');
-    const project = tmpDir('kubic-skills-project-');
+    const home = tempDir('kubic-skills-home-');
+    const project = tempDir('kubic-skills-project-');
     mkdirSync(join(project, '.kubic'), { recursive: true });
     mkdirSync(join(project, 'shared', 'team'), { recursive: true });
     writeFileSync(
@@ -708,14 +695,14 @@ describe('settings skills from config', () => {
   });
 
   it('keeps an absolute global entry as written', () => {
-    const home = tmpDir('kubic-skills-home-');
+    const home = tempDir('kubic-skills-home-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
-    const shared = tmpDir('kubic-skills-shared-');
+    const shared = tempDir('kubic-skills-shared-');
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
       `skills = ["${shared}"]\n`,
     );
-    const project = tmpDir('kubic-skills-project-');
+    const project = tempDir('kubic-skills-project-');
     const result = loadCliConfig({ cwd: project, home, env: {} });
     expect(result.error).toBeUndefined();
     expect(runtimeSkillsDeps(result)).toEqual({ settingsSkills: [shared] });
@@ -723,8 +710,8 @@ describe('settings skills from config', () => {
   });
 
   it('refuses the project skills with the project file when untrusted', () => {
-    const home = tmpDir('kubic-skills-home-');
-    const project = tmpDir('kubic-skills-project-');
+    const home = tempDir('kubic-skills-home-');
+    const project = tempDir('kubic-skills-project-');
     mkdirSync(join(project, '.kubic'), { recursive: true });
     writeFileSync(
       join(project, '.kubic', 'config.toml'),
@@ -736,14 +723,14 @@ describe('settings skills from config', () => {
   });
 
   it('reports the effective list in `kubic config`', () => {
-    const home = tmpDir('kubic-skills-home-');
+    const home = tempDir('kubic-skills-home-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
-    const shared = tmpDir('kubic-skills-shared-');
+    const shared = tempDir('kubic-skills-shared-');
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
       `skills = ["${shared}"]\n`,
     );
-    const project = tmpDir('kubic-skills-project-');
+    const project = tempDir('kubic-skills-project-');
     const result = loadCliConfig({ cwd: project, home, env: {} });
     const view = effectiveConfigView(requireRuntimeConfig(result));
     const row = view.values.find((value) => value.key === 'skills');

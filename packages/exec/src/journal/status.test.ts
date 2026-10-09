@@ -1,14 +1,8 @@
 // Log timeline + status.
-import {
-  appendFileSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
@@ -16,23 +10,13 @@ import {
 import { journalStatus, reconciliationSummary } from './status.js';
 import { FileJournalStore } from './store.js';
 
-const roots: string[] = [];
-
 afterEach(() => {
   // Sandbox disposal restores process.env when a repo was activated.
   disposeAllGitSandboxes();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
 });
 
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
 function seed(): FileJournalStore {
-  const store = new FileJournalStore(tmpRoot('j-'));
+  const store = new FileJournalStore(tempDir('j-'));
   store.append({
     path: 'a.txt',
     op: 'edit',
@@ -60,7 +44,7 @@ function seed(): FileJournalStore {
 
 describe('journal log + status', () => {
   it('reports non-repo status outside a repository', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     const status = journalStatus(seed(), root);
     expect(status.entries).toBe(2);
     expect(status.reversible).toBe(1);
@@ -69,7 +53,7 @@ describe('journal log + status', () => {
   });
 
   it('reports branch state inside a repository without running naive git', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     mkdirSync(join(root, '.git'));
     writeFileSync(
       join(root, '.git', 'HEAD'),
@@ -88,9 +72,9 @@ describe('journal log + status', () => {
 // `(detached)`.
 describe('worktree HEAD resolution', () => {
   function linkedWorktree(head: string): { root: string; gitdir: string } {
-    const gitdir = tmpRoot('gd-');
+    const gitdir = tempDir('gd-');
     writeFileSync(join(gitdir, 'HEAD'), head);
-    const root = tmpRoot('wt-');
+    const root = tempDir('wt-');
     writeFileSync(join(root, '.git'), `gitdir: ${gitdir}\n`);
     return { root, gitdir };
   }
@@ -101,7 +85,7 @@ describe('worktree HEAD resolution', () => {
   });
 
   it('resolves a relative gitdir pointer against the worktree root', () => {
-    const root = tmpRoot('wt-');
+    const root = tempDir('wt-');
     const gitdir = join(root, '.git-worktrees', 'wt');
     mkdirSync(gitdir, { recursive: true });
     writeFileSync(join(gitdir, 'HEAD'), 'ref: refs/heads/relative-branch\n');
@@ -115,7 +99,7 @@ describe('worktree HEAD resolution', () => {
   });
 
   it('a dangling pointer degrades to (unknown), no throw', () => {
-    const root = tmpRoot('wt-');
+    const root = tempDir('wt-');
     writeFileSync(
       join(root, '.git'),
       `gitdir: ${join(root, 'absent-gitdir')}\n`,
@@ -125,13 +109,13 @@ describe('worktree HEAD resolution', () => {
   });
 
   it('a malformed pointer degrades to (unknown), no throw', () => {
-    const root = tmpRoot('wt-');
+    const root = tempDir('wt-');
     writeFileSync(join(root, '.git'), 'not a gitdir pointer\n');
     expect(journalStatus(seed(), root).repo?.branch).toBe('(unknown)');
   });
 
   it('the classic .git-directory layout stays byte-for-byte behavior', () => {
-    const root = tmpRoot('ws-');
+    const root = tempDir('ws-');
     mkdirSync(join(root, '.git'));
     writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/classic\n');
     expect(journalStatus(seed(), root).repo?.branch).toBe('classic');
@@ -140,14 +124,14 @@ describe('worktree HEAD resolution', () => {
 
 describe('unattributed count', () => {
   it('counts reconciliation finds separately in status', () => {
-    const status = journalStatus(seed(), tmpRoot('ws-'));
+    const status = journalStatus(seed(), tempDir('ws-'));
     expect(status.entries).toBe(2);
     expect(status.unattributed).toBe(1);
   });
 
   it('summarizes an empty journal without inventing entries', () => {
-    const empty = new FileJournalStore(tmpRoot('j-'));
-    expect(journalStatus(empty, tmpRoot('ws-'))).toEqual({
+    const empty = new FileJournalStore(tempDir('j-'));
+    expect(journalStatus(empty, tempDir('ws-'))).toEqual({
       entries: 0,
       reversible: 0,
       nonReversible: 0,
@@ -171,7 +155,7 @@ describe('unattributed count', () => {
 // tell an empty journal from an unreadable one.
 describe('corrupt index lines', () => {
   it('counts unparsable index lines and keeps the readable entries', () => {
-    const dir = tmpRoot('j-');
+    const dir = tempDir('j-');
     const store = new FileJournalStore(dir);
     store.append({
       path: 'a.txt',
@@ -184,7 +168,7 @@ describe('corrupt index lines', () => {
       timestamp: 1700000000000,
     });
     appendFileSync(join(dir, 'index.jsonl'), '{"path":"torn\n');
-    const status = journalStatus(store, tmpRoot('ws-'));
+    const status = journalStatus(store, tempDir('ws-'));
     expect(status.corruptLines).toBe(1);
     // A dropped line is not content corruption: no entry claims that
     // content, so the blob-integrity count stays where it was.
@@ -194,7 +178,7 @@ describe('corrupt index lines', () => {
   });
 
   it('reports zero for a clean index', () => {
-    expect(journalStatus(seed(), tmpRoot('ws-')).corruptLines).toBe(0);
+    expect(journalStatus(seed(), tempDir('ws-')).corruptLines).toBe(0);
   });
 });
 
@@ -202,7 +186,7 @@ describe('corrupt index lines', () => {
 // letting it hide behind reversibility counts.
 describe('corrupt count', () => {
   it('counts entries whose content is unexpectedly missing under a recorded hash', () => {
-    const dir = tmpRoot('j-');
+    const dir = tempDir('j-');
     const store = new FileJournalStore(dir);
     const recorded = store.append({
       path: 'a.txt',
@@ -215,14 +199,14 @@ describe('corrupt count', () => {
       timestamp: 1700000000000,
     });
     writeFileSync(join(dir, 'blobs', recorded.afterHash ?? ''), 'tampered\n');
-    const status = journalStatus(store, tmpRoot('ws-'));
+    const status = journalStatus(store, tempDir('ws-'));
     expect(status.corrupt).toBe(1);
   });
 
   it('does not count designed absences as corrupt', () => {
     // seed()'s unattributed entry records a hash-only pre-image — no
     // before-blob exists by design, and that is not corruption.
-    const status = journalStatus(seed(), tmpRoot('ws-'));
+    const status = journalStatus(seed(), tempDir('ws-'));
     expect(status.corrupt).toBe(0);
   });
 });
@@ -250,7 +234,7 @@ describe('HEAD-move markers in log + status', () => {
   }
 
   it('counts the marker as unattributed work and reports the move', () => {
-    const root = tmpRoot('ws-head-status-');
+    const root = tempDir('ws-head-status-');
     const status = journalStatus(withMarker(), root);
     expect(status.entries).toBe(3);
     expect(status.unattributed).toBe(2);
@@ -290,7 +274,7 @@ describe('status repo ahead/behind, root and conflicts', () => {
   it('reports ahead/behind against a local upstream', () => {
     const repo = createGitSandbox({ prefix: 'kubic-journal-status-' });
     repo.activate();
-    const origin = tmpRoot('origin-');
+    const origin = tempDir('origin-');
     repo.git(['init', '--bare', '-q', origin]);
     commitFile(repo, 'a.txt', 'one\n');
     repo.git(['remote', 'add', 'origin', origin]);

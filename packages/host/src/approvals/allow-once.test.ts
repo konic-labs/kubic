@@ -4,27 +4,18 @@
 // restarts, via approvals.json.
 //
 // Hermetic: real service, real file store in a temp dir removed in afterEach.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { auditLedgerDir, readAuditLedger } from '../audit/index.js';
 import { installPolicy } from './install.js';
 import type { ApprovalVerdict } from './policy.js';
 import { FileApprovalStore } from './stores.js';
 
-const made: string[] = [];
-
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-approvals-allow-${prefix}`));
-  made.push(dir);
-  return dir;
+  return tempDir(`kubic-approvals-allow-${prefix}`);
 }
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 const CALL = {
   toolName: 'bash',

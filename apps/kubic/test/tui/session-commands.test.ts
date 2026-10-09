@@ -3,14 +3,7 @@
 // path with a temp sessions root and a temp workspace, so `/new` really
 // boots a second session, `/resume` really lists the store, and `/undo`
 // really restores a journaled file. Zero network, zero paid tokens.
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -20,24 +13,12 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function fakeTerminal(width: number) {
   return terminalRig(width, 30);
@@ -83,8 +64,8 @@ describe('/new, /resume and /undo on the kubic tui path', () => {
   it('starts a fresh session with /new without leaving the alt-screen', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-session-commands-new-ws-');
-    const sessionsRoot = tmpRoot('tui-session-commands-new-sessions-');
+    const workspace = tempDir('tui-session-commands-new-ws-');
+    const sessionsRoot = tempDir('tui-session-commands-new-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     // ONE catalog per process, like the real boot: the shared faux script is
@@ -137,8 +118,8 @@ describe('/new, /resume and /undo on the kubic tui path', () => {
   it('lists the store with /resume and loads the chosen transcript', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-session-commands-resume-ws-');
-    const sessionsRoot = tmpRoot('tui-session-commands-resume-sessions-');
+    const workspace = tempDir('tui-session-commands-resume-ws-');
+    const sessionsRoot = tempDir('tui-session-commands-resume-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     const models = providers([
@@ -193,8 +174,8 @@ describe('/new, /resume and /undo on the kubic tui path', () => {
   it('restores the journaled change with /undo', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-session-commands-undo-ws-');
-    const sessionsRoot = tmpRoot('tui-session-commands-undo-sessions-');
+    const workspace = tempDir('tui-session-commands-undo-ws-');
+    const sessionsRoot = tempDir('tui-session-commands-undo-sessions-');
     const lines: string[] = [];
     const fake = fakeTerminal(120);
     writeFileSync(join(workspace, 'a.txt'), 'before\n');

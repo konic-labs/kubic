@@ -8,29 +8,15 @@
 // network, zero paid tokens. Temp workspace, `process.cwd()` mocked, temp HOME
 // from the hermetic vitest env.
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
 import { createProdRunners } from '../../src/prod-runners.js';
-
-const tempDirs: string[] = [];
-
-function tmpRoot(prefix = 'kubic-prod-policy-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -41,9 +27,6 @@ afterEach(() => {
   disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
@@ -115,7 +98,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
     trajectory: string;
     lockfile: string;
   } {
-    const dir = tmpRoot('kubic-replay-policy-');
+    const dir = tempDir('kubic-replay-policy-');
     const trajectory = join(dir, 't.json');
     writeFileSync(
       trajectory,
@@ -185,7 +168,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
 
   it('refuses a re-execution model the enterprise policy disallows (exit 6, named refusal)', async () => {
     const { trajectory, lockfile } = replayFixture();
-    const { r, lines, errs } = runners(tmpRoot());
+    const { r, lines, errs } = runners(tempDir());
     const code = (
       await r.replay(
         {
@@ -209,11 +192,11 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
 
   it('gates the live tier too: the recorded model is refused when the policy disallows it', async () => {
     const { trajectory } = replayFixture();
-    const roleConfig = join(tmpRoot('kubic-replay-role-'), 'role.json');
+    const roleConfig = join(tempDir('kubic-replay-role-'), 'role.json');
     writeFileSync(roleConfig, '{"role":"writer"}\n');
     // The role config names the role; the document it pins
     // must exist in the re-execution's worktree (the mocked workspace).
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'writer.md'),
@@ -253,13 +236,13 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
       ['read', false, false],
       ['read, bash', true, true],
     ] as const) {
-      const workspace = tmpRoot('kubic-replay-role-tools-');
+      const workspace = tempDir('kubic-replay-role-tools-');
       mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
       writeFileSync(
         join(workspace, '.kubic', 'roles', 'reader.md'),
         roleDoc(tools, shell),
       );
-      const roleConfig = join(tmpRoot('kubic-replay-role-pin-'), 'role.json');
+      const roleConfig = join(tempDir('kubic-replay-role-pin-'), 'role.json');
       writeFileSync(roleConfig, '{"role":"reader"}');
       const { r } = runners(workspace);
       await r.replay(
@@ -280,14 +263,14 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
     const { trajectory } = replayFixture(
       'faux:tool bash {"command":"touch marker"}',
     );
-    const workspace = tmpRoot('kubic-replay-cwd-');
-    const worktree = tmpRoot('kubic-replay-wt-');
+    const workspace = tempDir('kubic-replay-cwd-');
+    const worktree = tempDir('kubic-replay-wt-');
     mkdirSync(join(worktree, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(worktree, '.kubic', 'roles', 'reader.md'),
       '---\nrole: reader\ntools: [read, bash]\nfilesystem: workspace-write\nshell: true\nnetwork: none\ngit: false\ncredentials: none\n---\n\n# reader\n\n## Prompt\n\nRead.\n',
     );
-    const roleConfig = join(tmpRoot('kubic-replay-role-pin-'), 'role.json');
+    const roleConfig = join(tempDir('kubic-replay-role-pin-'), 'role.json');
     writeFileSync(roleConfig, '{"role":"reader"}');
     const { r } = runners(workspace);
     await r.replay(
@@ -300,7 +283,7 @@ describe('`kubic replay --tier live` re-executes under the enterprise policy', (
 
   it('re-executes a model the policy allows (control)', async () => {
     const { trajectory, lockfile } = replayFixture();
-    const { r, lines } = runners(tmpRoot());
+    const { r, lines } = runners(tempDir());
     const code = (
       await r.replay(
         {
@@ -325,7 +308,7 @@ describe('`kubic tui` through the prod runner enforces the enterprise model gate
     // prodTuiDeps and boots the real lane; a refusal here happens before the
     // alt-screen (no terminal is created in this test).
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
-    const { r, errs } = runners(tmpRoot());
+    const { r, errs } = runners(tempDir());
     const code = (
       await r.tui(
         {},
@@ -348,7 +331,7 @@ describe('role documents under the enterprise tool policy on the doctor runner',
   const DENY_BASH = '[policy]\ndenied_tools = ["bash"]\n';
 
   function workspaceWithRoles(): string {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'planner.md'),

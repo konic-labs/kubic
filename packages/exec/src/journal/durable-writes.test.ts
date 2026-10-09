@@ -5,16 +5,10 @@
 // a blob write would trust the name. The retention rewrite has the mirror problem: a
 // crash right after its rename can replace the journal's whole history with
 // an empty file, because nothing was flushed before the rename.
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { FileBridge } from '../file-bridge.js';
 import { sha256Hex } from './hash.js';
 import { FileJournalStore } from './store.js';
@@ -100,22 +94,12 @@ vi.mock('../file-bridge.js', async (importOriginal) => {
   };
 });
 
-const roots: string[] = [];
-
 afterEach(() => {
   log.calls = [];
   log.fsyncs = 0;
   hooks.refuseFlush = null;
   hooks.failFlush = null;
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
 });
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'journal-durable-writes-'));
-  roots.push(root);
-  return root;
-}
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   return {
@@ -141,7 +125,7 @@ function seedBlob(dir: string, hash: string, content: string): string {
 
 describe('journal durable writes', () => {
   it('fsyncs a blob and its directory before the index line is appended', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     const recorded = store.append(entry({ before: 'v1\n', after: 'v2\n' }));
     const index = join(dir, 'index.jsonl');
@@ -165,7 +149,7 @@ describe('journal durable writes', () => {
   });
 
   it('durable: false keeps the plain write and fsyncs nothing', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ before: 'v1\n', after: 'v2\n' }));
     expect(log.calls.filter((call) => call.startsWith('flush'))).toEqual([]);
@@ -174,7 +158,7 @@ describe('journal durable writes', () => {
   });
 
   it('rewrites a truncated blob found at the target hash', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     const before = 'the real pre-image\n';
     // Crash residue on a delayed-allocation filesystem: the rename landed,
@@ -187,7 +171,7 @@ describe('journal durable writes', () => {
   });
 
   it('rewrites a same-size blob whose bytes do not hash to its name', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     const before = 'the real pre-image\n';
     // Same length, so the size gate cannot catch it: the hash must.
@@ -198,7 +182,7 @@ describe('journal durable writes', () => {
   });
 
   it('leaves an intact blob alone: no rewrite, no tmp', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     const before = 'shared pre-image\n';
     const hash = seedBlob(dir, sha256Hex(before), before);
@@ -213,7 +197,7 @@ describe('journal durable writes', () => {
   });
 
   it('flushes the retention rewrite before renaming it over the index', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));
@@ -237,7 +221,7 @@ describe('journal durable writes', () => {
   });
 
   it('durable: false leaves the retention rewrite unfsynced', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));
@@ -253,7 +237,7 @@ describe('journal durable writes', () => {
 // A refused flush is not a failed write.
 describe('journal durable writes: refused flushes', () => {
   it('records the append when the filesystem refuses a directory flush', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     hooks.refuseFlush = (path) => path === join(dir, 'blobs');
     const recorded = store.append(entry({ path: 'a.txt', after: 'hello\n' }));
@@ -264,7 +248,7 @@ describe('journal durable writes: refused flushes', () => {
   });
 
   it('still completes a compaction whose directory flush is refused', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));
@@ -278,7 +262,7 @@ describe('journal durable writes: refused flushes', () => {
   });
 
   it('still fails the append when a flush fails for real', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     hooks.failFlush = (path) => path.includes(`${sep}blobs${sep}`);
     expect(() =>
@@ -294,7 +278,7 @@ describe('journal durable writes: refused flushes', () => {
 // read + hash of every reused blob.
 describe('journal durable writes: blob reuse', () => {
   it('trusts a blob it wrote itself, with no re-read on reuse', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     const content = 'reused content\n';
     const first = store.append(entry({ path: 'a.txt', after: content }));
@@ -307,7 +291,7 @@ describe('journal durable writes: blob reuse', () => {
   });
 
   it('reads and hashes a blob it did not write', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-writes-');
     const store = new FileJournalStore(dir);
     const content = 'foreign content\n';
     const hash = seedBlob(dir, sha256Hex(content), content);

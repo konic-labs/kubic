@@ -6,13 +6,11 @@
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   createGitSandbox,
@@ -22,16 +20,9 @@ import {
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../test/temp-dir.js';
 import type { CliConfigResult } from './config/load.js';
 import { createProdRunners } from './prod-runners.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -44,9 +35,6 @@ afterEach(() => {
   disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // The test's git driver: one injected sandbox per test, so
@@ -116,7 +104,7 @@ function git(dir: string, args: string[]): void {
 }
 
 function fixtureRepo(): string {
-  const dir = tmp('kubic-eval-repo-');
+  const dir = tempDir('kubic-eval-repo-');
   git(dir, ['init', '-q']);
   git(dir, ['config', 'user.email', 'eval@example.com']);
   git(dir, ['config', 'user.name', 'eval']);
@@ -138,7 +126,7 @@ describe('the live suite runner runs the built-in suites', () => {
   it('runs one suite end to end: a record, the eval fields and a trajectory file', {
     timeout: 60_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const { r, lines, errs } = runners(workspace);
     const code = (
       await r.eval(
@@ -189,8 +177,8 @@ describe('the live suite runner runs the built-in suites', () => {
   it('loads the configured settings skills into the suite lane', {
     timeout: 60_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
-    const skill = join(tmp('kubic-eval-skills-'), 'house-style');
+    const workspace = tempDir('kubic-eval-ws-');
+    const skill = join(tempDir('kubic-eval-skills-'), 'house-style');
     mkdirSync(skill);
     writeFileSync(
       join(skill, 'SKILL.md'),
@@ -224,7 +212,7 @@ describe('the live suite runner runs the built-in suites', () => {
   it('benchmark runs the matrix and exits 0 by verdict', {
     timeout: 120_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const { r, lines } = runners(workspace);
     const code = (
       await r.benchmark(
@@ -278,7 +266,7 @@ describe('the live suite runner runs the built-in suites', () => {
   it('scores a --trajectory FILE through the prod reader', {
     timeout: 60_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const path = join(workspace, 'run.json');
     writeFileSync(
       path,
@@ -356,7 +344,7 @@ describe('the live suite runner runs the built-in suites', () => {
   it('names an unreadable trajectory file (exit 2, trajectory-unreadable)', {
     timeout: 60_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const { r, lines } = runners(workspace);
     const code = (
       await r.eval(
@@ -382,7 +370,7 @@ describe('the live suite runner runs the built-in suites', () => {
   it('resolves the category alias (--suite swe)', {
     timeout: 60_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const { r, lines } = runners(workspace);
     const code = (
       await r.benchmark(

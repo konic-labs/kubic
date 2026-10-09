@@ -1,11 +1,10 @@
 // Structured git status/diff ops (switched the status parser to porcelain v2
 // -z).
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { argvKey } from '@kubic/exec/test-support/env-fakes';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../../test/temp-dir.js';
 import { createSessionSpillSink } from '../../spill.js';
 import { BASH_RESULT_MAX_CHARS } from '../bash.js';
 import { createInvocation, MemoryMemoStore } from '../memos.js';
@@ -40,19 +39,6 @@ function inv(): ToolInvocation {
     { invocationId: 'inv-g1', operationId: 'op-g1', turnId: 't-1' },
     new MemoryMemoStore(),
   );
-}
-
-const made: string[] = [];
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
 }
 
 const STATUS_OUT = [
@@ -553,7 +539,7 @@ describe('git output bounds', () => {
 
   it('git_show clips a huge patch and spills the full text when sunk', async () => {
     const big = `commit abc\n${'y'.repeat(200 * 1024)}\n`;
-    const session = tmp('git-tool-session-');
+    const session = tempDir('git-tool-session-');
     const sunk = {
       ...ctx({
         'git show --format= --patch HEAD': {

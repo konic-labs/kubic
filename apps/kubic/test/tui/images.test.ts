@@ -2,8 +2,7 @@
 // a terminal-pasted inline image reach the lane's user-message content, and a
 // model without image input refuses the attachment by name instead of sending
 // it. Faux provider only: zero network, zero paid tokens.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -15,6 +14,7 @@ import type { CommandResult } from '@kubic/core/cli/exit-codes';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { readImageFile } from '../../src/tui/commands/media.js';
 import { PASTE_IDLE_MS } from '../../src/tui/input.js';
@@ -27,14 +27,6 @@ const PNG = Buffer.from(
   'base64',
 );
 
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-images-'));
-  made.push(dir);
-  return dir;
-}
-
 beforeEach(() => {
   vi.stubEnv('KUBIC_PROVIDER', undefined);
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -45,8 +37,6 @@ afterEach(() => {
   // timers, so a leaked fake clock would hang every later wait.
   vi.useRealTimers();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 // The paste state machine arms its idle valve with `setTimeout`. Feeding the
@@ -199,7 +189,7 @@ function startStubSession(
 
 describe('kubic tui /image', () => {
   it('carries the attached image into the prompt the lane sends', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-images-');
     const shot = join(root, 'screenshot.png');
     writeFileSync(shot, PNG);
     const capture = captureUserMessage();
@@ -230,7 +220,7 @@ describe('kubic tui /image', () => {
   });
 
   it('attaches an image the terminal pastes inline (iTerm2 OSC 1337)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-images-');
     const capture = captureUserMessage();
     const { fake, exit } = startSession(
       root,
@@ -260,7 +250,7 @@ describe('kubic tui /image', () => {
   });
 
   it('refuses the attachment when the model takes no image input', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-images-');
     const shot = join(root, 'screenshot.png');
     writeFileSync(shot, PNG);
     const capture = captureUserMessage();
@@ -290,7 +280,7 @@ describe('kubic tui /image', () => {
   });
 
   it('refuses a file that is not an image, by name', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-images-');
     const notes = join(root, 'notes.txt');
     writeFileSync(notes, 'not an image');
     const { fake, exit } = startSession(
@@ -316,7 +306,7 @@ describe('kubic tui /image', () => {
   // The editor dropped a blank draft before onSubmit, so
   // attach + Enter was a silent no-op while the footer said "Enter sends it".
   it('sends an image-only prompt (Enter on an empty draft)', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-images-');
     const shot = join(root, 'shot.png');
     writeFileSync(shot, PNG);
     const capture = captureUserMessage();
@@ -350,7 +340,7 @@ describe('kubic tui /image', () => {
   // cell lands, so a blank Enter while the turn runs (a double-tap, or habit)
   // must stay a no-op instead of queueing a prompt with no images.
   it('does not submit a blank prompt between a submit and its echo', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-images-');
     const shot = join(root, 'shot.png');
     writeFileSync(shot, PNG);
     const { fake, exit, admitted, release } = startStubSession({
@@ -383,7 +373,7 @@ describe('kubic tui /image', () => {
   });
 
   it('drops pending attachments when /model switches to a text-only model', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-images-');
     const shot = join(root, 'shot.png');
     writeFileSync(shot, PNG);
     const capture = captureUserMessage();
@@ -568,7 +558,7 @@ describe('kubic tui /image', () => {
   // pi-tui's StdinBuffer flushes a partial OSC after 50 ms), so the sequence
   // is reassembled across listener calls instead of typed into the draft.
   it('reassembles an inline paste split across two input calls', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-images-');
     const capture = captureUserMessage();
     const { fake, exit } = startSession(
       root,

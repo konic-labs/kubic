@@ -5,16 +5,13 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
-  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type FileSystem, NodeExecutionEnv } from '@kubic/exec/env';
 import {
@@ -26,28 +23,16 @@ import {
   planUndo,
   reconcile,
 } from '@kubic/exec/journal';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { PREIMAGE_CHUNK_BYTES, PREIMAGE_MAX_BYTES } from './atomic-file.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
 
-const dirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  dirs.push(dir);
-  return dir;
-}
-
 function setup(): { root: string; journal: FileJournalStore; c: OpContext } {
-  const root = tmp('ws-');
-  const journal = new FileJournalStore(tmp('j-'));
+  const root = tempDir('ws-');
+  const journal = new FileJournalStore(tempDir('j-'));
   const c: OpContext = {
     env: new NodeExecutionEnv(root),
     sessionId: 's1',
@@ -317,10 +302,10 @@ describe('write/edit symlink safety', () => {
       // `realpathSync(cwd)` is a second spelling of the same workspace. A
       // path through it must not bypass the resolution: with the early
       // return on the lexical test it did, and the write landed outside.
-      const real = tmp('ws-real-');
-      const link = join(tmp('ws-link-'), 'ws');
+      const real = tempDir('ws-real-');
+      const link = join(tempDir('ws-link-'), 'ws');
       symlinkSync(real, link);
-      const journal = new FileJournalStore(tmp('j-'));
+      const journal = new FileJournalStore(tempDir('j-'));
       const c: OpContext = {
         env: new NodeExecutionEnv(link),
         sessionId: 's1',
@@ -328,7 +313,7 @@ describe('write/edit symlink safety', () => {
         toolCallId: 'call-1',
         journal,
       };
-      const outside = tmp('outside-');
+      const outside = tempDir('outside-');
       symlinkSync(outside, join(real, 'linkdir'));
       const out = await callOperation(
         'write',
@@ -349,10 +334,10 @@ describe('write/edit symlink safety', () => {
   it.runIf(posix)(
     'writes through the physical spelling of the workspace',
     async () => {
-      const real = tmp('ws-real-');
-      const link = join(tmp('ws-link-'), 'ws');
+      const real = tempDir('ws-real-');
+      const link = join(tempDir('ws-link-'), 'ws');
       symlinkSync(real, link);
-      const journal = new FileJournalStore(tmp('j-'));
+      const journal = new FileJournalStore(tempDir('j-'));
       const c: OpContext = {
         env: new NodeExecutionEnv(link),
         sessionId: 's1',
@@ -465,7 +450,7 @@ describe('write/edit symlink safety', () => {
     'refuses a symlink whose target escapes the workspace',
     async () => {
       const { root, journal, c } = setup();
-      const outside = tmp('outside-');
+      const outside = tempDir('outside-');
       writeFileSync(join(outside, 'secret.txt'), 'secret\n');
       symlinkSync(join(outside, 'secret.txt'), join(root, 'link.txt'));
       const out = await callOperation(
@@ -490,7 +475,7 @@ describe('write/edit symlink safety', () => {
     'refuses a write through a symlinked directory that escapes the workspace',
     async () => {
       const { root, c } = setup();
-      const outside = tmp('outside-');
+      const outside = tempDir('outside-');
       symlinkSync(outside, join(root, 'linkdir'));
       const out = await callOperation(
         'write',

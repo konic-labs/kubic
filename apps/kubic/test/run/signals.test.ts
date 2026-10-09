@@ -7,8 +7,7 @@
 // Real NodeExecutionEnv + real `sh` child; faux provider only: zero network.
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   attachSession,
@@ -32,16 +31,10 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 
-const made: string[] = [];
 let observedPid: number | undefined;
-
-function tmpRoot(prefix = 'signal-drain-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -57,8 +50,6 @@ afterEach(() => {
     }
     observedPid = undefined;
   }
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function hangingBashModels(pidName: string): MutableModels {
@@ -120,8 +111,8 @@ describe('headless run signal handling (lane)', () => {
     it(`${signal} mid-drive kills the detached bash child and settles a mapped result`, {
       timeout: 10_000,
     }, async () => {
-      const sessionsRoot = tmpRoot();
-      const workspace = tmpRoot('ws-');
+      const sessionsRoot = tempDir();
+      const workspace = tempDir('ws-');
       const pidFile = join(workspace, 'pidmarker.txt');
       const signals = new EventEmitter();
       const pending = runHeadlessPrompt(
@@ -164,7 +155,7 @@ describe('headless run signal handling (lane)', () => {
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot(),
+        sessionsRoot: tempDir(),
         models: textModels('hi'),
         env: new FakeExecutionEnv({}),
         signals,
@@ -180,7 +171,7 @@ describe('headless run signal handling (lane)', () => {
       'hello',
       {},
       {
-        sessionsRoot: tmpRoot(),
+        sessionsRoot: tempDir(),
         models: textModels('hi'),
         env: new FakeExecutionEnv({}),
       },
@@ -193,7 +184,7 @@ describe('headless run signal handling (lane)', () => {
     // The lane booted and the turn never submitted. This path must still leave
     // exactly one durable pi.user entry: the fallback write is derived from the
     // transcript, not from a submit flag.
-    const root = tmpRoot();
+    const root = tempDir();
     const signals = new EventEmitter();
     const result = await runHeadlessPrompt(
       'late-prompt',
@@ -234,8 +225,8 @@ describe('headless run signal handling (lane)', () => {
   });
 
   it('a signal during boot (before admission) cancels the run instead of driving it', async () => {
-    const root = tmpRoot();
-    const workspace = tmpRoot('ws-');
+    const root = tempDir();
+    const workspace = tempDir('ws-');
     // A sibling session makes the boot emit its overlap line on the debug
     // channel — a hook that fires strictly before the lane admits the prompt.
     const store = openSessionStore(root, createNodeFileBridge(root));

@@ -1,8 +1,7 @@
 // The `[ui] theme` boot path ("Themes are JSON with a
 // schema"): a built-in name, a JSON theme file, and the named refusal for a
 // file that is missing or invalid — before the alt-screen opens.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createModels, fauxProvider } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
@@ -11,6 +10,7 @@ import { createTuiTheme, ThemeError, tuiTheme } from '@kubic/tui/theme';
 import type { Terminal } from '@kubic/tui/tui-boundary';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import {
   resolveTuiTheme,
@@ -35,22 +35,12 @@ function recordingTerminal(): {
   return terminalRig(120, 30);
 }
 
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-theme-'));
-  made.push(dir);
-  return dir;
-}
-
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 const VALID_THEME = JSON.stringify({
@@ -72,7 +62,7 @@ function bridgeFor(root: string) {
 
 describe('resolveTuiTheme', () => {
   it('defaults to the shipped brand palette', () => {
-    const files = bridgeFor(tmpRoot());
+    const files = bridgeFor(tempDir('kubic-tui-theme-'));
     expect(resolveTuiTheme(undefined, 'truecolor', files).accent('x')).toBe(
       createTuiTheme('truecolor').accent('x'),
     );
@@ -82,12 +72,16 @@ describe('resolveTuiTheme', () => {
   });
 
   it('selects the built-in light palette by name', () => {
-    const light = resolveTuiTheme('light', 'truecolor', bridgeFor(tmpRoot()));
+    const light = resolveTuiTheme(
+      'light',
+      'truecolor',
+      bridgeFor(tempDir('kubic-tui-theme-')),
+    );
     expect(light.accent('x')).toBe('\u001b[38;2;208;0;63mx\u001b[39m');
   });
 
   it('reads and validates a JSON theme file', () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-theme-');
     writeFileSync(join(root, 'solarized.json'), VALID_THEME);
     const theme = resolveTuiTheme(
       'solarized.json',
@@ -105,7 +99,7 @@ describe('resolveTuiTheme', () => {
   });
 
   it('names a missing theme file', () => {
-    const files = bridgeFor(tmpRoot());
+    const files = bridgeFor(tempDir('kubic-tui-theme-'));
     expect(() => resolveTuiTheme('nope.json', 'truecolor', files)).toThrow(
       ThemeError,
     );
@@ -161,7 +155,7 @@ describe('resolveTuiTheme', () => {
   });
 
   it('names an invalid theme file', () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-theme-');
     writeFileSync(
       join(root, 'broken.json'),
       '{ "colors": { "accent": "red" } }',
@@ -174,7 +168,7 @@ describe('resolveTuiTheme', () => {
 
 describe('kubic tui rejects a bad theme at boot', () => {
   it('prints one named error and exits 2 before the screen opens', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-theme-');
     const errors: string[] = [];
     let created = 0;
     const deps: TuiRunDeps = {
@@ -201,7 +195,7 @@ describe('kubic tui rejects a bad theme at boot', () => {
   });
 
   it('renders the configured theme on the first frame', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-theme-');
     const themePath = join(root, 'solarized.json');
     writeFileSync(themePath, VALID_THEME);
     const fake = recordingTerminal();
@@ -247,7 +241,7 @@ describe('/theme in the TUI', () => {
   it('previews as the selection moves, restores on esc, keeps on enter', {
     timeout: 20000,
   }, async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-theme-');
     const fake = recordingTerminal();
     const faux = fauxProvider({ models: [{ id: 'lane', input: ['text'] }] });
     const registry = createModels();

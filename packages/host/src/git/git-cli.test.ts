@@ -1,6 +1,5 @@
 // Push guard, git CLI, git-via-bash reconciliation.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInvocation, MemoryMemoStore } from '@kubic/agent/ops/memos';
 import { callOperation } from '@kubic/agent/ops/registry';
@@ -18,21 +17,12 @@ import {
   disposeAllGitSandboxes,
 } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { detectTriggers } from '../approvals/index.js';
 import { GIT_NOT_A_REPO, runGitCommand } from './index.js';
 
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
 afterEach(() => {
   disposeAllGitSandboxes();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 const TRIGGER_CTX = {
@@ -154,7 +144,7 @@ describe('git guard + CLI + reconciliation', () => {
     repo.git(['commit', '-m', 'v1']);
 
     const env = new NodeExecutionEnv(root);
-    const store = new FileJournalStore(mkTmp('j-'));
+    const store = new FileJournalStore(tempDir('j-'));
     const baseline = captureBaseline(root);
     // The agent rewrites the file through bash + git (no journal entry —
     // bash mutations are not intercepted by design).
@@ -179,7 +169,7 @@ describe('git guard + CLI + reconciliation', () => {
     });
     const root = repo.path;
     writeFileSync(join(root, 'tracked.txt'), 'v1\n');
-    const store = new FileJournalStore(mkTmp('j-'));
+    const store = new FileJournalStore(tempDir('j-'));
     const baseline = captureBaseline(root);
     const memos = new MemoryMemoStore();
     const out = await callOperation(

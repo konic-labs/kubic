@@ -6,21 +6,13 @@
 // read every snapshot on a shared machine. Kubic now creates its own state
 // private: 0700 directories, 0600 files, and an existing loose directory is
 // tightened on the way in.
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { FileJournalStore } from './store.js';
 import type { JournalEntryInput } from './types.js';
 
-const roots: string[] = [];
 let priorUmask = 0o022;
 
 // The modes are asserted exactly, so the ambient umask must not decide the
@@ -32,15 +24,7 @@ beforeEach(() => {
 
 afterEach(() => {
   process.umask(priorUmask);
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
 });
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'journal-perm-'));
-  roots.push(root);
-  return root;
-}
 
 function modeOf(path: string): number {
   return statSync(path).mode & 0o777;
@@ -62,7 +46,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
 
 describe('journal state permissions', () => {
   it('creates the journal directory 0700 and its blobs and index 0600', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-perm-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ before: 'v1\n', after: 'v2\n' }));
     expect(modeOf(dir)).toBe(0o700);
@@ -76,14 +60,14 @@ describe('journal state permissions', () => {
   });
 
   it('creates the index 0600 through the durable append seam too', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-perm-');
     const store = new FileJournalStore(dir); // durable on
     store.append(entry({ path: 'a.txt' }));
     expect(modeOf(join(dir, 'index.jsonl'))).toBe(0o600);
   });
 
   it('tightens an existing loose journal directory on the next mutation', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-perm-');
     mkdirSync(dir, { recursive: true });
     chmodSync(dir, 0o755);
     expect(modeOf(dir)).toBe(0o755);
@@ -93,7 +77,7 @@ describe('journal state permissions', () => {
   });
 
   it('keeps the retention rewrite private', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-perm-');
     const store = new FileJournalStore(dir, { durable: false });
     store.append(entry({ path: 'a.txt', after: 'a\n' }));
     store.append(entry({ path: 'b.txt', after: 'b\n' }));

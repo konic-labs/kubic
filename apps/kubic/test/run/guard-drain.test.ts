@@ -5,8 +5,7 @@
 // journal's last look. Real NodeExecutionEnv + real `sh` child; faux
 // provider only: zero network.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -17,18 +16,12 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 
-const made: string[] = [];
 // A shell pid this test observed: if an assertion fails while the child is
 // still alive, afterEach kills it rather than leaking a 60s `sleep`.
 let observedPid: number | undefined;
-
-function tmpRoot(prefix = 'guard-drain-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   // The no-isolation notice is not under test here (approvals/no-isolation-notice.test.ts owns
@@ -46,8 +39,6 @@ afterEach(() => {
     }
     observedPid = undefined;
   }
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function hangingBashModels(pidName: string): MutableModels {
@@ -101,8 +92,8 @@ describe('guard drain, prod path', () => {
     // a liveness bound, not a latency assertion.
     timeout: 30_000,
   }, async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('ws-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('ws-');
     const pidFile = join(workspace, 'pidmarker.txt');
     const result = await runHeadlessPrompt(
       'hang a bash child',

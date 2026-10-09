@@ -3,8 +3,7 @@
 // with the live model untouched. Drives the real `bootTuiLane` through
 // the production deps builder with faux providers: zero network, zero
 // paid tokens.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -16,19 +15,12 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
 import { prodTuiDeps } from '../../src/prod-runners.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { tuiDepsWithDefaults } from '../../src/tui/deps.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const tempDirs: string[] = [];
-
-function tmpRoot(prefix = 'kubic-tui-scoped-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -36,8 +28,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of tempDirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function writeRole(root: string, name: string): void {
@@ -134,7 +124,7 @@ function cliConfig(files: Record<string, string>): CliConfigResult {
 
 describe('scoped role set on the TUI lane', () => {
   it('refuses a /model switch outside the set, keeping the live model', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     writeRole(workspace, 'reviewer');
     const cfg = cliConfig({
       [PROJECT]:
@@ -143,7 +133,7 @@ describe('scoped role set on the TUI lane', () => {
     });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(workspace, tmpRoot(), twoProviders()),
+      rerooted(workspace, tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane(undefined, undefined, {
       role: 'reviewer',
@@ -177,7 +167,7 @@ describe('scoped role set on the TUI lane', () => {
     // only the pure helper and the help count were pinned. Dispatch
     // `/scoped-models` through the real loop (fake terminal, prod boot)
     // and assert the transcript carries the report, scoped and roleless.
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     writeRole(workspace, 'reviewer');
     const cfg = cliConfig({
       [PROJECT]:
@@ -186,7 +176,7 @@ describe('scoped role set on the TUI lane', () => {
     });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(workspace, tmpRoot(), twoProviders()),
+      rerooted(workspace, tempDir(), twoProviders()),
     );
     const fake = terminalRig(100);
     const pending = runTuiCommand(
@@ -209,13 +199,13 @@ describe('scoped role set on the TUI lane', () => {
   });
 
   it('reports the allow-all set when the lane has no role', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const cfg = cliConfig({
       [PROJECT]: '[model]\nprovider = "local"\nid = "a"\n',
     });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(workspace, tmpRoot(), twoProviders()),
+      rerooted(workspace, tempDir(), twoProviders()),
     );
     const fake = terminalRig(100);
     const pending = runTuiCommand(

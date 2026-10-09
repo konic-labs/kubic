@@ -18,17 +18,10 @@
 // `.gitignore` once (root only), and the sweep records the nested-ignored
 // write. Each test below states the failure it guards against.
 
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { createNodeFileBridge, type FileBridge } from '../file-bridge.js';
 import { captureBaseline, UNREADABLE_HASH } from './baseline.js';
 import { FileJournalStore } from './store.js';
@@ -40,28 +33,15 @@ const CTX = {
   timestamp: 1_700_000_000_000,
 };
 
-const roots: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
 function journalStore(): FileJournalStore {
-  return new FileJournalStore(tmpRoot('j-nested-ignore-'));
+  return new FileJournalStore(tempDir('j-nested-ignore-'));
 }
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
 
 // The fixture: a root ignore file whose rules must keep applying
 // inside children (`*.log`, `node_modules/`) plus a nested one whose rules
 // must apply to its own subtree and nowhere else.
 function workspace(): string {
-  const root = tmpRoot('ws-nested-ignore-');
+  const root = tempDir('ws-nested-ignore-');
   writeFileSync(join(root, '.gitignore'), '*.log\nnode_modules/\n');
   writeFileSync(join(root, 'keep.txt'), 'keep\n');
   writeFileSync(join(root, 'root.log'), 'noise\n');
@@ -139,7 +119,7 @@ describe('nested .gitignore in the baseline walk', () => {
   });
 
   it('proceeds with the parent rules when a nested .gitignore cannot be read', (ctx) => {
-    const root = tmpRoot('ws-nested-unreadable-');
+    const root = tempDir('ws-nested-unreadable-');
     writeFileSync(join(root, '.gitignore'), '*.tmp\n');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');
     mkdirSync(join(root, 'sub'));
@@ -169,7 +149,7 @@ describe('nested .gitignore in the baseline walk', () => {
   });
 
   it('keeps the .git/ and .kubic/ skips hard-first, ahead of any ignore rule', () => {
-    const root = tmpRoot('ws-nested-hardskip-');
+    const root = tempDir('ws-nested-hardskip-');
     // Rules that would un-ignore them if the hard skips were not ahead of the
     // matcher.
     writeFileSync(join(root, '.gitignore'), '!.git/\n!.kubic/\n');
@@ -199,7 +179,7 @@ describe('nested .gitignore in the baseline walk', () => {
   });
 
   it('probes .gitignore exactly once per directory entered (perf smoke)', () => {
-    const root = tmpRoot('ws-nested-perf-');
+    const root = tempDir('ws-nested-perf-');
     writeFileSync(join(root, '.gitignore'), 'ignored-dir/\n');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');
     mkdirSync(join(root, 'a', 'b'), { recursive: true });
@@ -260,7 +240,7 @@ describe('nested .gitignore in the baseline walk', () => {
     // The subset does not re-root a nested rule at its own directory: an
     // anchored nested pattern is matched against the workspace-relative path,
     // so the repo-relative form (`pkg/build/`) is exact...
-    const root = tmpRoot('ws-nested-anchored-');
+    const root = tempDir('ws-nested-anchored-');
     writeFileSync(join(root, '.gitignore'), '');
     mkdirSync(join(root, 'pkg', 'build'), { recursive: true });
     mkdirSync(join(root, 'pkg', 'sub', 'build'), { recursive: true });
@@ -280,7 +260,7 @@ describe('nested .gitignore in the baseline walk', () => {
 
 describe('gitignore dir rules at the walk', () => {
   function dirRuleWorkspace(): string {
-    const root = tmpRoot('ws-dir-rules-');
+    const root = tempDir('ws-dir-rules-');
     writeFileSync(join(root, '.gitignore'), 'build/\n*.egg-info/\n');
     // Narrowing half: a tracked script named `build` — the `build/` rule
     // names a directory, so the file stays in the baseline.

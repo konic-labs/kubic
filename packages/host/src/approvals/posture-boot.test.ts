@@ -5,27 +5,18 @@
 // if the user had.
 //
 // Hermetic: temp session/workspace dirs removed in afterEach, no model.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { auditLedgerDir, readAuditLedger } from '../audit/index.js';
 import { enableSessionFullAccess } from './full-access.js';
 import { installPolicy } from './install.js';
 import { FileApprovalStore } from './stores.js';
 
-const made: string[] = [];
-
 function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `kubic-approvals-posture-${prefix}`));
-  made.push(dir);
-  return dir;
+  return tempDir(`kubic-approvals-posture-${prefix}`);
 }
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 const DESTRUCTIVE = {
   toolName: 'bash',

@@ -3,8 +3,6 @@
 // the shared faux harness factory; its tool-end events come from the
 // durable watch exactly as `kubic run`/`tui` consume them.
 
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { KubicLaneEvent, LaneEventSink } from '@kubic/agent/lane/events';
 import { fauxAssistantMessage, fauxToolCall } from '@kubic/agent/pi-boundary';
@@ -12,28 +10,16 @@ import {
   bootFauxLane,
   fauxToolUse,
 } from '@kubic/agent/test-support/lane-harness';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { auditLedgerDirFor, readAuditLedger } from '../audit/index.js';
 import { enableFullAccess } from './full-access.js';
 import { installPolicy } from './install.js';
 import { FileApprovalStore } from './stores.js';
 
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
 describe('approvals gate the lane', () => {
   it('denies a destructive call headless, runs it under full-access', async () => {
-    const dir = mkTmp('approvals-lane-');
+    const dir = tempDir('approvals-lane-');
     const store = new FileApprovalStore(dir);
 
     // Each boot installs the policy anew: the posture is read once, at install.
@@ -85,7 +71,7 @@ describe('approvals gate the lane', () => {
 
 describe('credential access is challenged and audited', () => {
   it('denies a headless bash credential read and records trigger:credentials', async () => {
-    const dir = mkTmp('approvals-cred-');
+    const dir = tempDir('approvals-cred-');
     const installed = installPolicy({
       workspace: dir,
       sessionDir: join(dir, 'session'),

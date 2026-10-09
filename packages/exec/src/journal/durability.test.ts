@@ -9,10 +9,10 @@
 //   - Blob writes are tmp+rename: content-addressed blobs are never exposed
 //     half-written under their real name (readBlob would serve the torn bytes
 //     as content hash check rejects them).
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { FileBridge } from '../file-bridge.js';
 import { sha256Hex } from './hash.js';
 import { FileJournalStore } from './store.js';
@@ -78,19 +78,6 @@ vi.mock('../file-bridge.js', async (importOriginal) => {
   };
 });
 
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'journal-durable-'));
-  roots.push(root);
-  return root;
-}
-
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   return {
     path: 'src/a.ts',
@@ -107,7 +94,7 @@ function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
 
 describe('journal durability', () => {
   it('fsyncs the index on every append, through the durable bridge seam', () => {
-    const store = new FileJournalStore(tmpRoot());
+    const store = new FileJournalStore(tempDir('journal-durable-'));
     hooks.fsyncs = 0;
     hooks.durableAppends = [];
     store.append(entry({ path: 'a.txt', after: 'hello\n' }));
@@ -125,7 +112,9 @@ describe('journal durability', () => {
   });
 
   it('durable: false keeps the plain append seam and fsyncs nothing', () => {
-    const store = new FileJournalStore(tmpRoot(), { durable: false });
+    const store = new FileJournalStore(tempDir('journal-durable-'), {
+      durable: false,
+    });
     hooks.fsyncs = 0;
     store.append(entry({ path: 'a.txt', after: 'hello\n' }));
     expect(hooks.fsyncs).toBe(0);
@@ -136,7 +125,7 @@ describe('journal durability', () => {
   it('a bridge double without appendDurably keeps appending (old seam)', () => {
     hooks.withoutAppendDurably = true;
     try {
-      const store = new FileJournalStore(tmpRoot());
+      const store = new FileJournalStore(tempDir('journal-durable-'));
       hooks.fsyncs = 0;
       hooks.durableAppends = [];
       store.append(entry({ path: 'a.txt', after: 'hello\n' }));
@@ -154,7 +143,7 @@ describe('journal durability', () => {
   });
 
   it('never exposes a partial blob: a failed rename leaves no blob and no tmp litter', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-');
     const store = new FileJournalStore(dir);
     hooks.failRename = (destination) =>
       destination.includes(`${'/'}blobs${'/'}`);
@@ -174,7 +163,7 @@ describe('journal durability', () => {
   });
 
   it('a torn blob write fails the append and leaves no torn prefix behind', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-');
     const store = new FileJournalStore(dir);
     hooks.tornWrite = (path) =>
       path.includes(`${'/'}blobs${'/'}`) && path.endsWith('.tmp');
@@ -192,7 +181,7 @@ describe('journal durability', () => {
   });
 
   it('blob content is intact through the rename when the write succeeds', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-durable-');
     const store = new FileJournalStore(dir);
     const recorded = store.append(entry({ path: 'a.txt', after: 'hello\n' }));
     const blob = join(dir, 'blobs', recorded.afterHash ?? 'missing');

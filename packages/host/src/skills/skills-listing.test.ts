@@ -1,11 +1,11 @@
 // The `kubic skills` listing core: one row per skill with
 // its status and reason, the doctor counts line, and the TUI's one-time
 // boot notice. Pure data in, pure data out — no bridge, no network.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   type BootSkills,
   bootSkills,
@@ -15,19 +15,6 @@ import {
   skillsDoctorSummary,
   summarizeSkills,
 } from './skills-boot.js';
-
-const made: string[] = [];
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 function booted(): BootSkills {
   return {
@@ -187,8 +174,8 @@ function writeSkill(home: string, cwd: string): void {
 
 describe('skillsDoctorProbe carries the counts line first', () => {
   it('summary first, then the per-skill warns', () => {
-    const home = tmpRoot('kubic-skills-home-');
-    const cwd = tmpRoot('kubic-skills-cwd-');
+    const home = tempDir('kubic-skills-home-');
+    const cwd = tempDir('kubic-skills-cwd-');
     writeSkill(home, cwd);
     const checks = skillsDoctorProbe({
       bridge: createNodeFileBridge(cwd),
@@ -203,14 +190,14 @@ describe('skillsDoctorProbe carries the counts line first', () => {
 
 describe('bootSkills passes discovery skips through', () => {
   it('an untrusted project skill reaches the listing as excluded', () => {
-    const cwd = tmpRoot('kubic-skills-skipped-');
+    const cwd = tempDir('kubic-skills-skipped-');
     const dir = join(cwd, '.pi', 'skills', 'gem');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, 'SKILL.md'),
       '---\nname: gem\ndescription: Left out\n---\n\nBody.\n',
     );
-    const home = tmpRoot('kubic-skills-home-');
+    const home = tempDir('kubic-skills-home-');
     const result = bootSkills({
       bridge: createNodeFileBridge(cwd),
       cwd,
@@ -240,7 +227,7 @@ describe('offeredSkillNames', () => {
 
 describe('an explicit --skill in the listing', () => {
   it('lists a --skill path as a visible row of source cli', () => {
-    const cwd = tmpRoot('kubic-skills-cli-');
+    const cwd = tempDir('kubic-skills-cli-');
     const dir = join(cwd, 'extra', 'lint');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -250,7 +237,7 @@ describe('an explicit --skill in the listing', () => {
     const result = bootSkills({
       bridge: createNodeFileBridge(cwd),
       cwd,
-      homeDir: tmpRoot('kubic-skills-home-'),
+      homeDir: tempDir('kubic-skills-home-'),
       trusted: false,
       cliSkills: ['./extra/lint'],
     });

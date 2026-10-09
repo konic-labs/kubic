@@ -4,9 +4,6 @@
 // `kubic run --debug` — instead of looking like a hang. Faux provider only:
 // the first response is a transient error, the second succeeds; the backoff
 // is pi-durable's own default, so the TUI test observes a real window.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   createModels,
   fauxAssistantMessage,
@@ -14,25 +11,13 @@ import {
   fauxText,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function transientThenRecovered() {
   const models = createModels();
@@ -59,8 +44,8 @@ describe('retry activity on the kubic tui footer', () => {
   it('names the retry while it waits, then clears it', {
     timeout: 20000,
   }, async () => {
-    const workspace = tmpRoot('tui-lane-activity-ws-');
-    const sessionsRoot = tmpRoot('tui-lane-activity-sessions-');
+    const workspace = tempDir('tui-lane-activity-ws-');
+    const sessionsRoot = tempDir('tui-lane-activity-sessions-');
     const models = transientThenRecovered();
     const fake = terminalRig(120, 30);
     const printed: string[] = [];
@@ -106,9 +91,9 @@ describe('retry activity on kubic run --debug', () => {
       'say hi',
       { debug: true },
       {
-        sessionsRoot: tmpRoot('run-lane-activity-sessions-'),
+        sessionsRoot: tempDir('run-lane-activity-sessions-'),
         models: transientThenRecovered(),
-        env: new NodeExecutionEnv(tmpRoot('run-lane-activity-ws-')),
+        env: new NodeExecutionEnv(tempDir('run-lane-activity-ws-')),
         debugSink: (line) => debug.push(line),
         warn: () => undefined,
       },

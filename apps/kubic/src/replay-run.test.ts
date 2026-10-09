@@ -6,8 +6,7 @@
 // prompt runner is mocked so the test can prove it is NOT called for a
 // refused pin, and the model catalog is assembled for real from the faux
 // registry (no network, no credentials).
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   DEFAULT_PERMISSIONS,
@@ -26,15 +25,8 @@ vi.mock('./run/command.js', () => ({
   runHeadlessPrompt: lane.runHeadlessPrompt,
 }));
 
+import { tempDir } from '../../../test/temp-dir.js';
 import { runProdReplay } from './replay-run.js';
-
-const roots: string[] = [];
-
-function tempDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(dir);
-  return dir;
-}
 
 function fixtureTrajectory(objective = 'Fix the widget'): TrajectoryExport {
   return buildTrajectoryExport({
@@ -117,9 +109,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  for (const dir of roots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 describe('prod replay re-execution runner', () => {

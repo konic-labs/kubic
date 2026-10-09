@@ -12,12 +12,12 @@
 //
 // Faux provider only (`KUBIC_PROVIDER=faux`): zero network, zero paid
 // tokens. Temp dirs throughout.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
 import { createProdRunners } from '../../src/prod-runners.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
@@ -26,14 +26,6 @@ vi.mock('../../src/run/command.js', async (importOriginal) => ({
   ...(await importOriginal()),
   runHeadlessPrompt: vi.fn(),
 }));
-
-const tempDirs: string[] = [];
-
-function tmpRoot(prefix = 'kubic-replay-threading-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -51,9 +43,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 const HOME = '/nonexistent-home';
@@ -95,8 +84,8 @@ function runners() {
 
 describe('replay re-execution threads compaction and the prompt section', () => {
   it('the real builder hands both projections to the lane', async () => {
-    const dir = tmpRoot();
-    const worktree = tmpRoot('kubic-replay-threading-wt-');
+    const dir = tempDir();
+    const worktree = tempDir('kubic-replay-threading-wt-');
     const trajectory = join(dir, 't.json');
     writeFileSync(
       trajectory,

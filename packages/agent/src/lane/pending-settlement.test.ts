@@ -7,10 +7,8 @@
 // tool that blocks until its invocation is cancelled; the crash is simulated by
 // abandoning the first Harness mid-turn (never closing it) and reopening the
 // same storage.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   BACKGROUND_CONTEXT,
   type Conversation,
@@ -33,19 +31,9 @@ import {
   settlePending,
 } from './pending.js';
 
-const dirs: string[] = [];
-
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
-
-function scratch(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-pending-'));
-  dirs.push(dir);
-  return dir;
-}
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -229,7 +217,7 @@ describe('pendingInputText', () => {
       toolCall('work'),
       fauxAssistantMessage('finished'),
     ]);
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const first = await openLane(fixture, dir);
     await blockTurn(first, work, 'the interrupted prompt');
     const second = await openLane(fixture, dir);
@@ -248,7 +236,7 @@ describe('pendingInputText', () => {
       toolCall('work'),
       fauxAssistantMessage('finished'),
     ]);
-    const lane = await openLane(fixture, scratch());
+    const lane = await openLane(fixture, tempDir('kubic-pending-'));
     expect(
       await pendingInputText(lane.lane, BACKGROUND_CONTEXT),
     ).toBeUndefined();
@@ -464,7 +452,7 @@ describe('inspectStoredWork', () => {
       defineExtension({ name: 'kubic', tools: [work.tool] }),
     );
     fixture.faux.setResponses([toolCall('work')]);
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const first = await openLane(fixture, dir);
     await blockTurn(first, work);
 
@@ -482,7 +470,7 @@ describe('inspectStoredWork', () => {
 
   it('reports nothing for a storage with no unfinished work', async () => {
     const fixture = laneFixture();
-    const dir = scratch();
+    const dir = tempDir('kubic-pending-');
     const lane = await openLane(fixture, dir);
     lane.harness.resume();
     const submission = await lane.conversation.submit(

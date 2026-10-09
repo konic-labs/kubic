@@ -2,8 +2,7 @@
 // text, an interrupt before the turn drives nothing, and `--max-turns` stops
 // a tool loop as a guard stop that abandons the live turn.
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { killLaneProcesses } from '@kubic/agent/lane/abort';
 import type { Lane } from '@kubic/agent/lane/boot';
@@ -19,7 +18,8 @@ import {
   fauxToolCall,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootLane, createRunBoot } from './boot.js';
 import { closeRun } from './close.js';
 import { RunGuard } from './guard.js';
@@ -27,25 +27,13 @@ import type { HeadlessRunOptions } from './options.js';
 import { RunState } from './state.js';
 import { runTurn } from './turn.js';
 
-const made: string[] = [];
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
 type Responses = Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0];
 
 async function bootedRun(
   responses: Responses,
   options: HeadlessRunOptions = {},
 ) {
-  const workspace = tmp('run-turn-ws-');
+  const workspace = tempDir('run-turn-ws-');
   writeFileSync(join(workspace, 'a.txt'), 'spin\n');
   const faux = fauxProvider();
   const models = createModels();
@@ -54,12 +42,16 @@ async function bootedRun(
   const signals = new EventEmitter();
   const notices: string[] = [];
   const state = new RunState('hello', options, {
-    sessionsRoot: tmp('run-turn-sessions-'),
+    sessionsRoot: tempDir('run-turn-sessions-'),
     env: new NodeExecutionEnv(workspace),
     models,
     modelsCwd: workspace,
     roles: { cwd: workspace },
-    skills: { cwd: workspace, homeDir: tmp('run-turn-home-'), trusted: false },
+    skills: {
+      cwd: workspace,
+      homeDir: tempDir('run-turn-home-'),
+      trusted: false,
+    },
     signals,
     notice: (line) => notices.push(line),
     warn: (line) => notices.push(line),

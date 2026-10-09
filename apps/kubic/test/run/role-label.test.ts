@@ -2,8 +2,7 @@
 // agent tree name it: the `--role` name when one is selected, otherwise
 // `default`. A role name is user-controlled, so a long one is cut to its
 // column. Faux provider, zero network.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import {
@@ -13,8 +12,9 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { createCliTheme } from '@kubic/core/cli/theme';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { createRunProgress } from '../../src/run/progress.js';
 import { runTuiCommand } from '../../src/tui/run.js';
@@ -23,19 +23,6 @@ import { runTuiCommand } from '../../src/tui/run.js';
 // and an ellipsis.
 const LONG_ROLE = 'performance-regression-checker';
 const LONG_LABEL = 'performance-regress…';
-
-const made: string[] = [];
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 // The shape .kubic/roles/*.md use: frontmatter and a `## Prompt` section.
 function writeRole(root: string, name: string): void {
@@ -70,7 +57,7 @@ async function headingFor(
   rolesCwd: string,
   role: string | undefined,
 ): Promise<string> {
-  const cwd = tmpRoot('run-role-cwd-');
+  const cwd = tempDir('run-role-cwd-');
   const chunks: string[] = [];
   const progress = createRunProgress(
     { isTTY: true, columns: 100, write: (chunk: string) => chunks.push(chunk) },
@@ -81,7 +68,7 @@ async function headingFor(
     'review the change',
     { progress, ...(role === undefined ? {} : { role }) },
     {
-      sessionsRoot: tmpRoot('run-role-sessions-'),
+      sessionsRoot: tempDir('run-role-sessions-'),
       models: fauxModels(),
       env: new FakeExecutionEnv({}),
       roles: { cwd: rolesCwd, trusted: true },
@@ -125,18 +112,18 @@ async function treeFrameFor(
 
 describe('the run role in the heading of `kubic run`', () => {
   it('names a run without --role as the default role', async () => {
-    const heading = await headingFor(tmpRoot('run-role-roles-'), undefined);
+    const heading = await headingFor(tempDir('run-role-roles-'), undefined);
     expect(heading).toContain('■ kubic run · default · faux/small ·');
   });
 
   it('names the selected role', async () => {
-    const heading = await headingFor(tmpRoot('run-role-roles-'), 'reviewer');
+    const heading = await headingFor(tempDir('run-role-roles-'), 'reviewer');
     expect(heading).toContain('■ kubic run · reviewer · faux/small ·');
     expect(heading).not.toContain('· default ·');
   });
 
   it('cuts a long role name to its column and keeps the heading within the terminal', async () => {
-    const rolesCwd = tmpRoot('run-role-roles-');
+    const rolesCwd = tempDir('run-role-roles-');
     writeRole(rolesCwd, LONG_ROLE);
     const heading = await headingFor(rolesCwd, LONG_ROLE);
     expect(heading).toContain(`■ kubic run · ${LONG_LABEL} · faux/small ·`);

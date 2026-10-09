@@ -1,28 +1,15 @@
 // Undo core — reverse-chronological restore.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { FileJournalStore } from './store.js';
 import { applyUndo } from './undo.js';
 import { planUndo } from './undo-plan.js';
 
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
 function seed(): { store: FileJournalStore; root: string } {
-  const store = new FileJournalStore(tmpRoot('j-'));
-  const root = tmpRoot('ws-');
+  const store = new FileJournalStore(tempDir('j-'));
+  const root = tempDir('ws-');
   writeFileSync(join(root, 'a.txt'), 'v1\n');
   writeFileSync(join(root, 'b.txt'), 'keep\n');
   store.append({
@@ -95,8 +82,8 @@ const ENTRY_BASE = {
 } as const;
 
 function seedStale(): { store: FileJournalStore; root: string } {
-  const store = new FileJournalStore(tmpRoot('j-'));
-  const root = tmpRoot('ws-');
+  const store = new FileJournalStore(tempDir('j-'));
+  const root = tempDir('ws-');
   return { store, root };
 }
 
@@ -104,8 +91,8 @@ describe('a journal written before entries carried a source', () => {
   // Two tool writes to two files, the way main recorded them. The disk holds
   // the after-state, as it does when a run has just finished.
   function legacyTwoWrites(): { dir: string; root: string } {
-    const dir = tmpRoot('j-');
-    const root = tmpRoot('ws-');
+    const dir = tempDir('j-');
+    const root = tempDir('ws-');
     const store = new FileJournalStore(dir);
     writeFileSync(join(root, 'a.txt'), 'a1\n');
     writeFileSync(join(root, 'b.txt'), 'b1\n');
@@ -134,8 +121,8 @@ describe('a journal written before entries carried a source', () => {
   }
 
   it('maps each legacy line to its source on read, and drops the agent id', () => {
-    const dir = tmpRoot('j-');
-    const root = tmpRoot('ws-');
+    const dir = tempDir('j-');
+    const root = tempDir('ws-');
     const store = new FileJournalStore(dir);
     writeFileSync(join(root, 'a.txt'), 'a1\n');
     store.append({
@@ -332,8 +319,8 @@ describe('journal undo core', () => {
 // the world after it) and reversible: a second `undo --step` is the redo.
 describe('undo record + redo', () => {
   function seedOne(): { store: FileJournalStore; root: string } {
-    const store = new FileJournalStore(tmpRoot('j-'));
-    const root = tmpRoot('ws-');
+    const store = new FileJournalStore(tempDir('j-'));
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'a.txt'), 'v2\n');
     store.append({
       path: 'a.txt',
@@ -419,8 +406,8 @@ describe('undo record + redo', () => {
   });
 
   it('plain undo skips interleaved bookkeeping; --step still targets the newest entry (the redo)', () => {
-    const store = new FileJournalStore(tmpRoot('j-'));
-    const root = tmpRoot('ws-');
+    const store = new FileJournalStore(tempDir('j-'));
+    const root = tempDir('ws-');
     const undoRecord = (
       path: string,
       before: string,

@@ -1,11 +1,9 @@
 // The lane boots at the resolved thinking level:
 // override > the session's stored level > role > config, clamped to the
 // effective model. Faux provider only: zero network, zero paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { BACKGROUND_CONTEXT, fauxAssistantMessage } from '../pi-boundary.js';
 import {
   bootFauxLane,
@@ -15,20 +13,11 @@ import {
 } from '../test-support/lane-harness.js';
 import { attachSession, openSessionStore } from './session-store/index.js';
 
-const dirs: string[] = [];
 const lanes: FauxLane[] = [];
 
 afterEach(async () => {
   for (const lane of lanes.splice(0)) await lane.cleanup();
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
-
-function scratch(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-lane-thinking-'));
-  dirs.push(dir);
-  return dir;
-}
 
 function reasoning() {
   return {
@@ -64,7 +53,7 @@ describe('lane thinking resolution', () => {
   });
 
   it('orders override > session > role > config across attach', async () => {
-    const root = scratch();
+    const root = tempDir('kubic-lane-thinking-');
     const first = await bootFauxLane({
       storage: 'jsonl',
       root,

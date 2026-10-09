@@ -2,14 +2,7 @@
 // session > role > config, clamped to the effective model, never silently — and
 // the trajectory records the applied level, not the request. Drives the real
 // `runHeadlessPrompt` with faux models: zero network, zero paid tokens.
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -17,21 +10,9 @@ import {
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'run-thinking-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function reasoningModels(texts: string[]) {
   const faux = fauxProvider({
@@ -70,7 +51,7 @@ function writeRole(root: string, name: string): void {
 
 describe('run thinking level', () => {
   it('applies the per-run override and records it in the trajectory', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-thinking-');
     const result = await runHeadlessPrompt(
       'do it',
       {},
@@ -86,7 +67,7 @@ describe('run thinking level', () => {
   });
 
   it('clamps an unsupported request with a named notice and records the clamp', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-thinking-');
     const notices: string[] = [];
     const result = await runHeadlessPrompt(
       'do it',
@@ -105,7 +86,7 @@ describe('run thinking level', () => {
   });
 
   it('keeps the session record over a file-layer default on resume', async () => {
-    const root = tmpRoot();
+    const root = tempDir('run-thinking-');
     const env = new FakeExecutionEnv({});
     const first = await runHeadlessPrompt(
       'first',
@@ -133,8 +114,8 @@ describe('run thinking level', () => {
   });
 
   it('resolves the role default under the session record but over config', async () => {
-    const root = tmpRoot();
-    const rolesCwd = tmpRoot();
+    const root = tempDir('run-thinking-');
+    const rolesCwd = tempDir('run-thinking-');
     writeRole(rolesCwd, 'reviewer');
     const env = new FakeExecutionEnv({});
     const result = await runHeadlessPrompt(

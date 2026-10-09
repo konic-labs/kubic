@@ -4,8 +4,6 @@
 // the fake terminal satisfies the seam structurally, and the assertions read
 // the restored main-screen document the loop prints. A real faux lane end to
 // end: no network, no paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootLane, type Lane } from '@kubic/agent/lane/boot';
 import {
@@ -29,8 +27,9 @@ import {
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { TUI_CLOCK_TICK_MS } from '../../src/tui/chrome.js';
 import { tuiLoop } from '../../src/tui/lane-loop.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
@@ -47,19 +46,6 @@ type FauxStep =
   | FauxContent
   | (() => Promise<FauxMessage>)
   | ((context: { messages: readonly unknown[] }) => FauxMessage);
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tui-loop-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function fauxModels(steps: FauxStep[]): {
   models: MutableModels;
@@ -177,7 +163,7 @@ describe('kubic tui prompt loop', () => {
   it('refuses the side-effecting commands while a turn runs', async () => {
     // `/new`, `/resume` and `/undo` swap or close the session (and touch the
     // workspace) — a turn in flight owns both. The local reads stay allowed.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     let release: () => void = () => {};
@@ -232,7 +218,7 @@ describe('kubic tui prompt loop', () => {
   });
 
   it('runs a command from the Ctrl-P palette', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models, calls } = fauxModels(['never used']);
@@ -266,7 +252,7 @@ describe('kubic tui prompt loop', () => {
     // lane, and the second submit is rejected by pi-durable (whenBusy
     // 'reject') — lane/turn.ts maps that to the named busy failure, which
     // the footer shows and which never reaches the model.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     let release: () => void = () => {};
     const gated = new Promise<void>((resolve) => {
       release = resolve;
@@ -329,7 +315,7 @@ describe('kubic tui prompt loop', () => {
     // ('\x1b[27u') does not quit at all; Ctrl-C quits on its
     // double press.
     for (const presses of [['\x1b[99;5u', '\x1b[99;5u'], ['\x1b[100;5u']]) {
-      const root = tmpRoot();
+      const root = tempDir('tui-loop-');
       const lines: string[] = [];
       const fake = fakeTerminal(100);
       const { models } = fauxModels(['hello']);
@@ -354,7 +340,7 @@ describe('kubic tui prompt loop', () => {
     // idle, quit. A second Ctrl-C during a turn also quits." The second one
     // arrives while the cancellation is still draining — the turn is no
     // longer "running" but the abort has not settled. That must quit.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     let release: () => void = () => {};
@@ -394,7 +380,7 @@ describe('kubic tui prompt loop', () => {
   it('quits on stdin EOF so a detached tty cannot hang the alt-screen', async () => {
     // EOF is defined behaviour, not a silent no-op. Pi's
     // terminal exposes no EOF callback, so the loop watches the stream itself.
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels([]);
@@ -419,7 +405,7 @@ describe('kubic tui prompt loop', () => {
   });
 
   it('Esc interrupts a busy turn and never quits', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     let release: () => void = () => {};
@@ -476,7 +462,7 @@ describe('kubic tui prompt loop', () => {
 
   it('quits on Ctrl-D and on a Ctrl-C double press with an empty draft', async () => {
     for (const key of ['\x04', '\x03\x03']) {
-      const root = tmpRoot();
+      const root = tempDir('tui-loop-');
       const lines: string[] = [];
       const fake = fakeTerminal(100);
       const { models } = fauxModels([]);
@@ -498,7 +484,7 @@ describe('kubic tui prompt loop', () => {
   });
 
   it('prints the final document with the prompt in it', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const lines: string[] = [];
     const fake = fakeTerminal(100);
     const { models } = fauxModels(['answered']);
@@ -535,7 +521,7 @@ describe('kubic tui prompt loop', () => {
 // reads (at boot and after every settled turn) and the wall clock.
 describe('the header facts on the live loop', () => {
   it('reads the workspace at boot and again after a settled turn', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const fake = fakeTerminal(120);
     const { models } = fauxModels(['first done']);
     let reads = 0;
@@ -611,7 +597,7 @@ describe('the header facts on the live loop', () => {
 // recorded, and the receipt the settlement appends.
 describe('the turn receipt on the live loop', () => {
   it('counts the tools, the file and its lines of a write turn', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-loop-');
     const fake = fakeTerminal(120);
     const { models } = fauxModels([
       [

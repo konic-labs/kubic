@@ -7,15 +7,7 @@
 // Real code end to end: the prod bootTuiLane re-rooted onto temp state, a
 // real NodeExecutionEnv (a real slow bash) inside a temp workspace, and a
 // recording fake Terminal under the real alt-screen. Faux provider only.
-import {
-  existsSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inspectStoredWork } from '@kubic/agent/lane/pending';
 import {
@@ -36,19 +28,13 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
 
-const made: string[] = [];
 const pids: number[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tui-quit-drain-'));
-  made.push(dir);
-  return dir;
-}
 
 // The durable session's own records: any jsonl under the root holding the
 // needle (the JSONL storage writes <id>/main.jsonl plus document sidecars).
@@ -90,8 +76,6 @@ afterEach(() => {
       }
     }
   }
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;
@@ -122,8 +106,8 @@ interface Harness {
 // The prod boot, re-rooted, with the admitted operation ids and the order of
 // abort / kill / close recorded (the loop surface is passed through intact).
 function harness(steps: Step[]): Harness {
-  const sessionsRoot = tmpRoot();
-  const workspace = tmpRoot();
+  const sessionsRoot = tempDir('tui-quit-drain-');
+  const workspace = tempDir('tui-quit-drain-');
   const events: string[] = [];
   const admitted: string[] = [];
   const boots: TuiLaneBoot[] = [];

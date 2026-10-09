@@ -5,34 +5,19 @@
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   realpathSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../test/temp-dir.js';
 import { type FileSystem, NodeExecutionEnv } from './env/index.js';
 import { readRootFor, withReadRoots } from './read-roots.js';
 
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
 function skillTree(): { workspace: string; skillDir: string; skill: string } {
-  const workspace = tmp('kubic-read-roots-ws-');
-  const home = tmp('kubic-read-roots-home-');
+  const workspace = tempDir('kubic-read-roots-ws-');
+  const home = tempDir('kubic-read-roots-home-');
   const skillDir = join(home, '.agents', 'skills', 'a');
   mkdirSync(join(skillDir, 'refs'), { recursive: true });
   const skill = join(skillDir, 'SKILL.md');

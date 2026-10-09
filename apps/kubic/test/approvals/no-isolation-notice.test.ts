@@ -5,14 +5,7 @@
 // PATH (apps/kubic), not just inside the strings module: stderr for `run`
 // before the first turn, the welcome block for `tui` from the first render.
 // Faux lane only — zero network, zero paid tokens.
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootLane } from '@kubic/agent/lane/boot';
@@ -39,6 +32,7 @@ import {
 import { FAUX_MODEL_REF } from '@kubic/host/models';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import { tuiLoop } from '../../src/tui/lane-loop.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
@@ -46,14 +40,6 @@ import { runTuiCommand } from '../../src/tui/run.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..', '..');
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 // One faux provider plus the model collection it registers into; the handle
 // carries `state.callCount`, which is how the tests date the notice against
@@ -107,13 +93,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('no-isolation notice on `kubic run`', () => {
   it('emits the warning on stderr before the first turn', async () => {
-    const root = tmpRoot('notice-run-');
+    const root = tempDir('notice-run-');
     const faux = fauxModels(['all done']);
     const capture = captureStderr(faux.calls);
     let terminus: string;
@@ -143,7 +127,7 @@ describe('no-isolation notice on `kubic run`', () => {
   });
 
   it('still warns on an explicit --session resume (rule: per process start)', async () => {
-    const root = tmpRoot('notice-resume-');
+    const root = tempDir('notice-resume-');
     // Both runs are captured: the first one announces too (fresh start), and
     // an uncaptured sink would spray the suite's own output.
     const firstCapture = captureStderr(() => 0);
@@ -184,7 +168,7 @@ describe('no-isolation notice on `kubic run`', () => {
 
 describe('no-isolation notice suppression', () => {
   async function runOnce(label: string): Promise<CapturedWrite[]> {
-    const root = tmpRoot(`notice-${label}-`);
+    const root = tempDir(`notice-${label}-`);
     const capture = captureStderr(() => 0);
     try {
       const result = await runHeadlessPrompt(
@@ -354,7 +338,7 @@ describe('no-isolation notice on `kubic tui`', () => {
   });
 
   it('prints the full notice on /safety after a turn', async () => {
-    const root = tmpRoot('notice-tui-');
+    const root = tempDir('notice-tui-');
     const lines: string[] = [];
     const fake = fakeTerminal(200);
     const pending = runTuiCommand(

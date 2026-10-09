@@ -3,8 +3,7 @@
 // turn's unreadable audit ledger, an unresolvable --skill at startup and after
 // /new, and the full-access notice of a lane /new boots. Real booted lane over
 // temp dirs, faux models only: zero network, zero paid tokens.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -18,17 +17,10 @@ import { bootScreen } from '@kubic/tui/screen';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeTerminal, terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import { TuiTurnRunner } from '../../src/tui/turn-runner.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -83,17 +75,15 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('TUI warnings reach the transcript, not stderr', () => {
   it('a settled turn that cannot read the audit ledger warns on the screen', async () => {
-    const ws = tmp('tui-notice-ws-');
+    const ws = tempDir('tui-notice-ws-');
     olderLedger(ws);
     const stderr = captureStderr();
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmp('tui-notice-root-'),
+      sessionsRoot: tempDir('tui-notice-root-'),
       models: fauxModels(['answer']),
       env: new NodeExecutionEnv(ws),
     });
@@ -119,9 +109,9 @@ describe('TUI warnings reach the transcript, not stderr', () => {
   });
 
   it('an unresolvable --skill shows on the first frame, never on stderr', async () => {
-    const home = tmp('tui-notice-home-');
-    const ws = tmp('tui-notice-work-');
-    const root = tmp('tui-notice-sessions-');
+    const home = tempDir('tui-notice-home-');
+    const ws = tempDir('tui-notice-work-');
+    const root = tempDir('tui-notice-sessions-');
     const fake = terminalRig(120);
     const stderr = captureStderr();
     const errors: string[] = [];
@@ -162,9 +152,9 @@ describe('TUI warnings reach the transcript, not stderr', () => {
   });
 
   it('a session switched with /new shows its boot warning on the new screen', async () => {
-    const home = tmp('tui-notice-home-');
-    const ws = tmp('tui-notice-work-');
-    const root = tmp('tui-notice-sessions-');
+    const home = tempDir('tui-notice-home-');
+    const ws = tempDir('tui-notice-work-');
+    const root = tempDir('tui-notice-sessions-');
     const fake = terminalRig(120);
     const stderr = captureStderr();
     const warning = "warning: skill skipped (unknown skill 'ghost-skill')";
@@ -209,9 +199,9 @@ describe('TUI warnings reach the transcript, not stderr', () => {
   });
 
   it('a /new boot whose lane carries a full-access notice shows it on the new screen, never on stderr', async () => {
-    const home = tmp('tui-notice-home-');
-    const ws = tmp('tui-notice-work-');
-    const root = tmp('tui-notice-sessions-');
+    const home = tempDir('tui-notice-home-');
+    const ws = tempDir('tui-notice-work-');
+    const root = tempDir('tui-notice-sessions-');
     const fake = terminalRig(120);
     const stderr = captureStderr();
     const errors: string[] = [];

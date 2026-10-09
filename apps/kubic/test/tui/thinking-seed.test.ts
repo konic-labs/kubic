@@ -2,9 +2,6 @@
 // committed level. The bar never shows the seed default (`off`) before the first
 // turn's refresh, so a session booted at `high` agrees with its own lane on the
 // first frame. Faux provider only: zero network, zero paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   createModels,
   fauxAssistantMessage,
@@ -13,17 +10,10 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'kubic-tui-thinking-'));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -31,8 +21,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 // A reasoning model: only a model that supports levels above `off` can show
@@ -68,7 +56,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
 
 describe('kubic tui seeds the thinking indicator from the boot', () => {
   it('exposes the committed level on the boot', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-thinking-');
     const boot = await bootTuiLane(undefined, bootOptions(root));
     try {
       // The lane resolved the cli request against the reasoning model and
@@ -81,7 +69,7 @@ describe('kubic tui seeds the thinking indicator from the boot', () => {
   });
 
   it('shows the booted level on the first frame', async () => {
-    const root = tmpRoot();
+    const root = tempDir('kubic-tui-thinking-');
     const first = await bootTuiLane(undefined, bootOptions(root));
     // Release the session lock: the headless drive below attaches as the
     // second process, exactly like a reattached `kubic tui --session`.

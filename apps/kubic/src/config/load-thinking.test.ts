@@ -9,30 +9,17 @@
 // --model`, `kubic tui --model` and `kubic config --model` are one input to the
 // ONE load dispatch performs, so the model the projection hands the lane is the
 // same model `kubic config` reports — never two derivations that can drift.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { loadCliConfig } from './load.js';
 import { runtimeLaneDeps } from './projections.js';
 
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
 describe('cli thinking layer', () => {
   function homeWithThinking(thinking: string): { home: string; cwd: string } {
-    const home = tmp('cli-thinking-home-');
-    const cwd = tmp('cli-thinking-cwd-');
+    const home = tempDir('cli-thinking-home-');
+    const cwd = tempDir('cli-thinking-cwd-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
@@ -86,8 +73,8 @@ describe('cli thinking layer', () => {
   });
 
   it('carries the role thinking default in the lane layers', () => {
-    const home = tmp('cli-thinking-roles-home-');
-    const cwd = tmp('cli-thinking-roles-cwd-');
+    const home = tempDir('cli-thinking-roles-home-');
+    const cwd = tempDir('cli-thinking-roles-cwd-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),
@@ -100,8 +87,8 @@ describe('cli thinking layer', () => {
     ]);
   });
   it('carries the role model sets in the lane layers', () => {
-    const home = tmp('cli-models-roles-home-');
-    const cwd = tmp('cli-models-roles-cwd-');
+    const home = tempDir('cli-models-roles-home-');
+    const cwd = tempDir('cli-models-roles-cwd-');
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(
       join(home, '.kubic', 'config.toml'),

@@ -3,8 +3,7 @@
 // included, withheld skills excluded) into the turn prompt. Unknown names
 // refuse locally by name and never reach the model. Faux provider only:
 // zero network, zero paid tokens.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -15,6 +14,7 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import {
   parseSkillInvokeCommand,
@@ -22,14 +22,6 @@ import {
 } from '../../src/tui/commands/parse.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix = 'kubic-tui-skill-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_PROVIDER', undefined);
@@ -39,8 +31,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 async function waitFor(condition: () => boolean): Promise<void> {
@@ -292,7 +282,7 @@ describe('kubic tui /skill: over a stub lane', () => {
 
 describe('kubic tui /skill: over the real lane', () => {
   it('drives the hidden skill content to the model, never the system prompt', async () => {
-    const root = tmpRoot();
+    const root = tempDir();
     const skillsDir = join(root, 'skills');
     const secret = writeSkill(
       join(skillsDir, 'secret'),
@@ -359,7 +349,7 @@ describe('kubic tui /skill: over the real lane', () => {
 
 describe('withheld skills are not invocable or completed', () => {
   it('excludes a role-withheld skill from completion names and invocation', async () => {
-    const workspace = tmpRoot('kubic-tui-skill-gate-');
+    const workspace = tempDir('kubic-tui-skill-gate-');
     mkdirSync(join(workspace, '.git'), { recursive: true });
     const skillsDir = join(workspace, '.agents', 'skills');
     writeSkill(
@@ -378,7 +368,7 @@ describe('withheld skills are not invocable or completed', () => {
       '---\nrole: narrow\ntools: [read, ls]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\nskills: [open]\n---\n# Narrow\n\n## Prompt\n\nBe narrow.\n',
     );
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot(),
+      sessionsRoot: tempDir(),
       models: textModels(() => fauxAssistantMessage('seen')),
       env: new FakeExecutionEnv({}),
       model: { provider: 'faux', id: 'text' },

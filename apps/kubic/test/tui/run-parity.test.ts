@@ -4,8 +4,7 @@
 // retention, and the runtime exclude rules. And its deferred-settlement
 // footer must stop blaming a missing TTY (there is one). Faux provider
 // only: zero network.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OperationKillRegistry } from '@kubic/agent/lane/abort';
 import {
@@ -18,19 +17,12 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import { TuiTurnRunner } from '../../src/tui/turn-runner.js';
 import type { TuiLaneBoot } from '../../src/tui/types.js';
-
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 // The model-visible system prompt of one request. The durable lane
 // materializes the assembled prompt at REQUEST time (a positional prompt
@@ -126,17 +118,15 @@ function writeRole(
 
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('skills reach the TUI lane', () => {
   it("injects a discovered skill's block into the TUI system prompt", async () => {
-    const home = tmpRoot('tui-skills-home-');
+    const home = tempDir('tui-skills-home-');
     writeSkill(join(home, '.agents', 'skills'), 'deploy-widget', 'Ship it');
     const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-skills-sessions-'),
+      sessionsRoot: tempDir('tui-skills-sessions-'),
       models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, trusted: true },
@@ -150,7 +140,7 @@ describe('skills reach the TUI lane', () => {
   });
 
   it('suppresses discovery under --no-skills, and an explicit skill still applies', async () => {
-    const home = tmpRoot('tui-skills-home-');
+    const home = tempDir('tui-skills-home-');
     const skillFile = writeSkill(
       join(home, '.agents', 'skills'),
       'deploy-widget',
@@ -158,7 +148,7 @@ describe('skills reach the TUI lane', () => {
     );
     const suppressedCaptured: string[] = [];
     const suppressed = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-skills-sessions-'),
+      sessionsRoot: tempDir('tui-skills-sessions-'),
       models: fauxModels(['done'], suppressedCaptured),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, trusted: true },
@@ -171,7 +161,7 @@ describe('skills reach the TUI lane', () => {
 
     const explicitCaptured: string[] = [];
     const explicit = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-skills-sessions-'),
+      sessionsRoot: tempDir('tui-skills-sessions-'),
       models: fauxModels(['done'], explicitCaptured),
       env: new FakeExecutionEnv({}),
       skills: { homeDir: home, trusted: true },
@@ -188,7 +178,7 @@ describe('skills reach the TUI lane', () => {
 
 describe('role documents drive the TUI lane', () => {
   it('replaces the prompt and narrows the tool set on --role', async () => {
-    const cwd = tmpRoot('tui-roles-cwd-');
+    const cwd = tempDir('tui-roles-cwd-');
     writeRole(
       cwd,
       'reviewer',
@@ -197,7 +187,7 @@ describe('role documents drive the TUI lane', () => {
     );
     const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-roles-sessions-'),
+      sessionsRoot: tempDir('tui-roles-sessions-'),
       models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       role: 'reviewer',
@@ -216,10 +206,10 @@ describe('role documents drive the TUI lane', () => {
   });
 
   it('fails closed on an unknown role with the named refusal', async () => {
-    const cwd = tmpRoot('tui-roles-cwd-');
+    const cwd = tempDir('tui-roles-cwd-');
     await expect(
       bootTuiLane(undefined, {
-        sessionsRoot: tmpRoot('tui-roles-sessions-'),
+        sessionsRoot: tempDir('tui-roles-sessions-'),
         models: fauxModels(['done']),
         env: new FakeExecutionEnv({}),
         role: 'no-such-role',
@@ -236,7 +226,7 @@ describe('lane projections reach the TUI lane', () => {
   it('names the lane from [agent].name in the assembled prompt metadata', async () => {
     const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-agent-sessions-'),
+      sessionsRoot: tempDir('tui-agent-sessions-'),
       models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       agentId: 'kubic-tui',
@@ -247,7 +237,7 @@ describe('lane projections reach the TUI lane', () => {
     // Unset: 'root' — the shipped attribution, unchanged.
     const bareCaptured: string[] = [];
     const bare = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-agent-bare-'),
+      sessionsRoot: tempDir('tui-agent-bare-'),
       models: fauxModels(['done'], bareCaptured),
       env: new FakeExecutionEnv({}),
     });
@@ -259,7 +249,7 @@ describe('lane projections reach the TUI lane', () => {
   // for BOTH boots (the shared projection), which is why the TUI resolves
   // the role BEFORE selectModel.
   it('a role model layer selects the pinned model on the TUI lane', async () => {
-    const cwd = tmpRoot('tui-role-model-cwd-');
+    const cwd = tempDir('tui-role-model-cwd-');
     writeRole(
       cwd,
       'reviewer',
@@ -274,7 +264,7 @@ describe('lane projections reach the TUI lane', () => {
     alt.setResponses([fauxAssistantMessage('from alt')]);
     models.setProvider(alt.provider);
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-role-model-sessions-'),
+      sessionsRoot: tempDir('tui-role-model-sessions-'),
       models,
       env: new FakeExecutionEnv({}),
       role: 'reviewer',
@@ -296,7 +286,7 @@ describe('lane projections reach the TUI lane', () => {
   });
 
   it('layers [roles.<name>] tools under the role document on --role', async () => {
-    const cwd = tmpRoot('tui-layers-cwd-');
+    const cwd = tempDir('tui-layers-cwd-');
     writeRole(
       cwd,
       'reviewer',
@@ -305,7 +295,7 @@ describe('lane projections reach the TUI lane', () => {
     );
     const captured: string[] = [];
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-layers-sessions-'),
+      sessionsRoot: tempDir('tui-layers-sessions-'),
       models: fauxModels(['done'], captured),
       env: new FakeExecutionEnv({}),
       role: 'reviewer',
@@ -330,7 +320,7 @@ describe('lane projections reach the TUI lane', () => {
 
 describe('journal retention reaches the TUI store', () => {
   it('constructs the session journal with the configured retention', async () => {
-    const sessionsRoot = tmpRoot('tui-retention-');
+    const sessionsRoot = tempDir('tui-retention-');
     const boot = await bootTuiLane(undefined, {
       sessionsRoot,
       models: fauxModels(['done']),
@@ -386,7 +376,7 @@ describe('kubic tui parses the parity flags', () => {
   }
 
   it('runs a --role turn behind the alt screen on the role lane', async () => {
-    const cwd = tmpRoot('tui-roles-cwd-');
+    const cwd = tempDir('tui-roles-cwd-');
     writeRole(
       cwd,
       'reviewer',
@@ -395,7 +385,7 @@ describe('kubic tui parses the parity flags', () => {
     );
     const captured: string[] = [];
     const models = fauxModels(['findings reported'], captured);
-    const sessionsRoot = tmpRoot('tui-roles-sessions-');
+    const sessionsRoot = tempDir('tui-roles-sessions-');
     const fake = fakeTerminal();
     const pending = runTuiCommand(
       { role: 'reviewer' },

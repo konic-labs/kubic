@@ -3,8 +3,7 @@
 // by name, and applies the resolved tool set + prompt on a live `--role` path.
 //
 // Faux provider only (zero network, zero paid tokens).
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROMPT_SECTION } from '@kubic/agent/lane/boot';
 import {
@@ -27,15 +26,8 @@ import { runDoctorCommand } from '@kubic/host/doctor';
 import { rolesDoctorProbe } from '@kubic/host/roles';
 import { runRunCommand } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const roots: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
 
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
@@ -98,21 +90,18 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 describe('role documents drive a live lane', () => {
   it("editing .kubic/roles/<name>.md changes the lane's system prompt on --role", async () => {
-    const cwd = tmpRoot('roles-cwd-');
+    const cwd = tempDir('roles-cwd-');
     writeRole(
       cwd,
       'planner',
       'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
       'You are the planner. Decompose objectives into ordered steps.',
     );
-    const root = tmpRoot('roles-sessions-');
+    const root = tempDir('roles-sessions-');
     const result = await runHeadlessPrompt(
       'plan the work',
       { role: 'planner' },
@@ -137,14 +126,14 @@ describe('role documents drive a live lane', () => {
   });
 
   it('hands the lane prompt only the role-declared tool set (absence, not approval)', async () => {
-    const cwd = tmpRoot('roles-cwd-');
+    const cwd = tempDir('roles-cwd-');
     writeRole(
       cwd,
       'reviewer',
       'tools: [read, ls, find, grep, git_status, git_diff, git_log, git_show]\nfilesystem: read\nshell: false\nnetwork: none\ngit: workspace\ncredentials: none\n',
       'You are the reviewer. Report findings.',
     );
-    const root = tmpRoot('roles-sessions-');
+    const root = tempDir('roles-sessions-');
     const result = await runHeadlessPrompt(
       'review it',
       { role: 'reviewer' },
@@ -170,7 +159,7 @@ describe('role documents drive a live lane', () => {
   });
 
   it('refuses a role whose declared tool set contradicts its permission classes, naming the reason', async () => {
-    const cwd = tmpRoot('roles-cwd-');
+    const cwd = tempDir('roles-cwd-');
     // filesystem: read with a write tool registered — the
     // contradiction the resolver refuses.
     writeRole(
@@ -179,7 +168,7 @@ describe('role documents drive a live lane', () => {
       'tools: [read, write]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
       'You claim to be read-only.',
     );
-    const root = tmpRoot('roles-sessions-');
+    const root = tempDir('roles-sessions-');
     const result = await runHeadlessPrompt(
       'do the thing',
       { role: 'liar' },
@@ -200,14 +189,14 @@ describe('role documents drive a live lane', () => {
   });
 
   it('fails closed when --role names a role with no document', async () => {
-    const cwd = tmpRoot('roles-cwd-');
+    const cwd = tempDir('roles-cwd-');
     writeRole(
       cwd,
       'planner',
       'tools: [read]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n',
       'Plan.',
     );
-    const root = tmpRoot('roles-sessions-');
+    const root = tempDir('roles-sessions-');
     const result = await runHeadlessPrompt(
       'go',
       { role: 'ghost' },
@@ -251,7 +240,7 @@ describe('role documents drive a live lane', () => {
 
 describe('kubic doctor reports every role document', () => {
   it('surfaces roleDoctorChecks for the loaded documents, including a contradictory one', () => {
-    const cwd = tmpRoot('roles-cwd-');
+    const cwd = tempDir('roles-cwd-');
     writeRole(
       cwd,
       'planner',
@@ -311,9 +300,9 @@ describe('project roles are trust-gated on the live path', () => {
     'tools: [read, ls, find, grep]\nfilesystem: read\nshell: false\nnetwork: none\ngit: false\ncredentials: none\n';
 
   it('refuses --role naming an untrusted project role with the trust message', async () => {
-    const cwd = tmpRoot('roles-untrusted-');
+    const cwd = tempDir('roles-untrusted-');
     writeRole(cwd, 'scout', FRONTMATTER, 'Scout it.');
-    const root = tmpRoot('roles-untrusted-sessions-');
+    const root = tempDir('roles-untrusted-sessions-');
     const result = await runHeadlessPrompt(
       'go',
       { role: 'scout' },
@@ -330,10 +319,10 @@ describe('project roles are trust-gated on the live path', () => {
   });
 
   it('loads the same role once trusted, or under KUBIC_TRUST_PROJECT=1', async () => {
-    const home = tmpRoot('roles-trusted-home-');
-    const cwd = tmpRoot('roles-trusted-');
+    const home = tempDir('roles-trusted-home-');
+    const cwd = tempDir('roles-trusted-');
     writeRole(cwd, 'scout', FRONTMATTER, 'Scout it.');
-    const root = tmpRoot('roles-trusted-sessions-');
+    const root = tempDir('roles-trusted-sessions-');
     const trusted = await runHeadlessPrompt(
       'go',
       { role: 'scout' },
@@ -371,7 +360,7 @@ describe('project roles are trust-gated on the live path', () => {
   });
 
   it('reports withheld project roles in doctor without failing it', () => {
-    const cwd = tmpRoot('roles-withheld-');
+    const cwd = tempDir('roles-withheld-');
     writeRole(cwd, 'scout', FRONTMATTER, 'Scout it.');
     const probe = rolesDoctorProbe({
       cwd,

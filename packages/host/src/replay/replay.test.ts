@@ -2,32 +2,18 @@
 // runner is injected (zero network); trajectory fixtures are built with the
 // versioned exporter so tests always run against the current stable contract.
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import type { TrajectoryExport } from '@kubic/trajectory/schema';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   type ReplayCommandDeps,
   type ReplayCommandOptions,
   type ReplayRunResult,
   runReplayCommand,
 } from './index.js';
-
-const roots: string[] = [];
-
-function tmpRoot(prefix = 'replay-'): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
-afterEach(() => {
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
 
 // stdout (`lines`) and stderr (`errs`) captured separately.
 interface Capture {
@@ -136,7 +122,7 @@ function deps(o: Capture, run?: ReplayCommandDeps['run']): ReplayCommandDeps {
 
 describe('replay recorded exact (exact; Recorded)', () => {
   it('resolves a relative trajectory path against the working directory, not /', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     writeTrajectory(dir, 'rel.json');
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
     try {
@@ -151,7 +137,7 @@ describe('replay recorded exact (exact; Recorded)', () => {
   });
 
   it('replays a versioned trajectory log-only: exit 0, tier printed, runner never called', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const path = writeTrajectory(dir, 't.json');
     const o = out();
     let called = false;
@@ -177,7 +163,7 @@ describe('replay recorded exact (exact; Recorded)', () => {
   });
 
   it('publishes the tier in the --json envelope', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const path = writeTrajectory(dir, 't.json');
     const o = out();
     const exit = (
@@ -200,7 +186,7 @@ describe('replay recorded exact (exact; Recorded)', () => {
     const o = out();
     const exit = (
       await runReplayCommand(
-        { trajectory: join(tmpRoot(), 'nope.json'), json: true },
+        { trajectory: join(tempDir(), 'nope.json'), json: true },
         deps(o),
       )
     ).exitCode;
@@ -212,7 +198,7 @@ describe('replay recorded exact (exact; Recorded)', () => {
   });
 
   it('exits 2 when the trajectory is malformed', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const path = join(dir, 'bad.json');
     writeFileSync(path, '{not json');
     const o = out();
@@ -231,7 +217,7 @@ describe('replay recorded exact (exact; Recorded)', () => {
     // die as a raw TypeError (generic exit 1). It is refused by the
     // parser with a named path, on the same exit-2 code as any other
     // malformed trajectory.
-    const dir = tmpRoot();
+    const dir = tempDir();
     const path = join(dir, 'null-actions.json');
     writeFileSync(
       path,
@@ -267,7 +253,7 @@ describe('replay recorded exact (exact; Recorded)', () => {
   });
 
   it('exits 2 with the code preserved when the major is unsupported', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const path = join(dir, 'future.json');
     writeFileSync(
       path,
@@ -297,7 +283,7 @@ describe('replay deterministic (different-model; Deterministic)', () => {
   }
 
   it('refuses without pins (exit 2, runner never called, tier published)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const { base } = detArgs(dir);
     for (const options of [
       base,
@@ -331,7 +317,7 @@ describe('replay deterministic (different-model; Deterministic)', () => {
   });
 
   it('refuses a model pin outside provider/id form', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const { traj, lock } = detArgs(dir);
     const o = out();
     const exit = (
@@ -351,7 +337,7 @@ describe('replay deterministic (different-model; Deterministic)', () => {
   });
 
   it('exits 5 when the lockfile is unreadable', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const { traj } = detArgs(dir);
     const o = out();
     const exit = (
@@ -374,7 +360,7 @@ describe('replay deterministic (different-model; Deterministic)', () => {
   });
 
   it('re-executes with pins: exit 0, tier deterministic in text and --json', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const { traj, lock, base } = detArgs(dir);
     const seen: unknown[] = [];
     const o = out();
@@ -411,7 +397,7 @@ describe('replay deterministic (different-model; Deterministic)', () => {
   });
 
   it('maps runner termini to exit codes 1/5/6', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const { traj, lock } = detArgs(dir);
     const cases = [
       { terminus: 'failed', code: 1 },
@@ -447,7 +433,7 @@ describe('replay deterministic (different-model; Deterministic)', () => {
   });
 
   it('fail-closes to exit 2 on a contract-violating runner terminus (never 3/4/undefined)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const { traj, lock } = detArgs(dir);
     const termini = [
       'turn_limit',
@@ -489,7 +475,7 @@ describe('replay deterministic (different-model; Deterministic)', () => {
   });
 
   it('is byte-identical across runs with the same pins', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const { traj, lock } = detArgs(dir);
     const run = async (): Promise<ReplayRunResult> => ({
       terminus: 'completed',
@@ -539,7 +525,7 @@ describe('replay pins: the lockfile and role config are enforced', () => {
   }
 
   it('refuses a model the lockfile does not pin (exit 2, named)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const lock = writeLockfile(dir, 'pins.json');
     const o = out();
@@ -566,7 +552,7 @@ describe('replay pins: the lockfile and role config are enforced', () => {
   });
 
   it('accepts the provider-keyed pin form (provider -> [ids])', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const lock = join(dir, 'pins.json');
     writeFileSync(lock, JSON.stringify({ models: { acme: ['m1'] } }));
@@ -593,7 +579,7 @@ describe('replay pins: the lockfile and role config are enforced', () => {
   });
 
   it('refuses a lockfile whose prompt/tools pins do not match the trajectory', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     for (const [key, bad] of [
       ['prompt', { digest: digest('another prompt') }],
@@ -625,7 +611,7 @@ describe('replay pins: the lockfile and role config are enforced', () => {
   });
 
   it('accepts matching prompt/tools pins and re-executes', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const lock = writePin(dir, 'match.json', {
       prompt: { digest: digest(fixtureTrajectory().task.objective) },
@@ -654,7 +640,7 @@ describe('replay pins: the lockfile and role config are enforced', () => {
   });
 
   it('refuses a malformed digest pin (exit 2, lockfile-invalid)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const lock = writePin(dir, 'bad.json', { prompt: 'sha256:abc' });
     const o = out();
@@ -679,7 +665,7 @@ describe('replay pins: the lockfile and role config are enforced', () => {
   });
 
   it('refuses a role config that is not the JSON pin form (exit 2, named)', async () => {
-    const dir = tmpRoot();
+    const dir = tempDir();
     const traj = writeTrajectory(dir, 't.json');
     const cases: Array<[string, RegExp]> = [
       [

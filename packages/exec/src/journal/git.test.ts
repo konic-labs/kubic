@@ -5,10 +5,10 @@
 // the git object store. This module is the git plumbing: which calls the
 // baseline makes, how their output parses, and how a pre-image blob is read
 // back.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   captureGitBaseline,
   captureHeadState,
@@ -19,19 +19,6 @@ import {
   saveGitBaseline,
   saveHeadState,
 } from './git.js';
-
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'journal-git-'));
-  roots.push(root);
-  return root;
-}
 
 const OID_A = 'a'.repeat(40);
 const OID_B = 'b'.repeat(40);
@@ -126,7 +113,9 @@ describe('captureGitBaseline', () => {
   });
 
   it('returns null outside a git repo with the production runner', () => {
-    expect(captureGitBaseline(tmpRoot(), { 'a.ts': 'h' })).toBe(null);
+    expect(captureGitBaseline(tempDir('journal-git-'), { 'a.ts': 'h' })).toBe(
+      null,
+    );
   });
 
   // A status output git did not shape (a record without the
@@ -218,7 +207,7 @@ describe('readGitBlob', () => {
 
 describe('git baseline persistence', () => {
   it('writes the git baseline beside the baseline file', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-git-');
     saveGitBaseline(dir, 'run-1', { 'a.ts': OID_A });
     expect(
       JSON.parse(readFileSync(join(dir, 'baseline-run-1.git.json'), 'utf8')),
@@ -228,7 +217,7 @@ describe('git baseline persistence', () => {
   });
 
   it('never writes through an unsafe run id', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-git-');
     expect(() => saveGitBaseline(dir, '../evil', { 'a.ts': OID_A })).toThrow();
   });
 });
@@ -310,12 +299,12 @@ describe('captureHeadState', () => {
   });
 
   it('returns null outside a git repo with the production runner', () => {
-    const root = tmpRoot();
+    const root = tempDir('journal-git-');
     expect(captureHeadState(root)).toBe(null);
   });
 
   it('writes the head sidecar beside the baseline file', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-git-');
     const state = { head: 'd'.repeat(40), branch: 'main', stash: 0 };
     saveHeadState(dir, 'run-1', state);
     expect(

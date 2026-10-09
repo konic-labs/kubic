@@ -1,8 +1,7 @@
 // The sessions the TUI's `/resume` picker lists: this project's
 // sessions, newest first, with their first prompt, turns and cost, read
 // without a lock; a session held live is listed but never opened.
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createSession,
@@ -19,24 +18,16 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { summarizeProjectSessions } from './session-summaries.js';
 
-const made: string[] = [];
 const open: Harness[] = [];
 
 afterEach(async () => {
   for (const harness of open.splice(0)) {
     await harness.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'session-summaries-'));
-  made.push(dir);
-  return dir;
-}
 
 async function run(
   storage: Storage,
@@ -81,7 +72,7 @@ async function stored(
 
 describe('session summaries for /resume', () => {
   it('lists this project newest first with title, turns and cost', async () => {
-    const root = tmpRoot();
+    const root = tempDir('session-summaries-');
     await stored(root, 'older', '/proj', [
       'fix the cart\nwith details',
       'and test it',
@@ -106,7 +97,7 @@ describe('session summaries for /resume', () => {
   });
 
   it('lists a session held live without opening it', async () => {
-    const root = tmpRoot();
+    const root = tempDir('session-summaries-');
     await stored(root, 'held', '/proj', ['busy elsewhere']);
     // A live holder: this very process's pid in the session's lock.
     writeFileSync(

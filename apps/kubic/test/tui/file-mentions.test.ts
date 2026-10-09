@@ -2,8 +2,7 @@
 // files from the gitignore-aware walk (gitignored files are never offered),
 // workspace-relative, cached for a short window. Faux provider; temp dirs
 // cleaned up in afterEach.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -11,28 +10,16 @@ import {
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   bootTuiLane,
   FILE_LIST_TTL_MS,
   workspaceFileLister,
 } from '../../src/tui/boot.js';
 
-const made: string[] = [];
-
-function tmpRoot(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
 function workspace(): string {
-  const root = tmpRoot('tui-file-mentions-ws-');
+  const root = tempDir('tui-file-mentions-ws-');
   mkdirSync(join(root, 'src'));
   mkdirSync(join(root, 'dist'));
   writeFileSync(join(root, 'src', 'main.ts'), 'main\n');
@@ -50,7 +37,7 @@ describe('@ mention file source', () => {
     faux.setResponses([fauxAssistantMessage('hi')]);
     models.setProvider(faux.provider);
     const boot = await bootTuiLane(undefined, {
-      sessionsRoot: tmpRoot('tui-file-mentions-sessions-'),
+      sessionsRoot: tempDir('tui-file-mentions-sessions-'),
       models,
       env: new NodeExecutionEnv(root),
     });

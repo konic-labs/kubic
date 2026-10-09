@@ -6,14 +6,7 @@
 // Faux provider only (scripted replies, a real bash tool call); a fixture
 // git repo in a temp dir; zero network.
 
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -38,17 +31,10 @@ import {
   type TrajectoryExport,
 } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runtimeRunDeps } from '../../src/config/projections.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 import type { HeadlessRunDeps } from '../../src/run/options.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -58,9 +44,6 @@ afterEach(() => {
   driver = undefined;
   disposeAllGitSandboxes();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // The test's git driver: one injected sandbox per test, so
@@ -75,7 +58,7 @@ function ensureDriver(): GitSandbox {
 
 // A one-commit repo whose "test suite" passes while ok.txt exists.
 function fixtureRepo(): string {
-  const dir = tmp('verify-repo-');
+  const dir = tempDir('verify-repo-');
   const git = (args: string[]) => ensureDriver().git(args, { cwd: dir });
   git(['init', '-q']);
   git(['config', 'user.email', 'verify@example.com']);
@@ -127,7 +110,7 @@ async function run(
     'fix the widget',
     {},
     {
-      sessionsRoot: tmp('verify-sessions-'),
+      sessionsRoot: tempDir('verify-sessions-'),
       models: models(breakTheTree),
       env: new NodeExecutionEnv(repo),
       ...(verify === null ? {} : { verify }),
@@ -243,7 +226,7 @@ describe('the run verifier writes gate signals', () => {
         'fix the widget',
         {},
         {
-          sessionsRoot: tmp('verify-sessions-'),
+          sessionsRoot: tempDir('verify-sessions-'),
           models: models(false),
           env: new NodeExecutionEnv(fixtureRepo()),
           // Reading `commands` throws: the verifier itself is broken.
@@ -270,7 +253,7 @@ describe('the run verifier writes gate signals', () => {
   it('outside a git checkout the gates are verified but no regression is claimed', {
     timeout: 30_000,
   }, async () => {
-    const dir = tmp('verify-plain-');
+    const dir = tempDir('verify-plain-');
     writeFileSync(join(dir, 'ok.txt'), 'green\n');
     const exported = await run(dir, false);
     expect(exported.eval.labels).toEqual({ 'signal:tests': 'pass' });
@@ -280,7 +263,7 @@ describe('the run verifier writes gate signals', () => {
 
 describe('[verify] config reaches the run', () => {
   it('projects the configured commands and timeout into the run deps', () => {
-    const cwd = tmp('verify-config-');
+    const cwd = tempDir('verify-config-');
     const configPath = `${cwd}/.kubic/config.toml`;
     const runtime = loadRuntimeConfig({
       bridge: {
@@ -314,7 +297,7 @@ describe('[verify] config reaches the run', () => {
     const runtime = loadRuntimeConfig({
       bridge: { exists: () => false, readTextFile: () => '' },
       home: '/nonexistent-home',
-      cwd: tmp('verify-config-'),
+      cwd: tempDir('verify-config-'),
       enterprisePath: '/nonexistent/config.toml',
       env: {},
     });

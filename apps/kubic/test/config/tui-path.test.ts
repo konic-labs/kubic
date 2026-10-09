@@ -7,8 +7,7 @@
 //
 // Faux provider only: zero network, zero paid tokens.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -30,20 +29,13 @@ import {
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runtimeModelPin } from '../../src/config/model-selection.js';
 import { runtimeLaneDeps } from '../../src/config/projections.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
 import { tuiDepsWithDefaults } from '../../src/tui/deps.js';
 import type { TuiRunOptions } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
-
-const tempDirs: string[] = [];
-
-function tmpRoot(prefix = 'kubic-tui-path-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -52,9 +44,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 const NO_SPLIT = { missing: [], checked: [], applicable: false };
@@ -158,8 +147,8 @@ describe('tuiDepsWithDefaults forwards the lane projection', () => {
   });
 
   it('attributes TUI journal entries to [agent].name', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-tui-agent-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('kubic-tui-agent-');
     writeFileSync(join(workspace, 'note.txt'), 'v1\n');
     const lane = laneFor(workspace, '[agent]\nname = "foo"\n');
     expect(lane.agentId).toBe('foo');
@@ -206,8 +195,8 @@ describe('tuiDepsWithDefaults forwards the lane projection', () => {
   });
 
   it('layers config [roles.implementer] tools under the document on kubic tui --role', async () => {
-    const sessionsRoot = tmpRoot();
-    const workspace = tmpRoot('kubic-tui-path-roles-');
+    const sessionsRoot = tempDir();
+    const workspace = tempDir('kubic-tui-path-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'implementer.md'),
@@ -298,7 +287,7 @@ describe('the TUI selects the pinned model', () => {
           model: runtimeModelPin(cliConfig),
           ...runtimeLaneDeps(cliConfig),
         },
-        rerooted(workspace, tmpRoot(), twoModels()),
+        rerooted(workspace, tempDir(), twoModels()),
       ),
       createTerminal: () => fake.terminal,
       colorLevel: 'none' as const,
@@ -307,7 +296,7 @@ describe('the TUI selects the pinned model', () => {
   }
 
   it('boots on the [model] pin and shows it in the header and status bar', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const { deps, fake, lines } = tuiWith(
       workspace,
       '[model]\nprovider = "fx"\nid = "b"\n',
@@ -326,7 +315,7 @@ describe('the TUI selects the pinned model', () => {
   });
 
   it('KUBIC_MODEL overrides the config pin', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const { deps, fake, lines } = tuiWith(
       workspace,
       '[model]\nprovider = "fx"\nid = "a"\n',
@@ -341,7 +330,7 @@ describe('the TUI selects the pinned model', () => {
   });
 
   it('a --role whose layer pins a model selects it; an explicit pin still wins', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'implementer.md'),
@@ -379,7 +368,7 @@ describe('the TUI selects the pinned model', () => {
   });
 
   it('an unknown pinned model exits 6 with the reason, before the alt-screen', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const { deps, fake, errs } = tuiWith(
       workspace,
       '[model]\nprovider = "fx"\nid = "zzz"\n',
@@ -391,7 +380,7 @@ describe('the TUI selects the pinned model', () => {
   });
 
   it('a TUI-approved call writes an audit record with the model and session id', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const faux = fauxProvider({
       provider: 'fx',
       models: [{ id: 'a' }, { id: 'b' }],
@@ -404,7 +393,7 @@ describe('the TUI selects the pinned model', () => {
     models.setProvider(faux.provider);
     const deps = tuiDepsWithDefaults(
       { out: () => {}, model: { provider: 'fx', id: 'b' } },
-      rerooted(workspace, tmpRoot(), models),
+      rerooted(workspace, tempDir(), models),
     );
     const boot = await deps.bootLane(undefined, async () => ({
       approved: true,

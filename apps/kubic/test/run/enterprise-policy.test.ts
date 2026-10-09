@@ -8,14 +8,7 @@
 // network, zero paid tokens. Temp workspace, `process.cwd()` mocked, temp HOME
 // from the hermetic vitest env.
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -27,6 +20,7 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
 import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
 import { runtimeModelPin } from '../../src/config/model-selection.js';
 import {
@@ -35,14 +29,6 @@ import {
 } from '../../src/config/projections.js';
 import { createProdRunners, prodRunDeps } from '../../src/prod-runners.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const tempDirs: string[] = [];
-
-function tmpRoot(prefix = 'kubic-prod-policy-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -53,9 +39,6 @@ afterEach(() => {
   disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 const ENTERPRISE = '/etc/kubic-test/enterprise.toml';
@@ -183,7 +166,7 @@ describe('`kubic run` through the prod runner enforces the config', () => {
   });
 
   it('refuses a model outside allowed_models with the named policy refusal (exit 6)', async () => {
-    const { r, lines } = runners(tmpRoot());
+    const { r, lines } = runners(tempDir());
     const code = (
       await r.run(
         { prompt: 'hello', json: true },
@@ -199,7 +182,7 @@ describe('`kubic run` through the prod runner enforces the config', () => {
   });
 
   it('runs a model the policy allows (control)', async () => {
-    const { r, lines } = runners(tmpRoot());
+    const { r, lines } = runners(tempDir());
     const code = (
       await r.run(
         { prompt: 'hello', json: true },
@@ -211,7 +194,7 @@ describe('`kubic run` through the prod runner enforces the config', () => {
   });
 
   it('installs the config approvals route: route = "deny" refuses a challenged call by policy', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const { r, lines } = runners(workspace);
     const code = (
       await r.run(
@@ -237,7 +220,7 @@ describe('explicit skill invocation reaches hidden skills', () => {
   });
 
   function hiddenSkillWorkspace(): { workspace: string; marker: string } {
-    const workspace = tmpRoot('kubic-prod-skills-');
+    const workspace = tempDir('kubic-prod-skills-');
     const marker = join(workspace, 'invoked');
     // Project skills load inside a repository (the walk stops
     // at the git top level), so mark the workspace root.
@@ -311,7 +294,7 @@ describe('role classes and approval requires reach the installed policy', () => 
     `---\nrole: reviewer\ntools: [read, bash]\nfilesystem: read\nshell: true\nnetwork: ${network}\ngit: false\ncredentials: none\n---\n\n# reviewer\n\n## Prompt\n\nReview.\n`;
 
   function reviewerWorkspace(network: string): string {
-    const workspace = tmpRoot('kubic-prod-roles-');
+    const workspace = tempDir('kubic-prod-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'reviewer.md'),
@@ -367,7 +350,7 @@ describe('role classes and approval requires reach the installed policy', () => 
   });
 
   it("the role document's requires challenge an otherwise-allowed tool", async () => {
-    const workspace = tmpRoot('kubic-prod-roles-');
+    const workspace = tempDir('kubic-prod-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'reviewer.md'),
@@ -392,7 +375,7 @@ describe('role classes and approval requires reach the installed policy', () => 
   });
 
   it('a [roles.<name>] requires layer challenges like the document list', async () => {
-    const workspace = tmpRoot('kubic-prod-roles-');
+    const workspace = tempDir('kubic-prod-roles-');
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'reviewer.md'),
@@ -432,7 +415,7 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
   });
 
   it('kubic run: one stderr note naming the ignored --model, stdout untouched', async () => {
-    const { r, lines, errs } = runners(tmpRoot());
+    const { r, lines, errs } = runners(tempDir());
     const code = (
       await r.run(
         { prompt: 'hello', json: true },
@@ -450,7 +433,7 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
   });
 
   it('kubic run: names an ignored KUBIC_MODEL by its env spelling', async () => {
-    const { r, errs } = runners(tmpRoot());
+    const { r, errs } = runners(tempDir());
     await r.run(
       { prompt: 'hello', json: true },
       cliConfig(
@@ -462,7 +445,7 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
   });
 
   it('kubic run: one note per overridden pin when both the flag and the env pin are ignored', async () => {
-    const { r, errs } = runners(tmpRoot());
+    const { r, errs } = runners(tempDir());
     await r.run(
       { prompt: 'hello', json: true },
       cliConfig(
@@ -481,14 +464,14 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
 
   it('says nothing when nothing was overridden (no pin, the same pin, or no freeze)', async () => {
     // No pin given against a frozen model.
-    const none = runners(tmpRoot());
+    const none = runners(tempDir());
     await none.r.run(
       { prompt: 'hello', json: true },
       cliConfig({ [ENTERPRISE]: FROZEN }),
     );
     expect(none.errs.filter((line) => line.startsWith('note:'))).toEqual([]);
     // The flag names the very model the enterprise layer pinned.
-    const same = runners(tmpRoot());
+    const same = runners(tempDir());
     await same.r.run(
       { prompt: 'hello', json: true },
       cliConfig(
@@ -498,7 +481,7 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
     );
     expect(same.errs.filter((line) => line.startsWith('note:'))).toEqual([]);
     // No enterprise freeze: the flag simply wins, nothing to announce.
-    const free = runners(tmpRoot());
+    const free = runners(tempDir());
     await free.r.run(
       { prompt: 'hello', json: true },
       cliConfig({}, { cliModel: { provider: 'evil', id: 'other' } }),
@@ -507,7 +490,7 @@ describe('a frozen enterprise model pin announces the flag or env pin it overrid
   });
 
   it('kubic tui: the note lands before the boot (exit 6 on the unknown pinned model, no terminal)', async () => {
-    const { r, errs } = runners(tmpRoot());
+    const { r, errs } = runners(tempDir());
     // The frozen pin names a provider this catalog lacks, so the boot stops
     // at model selection — before any terminal opens.
     vi.stubEnv('KUBIC_PROVIDER', '');
@@ -537,9 +520,9 @@ describe('a model refusal names the real source of the pin', () => {
       {},
       {
         ...prodRunDeps(cfg),
-        sessionsRoot: tmpRoot(),
+        sessionsRoot: tempDir(),
         models: catalog(),
-        env: new NodeExecutionEnv(tmpRoot()),
+        env: new NodeExecutionEnv(tempDir()),
         warn: () => undefined,
       },
     );
@@ -580,7 +563,7 @@ describe('a model refusal names the real source of the pin', () => {
   });
 
   it('labels a role-layer model pin (role model)', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     mkdirSync(join(workspace, '.kubic', 'roles'), { recursive: true });
     writeFileSync(
       join(workspace, '.kubic', 'roles', 'implementer.md'),
@@ -597,7 +580,7 @@ describe('a model refusal names the real source of the pin', () => {
       { role: 'implementer' },
       {
         ...prodRunDeps(cfg),
-        sessionsRoot: tmpRoot(),
+        sessionsRoot: tempDir(),
         models: catalog(),
         env: new NodeExecutionEnv(workspace),
         roles: { ...prodRunDeps(cfg).roles, cwd: workspace },

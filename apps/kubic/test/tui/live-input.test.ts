@@ -10,8 +10,6 @@
 // One shared harness: a recording fake Terminal under the real bootScreen,
 // with the real input listener attached by runTuiCommand. Faux provider /
 // fake execution env only: zero network, zero paid tokens.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootLane } from '@kubic/agent/lane/boot';
 import {
@@ -30,25 +28,13 @@ import { fauxToolUse } from '@kubic/agent/test-support/lane-harness';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { tuiLoop } from '../../src/tui/lane-loop.js';
 import type { TuiRunDeps } from '../../src/tui/options.js';
 import { runTuiCommand } from '../../src/tui/run.js';
 import type { TuiApprovalSeat } from '../../src/tui/types.js';
-
-const made: string[] = [];
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tui-live-input-'));
-  made.push(dir);
-  return dir;
-}
 
 // The recording fake Terminal: every byte the alt-screen writes is kept, so
 // a test can mark a point and read only the frames written after it.
@@ -198,7 +184,7 @@ describe('idle input repaints', () => {
   });
 
   it('Ctrl-T repaints the opened tree and Ctrl-X repaints the expanded output', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-live-input-');
     const out = Array.from({ length: 9 }, (_, i) => `row-${i + 1}`).join('\n');
     const script = { exitCode: 0, stdout: `${out}\n`, stderr: '' };
     const env = new FakeExecutionEnv({
@@ -262,7 +248,7 @@ describe('idle input repaints', () => {
 
 describe('Kitty key releases on the live loop', () => {
   it('a Ctrl-C release after a cancel press never quits the session', async () => {
-    const root = tmpRoot();
+    const root = tempDir('tui-live-input-');
     let release: () => void = () => {};
     const gated = new Promise<void>((resolve) => {
       release = resolve;

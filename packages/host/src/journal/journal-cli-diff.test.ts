@@ -1,7 +1,6 @@
 // `kubic diff / undo / log / status` CLI.
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createSession,
@@ -12,20 +11,11 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { disposeAllGitSandboxes } from '@kubic/exec/test-support/git-sandbox';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runJournalCommand } from './index.js';
-
-const made: string[] = [];
-
-function mkTmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 afterEach(() => {
   disposeAllGitSandboxes();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function setup(): {
@@ -33,8 +23,8 @@ function setup(): {
   root: string;
   out: { lines: string[]; write: (line: string) => void };
 } {
-  const journalDir = mkTmp('j-');
-  const root = mkTmp('ws-');
+  const journalDir = tempDir('j-');
+  const root = tempDir('ws-');
   writeFileSync(join(root, 'a.txt'), 'v1\n');
   const store = new FileJournalStore(journalDir);
   store.append({
@@ -61,8 +51,8 @@ function setup(): {
 // created by the store associates its journal with the workspace it recorded.
 describe('journal CLI default session workspaces over the durable store', () => {
   it('finds the latest journal of a session the store recorded for this workspace', async () => {
-    const sessionsRoot = mkTmp('sr-');
-    const root = mkTmp('ws-');
+    const sessionsRoot = tempDir('sr-');
+    const root = tempDir('ws-');
     // The session ran in a subdirectory but declared the repo as its
     // workspace: `kubic diff` from the repo must still find it.
     const store = openSessionStore(
@@ -117,8 +107,8 @@ describe('journal CLI HEAD moves', () => {
     root: string;
     lines: string[];
   } {
-    const journalDir = mkTmp('j-');
-    const root = mkTmp('ws-');
+    const journalDir = tempDir('j-');
+    const root = tempDir('ws-');
     writeFileSync(join(root, 'a.txt'), 'v2\n');
     const store = new FileJournalStore(journalDir);
     store.append({
@@ -251,8 +241,8 @@ describe('journal CLI diff path scope', () => {
 
 describe('journal CLI diff --stat', () => {
   function statSetup(): { journalDir: string; root: string } {
-    const journalDir = mkTmp('j-');
-    const root = mkTmp('ws-');
+    const journalDir = tempDir('j-');
+    const root = tempDir('ws-');
     const store = new FileJournalStore(journalDir);
     store.append({
       path: 'a.txt',

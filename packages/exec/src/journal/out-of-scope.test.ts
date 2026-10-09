@@ -9,30 +9,17 @@
 // declared) was journaled anyway. `isOutOfScope` is the shared rule both
 // walks and the sweep's after-content loop now apply: an entry excludes the
 // path itself and everything under it, path-boundary aware.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { createNodeFileBridge, type FileBridge } from '../file-bridge.js';
 import { captureBaseline, isOutOfScope } from './baseline.js';
 import { FileJournalStore } from './store.js';
 import { reconcile } from './sweep.js';
 
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
 function workspace(): string {
-  const root = tmpRoot('ws-oos-');
+  const root = tempDir('ws-oos-');
   writeFileSync(join(root, 'keep.txt'), 'keep\n');
   writeFileSync(join(root, 'change.txt'), 'before\n');
   mkdirSync(join(root, 'dist'));
@@ -45,7 +32,7 @@ function workspace(): string {
 }
 
 function journalStore(): FileJournalStore {
-  return new FileJournalStore(tmpRoot('j-oos-'));
+  return new FileJournalStore(tempDir('j-oos-'));
 }
 
 // Records every content read the walk/sweep performs, so "not journaled" can
@@ -109,7 +96,7 @@ describe('out-of-scope matching', () => {
   });
 
   it('keeps exact-file behaviour: a file named like the entry is excluded', () => {
-    const root = tmpRoot('ws-oos-file-');
+    const root = tempDir('ws-oos-file-');
     writeFileSync(join(root, 'dist'), 'a file, not a directory\n');
     writeFileSync(join(root, 'dist-x'), 'sibling\n');
     writeFileSync(join(root, 'keep.txt'), 'keep\n');

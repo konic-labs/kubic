@@ -2,9 +2,6 @@
 // --session validation inside runHeadlessPrompt, the ref triple on store
 // failures, honest summaries when the model left no text, and the guard drain
 // running BEFORE the reconciliation sweep. Faux models only: zero network.
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { abortLane } from '@kubic/agent/lane/abort';
 import { createSession } from '@kubic/agent/lane/session-store';
 import {
@@ -16,6 +13,7 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
 
 const mockState = vi.hoisted(() => ({ closeShouldReject: false }));
@@ -73,14 +71,6 @@ vi.mock('@kubic/agent/lane/session-store', async (importOriginal) => {
   }
 });
 
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'run-headless-hardening-'));
-  made.push(dir);
-  return dir;
-}
-
 function fauxModels(texts: string[]): MutableModels {
   const faux = fauxProvider();
   const models = createModels();
@@ -100,7 +90,7 @@ function hangingModels(): MutableModels {
 
 function deps(): Parameters<typeof runHeadlessPrompt>[2] {
   return {
-    sessionsRoot: tmpRoot(),
+    sessionsRoot: tempDir('run-headless-hardening-'),
     models: fauxModels(['unused']),
     env: new FakeExecutionEnv({}),
   };
@@ -117,8 +107,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 describe('headless run failure reporting', () => {

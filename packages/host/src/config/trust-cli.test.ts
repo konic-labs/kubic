@@ -1,36 +1,16 @@
 // `kubic trust`: grant, revoke and list the persistent
 // project-trust decision.
 
-import {
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { CliUsageError } from '@kubic/core/cli/exit-codes';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runTrustCommand } from './trust-cli.js';
 import { ProjectTrustStore, projectTrustStorePath } from './trust-store.js';
 
-const made: string[] = [];
-
-function tmpDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
 function projectWithConfig(): string {
-  const project = tmpDir('kubic-trust-cli-');
+  const project = tempDir('kubic-trust-cli-');
   mkdirSync(join(project, '.kubic'), { recursive: true });
   writeFileSync(join(project, '.kubic', 'config.toml'), '[journal]\n');
   return project;
@@ -52,7 +32,7 @@ function harness(store: ProjectTrustStore, cwd: string) {
 
 describe('kubic trust command', () => {
   it('grants trust for the cwd and names the config it unlocks', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const project = projectWithConfig();
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const h = harness(store, project);
@@ -67,7 +47,7 @@ describe('kubic trust command', () => {
   // project models.json (a provider URL and the `*_API_KEY` sent to it) and
   // the project skills. The output says so, on the grant and not on revoke.
   it('names everything the grant covers, models.json and skills included', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const project = projectWithConfig();
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const granted = harness(store, project);
@@ -81,7 +61,7 @@ describe('kubic trust command', () => {
   });
 
   it('grants for an explicit path operand', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const project = projectWithConfig();
     const other = projectWithConfig();
     const store = new ProjectTrustStore(projectTrustStorePath(home));
@@ -92,18 +72,18 @@ describe('kubic trust command', () => {
   });
 
   it('accepts a relative path operand resolved against the process cwd', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const project = projectWithConfig();
     const store = new ProjectTrustStore(projectTrustStorePath(home));
-    const h = harness(store, tmpDir('kubic-trust-cli-'));
+    const h = harness(store, tempDir('kubic-trust-cli-'));
     const rel = relative(process.cwd(), project);
     expect(runTrustCommand({ path: rel }, h.deps).exitCode).toBe(0);
     expect(store.get(project)).toBe(true);
   });
 
   it('notes when no project config exists yet', () => {
-    const home = tmpDir('kubic-trust-home-');
-    const project = tmpDir('kubic-trust-cli-');
+    const home = tempDir('kubic-trust-home-');
+    const project = tempDir('kubic-trust-cli-');
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const h = harness(store, project);
     expect(runTrustCommand({}, h.deps).exitCode).toBe(0);
@@ -112,7 +92,7 @@ describe('kubic trust command', () => {
   });
 
   it('revokes: the decision is removed and the refusal named', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const project = projectWithConfig();
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     store.set(project, true);
@@ -124,7 +104,7 @@ describe('kubic trust command', () => {
   });
 
   it('lists every recorded decision, sorted', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const a = join(home, 'aaa');
     const z = join(home, 'zzz');
     mkdirSync(a);
@@ -142,7 +122,7 @@ describe('kubic trust command', () => {
   });
 
   it('reports an empty store on --list', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const h = harness(store, home);
     expect(runTrustCommand({ list: true }, h.deps).exitCode).toBe(0);
@@ -150,7 +130,7 @@ describe('kubic trust command', () => {
   });
 
   it('refuses --list combined with --revoke or a path (usage, exit 2)', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const store = new ProjectTrustStore(projectTrustStorePath(home));
     const h = harness(store, home);
     expect(() => runTrustCommand({ list: true, revoke: true }, h.deps)).toThrow(
@@ -162,7 +142,7 @@ describe('kubic trust command', () => {
   });
 
   it('refuses a path that is not a directory (usage, exit 2)', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const file = join(home, 'notes.txt');
     writeFileSync(file, 'x');
     const store = new ProjectTrustStore(projectTrustStorePath(home));
@@ -180,7 +160,7 @@ describe('kubic trust command', () => {
   // "not a directory" (lstat).
   describe('a symlink operand', () => {
     it('to a directory is granted, under the canonical (resolved) path', () => {
-      const home = tmpDir('kubic-trust-home-');
+      const home = tempDir('kubic-trust-home-');
       const project = projectWithConfig();
       const link = join(home, 'project-link');
       symlinkSync(project, link, 'dir');
@@ -198,7 +178,7 @@ describe('kubic trust command', () => {
     });
 
     it('to a directory can be revoked', () => {
-      const home = tmpDir('kubic-trust-home-');
+      const home = tempDir('kubic-trust-home-');
       const project = projectWithConfig();
       const link = join(home, 'project-link');
       symlinkSync(project, link, 'dir');
@@ -212,7 +192,7 @@ describe('kubic trust command', () => {
     });
 
     it('to a file is still refused as not a directory', () => {
-      const home = tmpDir('kubic-trust-home-');
+      const home = tempDir('kubic-trust-home-');
       const file = join(home, 'notes.txt');
       writeFileSync(file, 'x');
       const link = join(home, 'file-link');
@@ -226,7 +206,7 @@ describe('kubic trust command', () => {
     });
 
     it('that dangles is refused as no such directory', () => {
-      const home = tmpDir('kubic-trust-home-');
+      const home = tempDir('kubic-trust-home-');
       const link = join(home, 'dangling');
       symlinkSync(join(home, 'gone'), link, 'dir');
       const store = new ProjectTrustStore(projectTrustStorePath(home));
@@ -239,7 +219,7 @@ describe('kubic trust command', () => {
   });
 
   it('fails closed with the named file when the store is corrupt (exit 1)', () => {
-    const home = tmpDir('kubic-trust-home-');
+    const home = tempDir('kubic-trust-home-');
     const project = projectWithConfig();
     const path = projectTrustStorePath(home);
     mkdirSync(join(home, '.kubic'), { recursive: true });

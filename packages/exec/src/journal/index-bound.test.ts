@@ -7,25 +7,12 @@
 // index.jsonl unbounded, which contradicts "unbounded growth is impossible by
 // construction" (journal.ts header). The bound is the whole store now: the
 // index's own size plus the blob bytes it references.
-import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { FileJournalStore } from './store.js';
 import type { JournalEntryInput } from './types.js';
-
-const roots: string[] = [];
-
-afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
-});
-
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'journal-index-bound-'));
-  roots.push(root);
-  return root;
-}
 
 function entry(overrides: Partial<JournalEntryInput> = {}): JournalEntryInput {
   return {
@@ -52,7 +39,7 @@ function storeBytes(dir: string): number {
 
 describe('journal index size counts against the bound', () => {
   it('keeps index + blobs under the bound across 10k alternating appends', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-index-bound-');
     const store = new FileJournalStore(dir, {
       maxBytes: 64 * 1024,
       durable: false,
@@ -75,7 +62,7 @@ describe('journal index size counts against the bound', () => {
   }, 30_000);
 
   it('leaves a tenth of the bound free, not a tenth of the entries', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-index-bound-');
     // Build well over the bound: the drop set is forced, so the pass has to
     // decide how much headroom to buy back.
     const store = new FileJournalStore(dir, { durable: false });
@@ -102,7 +89,7 @@ describe('journal index size counts against the bound', () => {
   });
 
   it('drops the oldest entry when only the index pushes the store over', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-index-bound-');
     const store = new FileJournalStore(dir, { maxBytes: 2000, durable: false });
     // One small blob, reused: the store grows through its index lines alone.
     for (let i = 0; i < 40; i += 1) {
@@ -123,7 +110,7 @@ describe('journal index size counts against the bound', () => {
   });
 
   it('still takes the fast path while index + blobs stay under the bound', () => {
-    const dir = tmpRoot();
+    const dir = tempDir('journal-index-bound-');
     const store = new FileJournalStore(dir, { maxBytes: 64 * 1024 });
     for (let i = 0; i < 5; i += 1) {
       store.append(entry({ path: `f${i}.txt`, after: 'small\n' }));

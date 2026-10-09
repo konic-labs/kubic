@@ -2,14 +2,7 @@
 // against the role's `models` and a model outside the set refuses by name
 // before any provider call. Drives the real `runHeadlessPrompt` with faux
 // providers: zero network, zero paid tokens.
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createModels,
@@ -17,21 +10,9 @@ import {
   fauxProvider,
 } from '@kubic/agent/pi-boundary';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runHeadlessPrompt } from '../../src/run/command.js';
-
-const made: string[] = [];
-
-function tmpRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'run-scoped-models-'));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function writeRole(root: string, name: string): void {
   const dir = join(root, '.kubic', 'roles');
@@ -65,8 +46,8 @@ function trajectoryThinking(root: string, id: string): unknown {
 
 describe('run scoped models', () => {
   it("refuses --model outside the role's set by name", async () => {
-    const root = tmpRoot();
-    const rolesCwd = tmpRoot();
+    const root = tempDir('run-scoped-models-');
+    const rolesCwd = tempDir('run-scoped-models-');
     writeRole(rolesCwd, 'reviewer');
     const result = await runHeadlessPrompt(
       'review it',
@@ -94,8 +75,8 @@ describe('run scoped models', () => {
   });
 
   it('an empty set allows any registered model (control)', async () => {
-    const root = tmpRoot();
-    const rolesCwd = tmpRoot();
+    const root = tempDir('run-scoped-models-');
+    const rolesCwd = tempDir('run-scoped-models-');
     writeRole(rolesCwd, 'reviewer');
     const result = await runHeadlessPrompt(
       'review it',
@@ -115,8 +96,8 @@ describe('run scoped models', () => {
   });
 
   it('a matching entry thinking beats the flat role default in the lane', async () => {
-    const root = tmpRoot();
-    const rolesCwd = tmpRoot();
+    const root = tempDir('run-scoped-models-');
+    const rolesCwd = tempDir('run-scoped-models-');
     writeRole(rolesCwd, 'reviewer');
     const faux = fauxProvider({
       models: [{ id: 'deep', reasoning: true }],

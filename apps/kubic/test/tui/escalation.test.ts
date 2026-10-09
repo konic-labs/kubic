@@ -4,8 +4,7 @@
 // one-way, and naming the live model still passes. Drives the real
 // `bootTuiLane` through the production deps builder with faux providers:
 // zero network, zero paid tokens.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TurnFailureReason } from '@kubic/agent/lane/turn';
 import {
@@ -20,6 +19,7 @@ import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../../test/fake-terminal.js';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { CliConfigResult } from '../../src/config/load.js';
 import { prodTuiDeps } from '../../src/prod-runners.js';
 import { bootTuiLane } from '../../src/tui/boot.js';
@@ -28,22 +28,12 @@ import { runTuiCommand } from '../../src/tui/run.js';
 import { TuiTurnRunner } from '../../src/tui/turn-runner.js';
 import type { TuiLaneLoop } from '../../src/tui/types.js';
 
-const tempDirs: string[] = [];
-
-function tmpRoot(prefix = 'kubic-tui-escalation-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
-
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of tempDirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
 });
 
 function twoProviders(): MutableModels {
@@ -132,11 +122,11 @@ const LADDER =
 
 describe('configured ladder on the TUI lane', () => {
   it('refuses an off-ladder switch, climbs on-ladder, refuses down-steps', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const cfg = cliConfig({ [PROJECT]: LADDER });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(workspace, tmpRoot(), twoProviders()),
+      rerooted(workspace, tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane(undefined, undefined, {});
     const loop = boot.loop;
@@ -166,11 +156,11 @@ describe('configured ladder on the TUI lane', () => {
   });
 
   it('climbs with an explicit reason on the /escalate path', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const cfg = cliConfig({ [PROJECT]: LADDER });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(workspace, tmpRoot(), twoProviders()),
+      rerooted(workspace, tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane(undefined, undefined, {});
     const loop = boot.loop;
@@ -190,7 +180,7 @@ describe('configured ladder on the TUI lane', () => {
   });
 
   it('refuses the second climb past maxEscalations', async () => {
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const cfg = cliConfig({
       [PROJECT]:
         '[model]\nprovider = "local"\nid = "a"\n' +
@@ -199,7 +189,7 @@ describe('configured ladder on the TUI lane', () => {
     });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(workspace, tmpRoot(), twoProviders()),
+      rerooted(workspace, tempDir(), twoProviders()),
     );
     const boot = await deps.bootLane(undefined, undefined, {});
     const loop = boot.loop;
@@ -223,8 +213,8 @@ describe('configured ladder on the TUI lane', () => {
     // Drives the real recordTurn (every TUI turn settles through it)
     // with synthesized failed records — the classification itself is
     // 's pinned unit, this pins the trigger off it.
-    const workspace = tmpRoot();
-    const sessions = tmpRoot();
+    const workspace = tempDir();
+    const sessions = tempDir();
     const cfg = cliConfig({ [PROJECT]: LADDER });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
@@ -266,8 +256,8 @@ describe('configured ladder on the TUI lane', () => {
   });
 
   it('a completed turn breaks the failure streak', async () => {
-    const workspace = tmpRoot();
-    const sessions = tmpRoot();
+    const workspace = tempDir();
+    const sessions = tempDir();
     const cfg = cliConfig({ [PROJECT]: LADDER });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
@@ -303,11 +293,11 @@ describe('configured ladder on the TUI lane', () => {
     // The /model climb records the event and the
     // runner drain reports it as a transcript row — each climb once.
     // Full loop level: /model through runTuiCommand on a fake terminal.
-    const workspace = tmpRoot();
+    const workspace = tempDir();
     const cfg = cliConfig({ [PROJECT]: LADDER });
     const deps = tuiDepsWithDefaults(
       prodTuiDeps(IO, cfg),
-      rerooted(workspace, tmpRoot(), twoProviders()),
+      rerooted(workspace, tempDir(), twoProviders()),
     );
     const fake = terminalRig(100);
     const pending = runTuiCommand(

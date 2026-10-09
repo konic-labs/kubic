@@ -1,26 +1,13 @@
 // Session-journal reachability: `kubic diff/undo` reach the
 // `kubic run` session journal under <sessionsRoot>/<id>/journal via
 // --session or the printed `journal:<id>` ref.
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { CliUsageError } from '@kubic/core/cli/exit-codes';
 import { FileJournalStore } from '@kubic/exec/journal';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { runJournalCommand } from './journal-cli.js';
-
-const made: string[] = [];
-
-function tmpDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
 
 function out(): { lines: string[]; write: (line: string) => void } {
   const lines: string[] = [];
@@ -48,8 +35,8 @@ function seedSessionJournal(
 
 describe('session journal reachability', () => {
   it('diff --session <id> shows the session journal effects from the cwd', async () => {
-    const sessionsRoot = tmpDir('sess-root-');
-    const root = tmpDir('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
     const o = out();
     const code = (
@@ -67,8 +54,8 @@ describe('session journal reachability', () => {
   });
 
   it('undo --dry-run plans against the same session store diff reads', async () => {
-    const sessionsRoot = tmpDir('sess-root-');
-    const root = tmpDir('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
     // The session recorded `root` as its workspace — undo
     // plans against that, whatever the invocation cwd.
@@ -110,8 +97,8 @@ describe('session journal reachability', () => {
   });
 
   it('accepts the printed journal:<id> ref verbatim as --session', async () => {
-    const sessionsRoot = tmpDir('sess-root-');
-    const root = tmpDir('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
     const o = out();
     const code = (
@@ -136,8 +123,8 @@ describe('session journal reachability', () => {
   ])(
     'refuses session id %s as a usage error (exit 2) and never escapes',
     async (id) => {
-      const sessionsRoot = tmpDir('sess-root-');
-      const root = tmpDir('ws-');
+      const sessionsRoot = tempDir('sess-root-');
+      const root = tempDir('ws-');
       seedSessionJournal(sessionsRoot, 'sess-1', root);
       const o = out();
       const error = await runJournalCommand(
@@ -157,8 +144,8 @@ describe('session journal reachability', () => {
   );
 
   it('refuses --session combined with a configured journal dir (explicit precedence)', async () => {
-    const sessionsRoot = tmpDir('sess-root-');
-    const root = tmpDir('ws-');
+    const sessionsRoot = tempDir('sess-root-');
+    const root = tempDir('ws-');
     seedSessionJournal(sessionsRoot, 'sess-1', root);
     const o = out();
     await expect(

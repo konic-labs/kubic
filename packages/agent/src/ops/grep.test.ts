@@ -3,11 +3,11 @@
 // oversized file must be skipped WITHOUT being read, and the whole result
 // must fit a byte budget. include stays a documented substring test.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type FileSystem, NodeExecutionEnv } from '@kubic/exec/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   GREP_MAX_FILE_BYTES,
   GREP_MAX_LINE_LENGTH,
@@ -16,19 +16,6 @@ import {
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation, OPERATION_PARAMETERS, OPERATIONS } from './registry.js';
 import type { OpContext, ToolInvocation } from './types.js';
-
-const dirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  dirs.push(dir);
-  return dir;
-}
 
 function ctx(root: string): OpContext {
   return { env: new NodeExecutionEnv(root), sessionId: 's1', agentId: 'a1' };
@@ -43,7 +30,7 @@ function inv(): ToolInvocation {
 
 describe('grep bounds', () => {
   it('clips a matching line at the line cap and sets linesTruncated', async () => {
-    const root = tmp('grep-tool-line-');
+    const root = tempDir('grep-tool-line-');
     const long = `needle ${'x'.repeat(1_000_000)}`;
     writeFileSync(join(root, 'big.txt'), `${long}\n`);
     const out = await callOperation(
@@ -63,7 +50,7 @@ describe('grep bounds', () => {
   });
 
   it('leaves a short matching line whole and reports linesTruncated false', async () => {
-    const root = tmp('grep-tool-short-');
+    const root = tempDir('grep-tool-short-');
     writeFileSync(join(root, 'a.txt'), 'needle here\n');
     const out = await callOperation(
       'grep',
@@ -80,7 +67,7 @@ describe('grep bounds', () => {
   });
 
   it('skips a file containing NUL bytes and counts it', async () => {
-    const root = tmp('grep-tool-binary-');
+    const root = tempDir('grep-tool-binary-');
     writeFileSync(join(root, 'blob.dat'), Buffer.from('needle\u0000needle\n'));
     writeFileSync(join(root, 'text.txt'), 'needle\n');
     const out = await callOperation(
@@ -99,7 +86,7 @@ describe('grep bounds', () => {
   });
 
   it('skips a file over the size bound, counts it, and never reads it', async () => {
-    const root = tmp('grep-tool-size-');
+    const root = tempDir('grep-tool-size-');
     writeFileSync(join(root, 'huge.txt'), 'needle\n');
     writeFileSync(join(root, 'small.txt'), 'needle\n');
     const base = new NodeExecutionEnv(root);
@@ -149,7 +136,7 @@ describe('grep bounds', () => {
   });
 
   it('bounds the total result bytes and names the cap', async () => {
-    const root = tmp('grep-tool-bytes-');
+    const root = tempDir('grep-tool-bytes-');
     const line = `needle ${'y'.repeat(400)}`;
     for (let i = 0; i < 200; i += 1) {
       writeFileSync(

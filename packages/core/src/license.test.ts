@@ -19,7 +19,7 @@ describe('kubic license identity', () => {
   });
 
   it('formats the --version line with version and license', () => {
-    expect(formatVersionLine('0.0.0')).toBe('kubic 0.0.0 (license: MIT)');
+    expect(formatVersionLine('1.2.3')).toBe('kubic 1.2.3 (license: MIT)');
   });
 
   it('formats the license detail with id and file pointer', () => {

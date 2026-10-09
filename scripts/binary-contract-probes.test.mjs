@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
 } from 'node:fs';
@@ -22,6 +23,7 @@ import {
   CONFIG_REFUSAL_KEY,
   CRASH_PROBE_ENV,
   CRASH_PROBE_MESSAGE,
+  expectedVersionLine,
   MODELS_RECEIPT_PREFIX,
   nodeGuardLine,
   ROOT_HELP_TEXT,
@@ -34,7 +36,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const SESSION = '01a0d7d9-d6fb-71c2-bcfa-15f762197e6b';
 
-const VERSION_LINE = 'kubic 0.0.0 (license: MIT)';
+// The line the built binary must print, from the live manifest's version.
+const VERSION_LINE = expectedVersionLine(
+  JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version,
+);
 
 const RUN_MESSAGE = 'no models available: register a provider first';
 

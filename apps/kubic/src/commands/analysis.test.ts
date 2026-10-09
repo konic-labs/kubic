@@ -56,7 +56,7 @@ async function kubic(argv: readonly string[], real = false): Promise<Run> {
     err: (line: string) => err.push(line),
   };
   const program = createKubicProgram(channels, {
-    versionLine: 'kubic 0.0.0 (license: MIT)',
+    versionLine: 'kubic 1.2.3 (license: MIT)',
     rootHelp: 'usage: kubic <analysis>',
   });
   const handlers = realRunners(channels);

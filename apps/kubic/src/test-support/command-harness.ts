@@ -38,7 +38,7 @@ export async function kubic(
     err: (line: string) => err.push(line),
   };
   const program = createKubicProgram(channels, {
-    versionLine: 'kubic 0.0.0 (license: MIT)',
+    versionLine: 'kubic 1.2.3 (license: MIT)',
     rootHelp: 'usage: kubic <…>',
   });
   let code: ExitCode = 0;

@@ -27,7 +27,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const SESSION = '01a0d7d9-d6fb-71c2-bcfa-15f762197e6b';
 
-const VERSION_LINE = 'kubic 0.0.0 (license: MIT)';
+// The line the built binary must print, from the live manifest's version.
+const VERSION_LINE = expectedVersionLine(
+  JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version,
+);
 
 const RUN_MESSAGE = 'no models available: register a provider first';
 
@@ -323,22 +326,19 @@ describe('binary contract', () => {
     assert.match(result.problems[0], /npm run build/);
   });
 
-  it('composes the exact version line from the live manifest', () => {
-    const manifest = JSON.parse(
-      readFileSync(join(ROOT, 'package.json'), 'utf8'),
-    );
-    assert.equal(expectedVersionLine(manifest.version), VERSION_LINE);
+  it('composes the exact version line from a version', () => {
+    assert.equal(expectedVersionLine('1.2.3'), 'kubic 1.2.3 (license: MIT)');
   });
 });
 
 describe('binary contract --version probe', () => {
   it('fails when the printed line drifts', () => {
     const result = contractWith({
-      version: versionOut('kubic 0.0.1 (license: MIT)'),
+      version: versionOut('kubic 9.9.9 (license: MIT)'),
     });
     assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /kubic 0\.0\.1 \(license: MIT\)/);
-    assert.match(result.problems[0], /kubic 0\.0\.0 \(license: MIT\)/);
+    assert.ok(result.problems[0].includes('kubic 9.9.9 (license: MIT)'));
+    assert.ok(result.problems[0].includes(VERSION_LINE));
   });
 
   it('fails when the line is not exact (extra output)', () => {

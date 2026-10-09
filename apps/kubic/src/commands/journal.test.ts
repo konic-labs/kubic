@@ -44,7 +44,7 @@ async function kubic(
     err: (line: string) => err.push(line),
   };
   const program = createKubicProgram(channels, {
-    versionLine: 'kubic 0.0.0',
+    versionLine: 'kubic 1.2.3',
     rootHelp: 'usage: kubic <x>',
   });
   let exit: ExitCode = 0;

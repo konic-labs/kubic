@@ -22,13 +22,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { prodTuiDeps } from './prod-runners.js';
-import type { TuiLaneLoop } from './tui-run.js';
-import {
-  bootTuiLane,
-  runTuiCommand,
-  TuiTurnRunner,
-  tuiDepsWithDefaults,
-} from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { tuiDepsWithDefaults } from './tui/deps.js';
+import { runTuiCommand } from './tui/run.js';
+import { TuiTurnRunner } from './tui/turn-runner.js';
+import type { TuiLaneLoop } from './tui/types.js';
 
 const tempDirs: string[] = [];
 

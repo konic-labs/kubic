@@ -18,7 +18,9 @@ import { bootScreen } from '@kubic/tui/screen';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeTerminal, terminalRig } from '../../../test/fake-terminal.js';
-import { bootTuiLane, runTuiCommand, TuiTurnRunner } from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { runTuiCommand } from './tui/run.js';
+import { TuiTurnRunner } from './tui/turn-runner.js';
 
 const made: string[] = [];
 

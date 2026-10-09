@@ -16,7 +16,7 @@ import {
   bootTuiLane,
   FILE_LIST_TTL_MS,
   workspaceFileLister,
-} from './tui-run.js';
+} from './tui/boot.js';
 
 const made: string[] = [];
 

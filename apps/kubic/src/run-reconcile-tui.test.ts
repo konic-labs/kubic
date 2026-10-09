@@ -25,7 +25,7 @@ import { NodeExecutionEnv } from '@kubic/exec/env';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it } from 'vitest';
-import { bootTuiLane } from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
 
 const made: string[] = [];
 

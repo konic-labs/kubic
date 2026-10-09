@@ -17,7 +17,7 @@ import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { mapTerminusToExitCode } from '@kubic/host/run';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runHeadlessPrompt } from './run/command.js';
-import { bootTuiLane } from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
 
 const made: string[] = [];
 

@@ -31,14 +31,10 @@ import {
   runtimeModelPin,
 } from './config-runtime.js';
 import { prodTuiDeps } from './prod-runners.js';
-import {
-  bootTuiLane,
-  runTuiCommand,
-  type TuiBootFlags,
-  type TuiRunOptions,
-  tuiBootOptions,
-  tuiDepsWithDefaults,
-} from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { tuiBootOptions, tuiDepsWithDefaults } from './tui/deps.js';
+import { runTuiCommand } from './tui/run.js';
+import type { TuiBootFlags, TuiRunOptions } from './tui/types.js';
 
 const tempDirs: string[] = [];
 

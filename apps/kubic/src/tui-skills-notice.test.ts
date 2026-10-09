@@ -13,7 +13,7 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it } from 'vitest';
-import { bootTuiLane } from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
 
 const made: string[] = [];
 

@@ -37,15 +37,12 @@ import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import {
-  runTuiCommand,
-  TUI_CLOCK_TICK_MS,
-  TuiCompactionTurn,
-  type TuiLaneLoop,
-  type TuiRunDeps,
-  TuiTurnRunner,
-  tuiLoop,
-} from './tui-run.js';
+import { TUI_CLOCK_TICK_MS } from './tui/chrome.js';
+import { TuiCompactionTurn } from './tui/compaction-turn.js';
+import { tuiLoop } from './tui/lane-loop.js';
+import { runTuiCommand } from './tui/run.js';
+import { TuiTurnRunner } from './tui/turn-runner.js';
+import type { TuiLaneLoop, TuiRunDeps } from './tui/types.js';
 
 type FauxContent = Parameters<typeof fauxAssistantMessage>[0];
 type FauxMessage = ReturnType<typeof fauxAssistantMessage>;

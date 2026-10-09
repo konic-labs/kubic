@@ -27,12 +27,10 @@ import { FileJournalStore } from '@kubic/exec/journal';
 import { runJournalCommand } from '@kubic/host/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import {
-  bootTuiLane,
-  JournalPanelFeed,
-  runTuiCommand,
-  type TuiRunDeps,
-} from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { JournalPanelFeed } from './tui/commands/journal.js';
+import { runTuiCommand } from './tui/run.js';
+import type { TuiRunDeps } from './tui/types.js';
 
 const made: string[] = [];
 

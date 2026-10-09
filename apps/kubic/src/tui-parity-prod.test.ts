@@ -18,13 +18,10 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import {
-  bootTuiLane,
-  runTuiCommand,
-  type TuiLaneBoot,
-  type TuiRunDeps,
-  TuiTurnRunner,
-} from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { runTuiCommand } from './tui/run.js';
+import { TuiTurnRunner } from './tui/turn-runner.js';
+import type { TuiLaneBoot, TuiRunDeps } from './tui/types.js';
 
 const made: string[] = [];
 

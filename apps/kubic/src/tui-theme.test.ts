@@ -11,13 +11,10 @@ import { createTuiTheme, ThemeError, tuiTheme } from '@kubic/tui/theme';
 import type { Terminal } from '@kubic/tui/tui-boundary';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import {
-  bootTuiLane,
-  resolveTuiTheme,
-  runTuiCommand,
-  THEME_MAX_BYTES,
-  type TuiRunDeps,
-} from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { resolveTuiTheme, THEME_MAX_BYTES } from './tui/commands/appearance.js';
+import { runTuiCommand } from './tui/run.js';
+import type { TuiRunDeps } from './tui/types.js';
 
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let i = 0; i < 500 && !condition(); i += 1) {

@@ -12,7 +12,7 @@ import {
 } from '@kubic/agent/pi-boundary';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { bootTuiLane } from '../tui-run.js';
+import { bootTuiLane } from '../tui/boot.js';
 import {
   SessionBoot,
   type SessionBootConfig,

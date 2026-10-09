@@ -36,12 +36,9 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import {
-  bootTuiLane,
-  runTuiCommand,
-  type TuiLaneBoot,
-  type TuiRunDeps,
-} from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { runTuiCommand } from './tui/run.js';
+import type { TuiLaneBoot, TuiRunDeps } from './tui/types.js';
 
 const made: string[] = [];
 const pids: number[] = [];

@@ -15,13 +15,11 @@ import type { CommandResult } from '@kubic/core/cli/exit-codes';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import {
-  bootTuiLane,
-  PASTE_IDLE_MS,
-  readImageFile,
-  runTuiCommand,
-  type TuiLaneBoot,
-} from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { readImageFile } from './tui/commands/media.js';
+import { PASTE_IDLE_MS } from './tui/input.js';
+import { runTuiCommand } from './tui/run.js';
+import type { TuiLaneBoot } from './tui/types.js';
 
 // 1x1 transparent PNG.
 const PNG = Buffer.from(

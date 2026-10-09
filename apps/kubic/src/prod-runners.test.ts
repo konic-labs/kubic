@@ -32,7 +32,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CliConfigResult } from './config-runtime.js';
 import { loadCliConfig } from './config-runtime.js';
 import { createProdRunners, prodTuiDeps } from './prod-runners.js';
-import { tuiDepsWithDefaults } from './tui-run.js';
+import { tuiDepsWithDefaults } from './tui/deps.js';
 
 const roots: string[] = [];
 afterEach(() => {

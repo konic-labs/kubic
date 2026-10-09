@@ -125,11 +125,9 @@ import type { HeadlessRunDeps } from './run/options.js';
 import { createRunProgress } from './run/progress.js';
 import { resolveSessionTrajectory } from './run/trajectory.js';
 import { prodSetupDeps } from './setup-prod.js';
-import {
-  runTuiCommand,
-  type TuiDepsInput,
-  tuiDepsWithDefaults,
-} from './tui-run.js';
+import type { TuiDepsInput } from './tui/deps.js';
+import { tuiDepsWithDefaults } from './tui/deps.js';
+import { runTuiCommand } from './tui/run.js';
 
 // The two channels the root wired: `kubic` output on stdout, diagnostics
 // (debug lines) on stderr.

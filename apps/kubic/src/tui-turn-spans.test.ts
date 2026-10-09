@@ -10,7 +10,8 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { TurnSpans, type TurnSpansSink } from '@kubic/host/run';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type TuiLaneLoop, TuiTurnRunner } from './tui-run.js';
+import { TuiTurnRunner } from './tui/turn-runner.js';
+import type { TuiLaneLoop } from './tui/types.js';
 
 const made: string[] = [];
 

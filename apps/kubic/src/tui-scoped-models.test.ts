@@ -18,7 +18,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import type { CliConfigResult } from './config-runtime.js';
 import { prodTuiDeps } from './prod-runners.js';
-import { bootTuiLane, runTuiCommand, tuiDepsWithDefaults } from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { tuiDepsWithDefaults } from './tui/deps.js';
+import { runTuiCommand } from './tui/run.js';
 
 const tempDirs: string[] = [];
 

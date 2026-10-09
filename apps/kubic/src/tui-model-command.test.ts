@@ -10,9 +10,9 @@ import {
   parseEscalateCommand,
   parseModelCommand,
   parseThinkingCommand,
-  type TuiLaneLoop,
-  TuiTurnRunner,
-} from './tui-run.js';
+} from './tui/commands/parse.js';
+import { TuiTurnRunner } from './tui/turn-runner.js';
+import type { TuiLaneLoop } from './tui/types.js';
 
 describe('parseModelCommand', () => {
   it('reads the report and switch forms', () => {

@@ -17,7 +17,8 @@ import {
   type TrajectoryExport,
 } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { bootTuiLane, TuiTurnRunner } from './tui-run.js';
+import { bootTuiLane } from './tui/boot.js';
+import { TuiTurnRunner } from './tui/turn-runner.js';
 
 const made: string[] = [];
 

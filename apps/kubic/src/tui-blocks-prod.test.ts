@@ -21,7 +21,9 @@ import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import { runTuiCommand, type TuiRunDeps, tuiLoop } from './tui-run.js';
+import { tuiLoop } from './tui/lane-loop.js';
+import { runTuiCommand } from './tui/run.js';
+import type { TuiRunDeps } from './tui/types.js';
 
 const made: string[] = [];
 

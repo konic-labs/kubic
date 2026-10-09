@@ -17,12 +17,9 @@ import {
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { createTuiApp } from '@kubic/tui/tui-app';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  bootTuiLane,
-  contextLimitsOf,
-  type TuiLaneLoop,
-  TuiTurnRunner,
-} from './tui-run.js';
+import { bootTuiLane, contextLimitsOf } from './tui/boot.js';
+import { TuiTurnRunner } from './tui/turn-runner.js';
+import type { TuiLaneLoop } from './tui/types.js';
 
 const made: string[] = [];
 

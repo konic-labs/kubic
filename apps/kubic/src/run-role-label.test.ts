@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
 import { runHeadlessPrompt } from './run/command.js';
 import { createRunProgress } from './run/progress.js';
-import { runTuiCommand } from './tui-run.js';
+import { runTuiCommand } from './tui/run.js';
 
 // The role name is longer than its column (20): it is cut to 19 characters
 // and an ellipsis.

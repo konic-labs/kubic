@@ -6,7 +6,7 @@ import { NoModelAvailableError } from '@kubic/agent/model-select';
 import { EXIT_PROVIDER } from '@kubic/core/cli/exit-codes';
 import { describe, expect, it } from 'vitest';
 import { terminalRig } from '../../../test/fake-terminal.js';
-import { runTuiCommand } from './tui-run.js';
+import { runTuiCommand } from './tui/run.js';
 
 async function waitFor(condition: () => boolean): Promise<void> {
   for (let i = 0; i < 500 && !condition(); i += 1) {

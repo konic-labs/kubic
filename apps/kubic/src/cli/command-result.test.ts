@@ -24,7 +24,7 @@ import { runSessionsCommand } from '@kubic/host/sessions';
 import { runSkillsCommand } from '@kubic/host/skills';
 import { describe, expectTypeOf, it } from 'vitest';
 import { prodFirstRunSetup } from '../setup-prod.js';
-import { runTuiCommand } from '../tui-run.js';
+import { runTuiCommand } from '../tui/run.js';
 
 describe('the exit-code contract', () => {
   it('ExitCode is exactly the documented codes', () => {

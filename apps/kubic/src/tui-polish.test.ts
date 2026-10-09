@@ -28,7 +28,7 @@ import { createTuiApp } from '@kubic/tui/tui-app';
 import { Text, visibleWidth } from '@kubic/tui/tui-boundary';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
-import { TuiTurnRunner } from './tui-run.js';
+import { TuiTurnRunner } from './tui/turn-runner.js';
 
 const ESC = String.fromCharCode(27);
 const plain = (line: string): string =>

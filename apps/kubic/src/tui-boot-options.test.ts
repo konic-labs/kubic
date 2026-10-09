@@ -5,7 +5,7 @@
 
 import { resolveEffectivePolicy } from '@kubic/host/policy';
 import { describe, expect, it } from 'vitest';
-import { tuiBootOptions, tuiDepsWithDefaults } from './tui-run.js';
+import { tuiBootOptions, tuiDepsWithDefaults } from './tui/deps.js';
 
 describe('tuiBootOptions', () => {
   it('forwards the model pin and every config projection', () => {

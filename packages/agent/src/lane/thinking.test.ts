@@ -13,7 +13,7 @@ import {
   type FauxLaneOptions,
   runPrompt,
 } from '../test-support/lane-harness.js';
-import { attachSession, openSessionStore } from './session-store.js';
+import { attachSession, openSessionStore } from './session-store/index.js';
 
 const dirs: string[] = [];
 const lanes: FauxLane[] = [];

@@ -26,24 +26,28 @@ import {
   fauxAssistantMessage,
   Harness,
   UserEntry,
-} from '../pi-boundary.js';
-import { bootFauxLane } from '../test-support/lane-harness.js';
+} from '../../pi-boundary.js';
+import { bootFauxLane } from '../../test-support/lane-harness.js';
+import { readSessionEntries } from '../transcript.js';
+import { SessionIdError } from './ids.js';
 import {
   acquireSessionLock,
-  attachSession,
-  createSession,
+  releaseSessionLock,
+  SessionLockError,
+} from './lock.js';
+import {
   KubicSessionDoc,
-  listSessions,
   openSessionStore,
   readSessionMetadata,
-  releaseSessionLock,
+} from './meta.js';
+import type { SessionHandle } from './store.js';
+import {
+  attachSession,
+  createSession,
+  listSessions,
   SessionAttachError,
-  type SessionHandle,
-  SessionIdError,
-  SessionLockError,
   sessionsTouchingWorkspace,
-} from './session-store.js';
-import { readSessionEntries } from './transcript.js';
+} from './store.js';
 
 const openSessions: SessionHandle[] = [];
 const scratchDirs: string[] = [];

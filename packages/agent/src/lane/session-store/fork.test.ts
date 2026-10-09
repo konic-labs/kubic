@@ -11,18 +11,13 @@ import {
   BACKGROUND_CONTEXT,
   fauxAssistantMessage,
   UsageDoc,
-} from '../pi-boundary.js';
-import { bootFauxLane } from '../test-support/lane-harness.js';
-import {
-  attachSession,
-  createSession,
-  forkSession,
-  listSessions,
-  openSessionStore,
-  readSessionMetadata,
-  SessionLockError,
-} from './session-store.js';
-import { readSessionEntries } from './transcript.js';
+} from '../../pi-boundary.js';
+import { bootFauxLane } from '../../test-support/lane-harness.js';
+import { readSessionEntries } from '../transcript.js';
+import { forkSession } from './fork.js';
+import { SessionLockError } from './lock.js';
+import { openSessionStore, readSessionMetadata } from './meta.js';
+import { attachSession, createSession, listSessions } from './store.js';
 
 const roots: string[] = [];
 

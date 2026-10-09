@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { BACKGROUND_CONTEXT, fauxAssistantMessage } from '../pi-boundary.js';
 import { bootFauxLane, type FauxLane } from '../test-support/lane-harness.js';
 import { settlePending } from './pending.js';
-import { attachSession, openSessionStore } from './session-store.js';
+import { attachSession, openSessionStore } from './session-store/index.js';
 
 const openLanes: FauxLane[] = [];
 const scratchDirs: string[] = [];

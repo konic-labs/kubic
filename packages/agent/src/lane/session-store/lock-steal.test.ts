@@ -17,7 +17,7 @@ import {
   readLockFile,
   removeLockFile,
 } from '@kubic/exec/lock-file';
-import { acquireSessionLock, SessionLockError } from './session-store.js';
+import { acquireSessionLock, SessionLockError } from './lock.js';
 
 describe('steal conditional clear', () => {
   it('never removes a live lock that lands after an absent read', () => {

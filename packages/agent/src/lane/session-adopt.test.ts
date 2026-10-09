@@ -15,7 +15,7 @@ import {
   type Storage,
 } from '../pi-boundary.js';
 import { bootLane, type Lane } from './boot.js';
-import type { SessionHandle } from './session-store.js';
+import type { SessionHandle } from './session-store/index.js';
 
 // The shipped handle's own contract, reduced to what this file observes:
 // `adopt()` marks the storage as the harness's, and `release()` closes the

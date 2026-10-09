@@ -58,7 +58,10 @@ import {
   PolicyRefusedError,
   toolsForNames,
 } from './policy.js';
-import { laneConversationIdOf, type SessionHandle } from './session-store.js';
+import {
+  laneConversationIdOf,
+  type SessionHandle,
+} from './session-store/index.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 import {
   composeTools,

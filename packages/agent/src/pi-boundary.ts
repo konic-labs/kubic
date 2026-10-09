@@ -145,7 +145,7 @@ export { openAIResponsesApi as openAIResponsesApiLazy } from '@earendil-works/pi
 export { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai/utils/uuid#uuidv7
-//   used by: packages/agent/src/lane/session-store.ts (minting a new
+//   used by: packages/agent/src/lane/session-store/ (minting a new
 //     session id)
 //   why Pi has no alternative: the session id is part of the store's public
 //     contract (`kubic run --session`, `kubic sessions list`, the session
@@ -163,7 +163,7 @@ export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
 //     lane/tools-adapter.ts (ToolRegistration, ToolExecutionApi),
 //     lane/interceptors.ts (ToolHooks, HookRegistration), lane/settle.ts
 //     (Submission, SettledSubmissionRecord), lane/events.ts (AgentEvent),
-// lane/session-store.ts (Storage), lane/boot.ts compaction
+// lane/session-store/ (Storage), lane/boot.ts compaction
 //     (CompactionPolicy), the session readers (EntryRecord)
 //   why Pi has no alternative: these are the shapes the durable harness
 //     passes across its API; Kubic aliases or structural copies would drift
@@ -250,7 +250,7 @@ export type {
 //     #MemoryStorage, #defineDoc
 //   used by: packages/agent/src/lane/events.ts (maps the committed event
 //     stream), packages/agent/src/lane/boot.ts (rejects a busy submit with
-//     ConversationBusy), packages/agent/src/lane/session-store.ts
+//     ConversationBusy), packages/agent/src/lane/session-store/
 //     (defines the kubic.session document), and the Kubic test harness
 //     factory (swaps MemoryStorage for temp-dir JSONL)
 //   why Pi has no alternative: watchEvents is the harness's committed-state
@@ -260,7 +260,7 @@ export type {
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#createSession (the plain Session kernel
 //     over one storage: commits and document reads, no harness)
-//   used by: packages/agent/src/lane/session-store.ts (the creating commit
+//   used by: packages/agent/src/lane/session-store/ (the creating commit
 //     that writes the kubic.session document)
 //   why Pi has no alternative: a document write is a Session commit, and the
 //     kernel is the only sanctioned writer of storage records (it owns the
@@ -318,7 +318,7 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/storage/jsonl#JsonlStorage (the portable
 //     JSONL storage core, opened over a supplied FileSystem)
-//   used by: packages/agent/src/lane/session-store.ts (one storage per
+//   used by: packages/agent/src/lane/session-store/ (one storage per
 //     <sessions-root>/<id>/) and lane/session-fs.test.ts (the storage
 //     conformance suite runs over the exec bridge)
 //   why Pi has no alternative: JSONL durability, commit markers and crash
@@ -330,7 +330,7 @@ export { err, FileError, ok } from '@earendil-works/pi-durable/env';
 export { JsonlStorage } from '@earendil-works/pi-durable/storage/jsonl';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/storage/jsonl/node#openNodeJsonlStorage
-//   used by: packages/agent/src/lane/session-store.ts (one storage per
+//   used by: packages/agent/src/lane/session-store/ (one storage per
 //     <sessions-root>/<id>/)
 //   why Pi has no alternative: JSONL durability, commit markers and crash
 //     recovery are pi-durable Storage internals, and Kubic owns no storage
@@ -364,7 +364,7 @@ export type { Registry } from '@earendil-works/pi-durable';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#createSession (the plain Session kernel
 //     over one storage: commits and document reads, no harness)
-//   used by: packages/agent/src/lane/session-store.ts (the creating commit
+//   used by: packages/agent/src/lane/session-store/ (the creating commit
 //     that writes the kubic.session document)
 //   why Pi has no alternative: a document write is a Session commit, and the
 //     kernel is the only sanctioned writer of storage records (it owns the

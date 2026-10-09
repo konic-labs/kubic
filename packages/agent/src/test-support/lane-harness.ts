@@ -36,7 +36,7 @@ import {
   openSessionStore,
   type SessionHandle,
   type SessionStore,
-} from '../lane/session-store.js';
+} from '../lane/session-store/index.js';
 import {
   BACKGROUND_CONTEXT,
   type Context,

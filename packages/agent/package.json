@@ -42,8 +42,8 @@
       "default": "./src/lane/session-fs.ts"
     },
     "./lane/session-store": {
-      "source": "./src/lane/session-store.ts",
-      "default": "./src/lane/session-store.ts"
+      "source": "./src/lane/session-store/index.ts",
+      "default": "./src/lane/session-store/index.ts"
     },
     "./lane/settle": {
       "source": "./src/lane/settle.ts",

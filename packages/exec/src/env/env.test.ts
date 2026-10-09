@@ -515,7 +515,7 @@ describe('a settled process handle', () => {
       const { env } = makeNodeEnv();
       // The leader exits at once but leaves a background member holding the
       // inherited pipes, so the handle stays unsettled through its drain
-      // window (EXIT_DRAIN_MS), the exact window in which a kill() must not
+      // window (OUTPUT_DRAIN_MS), the exact window in which a kill() must not
       // schedule a group SIGKILL for a leader that no longer owns a group.
       const leader = [
         "require('node:child_process')",

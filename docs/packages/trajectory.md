@@ -9,7 +9,7 @@ JSON record sufficient for replay, benchmarking, SFT/RL datasets and
 debugging — never claiming configuration the run did not use. The schema
 is `stable` at major 1 (currently `1.0`): additive-only within the major,
 same-major records parse with no shim, unknown fields are preserved, and
-an unknown major is refused with `unknown-major` (exit 3). The field list,
+an unknown major is refused with `unknown-major` (exit 2). The field list,
 the fail-closed rules and the changelog live in `CONTRACT.md`.
 
 ## Public API (`packages/trajectory/src`)
@@ -68,7 +68,7 @@ failures throw `TrajectoryExportError` (exit 2) with
 `missing-environment`, `untrusted-environment`,
 `missing-failure-category`, `contradictory-result`, `invalid-timestamps`,
 `invalid-usage`, `invalid-escalation`. Parse failures throw
-`TrajectorySchemaError` (exit 3): `unknown-major` | `malformed`.
+`TrajectorySchemaError` (exit 2, the usage code): `unknown-major` | `malformed`.
 
 The package imports none of the shapes it records: the execution
 environment (`exec` `env/`), file-change diffs (`exec`

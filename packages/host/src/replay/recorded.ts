@@ -39,9 +39,8 @@ export function loadTrajectory(
       error instanceof TrajectorySchemaError &&
       error.code === 'unknown-major'
     ) {
-      // Replay's subset (0/1/2/5/6) has no schema slot (exit 3 stays
-      // inside the trajectory package): an unsupported major is a caller
-      // usage error here, with the code preserved machine-readably.
+      // An unsupported major is a caller usage error, with the code
+      // preserved machine-readably.
       return {
         code: 'unknown-major',
         message: error.message,

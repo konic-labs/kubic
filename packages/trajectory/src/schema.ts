@@ -14,6 +14,7 @@
 // runtime implementations) — the structural interfaces below are
 // snapshots of those shapes, pinned by the golden fixture test.
 
+import { EXIT_USAGE, type ExitCode } from '@kubic/core/cli/exit-codes';
 export const SCHEMA_VERSION = '1.0';
 export const SCHEMA_MAJOR = 1;
 
@@ -252,9 +253,12 @@ export const TRAJECTORY_FIELDS = {
 
 export type TrajectorySchemaErrorCode = 'unknown-major' | 'malformed';
 
+// An export this reader cannot take — an unknown major version, or a file
+// that is not a valid export — is an invalid input: the usage code, never
+// `turn_limit`'s 3.
 export class TrajectorySchemaError extends Error {
   readonly code: TrajectorySchemaErrorCode;
-  readonly exitCode = 3;
+  readonly exitCode: ExitCode = EXIT_USAGE;
 
   constructor(code: TrajectorySchemaErrorCode, message: string) {
     super(message);

@@ -6,6 +6,7 @@
 // env (post-allowlist + role grant), never the intended config:
 // callers must pass capturedFrom: 'used' or the build is refused.
 
+import { EXIT_USAGE, type ExitCode } from '@kubic/core/cli/exit-codes';
 import { redactSecretEnv } from '@kubic/core/secret-keys';
 import {
   isTrajectoryFailureCode,
@@ -49,7 +50,7 @@ export type TrajectoryExportErrorCode =
 
 export class TrajectoryExportError extends Error {
   readonly code: TrajectoryExportErrorCode;
-  readonly exitCode = 2;
+  readonly exitCode: ExitCode = EXIT_USAGE;
 
   constructor(code: TrajectoryExportErrorCode, message: string) {
     super(message);

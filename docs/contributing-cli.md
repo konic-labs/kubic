@@ -45,7 +45,8 @@ The analysis group (`commands/analysis.ts`) is the reference to copy:
 - it declares typed runners (`AnalysisRunners`, parsed options in), which
   `DispatchRunners` extends;
 - each runner returns a `CommandResult`, and prints its own output on the
-  `out`/`err` channels;
+  `out`/`err` channels as it runs (a streaming command and a report work
+  alike, and a runner is testable without the dispatcher);
 - its tests are in `commands/analysis.test.ts`.
 
 A new command is a real definition:

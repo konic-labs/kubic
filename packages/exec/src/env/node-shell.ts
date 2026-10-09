@@ -29,7 +29,7 @@ const KILL_GRACE_MS = 2000;
 // a background job, never the command's own output, so the streams are
 // destroyed instead of waiting for 'close' (which never comes while a
 // backgrounded `sleep` inherits the pipe).
-const EXIT_DRAIN_MS = 150;
+const OUTPUT_DRAIN_MS = 150;
 
 const GROUP_POLL_MS = 10;
 
@@ -331,7 +331,7 @@ class ShellRun {
       void this.finish();
       return;
     }
-    this.drainTimer = setTimeout(() => void this.finish(), EXIT_DRAIN_MS);
+    this.drainTimer = setTimeout(() => void this.finish(), OUTPUT_DRAIN_MS);
   }
 
   private async finish(): Promise<void> {

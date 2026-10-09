@@ -8,7 +8,7 @@ configuration the run did not use.
 
 `stable`: additive-only within major 1. Readers pinned to major 1 (replay
 and eval) parse every same-major record with no shim; unknown fields are
-preserved; an unknown major is refused with `unknown-major` (exit 3).
+preserved; an unknown major is refused with `unknown-major` (exit 2).
 Breaking changes mint major 2.
 
 ## Fields (all present, every export)
@@ -53,7 +53,7 @@ list, never a missing key.
 - Structural validation: every section is type-checked with its required
   keys (`model.provider`/`model`, `result.status` in `RESULT_STATUSES`,
   `actions`/`observations`/`approvals` arrays, the `usage` numbers, …). A
-  null or mistyped section/key is `malformed` (exit 3) naming the JSON path
+  null or mistyped section/key is `malformed` (exit 2) naming the JSON path
   (`trajectory.actions must be an array`), never a raw `TypeError`
   downstream. Unknown extra keys are preserved.
 - Observations over 8 KiB are truncated on a UTF-8 character boundary

@@ -310,17 +310,17 @@ function detectionOnlyCheck(
   const lexical: string[] = [];
   if (effectiveNetworkLevel(posture.classes.network) === 'none') {
     lexical.push(
-      'network=none is a lexical bash command detector (approvals.ts isNetworkCommand) — a script the agent writes and runs can reach the network',
+      'network=none is a lexical bash command detector — a script the agent writes and runs can reach the network',
     );
   }
   if (posture.classes.filesystem !== 'none') {
     lexical.push(
-      `filesystem=${posture.classes.filesystem} is lexical path confinement (confinePath) — symlinks are not resolved and the shell can still read anything the command does not name`,
+      `filesystem=${posture.classes.filesystem} is lexical path confinement — symlinks are not resolved and the shell can still read anything the command does not name`,
     );
   }
   if (effectiveCredentialLevel(posture.classes.credentials) === 'none') {
     lexical.push(
-      'credentials=none is a lexical credential-path detector (approvals-credentials.ts) — only the listed paths are challenged',
+      'credentials=none is a lexical credential-path detector — only the listed paths are challenged',
     );
   }
   if (lexical.length === 0) return undefined;

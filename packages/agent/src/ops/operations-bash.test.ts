@@ -1,3 +1,4 @@
+// The bash operation: its run, replay acceptance and handle tracking.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

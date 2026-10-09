@@ -1,5 +1,5 @@
-// Escalation regression tests on the durable harness: (a) escalate ordering,
-// (b) same-model no-op. The escalation applies through
+// Model escalation on the durable harness: the escalate ordering and the
+// same-model no-op. The escalation applies through
 // `conversation.configure({ model })`; the reserve re-clamp lives in the live
 // CompactionPolicy getter.
 

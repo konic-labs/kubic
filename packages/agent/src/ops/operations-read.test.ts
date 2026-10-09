@@ -1,3 +1,5 @@
+// The operation registry and the read-family operations (read, ls) over a
+// fake execution env.
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { describe, expect, it, vi } from 'vitest';
 import { createInvocation, MemoryMemoStore } from './memos.js';

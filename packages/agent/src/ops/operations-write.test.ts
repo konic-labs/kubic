@@ -1,3 +1,4 @@
+// The write operations (write, edit) over a fake execution env.
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { describe, expect, it } from 'vitest';
 import { createInvocation, MemoryMemoStore } from './memos.js';

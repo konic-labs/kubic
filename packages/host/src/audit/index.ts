@@ -14,18 +14,22 @@ export {
   /** @internal */ auditLedgerDir,
   auditLedgerDirFor,
   auditSinkSnapshot,
-  auditSinksDoctorChecks,
-  buildConfiguredSinks,
-  decisionAudit,
-  fullAccessDisabledAudit,
-  fullAccessEnabledAudit,
-  isSyslogTargetAvailable,
-  postureChangedAudit,
   readAuditLedger,
   /** @internal */ resolveRepoRuntimeRoot,
   resolveRunBaseRevision,
-  runStartAudit,
   setAuditSinks,
-  undoRestoreAudit,
-} from './audit-ledger.js';
+} from './ledger.js';
 export { createLedgerModelKeyResolver } from './model-key-audit.js';
+export {
+  decisionAudit,
+  fullAccessDisabledAudit,
+  fullAccessEnabledAudit,
+  postureChangedAudit,
+  runStartAudit,
+  undoRestoreAudit,
+} from './records.js';
+export {
+  auditSinksDoctorChecks,
+  buildConfiguredSinks,
+  isSyslogTargetAvailable,
+} from './sinks.js';

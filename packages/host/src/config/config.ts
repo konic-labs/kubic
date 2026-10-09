@@ -194,7 +194,7 @@ interface PolicyConfig {
   loggingPolicy?: string;
 }
 
-// `[[audit]]` (parsed here; built in policy/audit-ledger.ts).
+// `[[audit]]` (parsed here; built in audit/sinks.ts).
 export interface AuditTableConfig {
   sink: string;
   level?: string;

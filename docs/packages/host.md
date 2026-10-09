@@ -22,7 +22,7 @@ composition-root tests are tagged `@internal`.
 | Folder | Owns |
 | --- | --- |
 | `approvals/` | The approval system: `installPolicy` and its posture, capabilities and `validatePolicy`, the stores, the decider service, full access, the trigger detectors over the shell lexer, git, `cd` and glob helpers (`shell/`), control-plane refusal, the credential-path detector and what an approval dialog shows |
-| `audit/` | The audit ledger and its records, the configured sinks and the syslog transport, the provider-key audit record, and `kubic audit` |
+| `audit/` | The audit ledger (`ledger.ts`: location, the redacting append, reads), its records (`records.ts`, `audit.ts`), the configured sinks and the syslog transport (`sinks.ts`, `syslog-transport.ts`), the provider-key audit record, and `kubic audit` |
 | `cli/` | Shared command plumbing: the output channels and theme (`cli-io.ts`) and project-root discovery |
 | `config/` | Layered TOML config and its validation (`config.ts`), the runtime load every command runs on (`runtime.ts`), comment-preserving edits (`toml-model.ts`), project trust (`trust-store.ts`), the MCP and ACP stances, and `kubic config`, `kubic setup` and `kubic trust` |
 | `cost/` | `kubic cost`: per-session cost rows, the prompt-cache hit rate and the usage a headless run reports |

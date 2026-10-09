@@ -25,18 +25,19 @@ import {
   appendToLedger,
   auditLedgerDir,
   auditLedgerDirFor,
-  auditSinksDoctorChecks,
-  buildConfiguredSinks,
+  readAuditLedger,
+  resolveRunBaseRevision,
+  setAuditSinks,
+} from './ledger.js';
+import {
   credentialUseAudit,
   decisionAudit,
   fullAccessEnabledAudit,
   isPrivilegedAuditWhat,
-  readAuditLedger,
-  resolveRunBaseRevision,
   runStartAudit,
-  setAuditSinks,
   undoRestoreAudit,
-} from './audit-ledger.js';
+} from './records.js';
+import { auditSinksDoctorChecks, buildConfiguredSinks } from './sinks.js';
 
 const roots: string[] = [];
 let driver: GitSandbox | undefined;

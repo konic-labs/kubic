@@ -9,11 +9,8 @@ import {
   type ModelKeyResolver,
   withoutIdentity,
 } from '../secret-refs/index.js';
-import {
-  appendToLedger,
-  auditLedgerDirFor,
-  credentialUseAudit,
-} from './audit-ledger.js';
+import { appendToLedger, auditLedgerDirFor } from './ledger.js';
+import { credentialUseAudit } from './records.js';
 
 export interface LedgerModelKeyResolverOptions {
   /** The run's workspace; the ledger is the one `kubic audit` reads there. */

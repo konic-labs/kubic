@@ -35,7 +35,7 @@ import {
   splitModelId,
 } from './boot.js';
 
-vi.mock('./interceptors.js', () => ({
+vi.mock('./interceptors/index.js', () => ({
   policyInterceptorHooks: () => [],
 }));
 

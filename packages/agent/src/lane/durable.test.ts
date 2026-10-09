@@ -23,7 +23,7 @@ import {
 } from '../pi-boundary.js';
 import { bootLane, type Lane, PROMPT_SECTION } from './boot.js';
 
-vi.mock('./interceptors.js', () => ({
+vi.mock('./interceptors/index.js', () => ({
   policyInterceptorHooks: () => [],
 }));
 

@@ -27,7 +27,7 @@
 // JUSTIFICATION:
 //   seam: @earendil-works/chord#Context, #JsonValue (types)
 // used by: packages/agent/src/lane/{boot,session-store,tools-adapter,
-//     pending,abort,events}.ts (Context) and lane/interceptors.ts+tools
+//     pending,abort,events}.ts (Context) and lane/interceptors/ + tools
 //     (JsonValue for tool details, memos and hook state)
 //   why Pi has no alternative: chord's Context IS the cancellation/telemetry
 //     plumbing the 1.0 harness is threaded with, and JsonValue is the exact
@@ -161,7 +161,7 @@ export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
 //   used by: the Kubic modules that name them in their own signatures —
 // lane/boot.ts Lane (Conversation, Extension, HarnessSettings),
 //     lane/tools-adapter.ts (ToolRegistration, ToolExecutionApi),
-//     lane/interceptors.ts (ToolHooks, HookRegistration), lane/settle.ts
+//     lane/interceptors/ (ToolHooks, HookRegistration), lane/settle.ts
 //     (Submission, SettledSubmissionRecord), lane/events.ts (AgentEvent),
 // lane/session-store/ (Storage), lane/boot.ts compaction
 //     (CompactionPolicy), the session readers (EntryRecord)
@@ -217,7 +217,7 @@ export type {
 //   seam: @earendil-works/pi-durable#section (prompt sections) and #hook,
 //     #ToolTask, #GenerationTask, #CompactionTask (hook targets)
 //   used by: packages/agent/src/lane/boot.ts (ordered prompt sections) and
-//     lane/interceptors.ts (beforeTool/afterTool policy and approval);
+//     lane/interceptors/ (beforeTool/afterTool policy and approval);
 // lane/boot.ts compaction (CompactionTask.beforeCompact)
 //   why Pi has no alternative: these are the built-in tasks whose hooks are
 //     the 1.0 replacement for the removed harness before_tool/after_tool

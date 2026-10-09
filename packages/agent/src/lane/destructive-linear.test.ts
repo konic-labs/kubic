@@ -6,7 +6,7 @@
 // leftmost-first walk per command segment — linear — and the differential
 // sweep below pins that exactly the same commands are recognised.
 import { describe, expect, it } from 'vitest';
-import { defaultIsDestructive } from './interceptors.js';
+import { defaultIsDestructive } from './interceptors/index.js';
 
 const LINEAR_BOUND_MS = 500;
 

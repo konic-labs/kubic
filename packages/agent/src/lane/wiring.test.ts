@@ -35,7 +35,7 @@ const captured = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock('./interceptors.js', () => ({
+vi.mock('./interceptors/index.js', () => ({
   policyInterceptorHooks: (options: {
     workspace?: string;
     readRoots?: readonly string[];

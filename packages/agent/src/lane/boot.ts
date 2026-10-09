@@ -52,7 +52,7 @@ import { OperationKillRegistry } from './abort.js';
 import {
   type PolicyInterceptorOptions,
   policyInterceptorHooks,
-} from './interceptors.js';
+} from './interceptors/index.js';
 import {
   applyToolPolicy,
   PolicyRefusedError,

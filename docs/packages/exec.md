@@ -20,7 +20,7 @@ escapes, not a sandbox boundary.
 | `file-bridge.ts` | `FileBridge`, `BridgeFileInfo`, `createNodeFileBridge` |
 | `lock-file.ts` | `createLockFile`, `readLockFile`, `removeLockFile` — the O_EXCL lock-file primitive behind the session lock |
 | `runtime-exclude.ts` | `RUNTIME_EXCLUDE_ENTRIES`, `RUNTIME_EXCLUDE_BEGIN`, `RUNTIME_EXCLUDE_END`, `RuntimeExcludeText`, `applyRuntimeExcludeBlock`, `RuntimeExcludeOutcome`, `ensureRuntimeExcludeRules` |
-| `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env/node-env.ts`; path confinement in `env/node-fs.ts` + `@kubic/agent` `lane/interceptors.ts` |
+| `workspace.ts`, `paths.ts` | Pointer | Workspace = cwd-scoped `NodeExecutionEnv` in `env/node-env.ts`; path confinement in `env/node-fs.ts` + `@kubic/agent` `lane/interceptors/` |
 | `index.ts` | Pointer | No barrel — import a module by its subpath, `@kubic/exec/<subpath>` |
 
 ## Contracts

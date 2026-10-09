@@ -21,17 +21,13 @@ import {
   ToolResultEntry,
   ToolTask,
   Type,
-} from '../pi-boundary.js';
-import {
-  confinePath,
-  defaultIsDestructive,
-  isNetworkCommand,
-  type PolicyInterceptorOptions,
-  policyInterceptorHooks,
-  readOnlyViolation,
-  redactReason,
-  redactSecrets,
-} from './interceptors.js';
+} from '../../pi-boundary.js';
+import { confinePath } from './confine.js';
+import { defaultIsDestructive, isNetworkCommand } from './detectors.js';
+import { policyInterceptorHooks } from './hooks.js';
+import { readOnlyViolation } from './read-only.js';
+import { redactReason, redactSecrets } from './redact.js';
+import type { PolicyInterceptorOptions } from './types.js';
 
 const openHarnesses: Harness[] = [];
 

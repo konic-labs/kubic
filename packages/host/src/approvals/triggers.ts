@@ -151,7 +151,7 @@ function shellTargetOutside(
 }
 
 // The read-family arguments that name what a call opens (the same path/root
-// mapping the agent confines with, CONFINED_TOOLS in interceptors.ts) plus
+// mapping the agent confines with, CONFINED_TOOLS in the agent interceptors/confine.ts) plus
 // the name FILTERS: `grep.include` and `find.nameContains` select files by
 // substring, so `include: '.env'` reaches a committed `.env` without naming
 // a path at all. The ask runs before that rewrite, so an

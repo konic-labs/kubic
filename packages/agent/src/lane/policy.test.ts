@@ -18,7 +18,7 @@ import {
 import { bootLane, type Lane } from './boot.js';
 import { applyToolPolicy } from './policy.js';
 
-vi.mock('./interceptors.js', () => ({
+vi.mock('./interceptors/index.js', () => ({
   policyInterceptorHooks: () => [],
 }));
 

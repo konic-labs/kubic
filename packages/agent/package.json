@@ -26,8 +26,8 @@
       "default": "./src/lane/failures.ts"
     },
     "./lane/interceptors": {
-      "source": "./src/lane/interceptors.ts",
-      "default": "./src/lane/interceptors.ts"
+      "source": "./src/lane/interceptors/index.ts",
+      "default": "./src/lane/interceptors/index.ts"
     },
     "./lane/pending": {
       "source": "./src/lane/pending.ts",

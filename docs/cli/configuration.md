@@ -522,7 +522,10 @@ is the one exception, caught because a quote is a boundary for the `git` word), 
 `python -c`/`node -e`/`npm`, substitution nesting past ~2× the depth cap,
 quoted or backslash-obfuscated verbs the literal patterns cannot see,
 whitespace tricks around redirection targets, git subcommands reached
-through an alias (`git config alias.p push; git p`), package managers
+through an alias (`git config alias.p push; git p`), `git` reached through
+a variable or a name built at run time (`g=git; $g push`, `$g config …`:
+the `git-push` and `.git/config` checks read the literal word `git`, though
+`$(git push)` and `eval "git config …"` raise), package managers
 not listed above, and installs run by a build script (`npm run setup`).
 The literal verb scan over-triggers on quoted text: `echo "git push
 later"` raises `git-push` (an ask, never a silent grant).

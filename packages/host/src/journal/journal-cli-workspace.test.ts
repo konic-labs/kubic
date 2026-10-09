@@ -22,7 +22,8 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { FileJournalStore } from '@kubic/exec/journal';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
-import { type JournalRequest, runJournalCommand } from './journal-cli.js';
+import { runJournalCommand } from './journal-cli.js';
+import type { JournalRequest } from './journal-run.js';
 
 async function recordSession(
   sessionsRoot: string,

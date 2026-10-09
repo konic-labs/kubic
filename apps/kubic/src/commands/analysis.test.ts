@@ -435,7 +435,7 @@ describe('analysis commands: parsed options reach the runners', () => {
 
 // The multi-agent flags this release removed are usage errors (exit 2), and
 // their runners never start: a script still passing them fails loudly.
-describe('analysis commands: removed multi-agent flags are usage errors', () => {
+describe('analysis commands refuse multi-agent flags as usage errors', () => {
   it('eval and benchmark refuse --generation before any suite runs', async () => {
     const cases: readonly (readonly string[])[] = [
       [

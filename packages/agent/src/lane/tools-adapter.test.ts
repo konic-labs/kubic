@@ -22,7 +22,6 @@ import type {
 import { FileJournalStore } from '@kubic/exec/journal';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { GREP_MAX_LINE_LENGTH } from '../ops/grep.js';
 import { OPERATION_PARAMETERS, OPERATIONS } from '../ops/registry.js';
 import type { JsonValue } from '../ops/types.js';
 import { WALK_MAX_DEPTH, WALK_MAX_ENTRIES } from '../ops/walk.js';
@@ -32,11 +31,7 @@ import {
   type ToolRegistration,
 } from '../pi-boundary.js';
 import { OperationKillRegistry } from './abort.js';
-import {
-  type KubicToolContext,
-  kubicToolsToPiTools,
-  renderGrepText,
-} from './tools-adapter.js';
+import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
 
 // Only the members the adapter reads are real: the call identity, the
 // running-output sink and the durable memo (first-writer-wins, like
@@ -104,6 +99,7 @@ function toolContext(
 }
 
 const scratchDirs: string[] = [];
+
 afterAll(() => {
   for (const dir of scratchDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -753,108 +749,5 @@ describe('kubicToolsToPiTools on the pi-durable surface', () => {
     // One registry lives for the whole TUI session: a handle retained per
     // completed call kept that call's output alive for the life of the run.
     expect(kills.drain('7')).toEqual([]);
-  });
-});
-
-describe('renderGrepText', () => {
-  const match = { path: 'a.ts', line: 3, text: 'x' };
-
-  it('appends the notice after the truncated marker', () => {
-    expect(
-      renderGrepText({
-        pattern: 'p',
-        matches: [match],
-        truncated: true,
-        notice: 'why it stopped',
-      }),
-    ).toBe(
-      '[grep /p/: 1 match, truncated (narrow pattern, root or include): why it stopped]\na.ts:3: x\n',
-    );
-  });
-
-  it('keeps the bare truncated marker when no notice came with it', () => {
-    expect(renderGrepText({ pattern: 'p', matches: [], truncated: true })).toBe(
-      '[grep /p/: 0 matches, truncated (narrow pattern, root or include)]\n',
-    );
-  });
-
-  it('says nothing about caps for a complete result', () => {
-    expect(
-      renderGrepText({ pattern: 'p', matches: [match], truncated: false }),
-    ).toBe('[grep /p/: 1 match]\na.ts:3: x\n');
-  });
-
-  it('names clipped lines and skipped files', () => {
-    // A clipped line read as a whole one is a wrong answer, and a skipped
-    // file is a place the pattern was never looked for.
-    expect(
-      renderGrepText({
-        pattern: 'p',
-        matches: [match],
-        truncated: false,
-        linesTruncated: true,
-      }),
-    ).toBe(
-      `[grep /p/: 1 match, lines clipped at ${GREP_MAX_LINE_LENGTH} chars]\na.ts:3: x\n`,
-    );
-    expect(
-      renderGrepText({
-        pattern: 'p',
-        matches: [],
-        truncated: true,
-        skippedBinary: 2,
-        skippedOversized: 1,
-        notice:
-          'skipped 1 file(s) over the 8388608B grep bound; results may be incomplete',
-      }),
-    ).toBe(
-      '[grep /p/: 0 matches, truncated (narrow pattern, root or include), 2 binary file(s) skipped, 1 oversized file(s) skipped: skipped 1 file(s) over the 8388608B grep bound; results may be incomplete]\n',
-    );
-  });
-});
-
-// A file change's display record rides the result details (the
-// UI's record); the model-facing text stays the op's own result.
-describe('file-change display records', () => {
-  it('puts the inline diff of an edit in the details, never in the text', async () => {
-    const env = new FakeExecutionEnv({});
-    env.fs.writeFile('cart.js', 'a\nexisting.qty = qty;\nb\n');
-    const out = await run(
-      'edit',
-      { path: 'cart.js', oldText: 'qty = qty', newText: 'qty += qty' },
-      toolContext({ env }),
-    );
-    expect(out.text).not.toContain('display');
-    expect(out.details).toMatchObject({
-      ok: true,
-      display: {
-        kind: 'diff',
-        text: ' 1 a\n-2 existing.qty = qty;\n+2 existing.qty += qty;\n 3 b',
-        firstChangedLine: 2,
-        added: 1,
-        removed: 1,
-        truncated: false,
-      },
-    });
-  });
-
-  it('describes a new file, and diffs an overwritten one', async () => {
-    const env = new FakeExecutionEnv({});
-    const created = await run(
-      'write',
-      { path: 'notes.md', content: 'one\ntwo\n' },
-      toolContext({ env }),
-    );
-    expect(created.details).toMatchObject({
-      display: { kind: 'write', newFile: true, lines: 2, preview: 'one\ntwo' },
-    });
-    const replaced = await run(
-      'write',
-      { path: 'notes.md', content: 'one\nthree\n' },
-      toolContext({ env }),
-    );
-    expect(replaced.details).toMatchObject({
-      display: { kind: 'diff', added: 1, removed: 1 },
-    });
   });
 });

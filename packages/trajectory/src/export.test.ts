@@ -401,7 +401,7 @@ describe('trajectory observations + failures + eval slot', () => {
   });
 });
 
-describe('trajectory export regressions', () => {
+describe('trajectory export bounds and validation', () => {
   it('truncates multi-byte output on a character boundary — byte cap holds exactly, no U+FFFD', () => {
     const cjk = 'あ'.repeat(5000);
     expect(Buffer.byteLength(cjk, 'utf8')).toBe(15_000);

@@ -121,7 +121,7 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-describe('headless hardening', () => {
+describe('headless run failure reporting', () => {
   it('rejects a hostile session id inside runHeadlessPrompt with exit 2', async () => {
     const result = await runHeadlessPrompt(
       'hello',

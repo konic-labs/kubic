@@ -1,0 +1,476 @@
+// Policy interceptors as pi-durable ToolTask hooks.
+// Every behaviour here runs through a REAL Harness over MemoryStorage with
+// the faux provider: first-block-wins, throw-to-block and argument chaining
+// are the harness's own hook semantics, not a hand-rolled stand-in.
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  BACKGROUND_CONTEXT,
+  type Conversation,
+  createModels,
+  createRegistry,
+  defineExtension,
+  defineTool,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  Harness,
+  type HookRegistration,
+  type JsonValue,
+  MemoryStorage,
+  Type,
+} from '../../pi-boundary.js';
+import { confinePath } from './confine.js';
+import { defaultIsDestructive, isNetworkCommand } from './detectors.js';
+import { policyInterceptorHooks } from './hooks.js';
+import { readOnlyViolation } from './read-only.js';
+import { redactReason } from './redact.js';
+import type { PolicyInterceptorOptions } from './types.js';
+
+const openHarnesses: Harness[] = [];
+
+afterEach(async () => {
+  for (const harness of openHarnesses.splice(0)) {
+    await harness.close(BACKGROUND_CONTEXT);
+  }
+});
+
+interface World {
+  calls: Array<{ name: string; args: Record<string, unknown> }>;
+}
+
+interface SeenToolResult {
+  toolName: string;
+  isError: boolean;
+  text: string;
+  code?: string;
+}
+
+function textOf(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part: unknown) => {
+      if (typeof part !== 'object' || part === null) return '';
+      const block = part as { type?: unknown; text?: unknown };
+      return block.type === 'text' && typeof block.text === 'string'
+        ? block.text
+        : '';
+    })
+    .join('');
+}
+
+// What the model actually sees: the harness's own model context, in order.
+async function toolResults(root: Conversation): Promise<SeenToolResult[]> {
+  const view = await root.context(BACKGROUND_CONTEXT);
+  return view.messages
+    .filter((message) => message.role === 'toolResult')
+    .map((message) => {
+      const result = message as unknown as {
+        toolName?: string;
+        isError?: boolean;
+        content?: unknown;
+      };
+      return {
+        toolName: result.toolName ?? '',
+        isError: result.isError === true,
+        text: textOf(result.content),
+      };
+    });
+}
+
+// The probe tools record what the tool layer received, so an interceptor's
+// rewrite is observable at the seam the tool executes against.
+function probeTools(world: World) {
+  const record = (
+    name: string,
+    args: Record<string, unknown>,
+  ): { content: Array<{ type: 'text'; text: string }> } => {
+    world.calls.push({ name, args });
+    return { content: [{ type: 'text', text: `${name} ran` }] };
+  };
+  return [
+    defineTool({
+      name: 'bash',
+      description: 'run a shell command',
+      parameters: Type.Object({ command: Type.String() }),
+      execute: async (args) => record('bash', args),
+    }),
+    defineTool({
+      name: 'read',
+      description: 'read a file',
+      parameters: Type.Object({ path: Type.String() }),
+      execute: async (args) => record('read', args),
+    }),
+    defineTool({
+      name: 'write',
+      description: 'write a file',
+      parameters: Type.Object({
+        path: Type.String(),
+        content: Type.Optional(Type.String()),
+      }),
+      execute: async (args) => record('write', args),
+    }),
+    defineTool({
+      name: 'edit',
+      description: 'edit a file',
+      parameters: Type.Object({
+        path: Type.String(),
+        oldText: Type.String(),
+        newText: Type.String(),
+      }),
+      execute: async (args) => record('edit', args),
+    }),
+    defineTool({
+      name: 'ls',
+      description: 'list a directory',
+      parameters: Type.Object({ path: Type.Optional(Type.String()) }),
+      execute: async (args) => record('ls', args),
+    }),
+  ];
+}
+
+interface BootOptions {
+  calls?: Array<{ name: string; args: Record<string, JsonValue> }>;
+  // A scripted multi-turn sequence (each inner array is one
+  // assistant tool-use message) whose entries may pin a provider call id,
+  // for the duplicate-id and empty-id stand-down cases.
+  turns?: Array<
+    Array<{ name: string; args: Record<string, JsonValue>; id?: string }>
+  >;
+  policy?: PolicyInterceptorOptions;
+  // Hooks appended after the policy hooks, inside kubic.policy.
+  extraHooks?: HookRegistration[];
+}
+
+interface Booted {
+  harness: Harness;
+  root: Conversation;
+  world: World;
+}
+
+async function boot(options: BootOptions): Promise<Booted> {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const turns = options.turns ?? [
+    (options.calls ?? []).map((call) => ({ ...call, id: undefined })),
+  ];
+  faux.setResponses([
+    ...turns.map((calls) =>
+      fauxAssistantMessage(
+        calls.map((call) =>
+          fauxToolCall(
+            call.name,
+            call.args,
+            call.id === undefined ? {} : { id: call.id },
+          ),
+        ),
+        { stopReason: 'toolUse' },
+      ),
+    ),
+    fauxAssistantMessage('done'),
+  ]);
+  const world: World = { calls: [] };
+  const registry = createRegistry();
+  registry.install(
+    defineExtension({
+      name: 'kubic.policy',
+      hooks: [
+        ...policyInterceptorHooks(options.policy ?? { workspace: '/work' }),
+        ...(options.extraHooks ?? []),
+      ],
+    }),
+  );
+  registry.install(
+    defineExtension({ name: 'kubic', tools: probeTools(world) }),
+  );
+  const harness = await Harness.open(
+    new MemoryStorage(),
+    { models, registry },
+    BACKGROUND_CONTEXT,
+  );
+  openHarnesses.push(harness);
+  const model = faux.getModel();
+  const root = await harness.root(BACKGROUND_CONTEXT, {
+    agent: { model: { provider: model.provider, modelId: model.id } },
+  });
+  return { harness, root, world };
+}
+
+async function drive(booted: Booted, prompt = 'go'): Promise<void> {
+  const submission = await booted.root.submit(
+    { type: 'input', content: prompt },
+    BACKGROUND_CONTEXT,
+  );
+  const settled = await submission.wait(BACKGROUND_CONTEXT);
+  expect(settled.status).toBe('done');
+}
+
+describe('read-only shell allowlist', () => {
+  it.each([
+    'ls',
+    'ls -la',
+    'ls && cat a',
+    'cat a | grep x',
+    'head -n 5 f; tail -n 5 f',
+    'wc -l f',
+    'rg TODO src',
+    'find . -name "*.ts"',
+    'git status',
+    'git -C /work diff HEAD',
+    'git --no-pager log -1',
+    'git show HEAD',
+    'cat < f',
+    // Single-quoted text is literal to the shell: no expansion, no redirect.
+    "cat '$F'",
+    "R='> out'; cat a",
+  ])('allows %s', (command) => {
+    expect(readOnlyViolation(command), command).toBeUndefined();
+  });
+
+  it.each([
+    ['echo x > a', 'redirection'],
+    ['echo x >> a', 'redirection'],
+    ['ls > out.txt', 'redirection'],
+    ['cat x | tee y', 'tee'],
+    ['sed -i s/a/b/ f', 'sed -i'],
+    ['sed --in-place s/a/b/ f', 'sed -i'],
+    ['perl -pi -e s/a/b/ f', 'perl -i'],
+    ['find . -exec rm {} ;', '-exec'],
+    ['find . -delete', '-delete'],
+    ['git commit -m x', 'commit'],
+    ['git push', 'push'],
+    ['npm test', 'npm'],
+    ['node -e "fs.writeFileSync(1,2)"', 'node'],
+    ['rm -rf x', 'rm'],
+    ['ls | xargs rm', 'xargs'],
+    // Review of: a single `&` is a separator too, or everything after
+    // it escapes the allowlist.
+    ['ls & git commit -m x', 'commit'],
+    ['ls & sed -i s/a/b/ f', 'sed -i'],
+    ['ls & tee y', 'tee'],
+    ['ls & cp a b', 'cp'],
+    // Shell expansion is never interpreted, so an allowed head verb must not
+    // launder another command through it (fail closed on `$`).
+    ['cat $(git commit -m x)', 'command substitution'],
+    ['cat `npm test`', 'command substitution'],
+    // Process substitution runs a command too.
+    ['cat <(git commit -m x)', 'process substitution'],
+    ['cat <(sed -i s/a/b/ f)', 'process substitution'],
+    ["R='> out'; cat a $R", 'shell-expanded'],
+    ['cat a $R', 'shell-expanded'],
+    ['cat "$R"', 'shell-expanded'],
+    // Write/exec flags under an allowed verb.
+    ['git diff --output=out.patch', '--output'],
+    ['rg --pre "cat" pattern', '--pre'],
+    // Git global options that execute code.
+    ['git -c diff.external=x diff', '-c'],
+    ['git -c core.pager=x log', '-c'],
+    ['git --exec-path=/tmp log', '--exec-path'],
+    ['git --upload-pack=/tmp/x log', '--upload-pack'],
+  ])('blocks %s naming %s', (command, needle) => {
+    const reason = readOnlyViolation(command);
+    expect(reason, command).toBeDefined();
+    expect(reason, command).toContain(needle);
+  });
+
+  it('blocks a write anywhere in a pipeline, not only the head', () => {
+    expect(readOnlyViolation('cat a; echo x > b')).toContain('redirection');
+    expect(readOnlyViolation('ls && git commit -m x')).toContain('commit');
+  });
+
+  it('blocks non-allowlisted commands in the lane and lets the allowlist run', async () => {
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'ls && cat a' } },
+        { name: 'bash', args: { command: 'echo x > a' } },
+        { name: 'bash', args: { command: 'npm test' } },
+      ],
+      policy: { workspace: '/work', shell: 'read-only-allowlist' },
+    });
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(false);
+    expect(results[1]?.text).toContain('read-only');
+    expect(results[2]?.text).toContain('read-only');
+    expect(booted.world.calls.map((call) => call.args.command)).toEqual([
+      'ls && cat a',
+    ]);
+  });
+
+  it('runs the read-only presets’ checks and blocks writes, destructive and network calls', async () => {
+    // The reviewer/planner presets run their targeted checks through this
+    // level (`.kubic/roles/{reviewer,planner}.md`: `shell:
+    // read-only-allowlist`, `git: false`), so a lane on it must let a
+    // read-only command through — including read-only git, which is how the
+    // reviewer inspects a diff without a git tool — and block everything that
+    // writes, destroys or dials out.
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'git diff --stat' } },
+        { name: 'bash', args: { command: 'ls && cat a' } },
+        { name: 'bash', args: { command: 'echo x > a' } },
+        { name: 'bash', args: { command: 'rm -rf build' } },
+        { name: 'bash', args: { command: 'curl https://example.com' } },
+      ],
+      policy: { workspace: '/work', shell: 'read-only-allowlist' },
+    });
+    await drive(booted);
+    const results = await toolResults(booted.root);
+    expect(results[0]?.isError).toBe(false);
+    expect(results[1]?.isError).toBe(false);
+    // Each refusal names its own guard: the redirect is the read-only
+    // allowlist, the `rm` the destructive guard, the `curl` the network
+    // guard — all three blocked before the shell sees them.
+    expect(results[2]?.isError).toBe(true);
+    expect(results[2]?.text).toContain('read-only');
+    expect(results[3]?.isError).toBe(true);
+    expect(results[3]?.text).toMatch(/destructive/);
+    expect(results[4]?.isError).toBe(true);
+    expect(results[4]?.text).toMatch(/network/);
+    // Only the two read-only commands reached the shell.
+    expect(booted.world.calls.map((call) => call.args.command)).toEqual([
+      'git diff --stat',
+      'ls && cat a',
+    ]);
+  });
+
+  it('leaves shell:true unchanged', async () => {
+    const booted = await boot({
+      calls: [
+        { name: 'bash', args: { command: 'echo x > a' } },
+        { name: 'bash', args: { command: 'npm test' } },
+        { name: 'bash', args: { command: 'node -e "1"' } },
+      ],
+      policy: { workspace: '/work', shell: true },
+    });
+    await drive(booted);
+    expect(
+      (await toolResults(booted.root)).every((result) => !result.isError),
+    ).toBe(true);
+    expect(booted.world.calls).toHaveLength(3);
+  });
+});
+
+describe('destructive/confine matchers (unit)', () => {
+  it('matches destructive commands and confines paths', () => {
+    expect(defaultIsDestructive('rm -rf /tmp/x')).toBe(true);
+    expect(defaultIsDestructive('rm -Rf --no-preserve-root /')).toBe(true);
+    expect(defaultIsDestructive('rm -f ~/.ssh/id_rsa', '/work')).toBe(true);
+    expect(defaultIsDestructive('rm /data/db.sqlite', '/work')).toBe(true);
+    expect(defaultIsDestructive('git clean -fdx', '/work')).toBe(true);
+    expect(defaultIsDestructive('echo hello')).toBe(false);
+    expect(defaultIsDestructive('ls -la')).toBe(false);
+    // Plain in-workspace single-file rm is allowed (recoverable via the
+    // journal) — documented scope limit, not a silent gap.
+    expect(defaultIsDestructive('rm notes.txt', '/work')).toBe(false);
+    // Multi-target rm is inspected token by token.
+    expect(defaultIsDestructive('rm notes.txt /etc/passwd', '/work')).toBe(
+      true,
+    );
+    expect(defaultIsDestructive('rm notes.txt /data/db.sqlite', '/work')).toBe(
+      true,
+    );
+    expect(defaultIsDestructive('rm notes.txt ~/.ssh/id_rsa', '/work')).toBe(
+      true,
+    );
+    expect(defaultIsDestructive('rm a.txt b.txt', '/work')).toBe(false);
+    expect(isNetworkCommand('curl https://example.com')).toBe(true);
+    expect(isNetworkCommand('ls -la')).toBe(false);
+    expect(
+      redactReason('destructive command blocked: rm --token abc123 /x'),
+    ).toContain('token [REDACTED]');
+    expect(
+      redactReason('destructive command blocked: rm --token abc123 /x'),
+    ).not.toContain('abc123');
+    expect(redactReason('x'.repeat(500)).length).toBeLessThan(250);
+    expect(confinePath('/work', '/etc/passwd')).toEqual({
+      confined: '/work/etc/passwd',
+      rewritten: true,
+    });
+    expect(confinePath('/work', 'notes.txt')).toEqual({
+      confined: '/work/notes.txt',
+      rewritten: false,
+    });
+    expect(confinePath('/work', '/work/sub/f.txt')).toEqual({
+      confined: '/work/sub/f.txt',
+      rewritten: false,
+    });
+  });
+
+  it('keeps tilde/$VAR tokens workspace-relative for tool paths', () => {
+    // The write/edit/read ops resolve a path with node `resolve(cwd, path)`
+    // and never expand `~` or `$VAR`, so for a TOOL path these tokens are
+    // literal workspace entries (`/work/~/.bashrc`) — confinePath is right to
+    // leave them unrewritten. Shell targets are different: bash expands
+    // them, so the host's bash outside-write detector (approvals/triggers.ts)
+    // treats a `~`/`$VAR` prefix as outside, fail-closed — pinned in
+    // approvals/detectors.test.ts.
+    expect(confinePath('/work', '~/.bashrc')).toEqual({
+      confined: '/work/~/.bashrc',
+      rewritten: false,
+    });
+    expect(confinePath('/work', '$HOME/.zshrc')).toEqual({
+      confined: '/work/$HOME/.zshrc',
+      rewritten: false,
+    });
+  });
+
+  it('matches every destructive shape, not just rm and git clean', () => {
+    // Each entry pins one DESTRUCTIVE_PATTERNS arm or rmBlocked branch, so a
+    // weakened pattern lets a destructive shape slip through and fails here.
+    for (const command of [
+      'dd if=/dev/zero of=/dev/sda',
+      'dd if=x of= /dev/null',
+      'shred -u secret.txt',
+      'mkfs.ext4 /dev/sda1',
+      'chmod -R 777 /tmp/x',
+      'chown -R root:root /tmp/x',
+      ':(){ :|:& };:',
+      'rm -rf ~/.gnupg',
+      'rm -f key.pem',
+      'rm -rf /tmp/work-notes',
+      'rmdir /tmp/old',
+    ]) {
+      expect(defaultIsDestructive(command, '/work')).toBe(true);
+    }
+    expect(defaultIsDestructive('rm notes.txt', '/work')).toBe(false);
+    expect(defaultIsDestructive('echo hi', '/work')).toBe(false);
+  });
+
+  // Each new DESTRUCTIVE_PATTERNS arm pinned on its own, with a
+  // near-miss beside it, so weakening one regex fails exactly one row.
+  it.each([
+    ['git push --force origin main', true],
+    ['git push -f', true],
+    ['git push -uf origin main', true],
+    ['git push --force-with-lease', true],
+    ['git push --force-if-includes origin main', true],
+    ['git push origin +main', true],
+    ['git -C . push --force', true],
+    ['git push -u origin main', false],
+    ['git push origin feat-fix', false],
+    ['find / -delete', true],
+    ['find . -type f -delete', true],
+    ['find . -name delete', false],
+    ['git reset --hard HEAD~5', true],
+    ['git -C sub reset --hard', true],
+    ['git reset --soft HEAD~1', false],
+    ['git checkout -- .', true],
+    ['git checkout main -- a.ts', true],
+    ['git checkout .', true],
+    ['git checkout -f main', true],
+    ['git checkout --force main', true],
+    ['git checkout -b feature', false],
+    ['git checkout main', false],
+    ['git restore .', true],
+    ['git restore src/a.ts', true],
+    ['git restore --staged --worktree .', true],
+    ['git restore -W a.ts', true],
+    ['git restore --staged a.ts', false],
+    ['git restore -S a.ts', false],
+    ['git status; git log', false],
+  ])('classifies %s as destructive=%s', (command, expected) => {
+    expect(defaultIsDestructive(command, '/work')).toBe(expected);
+  });
+});

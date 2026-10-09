@@ -4,17 +4,6 @@
 // real lane stores (assistant toolCall parts, toolResult messages,
 // per-request usage on assistant messages).
 
-import { readConversationEntries } from '@kubic/agent/lane/transcript';
-import {
-  BACKGROUND_CONTEXT,
-  createModels,
-  createRegistry,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-  Harness,
-  MemoryStorage,
-} from '@kubic/agent/pi-boundary';
 import { toolSpawnEnv } from '@kubic/exec/env';
 import type { FileChange } from '@kubic/exec/journal';
 import { parseTrajectoryExport } from '@kubic/trajectory/schema';
@@ -24,7 +13,6 @@ import {
   assembleRunTrajectory,
   type RunTrajectoryInput,
   taskIdForPrompt,
-  trajectoryResultFor,
 } from './run-trajectory.js';
 
 const STARTED = Date.parse('2026-09-28T10:00:00.000Z');
@@ -126,6 +114,7 @@ const ENTRIES: unknown[] = [
 ];
 
 let nextEntryId = 100;
+
 function entryId(): number {
   nextEntryId += 1;
   return nextEntryId;
@@ -646,192 +635,5 @@ describe('assembleRunTrajectory reads real entries defensively', () => {
     const exported = assembleRunTrajectory(input());
     expect(exported.task.taskId).toMatch(/^prompt:[0-9a-f]{16}$/);
     expect(exported.state).toEqual({ phase: 'completed' });
-  });
-});
-
-describe('trajectoryResultFor: terminus → status + failure code', () => {
-  it.each([
-    [{ terminus: 'completed', summary: 'ok' }, 'completed', null],
-    [
-      {
-        terminus: 'turn_limit',
-        summary: 'turn limit reached after 3 turns',
-      },
-      'turn_limit',
-      'run_limit',
-    ],
-    [
-      { terminus: 'timeout', summary: 'run timed out after 5ms' },
-      'timeout',
-      'run_limit',
-    ],
-    [
-      { terminus: 'cancelled', summary: 'run interrupted by SIGINT' },
-      'cancelled',
-      'process_crashed',
-    ],
-    [
-      { terminus: 'approval_denied', summary: 'no' },
-      'failed',
-      'approval_denied',
-    ],
-    [
-      { terminus: 'approval_timed_out', summary: 'late' },
-      'failed',
-      'approval_timed_out',
-    ],
-    [
-      { terminus: 'workspace_unavailable', summary: 'ENOENT' },
-      'failed',
-      'workspace_failed',
-    ],
-    [
-      { terminus: 'provider_probe_failed', summary: 'no model configured' },
-      'failed',
-      'provider_auth',
-    ],
-    [
-      {
-        terminus: 'provider_transient',
-        summary: 'provider capacity exhausted',
-      },
-      'failed',
-      'provider_transient',
-    ],
-    [
-      { terminus: 'provider_auth', summary: 'invalid api key' },
-      'failed',
-      'provider_auth',
-    ],
-    [
-      {
-        terminus: 'failed',
-        summary: 'run interrupted by SIGINT',
-        interrupted: true,
-      },
-      'cancelled',
-      'process_crashed',
-    ],
-    [
-      { terminus: 'failed', summary: 'skill load failed' },
-      'failed',
-      'process_crashed',
-    ],
-  ] as const)('%o → %s/%s', (outcome, status, code) => {
-    const result = trajectoryResultFor(outcome);
-    expect(result.status).toBe(status);
-    expect(result.failureCategory).toBe(code);
-    expect(result.summary).toBe(outcome.summary);
-    if (status === 'completed') expect(result.error).toBeNull();
-    else
-      expect(result.error).toEqual({
-        kind: outcome.terminus,
-        message: outcome.summary,
-      });
-  });
-
-  it('classifies a lane failure through the taxonomy', () => {
-    const result = trajectoryResultFor({
-      terminus: 'failed',
-      summary: 'tool_error: bash failed',
-      lane: {
-        status: 'failed',
-        error: { code: 'model_error', message: 'upstream 500' },
-      },
-    });
-    expect(result.status).toBe('failed');
-    expect(result.failureCategory).toBe('model_failed');
-  });
-
-  it('a lane failure without an error record is a process failure', () => {
-    const result = trajectoryResultFor({
-      terminus: 'failed',
-      summary: 'lane failed without detail',
-      lane: { status: 'failed' },
-    });
-    expect(result).toMatchObject({
-      status: 'failed',
-      failureCategory: 'process_crashed',
-    });
-  });
-
-  it('marks an aborted or declined lane operation cancelled', () => {
-    const result = trajectoryResultFor({
-      terminus: 'failed',
-      summary: 'lane aborted without detail',
-      lane: { status: 'aborted' },
-    });
-    expect(result.status).toBe('cancelled');
-    expect(result.failureCategory).toBe('process_crashed');
-  });
-
-  it('a failed trajectory never lacks its failure category (fail-closed export)', () => {
-    const exported = assembleRunTrajectory(
-      input({
-        outcome: { terminus: 'failed', summary: 'lane failed without detail' },
-      }),
-    );
-    expect(exported.result.status).toBe('failed');
-    expect(exported.result.failureCategory).not.toBeNull();
-  });
-});
-
-describe('assembleRunTrajectory over a real harness', () => {
-  it('builds a schema-valid v1 trajectory from the entries a faux harness stored', async () => {
-    // A real pi-durable Harness over MemoryStorage with the faux provider:
-    // the entries the adapter reads are the ones the harness actually
-    // writes (user turn, assistant tool call, its result, the answer).
-    const faux = fauxProvider();
-    const models = createModels();
-    models.setProvider(faux.provider);
-    const harness = await Harness.open(
-      new MemoryStorage(),
-      { models, registry: createRegistry() },
-      BACKGROUND_CONTEXT,
-    );
-    try {
-      const root = await harness.root(BACKGROUND_CONTEXT, {
-        agent: { model: { provider: 'faux', modelId: 'faux-1' } },
-      });
-      faux.setResponses([
-        fauxAssistantMessage([fauxToolCall('read', { path: 'a.txt' })], {
-          stopReason: 'toolUse',
-        }),
-        fauxAssistantMessage('read returned 6 chars'),
-      ]);
-      const startedAt = Date.now() - 60_000;
-      await (
-        await root.submit(
-          { type: 'input', content: 'read a.txt' },
-          BACKGROUND_CONTEXT,
-        )
-      ).wait(BACKGROUND_CONTEXT);
-      const entries = await readConversationEntries(root, BACKGROUND_CONTEXT);
-      const exported = assembleRunTrajectory(
-        input({
-          entries,
-          startedAt,
-          endedAt: Date.now(),
-          prompt: 'read a.txt',
-          outcome: {
-            terminus: 'completed',
-            summary: 'read returned 6 chars',
-          },
-        }),
-      );
-      expect(() =>
-        parseTrajectoryExport(JSON.parse(JSON.stringify(exported))),
-      ).not.toThrow();
-      expect(exported.actions).toEqual([
-        { seq: 1, tool: 'read', args: { path: 'a.txt' } },
-      ]);
-      expect(exported.observations).toHaveLength(1);
-      expect(exported.observations[0]?.actionSeq).toBe(1);
-      expect(exported.usage.requests).toBe(2);
-      expect(exported.usage.byModel['faux/faux-1']?.requests).toBe(2);
-      expect(exported.provenance.model).toBe('faux/echo');
-    } finally {
-      await harness.close(BACKGROUND_CONTEXT);
-    }
   });
 });

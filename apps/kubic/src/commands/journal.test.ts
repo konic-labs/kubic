@@ -188,7 +188,7 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
   }
 });
 
-describe('the removed diff --agent flag', () => {
+describe('diff takes no --agent flag', () => {
   for (const argv of [
     ['diff', '--agent', 'w1'],
     ['diff', '--agent=w1'],

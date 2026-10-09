@@ -171,7 +171,7 @@ describe('presentation projector', () => {
   });
 });
 
-describe('presentation projector regressions', () => {
+describe('presentation projector across turns and snapshots', () => {
   it('clears the previous turn calls at a turn boundary', () => {
     // The lane's `tools` list is a running list across turns; only a snapshot
     // replaces it. The tree renders it as the CURRENT turn, so the projector

@@ -338,7 +338,7 @@ describe('compact tree', () => {
   });
 });
 
-describe('regressions', () => {
+describe('echo, width and stale reads', () => {
   const userEntry = (id: string, seq: number, text: string) => ({
     id,
     seq,

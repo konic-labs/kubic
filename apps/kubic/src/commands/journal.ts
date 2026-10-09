@@ -5,13 +5,13 @@
 // commander owns the whole argv surface here — options, operands, generated
 // `--help`, and parse errors (exit 2, docs/cli/exit-codes.md). Each action
 // hands a typed request to the injected runner (production wiring in
-// ../prod-runners.ts → packages/host/src/{journal,git}-cli.ts), which
+// ../runners/journal.ts → packages/host/src/{journal,git}/), which
 // returns the command's exit code.
 
 import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
 import { CliUsageError } from '@kubic/core/cli/exit-codes';
-import type { GitRequest } from '@kubic/host/git-cli';
-import type { JournalRequest } from '@kubic/host/journal-cli';
+import type { GitRequest } from '@kubic/host/git';
+import type { JournalRequest } from '@kubic/host/journal';
 import type {
   CommandContext,
   CommandRegistrar,

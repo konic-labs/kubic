@@ -24,12 +24,14 @@ export const GREP_MAX_LINE_LENGTH = 500;
 // bound read and edit share (READ_MAX_BYTES / EDIT_MAX_BYTES), so a file the
 // read tool can show is a file grep can search. The file costs one stat and
 // is never opened.
+/** @internal */
 export const GREP_MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 // Total result budget: the rendered `path:line: text` lines
 // together stay at or below this, matching read's output cap
 // (READ_RESULT_MAX_BYTES) and Pi's DEFAULT_MAX_BYTES. The search stops at
 // the last whole line that fits and names the cap.
+/** @internal */
 export const GREP_RESULT_MAX_BYTES = 51200;
 
 /** A NUL byte in the decoded content is grep's binary rule. */

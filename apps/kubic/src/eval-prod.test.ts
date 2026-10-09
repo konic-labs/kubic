@@ -5,32 +5,24 @@
 
 import {
   existsSync,
-  mkdtempSync,
+  mkdirSync,
   readdirSync,
-  rmSync,
+  readFileSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   createGitSandbox,
   disposeAllGitSandboxes,
   type GitSandbox,
 } from '@kubic/exec/test-support/git-sandbox';
-import { loadRuntimeConfig } from '@kubic/host/config/runtime';
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { loadRuntimeConfig, NO_PROJECT_TRUST } from '@kubic/host/config';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CliConfigResult } from './config-runtime.js';
+import { tempDir } from '../../../test/temp-dir.js';
+import type { CliConfigResult } from './config/load.js';
 import { createProdRunners } from './prod-runners.js';
-
-const made: string[] = [];
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 beforeEach(() => {
   vi.stubEnv('KUBIC_NO_NOTICE', '1');
@@ -43,9 +35,6 @@ afterEach(() => {
   disposeAllGitSandboxes();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  for (const dir of made.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // The test's git driver: one injected sandbox per test, so
@@ -58,9 +47,14 @@ function ensureDriver(): GitSandbox {
   return driver;
 }
 
-function cliConfig(): CliConfigResult {
+// The effective config, from an optional global `config.toml` body.
+function cliConfig(globalToml?: string): CliConfigResult {
+  const globalPath = join('/nonexistent-home', '.kubic', 'config.toml');
   const runtime = loadRuntimeConfig({
-    bridge: { exists: () => false, readTextFile: () => '' },
+    bridge: {
+      exists: (path) => globalToml !== undefined && path === globalPath,
+      readTextFile: () => globalToml ?? '',
+    },
     home: '/nonexistent-home',
     cwd: '/nonexistent-cwd',
     enterprisePath: '/nonexistent/enterprise.toml',
@@ -89,12 +83,28 @@ function runners(workspace: string) {
   };
 }
 
+// Every trajectory a run wrote under the sessions root.
+function trajectoryFiles(): string[] {
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(join(dir, entry.name));
+      else if (entry.name === 'trajectory.json') {
+        found.push(join(dir, entry.name));
+      }
+    }
+  };
+  const root = join(homedir(), '.kubic', 'sessions');
+  if (existsSync(root)) walk(root);
+  return found;
+}
+
 function git(dir: string, args: string[]): void {
   ensureDriver().git(args, { cwd: dir });
 }
 
 function fixtureRepo(): string {
-  const dir = tmp('kubic-eval-repo-');
+  const dir = tempDir('kubic-eval-repo-');
   git(dir, ['init', '-q']);
   git(dir, ['config', 'user.email', 'eval@example.com']);
   git(dir, ['config', 'user.name', 'eval']);
@@ -116,7 +126,7 @@ describe('the live suite runner runs the built-in suites', () => {
   it('runs one suite end to end: a record, the eval fields and a trajectory file', {
     timeout: 60_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const { r, lines, errs } = runners(workspace);
     const code = (
       await r.eval(
@@ -161,24 +171,48 @@ describe('the live suite runner runs the built-in suites', () => {
     expect(envelope.record.toolCalls).toBeGreaterThan(0);
     // The run wrote its trajectory under the sessions root (the score
     // is derived from it).
-    const sessionsRoot = join(homedir(), '.kubic', 'sessions');
-    const trajectories: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.isDirectory()) walk(join(dir, entry.name));
-        else if (entry.name === 'trajectory.json') {
-          trajectories.push(join(dir, entry.name));
-        }
-      }
+    expect(trajectoryFiles()).toHaveLength(1);
+  });
+
+  it('loads the configured settings skills into the suite lane', {
+    timeout: 60_000,
+  }, async () => {
+    const workspace = tempDir('kubic-eval-ws-');
+    const skill = join(tempDir('kubic-eval-skills-'), 'house-style');
+    mkdirSync(skill);
+    writeFileSync(
+      join(skill, 'SKILL.md'),
+      '---\nname: house-style\ndescription: The house style\n---\nUse tabs.\n',
+    );
+    const { r } = runners(workspace);
+    // The sessions root is shared by every test in this file: this run's
+    // trajectory is the one it adds.
+    const before = new Set(trajectoryFiles());
+    const code = (
+      await r.eval(
+        {
+          task: 'fix it',
+          suite: 'swe-bench-mini',
+          model: 'faux/echo',
+          worktree: workspace,
+          size: 'smoke',
+          json: true,
+        },
+        cliConfig(`skills = [${JSON.stringify(skill)}]\n`),
+      )
+    ).exitCode;
+    expect(code).toBe(0);
+    const [trajectory] = trajectoryFiles().filter((file) => !before.has(file));
+    const exported = JSON.parse(readFileSync(trajectory ?? '', 'utf8')) as {
+      resources: { skills: string[] };
     };
-    walk(sessionsRoot);
-    expect(trajectories).toHaveLength(1);
+    expect(exported.resources.skills).toContain('house-style');
   });
 
   it('benchmark runs the matrix and exits 0 by verdict', {
     timeout: 120_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const { r, lines } = runners(workspace);
     const code = (
       await r.benchmark(
@@ -232,7 +266,7 @@ describe('the live suite runner runs the built-in suites', () => {
   it('scores a --trajectory FILE through the prod reader', {
     timeout: 60_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const path = join(workspace, 'run.json');
     writeFileSync(
       path,
@@ -310,7 +344,7 @@ describe('the live suite runner runs the built-in suites', () => {
   it('names an unreadable trajectory file (exit 2, trajectory-unreadable)', {
     timeout: 60_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const { r, lines } = runners(workspace);
     const code = (
       await r.eval(
@@ -336,7 +370,7 @@ describe('the live suite runner runs the built-in suites', () => {
   it('resolves the category alias (--suite swe)', {
     timeout: 60_000,
   }, async () => {
-    const workspace = tmp('kubic-eval-ws-');
+    const workspace = tempDir('kubic-eval-ws-');
     const { r, lines } = runners(workspace);
     const code = (
       await r.benchmark(

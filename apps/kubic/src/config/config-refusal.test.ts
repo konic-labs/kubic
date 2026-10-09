@@ -7,10 +7,10 @@
 // commands whose job is to REPORT a refusal (`config`, `doctor`, `trust`)
 // must still run so the operator can see the named reason.
 
-import { NO_PROJECT_TRUST } from '@kubic/host/config/trust-store';
+import { NO_PROJECT_TRUST } from '@kubic/host/config';
 import { describe, expect, it } from 'vitest';
-import type { CliConfigResult } from '../config-runtime.js';
-import { configRefusalExit, requireRuntimeConfig } from '../config-runtime.js';
+import type { CliConfigResult } from './load.js';
+import { configRefusalExit, requireRuntimeConfig } from './load.js';
 
 function refused(reason: string): CliConfigResult {
   return {

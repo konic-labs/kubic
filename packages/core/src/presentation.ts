@@ -97,6 +97,7 @@ export const PRESENTATION_STATE_FIELDS = {
   connection: true,
 } satisfies Record<keyof KubicPresentationState, true>;
 
+/** @internal */
 export const PRESENTATION_COMMANDS = [
   'approval.respond',
   'session.attach',

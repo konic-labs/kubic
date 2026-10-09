@@ -1,7 +1,7 @@
 // Edit size guard.
 // edit must refuse files above EDIT_MAX_BYTES (8 MiB) with a named
-// `file_too_large` OpError BEFORE any content allocation — a huge edit is
-// one tool call away and today it allocates the whole file.
+// `file_too_large` OpError BEFORE any content allocation: a huge edit is
+// one tool call away, and reading the file first would allocate all of it.
 
 import {
   closeSync,

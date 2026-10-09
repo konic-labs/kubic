@@ -12,6 +12,7 @@
 import type { Style, UiTheme } from '@kubic/core/ui/style';
 
 /** Blocks past either bound render plain. */
+/** @internal */
 export const HIGHLIGHT_MAX_LINES = 2000;
 const HIGHLIGHT_MAX_CHARS = 200_000;
 

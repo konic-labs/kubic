@@ -14,7 +14,7 @@ import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
 import {
   loadCliConfig,
   resolveInteractiveProjectTrust,
-} from './config-runtime.js';
+} from './config/load.js';
 import { dispatchCommand } from './dispatch.js';
 import { exitProcessAfterFlush } from './exit.js';
 import { createProdRunners } from './prod-runners.js';

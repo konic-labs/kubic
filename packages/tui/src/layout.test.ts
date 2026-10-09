@@ -108,7 +108,7 @@ describe('tui layout root', () => {
   });
 });
 
-describe('tui layout boundary (mutation hardening)', () => {
+describe('tui layout boundary', () => {
   it('keeps the tree visible at exactly 80 columns, hides at 79', () => {
     expect(renderRows(buildLayoutRoot(slots()), 80).join('\n')).toContain(
       'tree',

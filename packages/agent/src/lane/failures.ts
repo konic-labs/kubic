@@ -42,7 +42,7 @@ const RETRY_STRATEGIES = [
   'retry_with_wider_capability',
 ] as const;
 
-// Full retry strategy vocabulary. Emitted today: retry_same (executed by the
+// Full retry strategy vocabulary. Emitted: retry_same (executed by the
 // harness's durable generation retry), retry_with_different_tool, and
 // retry_with_new_context (compact-then-retry). Stronger model and new
 // agent are DECIDED here and executed by their owners; wider capability only

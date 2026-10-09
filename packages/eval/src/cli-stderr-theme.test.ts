@@ -1,5 +1,5 @@
 // Diagnostics colour follows stderr, never stdout (see the host twin,
-// packages/host/src/cli-stderr-theme.test.ts): eval, benchmark and export
+// packages/host/src/cli/stderr-theme.test.ts): eval, benchmark and export
 // build their stderr logger from `errTheme`.
 
 import { stripVTControlCharacters } from 'node:util';

@@ -13,7 +13,11 @@ import { join } from 'node:path';
 import { FileJournalStore, restoreEntry } from '@kubic/exec/journal';
 import { afterAll, describe, expect, it } from 'vitest';
 import { fauxAssistantMessage, fauxToolCall } from '../pi-boundary.js';
-import { bootFauxLane, type FauxLane, fauxToolUse } from './test-harness.js';
+import {
+  bootFauxLane,
+  type FauxLane,
+  fauxToolUse,
+} from '../test-support/lane-harness.js';
 
 const lanes: FauxLane[] = [];
 const scratchDirs: string[] = [];

@@ -36,7 +36,7 @@ import {
 } from '@kubic/core/cli/exit-codes';
 import { errorBlock } from '@kubic/core/cli/kit';
 import type { CliTheme } from '@kubic/core/cli/theme';
-import { shellQuote } from '@kubic/host/run-cli';
+import { shellQuote } from '@kubic/host/run';
 import type { KubicProgram } from './context.js';
 
 export interface ProgramIo {

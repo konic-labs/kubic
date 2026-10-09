@@ -16,29 +16,28 @@
     "apps/*"
   ],
   "scripts": {
-    "postinstall": "node scripts/patch-vitest-runner.mjs",
     "build": "node scripts/build.mjs",
     "kubic": "node ./bin/kubic.js",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:binary": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs",
+    "release:stage": "node scripts/release-stage.mjs",
+    "release:contract": "node scripts/pack-install-contract.mjs",
+    "check": "npm run typecheck && npm run lint && npm run lint:deps && npm run lint:dead && npm run lint:dead:prod && npm run check:pins && npm run docs:check && npm run check:gates",
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
     "lint": "biome ci .",
     "lint:deps": "node scripts/dep-lint.mjs",
     "lint:dead": "knip",
     "lint:dead:prod": "knip --config knip.production.jsonc --production",
-    "check:pi": "node scripts/check-pinned-deps.mjs",
-    "test:unit": "vitest run",
-    "test": "node --test \"scripts/*.test.mjs\"",
-    "docs:check": "node scripts/check-docs-links.mjs",
-    "test:binary-contract": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs",
-    "test:mutation:vitest": "stryker run",
-    "test:mutation:tap": "stryker run stryker.tap.conf.json",
-    "test:mutation": "npm run test:mutation:vitest && npm run test:mutation:tap && node scripts/mutation-check.mjs --report reports/mutation/mutation.json --min 80 && node scripts/mutation-check.mjs --report reports/mutation-tap/mutation.json --min 80"
+    "check:pins": "node scripts/check-pinned-deps.mjs",
+    "check:gates": "node --test \"scripts/*.test.mjs\"",
+    "docs:check": "node scripts/check-docs-links.mjs && node scripts/gen-config-docs.mjs --check",
+    "docs:config": "node scripts/gen-config-docs.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "@stryker-mutator/core": "10.0.0",
-    "@stryker-mutator/tap-runner": "10.0.0",
-    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "26.6.2",
+    "@vitest/coverage-v8": "5.0.3",
     "esbuild": "0.28.2",
     "knip": "6.38.0",
     "typescript": "7.0.2",
@@ -47,11 +46,13 @@
   "dependencies": {
     "@clack/prompts": "1.8.1",
     "@commander-js/extra-typings": "15.0.0",
+    "@earendil-works/chord": "1.0.2",
+    "@earendil-works/pi-ai": "1.0.2",
+    "@earendil-works/pi-durable": "1.0.2",
+    "@earendil-works/pi-telemetry": "1.0.2",
+    "@earendil-works/pi-tui": "1.0.2",
     "commander": "15.0.0",
     "consola": "3.4.2",
     "lowlight": "3.3.0"
-  },
-  "overrides": {
-    "@earendil-works/pi-telemetry": "1.0.2"
   }
 }

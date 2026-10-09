@@ -6,17 +6,13 @@
 // workspace link and the package's exports map under the `source` condition,
 // so the bundle contains the TypeScript sources of the packages. Third-party
 // packages stay external and load from node_modules at runtime, so no
-// third-party code is redistributed inside the bundle. A bare import that no
-// manifest declares is a build error, never a silently bundled module.
+// third-party code is redistributed inside the bundle. The root package.json is
+// the manifest npm installs, so a bare import it does not declare under
+// `dependencies` is a build error, never a silently bundled module or a
+// package missing from a user's install.
 //
 // Usage: node scripts/build.mjs
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
+import { readFileSync, rmSync, statSync } from 'node:fs';
 import { isBuiltin } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,16 +30,10 @@ export function packageNameOf(specifier) {
   return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
 }
 
-// Every name declared under `dependencies` across the given manifests.
-// devDependencies never reach the bundle, so they are not declared here.
-export function declaredDependencies(manifests) {
-  const names = new Set();
-  for (const manifest of manifests) {
-    for (const name of Object.keys(manifest.dependencies ?? {})) {
-      names.add(name);
-    }
-  }
-  return names;
+// The names a manifest declares under `dependencies`. devDependencies are
+// never installed for a user, so they never count.
+export function declaredDependencies(manifest) {
+  return new Set(Object.keys(manifest.dependencies ?? {}));
 }
 
 // esbuild plugin: `@kubic/*` is resolved and bundled; Node builtins and
@@ -62,7 +52,7 @@ export function thirdPartyExternals(declared) {
         return {
           errors: [
             {
-              text: `"${args.path}" is not a declared dependency of the root or any workspace package`,
+              text: `"${args.path}" is not a dependency of the root package.json, the manifest npm installs`,
             },
           ],
         };
@@ -71,27 +61,10 @@ export function thirdPartyExternals(declared) {
   };
 }
 
-function readManifest(file) {
-  return JSON.parse(readFileSync(file, 'utf8'));
-}
-
-// The root manifest plus every workspace package manifest (packages/*, apps/*).
-function allManifests(root) {
-  const manifests = [readManifest(join(root, 'package.json'))];
-  for (const group of ['packages', 'apps']) {
-    const base = join(root, group);
-    for (const entry of readdirSync(base).sort()) {
-      const file = join(base, entry, 'package.json');
-      if (statSync(join(base, entry)).isDirectory() && existsSync(file)) {
-        manifests.push(readManifest(file));
-      }
-    }
-  }
-  return manifests;
-}
-
 async function buildCli({ root = REPO_ROOT } = {}) {
-  const declared = declaredDependencies(allManifests(root));
+  const declared = declaredDependencies(
+    JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')),
+  );
   // Start from an empty dist/: a stale tsc tree from an earlier layout must
   // not sit next to the bundle.
   rmSync(join(root, 'dist'), { recursive: true, force: true });

@@ -14,7 +14,7 @@ import type {
   ReplayRunResult,
   ReplayRunTerminus,
   ReplayRuntimeDeps,
-} from './replay.js';
+} from './types.js';
 
 interface LanePromptOutcome {
   terminus: string;

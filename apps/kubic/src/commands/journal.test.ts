@@ -10,15 +10,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExitCode } from '@kubic/core/cli/exit-codes';
 import { FileJournalStore } from '@kubic/exec/journal';
-import type { GitRequest } from '@kubic/host/git-cli';
-import {
-  type JournalRequest,
-  runJournalCommand,
-} from '@kubic/host/journal-cli';
+import type { GitRequest } from '@kubic/host/git';
+import { type JournalRequest, runJournalCommand } from '@kubic/host/journal';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
-import type { CliConfigResult } from '../config-runtime.js';
+import type { CliConfigResult } from '../config/load.js';
 import { registerJournalCommands } from './journal.js';
 
 const CONFIG = {} as CliConfigResult;
@@ -47,7 +44,7 @@ async function kubic(
     err: (line: string) => err.push(line),
   };
   const program = createKubicProgram(channels, {
-    versionLine: 'kubic 0.0.0',
+    versionLine: 'kubic 1.2.3',
     rootHelp: 'usage: kubic <x>',
   });
   let exit: ExitCode = 0;
@@ -191,7 +188,7 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
   }
 });
 
-describe('the removed diff --agent flag', () => {
+describe('diff takes no --agent flag', () => {
   for (const argv of [
     ['diff', '--agent', 'w1'],
     ['diff', '--agent=w1'],

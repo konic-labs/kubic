@@ -22,14 +22,29 @@
   },
   "overrides": [
     {
-      "includes": ["docs/ui/**"],
+      "includes": [
+        "packages/*/src/**/*.ts",
+        "apps/*/src/**/*.ts",
+        "!**/*.test.ts",
+        "!**/test-support/**"
+      ],
       "linter": {
         "rules": {
           "complexity": {
-            "noImportantStyles": "off"
+            "noExcessiveLinesPerFunction": {
+              "level": "error",
+              "options": {
+                "maxLines": 150
+              }
+            }
           },
           "style": {
-            "noDescendingSpecificity": "off"
+            "noExcessiveLinesPerFile": {
+              "level": "error",
+              "options": {
+                "maxLines": 600
+              }
+            }
           }
         }
       }

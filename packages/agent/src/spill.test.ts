@@ -5,35 +5,16 @@
 // spills with it. Nothing lands in the workspace (where the end-of-run sweep
 // would journal it) or in $TMPDIR (which nothing would clean).
 
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../test/temp-dir.js';
 import { createSessionSpillSink, SPILL_DIR_NAME } from './spill.js';
-
-const dirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  dirs.push(dir);
-  return dir;
-}
 
 describe('session spill sink', () => {
   it('writes the full stream inside the session directory, 0600, in order', () => {
-    const sessionDir = tmp('spill-session-');
+    const sessionDir = tempDir('spill-session-');
     const sink = createSessionSpillSink(sessionDir);
     const first = sink.write('stdout', 'head\ntail\n');
     const second = sink.write('stderr', 'boom\n');
@@ -53,7 +34,7 @@ describe('session spill sink', () => {
   });
 
   it('never reuses a path a previous sink returned (a resumed session)', () => {
-    const sessionDir = tmp('spill-resume-');
+    const sessionDir = tempDir('spill-resume-');
     const first = createSessionSpillSink(sessionDir);
     const before = first.write('stdout', 'first run\n');
     // A resumed session builds a NEW sink over the same directory; its first
@@ -66,8 +47,8 @@ describe('session spill sink', () => {
   });
 
   it('goes away with the session: the prune removes the directory it lives in', () => {
-    const sessionDir = tmp('spill-prune-');
-    const workspace = tmp('spill-ws-');
+    const sessionDir = tempDir('spill-prune-');
+    const workspace = tempDir('spill-ws-');
     const sink = createSessionSpillSink(sessionDir);
     const spillPath = sink.write('stdout', 'x'.repeat(10));
     expect(statSync(spillPath).isFile()).toBe(true);

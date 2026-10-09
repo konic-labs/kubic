@@ -103,6 +103,7 @@ export function requireFailureLabel(
 // teaching the model that env breakage is a capability difference.
 // Capability codes (model_*, context_*, run_limit, approval_*,
 // tool_invalid_args) stay eligible.
+/** @internal */
 export const ENV_FAILURE_CODES = [
   'tool_failed',
   'tool_timeout',

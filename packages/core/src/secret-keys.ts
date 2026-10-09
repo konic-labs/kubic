@@ -2,6 +2,7 @@
 // environment a run used through this function, so a secret-classified
 // value is never written in the clear.
 
+/** @internal */
 export const REDACTED_ENV_VALUE = '<redacted>';
 
 const SECRET_SUFFIXES = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'CREDENTIALS'];

@@ -2,11 +2,8 @@
 // way a run can end as one TurnOutcome. Faux provider only, MemoryStorage,
 // zero network.
 
-import {
-  type ExecutionEnv,
-  FakeExecutionEnv,
-  type Shell,
-} from '@kubic/exec/env';
+import type { ExecutionEnv, Shell } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
@@ -16,9 +13,9 @@ import {
   fauxProvider,
   fauxToolCall,
   MemoryStorage,
-  type Storage,
   withAbortSignal,
 } from '../pi-boundary.js';
+import type { TestSession } from '../test-support/session-handle.js';
 import type { AbortableLane } from './abort.js';
 import { abortLane, forgetLaneKills, OperationKillRegistry } from './abort.js';
 import { bootLane, type Lane } from './boot.js';
@@ -41,15 +38,6 @@ afterEach(async () => {
     await lane.kills.drain(String(lane.conversation.id));
   }
 });
-
-type TestSession = {
-  id: string;
-  dir: string;
-  storage: Storage;
-  meta: { cwd: string; createdAt: string };
-  adopt(): Storage;
-  release(context: Context): Promise<void>;
-};
 
 function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();

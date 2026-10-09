@@ -26,7 +26,8 @@ Each command group owns one module under `apps/kubic/src/commands/`:
 
 | Module | Commands |
 | --- | --- |
-| `session.ts` | run, tui, doctor, models, config, sessions |
+| `session.ts` | run, tui, attach, resume, sessions |
+| `setup.ts` | doctor, skills, models, setup, config, trust |
 | `journal.ts` | diff, undo, log, status, journal prune, git |
 | `analysis.ts` | cost, policy, audit, eval, benchmark, replay, export |
 
@@ -36,16 +37,17 @@ the process-wide config load (`ctx.config`), the injected runners
 (`ctx.runners`), the `out`/`err` line channels, and `ctx.finish(result)`,
 which records the command's `CommandResult` (see [Exit codes](#exit-codes)).
 
-Every command is a real commander definition; the hand-rolled parser
-(`flags.ts`) and help convention (`cli-help.ts`) do not exist, and
-`scripts/flag-parser-gate.test.mjs` keeps them from coming back.
+Every command is a real commander definition, and commander (through
+`@commander-js/extra-typings`, imported only under `apps/kubic/src`) is the
+one argv parser: `npm run lint:deps` refuses any other parser import.
 
 The analysis group (`commands/analysis.ts`) is the reference to copy:
 
 - it declares typed runners (`AnalysisRunners`, parsed options in), which
   `DispatchRunners` extends;
 - each runner returns a `CommandResult`, and prints its own output on the
-  `out`/`err` channels;
+  `out`/`err` channels as it runs (a streaming command and a report work
+  alike, and a runner is testable without the dispatcher);
 - its tests are in `commands/analysis.test.ts`.
 
 A new command is a real definition:
@@ -125,7 +127,7 @@ keyed by signal name: SIGHUP 129, SIGINT 130, SIGTERM 143.
   computes `interactive` and `fancy`).
 - **Colour** comes from `themeFor(stream)` / `createCliTheme(level)`: it
   honours `NO_COLOR`, `FORCE_COLOR`, `TERM=dumb`, and is off on a non-TTY.
-  The palette is the shared design tokens (`docs/ui/README.md`); new output
+  The palette is the shared design tokens (`packages/core/src/ui/tokens.ts`); new output
   styles through `theme.ui` roles (`fg2`, `accent`, `ok`, …), never raw hex.
 - **Tables**: `renderTable(rows, columns, { fancy, theme, markers })` — the
   kit's borderless table when `fancy` (muted header, faint rule, optional
@@ -133,7 +135,7 @@ keyed by signal name: SIGHUP 129, SIGINT 130, SIGTERM 143.
   otherwise (pipes, CI, NO_COLOR), aligned by terminal display width (wide
   CJK cells count 2).
 - **The output kit** (`packages/core/src/cli/kit.ts`) is the TTY
-  layer for human-facing output (``): `brandHeading`,
+  layer for human-facing output: `brandHeading`,
   `sectionLabel`, `statusMark` (✓ ▲ ✕ ○ ℹ and the spinner frame),
   `alignedRows`, `receipt`, `nextActions`, `errorBlock`, `hintLine`
   (backtick spans highlighted) and `kvLine`. Use it only when

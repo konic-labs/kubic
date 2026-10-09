@@ -1,7 +1,7 @@
 // Unit tests for the pure parts of scripts/build.mjs: the package name of a
 // specifier, the declared-dependency set, and the third-party resolution
 // policy the esbuild plugin applies. The bundle itself is proven end to end by
-// `npm run test:binary-contract`.
+// `npm run test:binary`.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -26,19 +26,19 @@ describe('packageNameOf', () => {
 });
 
 describe('declaredDependencies', () => {
-  it('unions the runtime dependencies of every manifest', () => {
-    const declared = declaredDependencies([
-      {
-        dependencies: { commander: '15.0.0' },
-        devDependencies: { vitest: '5.0.3' },
-      },
-      { dependencies: { '@earendil-works/pi-tui': '1.0.2' } },
-      {},
-    ]);
+  it('names the runtime dependencies of the root manifest, never its dev tools', () => {
+    const declared = declaredDependencies({
+      dependencies: { commander: '15.0.0', '@earendil-works/pi-tui': '1.0.2' },
+      devDependencies: { vitest: '5.0.3' },
+    });
     assert.deepEqual([...declared].sort(), [
       '@earendil-works/pi-tui',
       'commander',
     ]);
+  });
+
+  it('is empty for a manifest without dependencies', () => {
+    assert.deepEqual([...declaredDependencies({})], []);
   });
 });
 
@@ -92,7 +92,10 @@ describe('thirdPartyExternals', () => {
   it('fails the build on an undeclared third-party import, naming it', () => {
     const result = resolve('left-pad');
     assert.equal(result.errors.length, 1);
-    assert.match(result.errors[0].text, /"left-pad" is not a declared/);
+    assert.match(
+      result.errors[0].text,
+      /"left-pad" is not a dependency of the root package\.json/,
+    );
   });
 
   it('matches bare specifiers only, never relative or absolute paths', () => {

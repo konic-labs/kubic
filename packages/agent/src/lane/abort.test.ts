@@ -1,4 +1,4 @@
-// Lane abort kill handling (re-pointed at the rewrite).
+// Lane abort kill handling.
 // abortLane drains the conversation's kills BEFORE running them, so a
 // rejected abort still consumed the handles: a retry finds the registry
 // empty and every original kill ran exactly once across both attempts.
@@ -7,6 +7,7 @@ import { BACKGROUND_CONTEXT } from '../pi-boundary.js';
 import {
   type AbortableLane,
   abortLane,
+  killLaneProcesses,
   LaneDriveError,
   OperationKillRegistry,
 } from './abort.js';
@@ -54,5 +55,25 @@ describe('abortLane', () => {
     expect(retry).toEqual({ killed: 0 });
     expect(runs).toBe(2);
     expect(attempts).toBe(2);
+  });
+});
+
+describe('killLaneProcesses', () => {
+  it("kills every tracked child of the conversation, past one that already exited, and only that conversation's", () => {
+    const kills = new OperationKillRegistry();
+    const killed: string[] = [];
+    kills.track('c1', () => killed.push('first'));
+    kills.track('c1', () => {
+      throw new Error('ESRCH');
+    });
+    kills.track('c1', () => killed.push('third'));
+    kills.track('other', () => killed.push('other'));
+    killLaneProcesses(
+      lane({ conversationId: 'c1', abort: async () => {}, kills }),
+    );
+    expect(killed).toEqual(['first', 'third']);
+    expect(kills.drain('c1')).toEqual([]);
+    expect(kills.drain('other')).toHaveLength(1);
+    expect(() => killLaneProcesses(undefined)).not.toThrow();
   });
 });

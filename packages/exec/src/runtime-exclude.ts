@@ -13,12 +13,9 @@
 //   * `.kubic/` itself stays unignored, so `config.toml` + `roles/*.md`
 //     remain committable (mixed directory, by construction).
 //
-// Placement is forced by: only packages/exec may spawn processes or
-// touch node:fs. This module is deliberately self-contained (node:
-// builtins only, no relative imports) so the plain `node --test` gate
-// (`scripts/runtime-exclude.test.mjs`, no build step) can drive the real
-// mechanism without `.js`-specifier resolution, and so @kubic/host can
-// derive its required-entry list from the same source of truth.
+// It lives in packages/exec because only exec may spawn processes or touch
+// node:fs, and @kubic/host derives its required-entry list from the same
+// source of truth.
 //
 // Fail-open: any git/fs failure degrades to a skip. Writing ignore rules
 // serves the user's commit path; it must never fail a run.
@@ -40,15 +37,19 @@ export const RUNTIME_EXCLUDE_ENTRIES = [
 // Managed-block markers. A later run replaces the block in place instead
 // of appending a duplicate, so repeated runs are idempotent and a rule
 // set that changes re-syncs.
+/** @internal */
 export const RUNTIME_EXCLUDE_BEGIN =
   '# kubic runtime state — local, never committed';
+/** @internal */
 export const RUNTIME_EXCLUDE_END = '# end kubic runtime state';
 
+/** @internal */
 export interface RuntimeExcludeText {
   text: string;
   changed: boolean;
 }
 
+/** @internal */
 export class RuntimeExcludeError extends Error {
   constructor(message: string) {
     super(message);
@@ -123,6 +124,7 @@ function renderBlock(entries: readonly string[]): string {
 // Unrelated entries above and below the block survive. An opening marker
 // with no closing marker is treated as a truncated block — ours to repair,
 // so it is re-rendered through the end of the file.
+/** @internal */
 export function applyRuntimeExcludeBlock(
   existing: string,
   entries: readonly string[] = RUNTIME_EXCLUDE_ENTRIES,

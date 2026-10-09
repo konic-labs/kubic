@@ -187,6 +187,7 @@ function snapshotEvent(snapshot: SnapshotEvent): KubicLaneEvent {
 // One pi-durable agent event in Kubic's vocabulary; undefined for the
 // kinds Kubic does not route (message deltas, inbox, deferred polls — a
 // deferred turn is surfaced by the submission).
+/** @internal */
 export function toKubicLaneEvent(
   event: AgentEvent,
 ): KubicLaneEvent | undefined {

@@ -236,17 +236,17 @@ describe('trajectory structural validation', () => {
     expect(parsed.model.future_key).toBe('kept');
   });
 
-  it('serializes a malformed error machine-readably with exitCode 3', () => {
+  it('serializes a malformed error machine-readably with the usage code', () => {
     const err = new TrajectorySchemaError(
       'malformed',
       'trajectory.actions must be an array (got null)',
     );
-    expect(err.exitCode).toBe(3);
+    expect(err.exitCode).toBe(2);
     expect(err.toJSON()).toEqual({
       error: {
         code: 'malformed',
         message: 'trajectory.actions must be an array (got null)',
-        exitCode: 3,
+        exitCode: 2,
       },
     });
   });
@@ -405,7 +405,7 @@ describe('trajectory 1.0 sections', () => {
     expect(parseTrajectoryExportJSON(JSON.stringify(once))).toEqual(once);
   });
 
-  it('reads an export an earlier build wrote at schema 1.3, keeping the keys 1.0 no longer defines', () => {
+  it('reads a schema 1.3 export, keeping the keys 1.0 does not define', () => {
     const record = validExport();
     const parsed = parseTrajectoryExport({
       ...record,

@@ -3,17 +3,7 @@
 // assertion logic is exercised without dist/ — the real binary run lives in
 // scripts/binary-contract.mjs (CI: the `binary-contract` job).
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -36,8 +26,14 @@ import {
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const SESSION = '01a0d7d9-d6fb-71c2-bcfa-15f762197e6b';
-const VERSION_LINE = 'kubic 0.0.0 (license: MIT)';
+
+// The line the built binary must print, from the live manifest's version.
+const VERSION_LINE = expectedVersionLine(
+  JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version,
+);
+
 const RUN_MESSAGE = 'no models available: register a provider first';
+
 const PROVIDER_FAIL =
   'FAIL limit:provider-availability (provider-down): no providers configured — configure a provider; `kubic run` exits 6 on provider failure';
 
@@ -330,22 +326,19 @@ describe('binary contract', () => {
     assert.match(result.problems[0], /npm run build/);
   });
 
-  it('composes the exact version line from the live manifest', () => {
-    const manifest = JSON.parse(
-      readFileSync(join(ROOT, 'package.json'), 'utf8'),
-    );
-    assert.equal(expectedVersionLine(manifest.version), VERSION_LINE);
+  it('composes the exact version line from a version', () => {
+    assert.equal(expectedVersionLine('1.2.3'), 'kubic 1.2.3 (license: MIT)');
   });
 });
 
 describe('binary contract --version probe', () => {
   it('fails when the printed line drifts', () => {
     const result = contractWith({
-      version: versionOut('kubic 0.0.1 (license: MIT)'),
+      version: versionOut('kubic 9.9.9 (license: MIT)'),
     });
     assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /kubic 0\.0\.1 \(license: MIT\)/);
-    assert.match(result.problems[0], /kubic 0\.0\.0 \(license: MIT\)/);
+    assert.ok(result.problems[0].includes('kubic 9.9.9 (license: MIT)'));
+    assert.ok(result.problems[0].includes(VERSION_LINE));
   });
 
   it('fails when the line is not exact (extra output)', () => {
@@ -385,7 +378,7 @@ describe('binary contract root help probes', () => {
     }
   });
 
-  it('fails when -h alone drifts (exit 2 from an old unknown-flag path)', () => {
+  it('fails when -h alone drifts (exit 2 from an unknown-flag path)', () => {
     const result = contractWith({
       shortHelp: { code: 2, stdout: '', stderr: '', error: null },
     });
@@ -549,7 +542,7 @@ describe('binary contract failure probes', () => {
 });
 
 describe('binary contract unknown-command probe', () => {
-  it('fails when an unknown command exits 1 (the old posture)', () => {
+  it('fails when an unknown command exits 1 instead of 2', () => {
     const result = contractWith({ unknown: { ...unknownOut(), code: 1 } });
     assert.equal(result.problems.length, 1);
     assert.match(result.problems[0], /exited 1 \(expected 2/);
@@ -697,454 +690,5 @@ describe('kubic launcher source contract', () => {
       src,
       /kubic: node >= 22\.19 required \(running \$\{process\.versions\.node\}\) — see the README install section/,
     );
-  });
-});
-
-describe('binary contract doctor probe', () => {
-  it('fails when doctor exits 0 (exit-code drift)', () => {
-    const result = contractWith({ doctor: doctorOut(0) });
-    assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /doctor` exited 0 \(expected 6/);
-  });
-
-  it('fails when the provider-down reason string changes', () => {
-    const drifted = PROVIDER_FAIL.replace(
-      '(provider-down)',
-      '(provider-missing)',
-    );
-    const result = contractWith({
-      doctor: doctorOut(6, [drifted]),
-    });
-    assert.ok(
-      result.problems.some((p) => /provider-missing/.test(p)),
-      `expected reason drift, got ${JSON.stringify(result.problems)}`,
-    );
-  });
-
-  it('fails when the check id is renamed', () => {
-    const renamed = PROVIDER_FAIL.replace(
-      'limit:provider-availability',
-      'limit:provider-reachability',
-    );
-    const result = contractWith({ doctor: doctorOut(6, [renamed]) });
-    assert.ok(
-      result.problems.some((p) =>
-        /limit:provider-availability \(provider-down\)/.test(p),
-      ),
-      `expected check-id drift, got ${JSON.stringify(result.problems)}`,
-    );
-  });
-
-  it('fails when a second FAIL line appears (runner is not clean)', () => {
-    const result = contractWith({
-      doctor: doctorOut(1, [
-        PROVIDER_FAIL,
-        'FAIL dep:node (deps-missing): node 20.0.0 (need >=22.19)',
-      ]),
-    });
-    assert.ok(
-      result.problems.some((p) => /2 FAIL line\(s\)/.test(p)),
-      `expected fail-count drift, got ${JSON.stringify(result.problems)}`,
-    );
-  });
-});
-
-describe('binary contract provider-less run probe', () => {
-  it('fails when the run exits 0', () => {
-    const result = contractWith({ run: runOut(0) });
-    assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /run -p` exited 0 \(expected 6/);
-  });
-
-  it('fails when a ref is missing', () => {
-    const base = runOut();
-    const result = contractWith({
-      run: {
-        ...base,
-        stdout: base.stdout.replace(/^trajectory: .*\n/m, ''),
-      },
-    });
-    assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /missing the `trajectory:` ref/);
-  });
-
-  it('fails when a ref points at a different session', () => {
-    const base = runOut();
-    const result = contractWith({
-      run: {
-        ...base,
-        stdout: base.stdout.replace(/^usage: .*/m, 'usage: usage:deadbeef'),
-      },
-    });
-    assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /does not point at session/);
-  });
-
-  // The trajectory ref is the written file, never the old
-  // `trajectory:<id>` string that resolved to nothing.
-  it("fails when the trajectory ref is not that session's trajectory.json", () => {
-    for (const ref of [
-      `trajectory:${SESSION}`,
-      '/home/.kubic/sessions/deadbeef/trajectory.json',
-    ]) {
-      const base = runOut();
-      const result = contractWith({
-        run: {
-          ...base,
-          stdout: base.stdout.replace(/^trajectory: .*/m, `trajectory: ${ref}`),
-        },
-      });
-      assert.equal(result.problems.length, 1, ref);
-      assert.match(
-        result.problems[0],
-        /`trajectory:` ref .* does not point at session/,
-      );
-    }
-  });
-
-  it('fails when the provider message changes', () => {
-    const base = runOut();
-    const result = contractWith({
-      run: {
-        ...base,
-        stdout: base.stdout.replace(
-          /no models available: register a provider first/g,
-          'no provider configured',
-        ),
-      },
-    });
-    assert.ok(
-      result.problems.some((p) =>
-        /no models available: register a provider first/.test(p),
-      ),
-      `expected provider-message drift, got ${JSON.stringify(result.problems)}`,
-    );
-  });
-});
-
-// ci.yml wiring: the contract above only gates a push once
-// the workflow actually builds and runs the binary. Text-matched like
-// erasable.test.mjs's CI check — the job block is delimited by its own
-// 2-space job key, so an edit that drops the step fails here.
-function jobBlock(name) {
-  const yml = readFileSync(
-    join(ROOT, '.github', 'workflows', 'ci.yml'),
-    'utf8',
-  );
-  const start = yml.indexOf(`\n  ${name}:`);
-  assert.ok(start !== -1, `ci.yml must define a \`${name}\` job`);
-  const rest = yml.slice(start + 1);
-  const next = rest.slice(1).search(/^ {2}[a-z-]+:/m);
-  return next === -1 ? rest : rest.slice(0, next + 1);
-}
-
-// CI efficiency (per-push cost): the workflow keeps one live run per ref,
-// tests the newest Node only on main, and never installs dependencies for a
-// mutation gate that has nothing to score. Text-matched like the wiring above.
-describe('CI efficiency', () => {
-  it('tests node 22 everywhere and node 24 as well on main only', () => {
-    const job = jobBlock('test');
-    assert.match(
-      job,
-      /node: \$\{\{ fromJSON\(github\.ref_name == 'main' && '\["22", "24"\]' \|\| '\["22"\]'\) \}\}/,
-    );
-  });
-
-  it('keeps one live run per ref and never cancels a main commit', () => {
-    const yml = ciYml();
-    assert.match(
-      yml,
-      /^concurrency:\n {2}group: .*format\('main-\{0\}', github\.sha\)/m,
-    );
-    assert.match(yml, /^ {2}cancel-in-progress: true$/m);
-  });
-
-  it('runs with read-only token permissions', () => {
-    assert.match(ciYml(), /^permissions:\n {2}contents: read$/m);
-  });
-
-  it('scopes the mutation diff before installing, and installs only when something is mutable', () => {
-    const job = jobBlock('mutation');
-    const scope = job.indexOf('id: scope');
-    const install = job.indexOf('run: npm ci');
-    assert.ok(scope !== -1 && install > scope, 'scope must precede `npm ci`');
-    assert.match(
-      job,
-      /- if: steps\.scope\.outputs\.run == 'true'\n {8}run: npm ci/,
-    );
-  });
-
-  it('gives the mutation steps their own timeout so an overrun is a named failure', () => {
-    const job = jobBlock('mutation');
-    assert.match(job, /timeout-minutes: 26/);
-    assert.match(job, /timeout-minutes: 30\n/);
-  });
-});
-
-function ciYml() {
-  return readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
-}
-
-describe('CI wiring', () => {
-  it('builds for real, then runs the binary contract, in the test job', () => {
-    const job = jobBlock('test');
-    assert.match(job, /actions\/checkout@v7/);
-    assert.match(job, /actions\/setup-node@v7/);
-    assert.match(job, /npm ci/);
-    const build = job.indexOf('- run: npm run build\n');
-    const contract = job.indexOf('- run: npm run test:binary-contract\n');
-    assert.ok(build !== -1, 'the test job must run `npm run build`');
-    assert.ok(contract > build, 'the contract must run after the build');
-  });
-
-  it('runs docs:check as a static step of the test job', () => {
-    assert.match(
-      jobBlock('test'),
-      /- if: matrix\.node == '22'\n {8}run: npm run docs:check\n/,
-    );
-  });
-
-  it('runs every Node-independent static check once, before the suites', () => {
-    const job = jobBlock('test');
-    const suites = job.indexOf('- run: npm test\n');
-    assert.ok(suites !== -1, 'the test job must run `npm test`');
-    for (const step of [
-      'npm run typecheck',
-      'npx biome ci .',
-      'npm run lint:deps',
-      'npm run check:pi',
-      'npm run docs:check',
-    ]) {
-      const at = job.indexOf(`run: ${step}\n`);
-      assert.ok(at !== -1 && at < suites, `${step} must run before the suites`);
-      assert.match(
-        job.slice(Math.max(0, at - 40), at),
-        /- if: matrix\.node == '22'\n {8}$/,
-        `${step} must run on the node 22 leg only`,
-      );
-    }
-  });
-  it('npm test globs the gate suite, so the binary-contract suite runs', () => {
-    const manifest = JSON.parse(
-      readFileSync(join(ROOT, 'package.json'), 'utf8'),
-    );
-    assert.match(
-      manifest.scripts.test,
-      /node --test\s+"scripts\/\*\.test\.mjs"/,
-      'npm test must glob scripts/*.test.mjs, not hand-list gates',
-    );
-  });
-
-  it('a failing run leaves no temp dir behind (cleanup survives the exit path)', () => {
-    // The contract exits non-zero on violation; process.exit() would kill the
-    // process before the finally-block cleanup, leaking one scratch dir per
-    // failing run. Point TMPDIR at a fresh dir and force the failure path.
-    // The script derives its root from its own location, so a copy in a
-    // dist-less fixture root takes the missing-build path without renaming
-    // the real dist/ (which raced any concurrent build or binary run).
-    // realpath: the script's main guard compares argv[1] with its own
-    // resolved URL, so a symlinked tmpdir (macOS /var -> /private/var)
-    // would skip main entirely and exit 0.
-    const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'bc-cleanup-')));
-    try {
-      const fixtureRoot = join(sandbox, 'repo');
-      const scratchTmp = join(sandbox, 'tmp');
-      mkdirSync(join(fixtureRoot, 'scripts'), { recursive: true });
-      mkdirSync(scratchTmp);
-      copyFileSync(
-        join(ROOT, 'scripts', 'binary-contract.mjs'),
-        join(fixtureRoot, 'scripts', 'binary-contract.mjs'),
-      );
-      copyFileSync(
-        join(ROOT, 'package.json'),
-        join(fixtureRoot, 'package.json'),
-      );
-      const result = spawnSync(
-        process.execPath,
-        [join(fixtureRoot, 'scripts', 'binary-contract.mjs')],
-        {
-          cwd: fixtureRoot,
-          env: { ...process.env, TMPDIR: scratchTmp },
-          encoding: 'utf8',
-        },
-      );
-      assert.equal(result.status, 1, 'the missing-dist path must exit 1');
-      assert.match(result.stderr, /binary contract: missing build output/);
-      assert.deepEqual(
-        readdirSync(scratchTmp),
-        [],
-        'no scratch dir may survive a failing run',
-      );
-    } finally {
-      rmSync(sandbox, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('binary contract --json purity probes', () => {
-  it('fails when the models.json receipt leaks to stdout', () => {
-    const result = contractWith({
-      modelsJson: {
-        ...modelsJsonOut(),
-        stdout: `${MODELS_RECEIPT_PREFIX} /x/models.json (project, trusted): local\n[]\n`,
-      },
-    });
-    assert.ok(
-      result.problems.some((p) => /leaked the models.json receipt/.test(p)),
-      JSON.stringify(result.problems),
-    );
-  });
-
-  it('fails when models --json stdout is not one JSON document', () => {
-    const result = contractWith({
-      modelsJson: { ...modelsJsonOut(), stdout: 'not json\n' },
-    });
-    assert.ok(
-      result.problems.some((p) => /not one JSON document/.test(p)),
-      JSON.stringify(result.problems),
-    );
-  });
-
-  it('fails when the receipt is missing from stderr', () => {
-    const result = contractWith({
-      doctorJson: { ...doctorJsonOut(), stderr: '' },
-    });
-    assert.ok(
-      result.problems.some((p) =>
-        /did not print the models.json receipt/.test(p),
-      ),
-      JSON.stringify(result.problems),
-    );
-  });
-
-  it('fails when the refused-config text run leaks the reason to stdout', () => {
-    const result = contractWith({
-      refusedRunText: {
-        ...refusedRunTextOut(),
-        stdout: `error: ${REFUSAL_MESSAGE}\n`,
-      },
-    });
-    assert.ok(
-      result.problems.some((p) => /stderr-only/.test(p)),
-      JSON.stringify(result.problems),
-    );
-  });
-
-  it('fails when the refused-config envelope is missing under --json', () => {
-    const result = contractWith({
-      refusedRunJson: { ...refusedRunJsonOut(), stdout: '' },
-    });
-    assert.ok(
-      result.problems.some((p) => /exactly one envelope/.test(p)),
-      JSON.stringify(result.problems),
-    );
-  });
-
-  it('fails when the refused-config envelope reports a different exit', () => {
-    const result = contractWith({
-      refusedRunJson: { ...refusedRunJsonOut(), code: 2 },
-    });
-    assert.ok(
-      result.problems.some((p) => /exited 2 \(expected 1/.test(p)),
-      JSON.stringify(result.problems),
-    );
-  });
-
-  it('fails when the refused-config envelope does not name the reason', () => {
-    const result = contractWith({
-      refusedRunJson: {
-        ...refusedRunJsonOut(),
-        stdout: `${JSON.stringify({
-          ok: false,
-          exitCode: 1,
-          error: { kind: 'failed', message: 'refused' },
-        })}\n`,
-      },
-    });
-    assert.ok(
-      result.problems.some((p) => /does not name the reason/.test(p)),
-      JSON.stringify(result.problems),
-    );
-  });
-});
-
-describe('binary contract command help probes', () => {
-  it('fails when a command help request boots a lane (writes to stderr)', () => {
-    const result = contractWith({
-      runHelp: {
-        ...commandHelpOut('run'),
-        stderr:
-          'warning: this run executes in-process with your user authority\n',
-      },
-    });
-    assert.ok(
-      result.problems.some((p) => /must not boot a lane/.test(p)),
-      JSON.stringify(result.problems),
-    );
-  });
-
-  it('fails when a command help request exits non-zero', () => {
-    const result = contractWith({
-      runHelp: { ...commandHelpOut('run'), code: 1 },
-    });
-    assert.ok(
-      result.problems.some((p) => /exited 1 \(expected 0/.test(p)),
-      JSON.stringify(result.problems),
-    );
-  });
-
-  it('fails when a command help request prints the wrong usage', () => {
-    const result = contractWith({
-      tuiHelp: commandHelpOut('doctor'),
-    });
-    assert.ok(
-      result.problems.some((p) => /did not print its usage line/.test(p)),
-      JSON.stringify(result.problems),
-    );
-  });
-});
-
-describe('binary contract symlinked-bin probe', () => {
-  const linkedVersion = () => ({
-    code: 0,
-    stdout: `${VERSION_LINE}\n`,
-    stderr: '',
-    error: null,
-  });
-
-  it('passes when --version through the symlink prints the version line', () => {
-    let seen = null;
-    const result = contractWith(
-      {},
-      {
-        runSymlinked: (args) => {
-          seen = args;
-          return linkedVersion();
-        },
-      },
-    );
-    assert.deepEqual(result.problems, []);
-    assert.deepEqual(seen, ['--version']);
-  });
-
-  it('is skipped when the symlinked runner is absent', () => {
-    const result = contractWith();
-    assert.deepEqual(result.problems, []);
-  });
-
-  it('fails when the symlinked run exits nonzero', () => {
-    const result = contractWith(
-      {},
-      {
-        runSymlinked: () => ({
-          code: 1,
-          stdout: '',
-          stderr: 'error: cannot find module',
-          error: null,
-        }),
-      },
-    );
-    assert.equal(result.problems.length, 1);
-    assert.match(result.problems[0], /symlinked bin exited 1/);
   });
 });

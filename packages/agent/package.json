@@ -26,8 +26,8 @@
       "default": "./src/lane/failures.ts"
     },
     "./lane/interceptors": {
-      "source": "./src/lane/interceptors.ts",
-      "default": "./src/lane/interceptors.ts"
+      "source": "./src/lane/interceptors/index.ts",
+      "default": "./src/lane/interceptors/index.ts"
     },
     "./lane/pending": {
       "source": "./src/lane/pending.ts",
@@ -42,16 +42,12 @@
       "default": "./src/lane/session-fs.ts"
     },
     "./lane/session-store": {
-      "source": "./src/lane/session-store.ts",
-      "default": "./src/lane/session-store.ts"
+      "source": "./src/lane/session-store/index.ts",
+      "default": "./src/lane/session-store/index.ts"
     },
     "./lane/settle": {
       "source": "./src/lane/settle.ts",
       "default": "./src/lane/settle.ts"
-    },
-    "./lane/test-harness": {
-      "source": "./src/lane/test-harness.ts",
-      "default": "./src/lane/test-harness.ts"
     },
     "./lane/transcript": {
       "source": "./src/lane/transcript.ts",
@@ -70,16 +66,16 @@
       "default": "./src/model-select.ts"
     },
     "./models-config": {
-      "source": "./src/models-config.ts",
-      "default": "./src/models-config.ts"
+      "source": "./src/models-config/index.ts",
+      "default": "./src/models-config/index.ts"
     },
     "./ops/display-diff": {
       "source": "./src/ops/display-diff.ts",
       "default": "./src/ops/display-diff.ts"
     },
     "./ops/git": {
-      "source": "./src/ops/git.ts",
-      "default": "./src/ops/git.ts"
+      "source": "./src/ops/git/index.ts",
+      "default": "./src/ops/git/index.ts"
     },
     "./ops/memos": {
       "source": "./src/ops/memos.ts",
@@ -109,13 +105,17 @@
       "source": "./src/prompts.ts",
       "default": "./src/prompts.ts"
     },
-    "./skills/skills": {
-      "source": "./src/skills/skills.ts",
-      "default": "./src/skills/skills.ts"
+    "./skills": {
+      "source": "./src/skills/index.ts",
+      "default": "./src/skills/index.ts"
     },
     "./stream-options": {
       "source": "./src/stream-options.ts",
       "default": "./src/stream-options.ts"
+    },
+    "./test-support/lane-harness": {
+      "source": "./src/test-support/lane-harness.ts",
+      "default": "./src/test-support/lane-harness.ts"
     },
     "./test-support/models-fixtures": {
       "source": "./src/test-support/models-fixtures.ts",

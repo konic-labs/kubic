@@ -2,21 +2,20 @@
 // hook order), the prompt sections (role prompt, appended context blocks), and
 // the HarnessSettings the boot hands over.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EscalationLadder } from '../model-select.js';
 import {
   BACKGROUND_CONTEXT,
-  type Context,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   hook,
   MemoryStorage,
-  type Storage,
   SystemEntry,
   ToolTask,
 } from '../pi-boundary.js';
+import type { TestSession } from '../test-support/session-handle.js';
 import { assemblePrompt, bootLane, type Lane, PROMPT_SECTION } from './boot.js';
 
 const captured = vi.hoisted(() => ({
@@ -35,7 +34,7 @@ const captured = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock('./interceptors.js', () => ({
+vi.mock('./interceptors/index.js', () => ({
   policyInterceptorHooks: (options: {
     workspace?: string;
     readRoots?: readonly string[];
@@ -97,15 +96,6 @@ afterEach(async () => {
     await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
 });
-
-type TestSession = {
-  id: string;
-  dir: string;
-  storage: Storage;
-  meta: { cwd: string; createdAt: string };
-  adopt(): Storage;
-  release(context: Context): Promise<void>;
-};
 function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();
   return {

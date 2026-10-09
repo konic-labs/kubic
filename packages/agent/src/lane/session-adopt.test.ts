@@ -3,7 +3,7 @@
 // records that a harness owns it and its `release()` gives the lock back
 // without closing a storage a live harness is using.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { describe, expect, it } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
@@ -15,7 +15,7 @@ import {
   type Storage,
 } from '../pi-boundary.js';
 import { bootLane, type Lane } from './boot.js';
-import type { SessionHandle } from './session-store.js';
+import type { SessionHandle } from './session-store/index.js';
 
 // The shipped handle's own contract, reduced to what this file observes:
 // `adopt()` marks the storage as the harness's, and `release()` closes the

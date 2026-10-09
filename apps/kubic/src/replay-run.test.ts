@@ -6,17 +6,13 @@
 // prompt runner is mocked so the test can prove it is NOT called for a
 // refused pin, and the model catalog is assembled for real from the faux
 // registry (no network, no credentials).
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   DEFAULT_PERMISSIONS,
   type PermissionClasses,
 } from '@kubic/agent/permissions';
-import type {
-  ReplayRunRequest,
-  ReplayRuntimeDeps,
-} from '@kubic/host/replay/replay';
+import type { ReplayRunRequest, ReplayRuntimeDeps } from '@kubic/host/replay';
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,19 +21,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // observable as "never booted" (and no real lane, journal or model is
 // touched by a passing test).
 const lane = vi.hoisted(() => ({ runHeadlessPrompt: vi.fn() }));
-vi.mock('./headless-run.js', () => ({
+vi.mock('./run/command.js', () => ({
   runHeadlessPrompt: lane.runHeadlessPrompt,
 }));
 
+import { tempDir } from '../../../test/temp-dir.js';
 import { runProdReplay } from './replay-run.js';
-
-const roots: string[] = [];
-
-function tempDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  roots.push(dir);
-  return dir;
-}
 
 function fixtureTrajectory(objective = 'Fix the widget'): TrajectoryExport {
   return buildTrajectoryExport({
@@ -120,9 +109,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  for (const dir of roots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 describe('prod replay re-execution runner', () => {
@@ -241,6 +227,20 @@ describe('prod replay re-execution runner', () => {
     expect(deps.roles).toEqual({ cwd: worktree, layers });
     expect(deps.agentId).toBe('alice');
     expect(deps.reconcileOutOfScope).toEqual(['dist']);
+  });
+
+  it('discovers skills at the pinned worktree with the configured settings skills', async () => {
+    cwdWithTrajectory();
+    const worktree = tempDir('replay-worktree-');
+    await runProdReplay(request({ worktree }), {
+      policySource: 'config',
+      skills: { settingsSkills: ['/configured/skill'] },
+    });
+    const deps = lane.runHeadlessPrompt.mock.calls[0]?.[2];
+    expect(deps.skills).toEqual({
+      settingsSkills: ['/configured/skill'],
+      cwd: worktree,
+    });
   });
 
   it('boots no role when the request carries none (deterministic tier)', async () => {

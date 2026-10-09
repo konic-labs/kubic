@@ -1,18 +1,16 @@
-// Cost/Model status line (one row).
-// Usage rows aggregated with the cache split; model + thinking,
-// context gauge, cost; the turn state word. The approvals posture moved to
-// the header (chrome.ts), which reads it from this bar's state.
+// The one-row status line: model and thinking level, the context gauge, the
+// session's cost and journal count, and the turn's state word on the right.
+// Usage rows are summed with the cache split kept. The approvals posture is
+// part of this bar's state, but the header (chrome.ts) renders it.
 //
-// Structural usage mirror: the fields below repeat the shape read in
-// packages/agent/src/usage.ts (KubicUsageRow) WITHOUT importing it —
-// dep-lint forbids tui → agent. Pi is untouched here (pure strings);
-// the Component seam stays in ./tui-boundary.js. No node:fs (I/O
-// confinement). Faux-only tests: fixtures, zero network.
+// The usage fields mirror the agent's `KubicUsageRow`
+// (packages/agent/src/usage.ts) without importing it: dep-lint forbids
+// tui → agent. The line is pure strings; the Component seam stays in
+// ./tui-boundary.js.
 //
-// There are no TTFT/tool-ms segments: Pi 1.0
-// routes no streaming/timing field Kubic could read (message deltas stay
-// inside the harness; the lane watch commits whole entries), so the two
-// segments could never render — dead code, which was the bug.
+// There are no time-to-first-token or tool-time segments: Pi 1.0 exposes no
+// timing Kubic could read (message deltas stay inside the harness, and the
+// lane commits whole entries).
 import { formatCost } from '@kubic/core/cli/kit';
 import { TOOL } from '@kubic/core/ui/glyphs';
 import type { UiTheme } from '@kubic/core/ui/style';
@@ -159,6 +157,7 @@ const TURN_ROLE: Record<StatusTurnState, TokenRole> = {
 };
 
 // `200k`, `1M`: the window as people say it.
+/** @internal */
 export function compactCount(count: number): string {
   if (count >= 1_000_000) {
     const millions = Math.round(count / 100_000) / 10;
@@ -244,6 +243,7 @@ function assemble(
  * and the turn state word on the right, painted on bg1. A
  * running turn turns the mark into the spinner.
  */
+/** @internal */
 export function renderStatusLine(
   state: StatusBarState,
   width: number,

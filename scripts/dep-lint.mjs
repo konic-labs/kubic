@@ -43,12 +43,58 @@ const IMPORT_RE =
 const TEST_SUPPORT_SPEC = /(^|\/)test-support(\/|$)/;
 const TEST_FILE = /\.test\.m?[jt]sx?$/;
 
+// The root test/ folder holds the shared test fixtures (the fake terminal,
+// the hermetic setup): tests only, the same as test-support/.
+function reachesRootTests(importerFile, spec, root) {
+  if (!spec.startsWith('.')) return false;
+  const rel = relative(root, resolve(dirname(importerFile), spec));
+  return rel.split(sep)[0] === 'test';
+}
+
+// commander, through @commander-js/extra-typings in the composition root, is
+// the one argv parser: no other parser is imported (node:util's parseArgs
+// included), and extra-typings stays in apps/kubic/src.
+const FOREIGN_PARSER_SPEC = /^(yargs(\/.*)?|minimist|meow|arg|commander)$/;
+
+function isSecondArgvParser(spec, statement, file, root) {
+  if (FOREIGN_PARSER_SPEC.test(spec)) return true;
+  if (
+    (spec === 'node:util' || spec === 'util') &&
+    /\bparseArgs\b/.test(statement)
+  )
+    return true;
+  return (
+    spec === '@commander-js/extra-typings' &&
+    !file.startsWith(join(root, 'apps', 'kubic', 'src') + sep)
+  );
+}
+
+// Packages organised into concern folders, each with an index.ts entry: a
+// module in one folder reaches another folder only through that entry, never
+// into its internal modules. test-support/ holds shared test fixtures, not a
+// concern, so tests import its modules directly.
+const FOLDER_ENTRY_PACKAGES = new Set(['host']);
+
+// The concern folder a file under packages/<owner>/src/ belongs to, or null
+// for a file at the src root (or outside src).
+function concernFolder(owner, file, root) {
+  const parts = relative(join(root, 'packages', owner, 'src'), file).split(sep);
+  return parts.length > 1 && parts[0] !== '..' ? parts[0] : null;
+}
+
 // The app's manifest is `@kubic/cli`; its directory, apps/kubic, is the
 // `kubic` owner in FORBIDDEN.
 const OWNER_OF_PACKAGE_NAME = { cli: 'kubic' };
 
+// Test code: a test file, a test-support module, or anything in an app's
+// integration-test folder (apps/<app>/test/).
 function isTestScaffold(rel) {
-  return TEST_FILE.test(rel) || rel.split(sep).includes('test-support');
+  const parts = rel.split(sep);
+  return (
+    TEST_FILE.test(rel) ||
+    parts.includes('test-support') ||
+    (parts[0] === 'apps' && parts[2] === 'test')
+  );
 }
 
 function listDir(dir) {
@@ -131,13 +177,27 @@ export function checkTree(root) {
         const spec = m[1] ?? m[2];
         const line = content.slice(0, m.index).split('\n').length;
         if (
-          TEST_SUPPORT_SPEC.test(spec) &&
+          (TEST_SUPPORT_SPEC.test(spec) ||
+            reachesRootTests(file, spec, root)) &&
           !isTestScaffold(relative(root, file))
         ) {
           // Test scaffolding is for tests: a production file that imports it
           // would ship fixtures in the product.
           violations.push({
             kind: 'test-support',
+            from: owner,
+            to: spec,
+            file: relative(root, file),
+            line,
+          });
+          continue;
+        }
+        if (
+          !isTestScaffold(relative(root, file)) &&
+          isSecondArgvParser(spec, m[0], file, root)
+        ) {
+          violations.push({
+            kind: 'argv',
             from: owner,
             to: spec,
             file: relative(root, file),
@@ -153,7 +213,7 @@ export function checkTree(root) {
             spec.startsWith('node:child_process/') ||
             spec === 'child_process') &&
           owner !== 'exec' &&
-          !file.endsWith('.test.ts')
+          !isTestScaffold(relative(root, file))
         ) {
           // I/O confinement: only packages/exec (the
           // ExecutionEnv binding) touches node:fs/child_process. Tools go
@@ -188,6 +248,32 @@ export function checkTree(root) {
             });
           }
           continue;
+        }
+        if (FOLDER_ENTRY_PACKAGES.has(owner) && spec.startsWith('.')) {
+          const from = concernFolder(owner, file, root);
+          const abs = resolve(dirname(file), spec);
+          const to = concernFolder(owner, abs, root);
+          const entry =
+            to !== null &&
+            relative(join(root, 'packages', owner, 'src', to), abs) ===
+              'index.js';
+          if (
+            from !== null &&
+            to !== null &&
+            from !== to &&
+            to !== 'test-support' &&
+            !entry
+          ) {
+            // A deep import into another concern folder: go through its entry.
+            violations.push({
+              kind: 'folder',
+              from: `${owner}/${from}`,
+              to: `${owner}/${to}`,
+              file: relative(root, file),
+              line,
+            });
+            continue;
+          }
         }
         const target = resolveTarget(owner, file, spec, root);
         if (target === null) continue;
@@ -240,7 +326,11 @@ if (isMain) {
     const what =
       v.kind === 'relative'
         ? `relative import into package ${v.to} from ${v.from} (import it by name: @kubic/<pkg>/<subpath>)`
-        : `forbidden import ${v.from} -> ${v.to}`;
+        : v.kind === 'folder'
+          ? `deep import into ${v.to}/ from ${v.from}/ (import its entry: ../${v.to.split('/')[1]}/index.js)`
+          : v.kind === 'argv'
+            ? `second argv parser ${v.to} in ${v.from} (commander through @commander-js/extra-typings in apps/kubic/src is the only one)`
+            : `forbidden import ${v.from} -> ${v.to}`;
     console.log(`${v.file}:${v.line}: ${what}`);
   }
   if (violations.length > 0) {

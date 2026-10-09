@@ -23,17 +23,19 @@ import { type EvalSuite, findSuite } from '@kubic/eval/suites';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { gitHeadOf, withDetachedCheckout } from '@kubic/exec/git-clean';
-import { assembleModels } from '@kubic/host/models-cli';
-import { defaultSessionsRoot } from '@kubic/host/sessions-cli';
+import { assembleModels } from '@kubic/host/models';
+import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
+import type { CliConfigResult } from './config/load.js';
+import { projectTrustFor } from './config/load.js';
+import { runtimePolicy } from './config/model-selection.js';
 import {
-  type CliConfigResult,
-  projectTrustFor,
   runtimeLaneDeps,
-  runtimePolicy,
   runtimeRunDeps,
-} from './config-runtime.js';
-import { type HeadlessRunDeps, runHeadlessPrompt } from './headless-run.js';
+  runtimeSkillsDeps,
+} from './config/projections.js';
+import { runHeadlessPrompt } from './run/command.js';
+import type { HeadlessRunDeps } from './run/options.js';
 
 export type ProdRunSuite = (
   suiteId: string,
@@ -98,6 +100,8 @@ async function runFixture(
     ...(enterprisePolicy === undefined
       ? {}
       : { modelPolicy: enterprisePolicy }),
+    // The config `skills`, loaded with source 'settings' like `kubic run`.
+    skills: { ...runtimeSkillsDeps(cliConfig) },
     verify: {
       commands: fixture.verify,
       ...(fixture.timeoutMs === undefined

@@ -9,7 +9,7 @@ import {
   fauxAssistantMessage,
   UserEntry,
 } from '../pi-boundary.js';
-import { bootFauxLane, type FauxLane } from './test-harness.js';
+import { bootFauxLane, type FauxLane } from '../test-support/lane-harness.js';
 import { runTurn } from './turn.js';
 
 // 1x1 transparent PNG.

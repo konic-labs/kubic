@@ -27,7 +27,10 @@ import {
   type Usage,
   UserEntry,
 } from '../pi-boundary.js';
-import { laneConversationIdOf, readSessionMetadata } from './session-store.js';
+import {
+  laneConversationIdOf,
+  readSessionMetadata,
+} from './session-store/index.js';
 
 export type TranscriptItem =
   | { kind: 'user'; text: string; entryId: string }

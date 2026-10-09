@@ -1,9 +1,9 @@
-// Operation tool contract (/B mutation hardening).
-// Pins every registered tool's name/description/replay triple exactly:
-// Stryker StringLiteral mutants on descriptions (→ "") survive suites that
-// only exercise behavior, so the contract itself is asserted here. Registry
-// keys must equal operation names, and unknown tools fail with the exact
-// `unknown_tool` shape — never a bare throw.
+// Operation tool contract.
+// Pins every registered tool's name/description/replay triple exactly: suites
+// that only exercise behaviour would not notice an emptied description, so the
+// contract itself is asserted here. Registry keys must equal operation names,
+// and unknown tools fail with the exact `unknown_tool` shape — never a bare
+// throw.
 import { describe, expect, it } from 'vitest';
 import { BASH_RESULT_MAX_CHARS, BASH_RESULT_MAX_LINES } from './bash.js';
 import { OPERATIONS } from './registry.js';

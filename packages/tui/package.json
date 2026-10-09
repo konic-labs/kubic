@@ -29,6 +29,10 @@
       "source": "./src/lane-cells.ts",
       "default": "./src/lane-cells.ts"
     },
+    "./lane-text": {
+      "source": "./src/lane-text.ts",
+      "default": "./src/lane-text.ts"
+    },
     "./layout": {
       "source": "./src/layout.ts",
       "default": "./src/layout.ts"
@@ -56,6 +60,10 @@
     "./transcript": {
       "source": "./src/transcript.ts",
       "default": "./src/transcript.ts"
+    },
+    "./transcript-entry": {
+      "source": "./src/transcript-entry.ts",
+      "default": "./src/transcript-entry.ts"
     },
     "./tree": {
       "source": "./src/tree.ts",

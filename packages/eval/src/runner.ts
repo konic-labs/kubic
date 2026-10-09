@@ -10,6 +10,7 @@
 // trajectory path, an invalid determinism tier) is a fail-closed
 // EvalRunnerError (exit 2), never a stored record.
 
+import { EXIT_USAGE, type ExitCode } from '@kubic/core/cli/exit-codes';
 import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { parseTrajectoryExport } from '@kubic/trajectory/schema';
 import {
@@ -43,7 +44,7 @@ export type EvalRunnerErrorCode =
 
 export class EvalRunnerError extends Error {
   readonly code: EvalRunnerErrorCode;
-  readonly exitCode = 2;
+  readonly exitCode: ExitCode = EXIT_USAGE;
 
   constructor(code: EvalRunnerErrorCode, message: string) {
     super(message);

@@ -1,15 +1,15 @@
 // The approval contract the TUI shares: the
 // request and decision shapes, the decision keys (defaults, overrides,
-// conflict and hygiene checks, the arming timings of), the overlay
+// conflict and hygiene checks, the arming timings), the overlay
 // options the question and confirm dialogs use, and the memoOnce /
 // timeout→deny helpers. The approval itself renders as the inline card
 // (approval-card.ts).
 // Presentation only: mirrors the host decider semantics
-// (packages/host/src/approvals.ts) structurally without importing it —
+// (packages/host/src/approvals/) structurally without importing it —
 // dep-lint forbids tui → host. Pi is touched ONLY through
 // ./tui-boundary.js. No node:fs in prod src (I/O confinement).
 
-import type { CellDisplay } from './transcript.js';
+import type { CellDisplay } from './transcript-entry.js';
 import type { Component } from './tui-boundary.js';
 import { matchesKey } from './tui-boundary.js';
 
@@ -48,6 +48,7 @@ export type ApprovalDecision =
 // Overlay geometry: centered 70% width / 60% height, visible at
 // 80+ columns. Approvals are an inline card now; the question
 // and confirm dialogs still use this overlay.
+/** @internal */
 export const APPROVAL_MIN_WIDTH = 80;
 
 // Structural overlay options mirroring Pi's OverlayOptions without

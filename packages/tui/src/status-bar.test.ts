@@ -376,7 +376,7 @@ describe('context-window gauge', () => {
   });
 });
 
-describe('status bar regressions', () => {
+describe('status bar spend and usage rows', () => {
   it('floors sub-cent spend to <$0.01 instead of $0.00', () => {
     expect(formatStatusCost(0)).toBe('$0.00');
     expect(formatStatusCost(0.001)).toBe('<$0.01');

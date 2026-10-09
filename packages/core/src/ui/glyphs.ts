@@ -1,5 +1,5 @@
-// Kubic glyphs (/README.md "Glyphs"). One glyph
-// per meaning, used the same way in the TUI and the CLI.
+// Kubic glyphs: one glyph per meaning, used the same way in the TUI and the
+// CLI.
 
 /** Brand mark. */
 export const BRAND = '■';

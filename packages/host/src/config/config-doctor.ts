@@ -7,7 +7,7 @@
 // channel (the same `{ id, ok, detail }` shape a dependency probe uses).
 // The composition root injects it; doctor renders it in both the human and
 // the `--json` output without doctor.ts being touched.
-import type { DepProbe } from '../doctor.js';
+import type { DepProbe } from '../doctor/index.js';
 
 export interface ConfigDoctorInput {
   // Undefined when the load was refused; `refusal` then carries the reason.
@@ -43,6 +43,7 @@ export interface ConfigDoctorInput {
   compactionSummary?: string;
 }
 
+/** @internal */
 export const CONFIG_DOCTOR_ID = 'config-load';
 
 // The trust half of the detail, naming the exact provenance —

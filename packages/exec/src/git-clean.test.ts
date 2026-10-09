@@ -9,16 +9,10 @@
 // into process.env while the probe (which spawns git on the inherited
 // environment) runs.
 
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../test/temp-dir.js';
 import {
   gitHeadOf,
   isGitWorktreeClean,
@@ -30,20 +24,9 @@ import {
   type GitSandbox,
 } from './test-support/git-sandbox.js';
 
-const roots: string[] = [];
-
 afterEach(() => {
   disposeAllGitSandboxes();
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
 });
-
-// Plain temp dirs, for the fail-closed paths that never touch git.
-function tmpRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'git-clean-'));
-  roots.push(root);
-  return root;
-}
 
 // Activated: isGitWorktreeClean / withDetachedCheckout / gitHeadOf spawn git
 // on the inherited environment, so process.env itself must be the sandbox's
@@ -80,8 +63,10 @@ describe('isGitWorktreeClean', () => {
   });
 
   it('fail-closes on a non-repo dir and a missing path', () => {
-    expect(isGitWorktreeClean(tmpRoot())).toBe(false);
-    expect(isGitWorktreeClean(join(tmpRoot(), 'no-such-dir'))).toBe(false);
+    expect(isGitWorktreeClean(tempDir('git-clean-'))).toBe(false);
+    expect(isGitWorktreeClean(join(tempDir('git-clean-'), 'no-such-dir'))).toBe(
+      false,
+    );
   });
 });
 
@@ -136,7 +121,9 @@ describe('withDetachedCheckout: the verifier baseline', () => {
       ran = true;
       return 1;
     };
-    expect(await withDetachedCheckout(tmpRoot(), 'HEAD', run)).toBeNull();
+    expect(
+      await withDetachedCheckout(tempDir('git-clean-'), 'HEAD', run),
+    ).toBeNull();
     const repo = initRepo();
     expect(
       await withDetachedCheckout(repo.path, 'f'.repeat(40), run),
@@ -162,7 +149,7 @@ describe('gitHeadOf: the trajectory base revision', () => {
   });
 
   it('is null outside a repository and on a missing path', () => {
-    expect(gitHeadOf(tmpRoot())).toBeNull();
-    expect(gitHeadOf(join(tmpRoot(), 'no-such-dir'))).toBeNull();
+    expect(gitHeadOf(tempDir('git-clean-'))).toBeNull();
+    expect(gitHeadOf(join(tempDir('git-clean-'), 'no-such-dir'))).toBeNull();
   });
 });

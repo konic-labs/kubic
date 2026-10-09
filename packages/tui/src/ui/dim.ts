@@ -17,6 +17,7 @@ const CSI_SEQUENCE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const ESC_SEQUENCE = /\u001b[ -/]*[0-~]/g;
 
 /** One row without its styling, in fg3 (a blank row stays blank). */
+/** @internal */
 export function dimLine(ui: UiTheme, line: string): string {
   const text = line
     .replace(STRING_SEQUENCE, '')

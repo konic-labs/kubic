@@ -3,10 +3,10 @@
   // left out. `npm run lint:dead:prod` runs it (see docs/contributing.md).
   "$schema": "https://unpkg.com/knip@6.38.0/schema.json",
 
-  // An export that production code uses inside its own module is live, so it
-  // is not reported here. The gate reports exports that no production code
-  // uses at all, which are the exports only tests import.
-  "ignoreExportsUsedInFile": true,
+  // An export only tests import is reported, even when production code uses
+  // it inside its own module: such an export is tagged @internal (below), and
+  // everything else is either used by production code elsewhere or private.
+  "ignoreExportsUsedInFile": false,
 
   // Exports named by a package's exports map are entry files for knip (see
   // knip.jsonc). This keeps the production gate reporting them too.
@@ -15,13 +15,24 @@
   // mkfifo is a POSIX utility, not a dependency (see knip.jsonc).
   "ignoreBinaries": ["mkfifo"],
 
-  // The nine boundary seams are tagged @internal where they are re-exported
-  // (pi-boundary.ts, tui-boundary.ts). knip ignores @internal exports in
-  // production mode only, so the default gate still checks them. No other
-  // export in those files is exempt.
+  // Exports tagged @internal exist for tests: limits and pure helpers a test
+  // pins directly, and the Pi and TUI seams only tests reach. knip ignores
+  // @internal exports in production mode only, so the default gate still
+  // checks them.
 
   "workspaces": {
     ".": {
+      // The root manifest is the one npm installs, so it declares every
+      // runtime dependency, the Pi packages included. packages/agent and
+      // packages/tui import and declare those too, which is where knip
+      // counts the use; `npm run check:pins` keeps the two declarations equal.
+      "ignoreDependencies": [
+        "@earendil-works/chord",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-durable",
+        "@earendil-works/pi-telemetry",
+        "@earendil-works/pi-tui"
+      ],
       // The vitest plugin would add every *.test.ts as an entry, which makes
       // any test import count as use. It is off here, so `ignore` below holds.
       "vitest": false,
@@ -42,7 +53,6 @@
         "**/*.test.ts",
         "**/*.test.mjs",
         "**/test-support/**",
-        "**/test-harness.ts",
         "test/**"
       ]
     }

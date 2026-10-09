@@ -2,23 +2,22 @@
 // harness. The class-derived allowlist is now a
 // `conversation.configure({ tools })` against the registry's registrations.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PERMISSIONS } from '../permissions.js';
 import {
   AgentDoc,
   BACKGROUND_CONTEXT,
-  type Context,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
   MemoryStorage,
-  type Storage,
 } from '../pi-boundary.js';
+import type { TestSession } from '../test-support/session-handle.js';
 import { bootLane, type Lane } from './boot.js';
 import { applyToolPolicy } from './policy.js';
 
-vi.mock('./interceptors.js', () => ({
+vi.mock('./interceptors/index.js', () => ({
   policyInterceptorHooks: () => [],
 }));
 
@@ -67,15 +66,6 @@ afterEach(async () => {
     await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
   }
 });
-
-type TestSession = {
-  id: string;
-  dir: string;
-  storage: Storage;
-  meta: { cwd: string; createdAt: string };
-  adopt(): Storage;
-  release(context: Context): Promise<void>;
-};
 function handle(id = 'sess-1'): TestSession {
   const storage = new MemoryStorage();
   return {

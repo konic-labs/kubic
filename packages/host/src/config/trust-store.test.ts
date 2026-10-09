@@ -10,18 +10,16 @@
 import {
   closeSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import {
   canonicalTrustPath,
   ProjectTrustStore,
@@ -30,27 +28,14 @@ import {
   projectTrustStorePath,
 } from './trust-store.js';
 
-const made: string[] = [];
-
-function tmpDir(prefix = 'kubic-trust-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
 function storeFor(home: string): ProjectTrustStore {
   return new ProjectTrustStore(projectTrustStorePath(home));
 }
 
 describe('project trust store', () => {
   it('records a trust decision and reads it back', () => {
-    const home = tmpDir();
-    const project = tmpDir();
+    const home = tempDir();
+    const project = tempDir();
     const store = storeFor(home);
     expect(store.get(project)).toBe(null);
     store.set(project, true);
@@ -61,16 +46,16 @@ describe('project trust store', () => {
   });
 
   it('records a declined decision as false, distinct from undecided', () => {
-    const home = tmpDir();
-    const project = tmpDir();
+    const home = tempDir();
+    const project = tempDir();
     const store = storeFor(home);
     store.set(project, false);
     expect(store.get(project)).toBe(false);
   });
 
   it('revoke removes the recorded decision (the refusal comes back)', () => {
-    const home = tmpDir();
-    const project = tmpDir();
+    const home = tempDir();
+    const project = tempDir();
     const store = storeFor(home);
     store.set(project, true);
     store.set(project, null);
@@ -79,8 +64,8 @@ describe('project trust store', () => {
   });
 
   it('is exact-path: trusting /a never trusts /a-sibling', () => {
-    const home = tmpDir();
-    const root = tmpDir();
+    const home = tempDir();
+    const root = tempDir();
     const a = join(root, 'a');
     const sibling = join(root, 'a-sibling');
     mkdirSync(a);
@@ -92,8 +77,8 @@ describe('project trust store', () => {
   });
 
   it('never trusts parent directories implicitly', () => {
-    const home = tmpDir();
-    const parent = tmpDir();
+    const home = tempDir();
+    const parent = tempDir();
     const child = join(parent, 'child');
     mkdirSync(child);
     const store = storeFor(home);
@@ -102,8 +87,8 @@ describe('project trust store', () => {
   });
 
   it('keys a symlinked path to its canonical target', () => {
-    const home = tmpDir();
-    const root = tmpDir();
+    const home = tempDir();
+    const root = tempDir();
     const real = join(root, 'real');
     const link = join(root, 'link');
     mkdirSync(real);
@@ -115,7 +100,7 @@ describe('project trust store', () => {
   });
 
   it('writes sorted JSON atomically and leaves no lock or tmp residue', () => {
-    const home = tmpDir();
+    const home = tempDir();
     const first = join(home, 'zzz-project');
     const second = join(home, 'aaa-project');
     mkdirSync(first);
@@ -136,7 +121,7 @@ describe('project trust store', () => {
   });
 
   it('preserves an own `__proto__` key instead of polluting the prototype', () => {
-    const home = tmpDir();
+    const home = tempDir();
     const path = projectTrustStorePath(home);
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(path, '{"__proto__": true, "/repo": false}');
@@ -151,8 +136,8 @@ describe('project trust store', () => {
   });
 
   it('keeps reads fail-closed and names the file on a corrupt store', () => {
-    const home = tmpDir();
-    const project = tmpDir();
+    const home = tempDir();
+    const project = tempDir();
     const path = projectTrustStorePath(home);
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(path, 'not json');
@@ -173,7 +158,7 @@ describe('project trust store', () => {
   });
 
   it('reads an unreadable store as no decision and names it for the doctor', () => {
-    const home = tmpDir();
+    const home = tempDir();
     const path = projectTrustStorePath(home);
     mkdirSync(join(home, '.kubic'), { recursive: true });
     symlinkSync(path, path); // a self-loop: lstat sees a link, readFile ELOOPs
@@ -186,8 +171,8 @@ describe('project trust store', () => {
   });
 
   it('checks trust for the path the files live in, never the process cwd', () => {
-    const home = tmpDir();
-    const root = tmpDir();
+    const home = tempDir();
+    const root = tempDir();
     const child = join(root, 'pkg');
     mkdirSync(child);
     const store = storeFor(home);
@@ -203,9 +188,9 @@ describe('project trust store', () => {
   });
 
   it('serializes a racing writer instead of losing its update', async () => {
-    const home = tmpDir();
-    const project = tmpDir();
-    const other = tmpDir();
+    const home = tempDir();
+    const project = tempDir();
+    const other = tempDir();
     const store = storeFor(home);
     // A racing writer holds the lock and has just committed its own grant;
     // the released writer must read that content after the wait and keep it.
@@ -237,14 +222,14 @@ describe('project trust store', () => {
 
 describe('project trust report', () => {
   function projectWithConfig(): string {
-    const project = tmpDir();
+    const project = tempDir();
     mkdirSync(join(project, '.kubic'), { recursive: true });
     writeFileSync(join(project, '.kubic', 'config.toml'), '[journal]\n');
     return project;
   }
 
   it('reports a recorded trust decision as the effective gate', () => {
-    const home = tmpDir();
+    const home = tempDir();
     const project = projectWithConfig();
     storeFor(home).set(project, true);
     const report = projectTrustReport({ home, cwd: project });
@@ -256,7 +241,7 @@ describe('project trust report', () => {
   });
 
   it('reports an undecided project with a present config as undecided', () => {
-    const home = tmpDir();
+    const home = tempDir();
     const project = projectWithConfig();
     const report = projectTrustReport({ home, cwd: project });
     expect(report.present).toBe(true);
@@ -265,7 +250,7 @@ describe('project trust report', () => {
   });
 
   it('records KUBIC_TRUST_PROJECT=1 as trusted even without a store entry', () => {
-    const home = tmpDir();
+    const home = tempDir();
     const project = projectWithConfig();
     const report = projectTrustReport({
       home,
@@ -278,15 +263,15 @@ describe('project trust report', () => {
   });
 
   it('reports an absent project config as not present', () => {
-    const home = tmpDir();
-    const project = tmpDir();
+    const home = tempDir();
+    const project = tempDir();
     const report = projectTrustReport({ home, cwd: project });
     expect(report.present).toBe(false);
     expect(report.trusted).toBe(false);
   });
 
   it('names a corrupt store in the report without trusting it', () => {
-    const home = tmpDir();
+    const home = tempDir();
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(projectTrustStorePath(home), 'not json');
     const report = projectTrustReport({ home, cwd: '/repo', env: {} });

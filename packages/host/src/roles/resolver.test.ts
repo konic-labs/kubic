@@ -7,13 +7,13 @@ import { describe, expect, it } from 'vitest';
 import {
   effectiveRoleClasses,
   mergeRoleLayers,
-  parseRoleDocument,
   RoleRefusedError,
   resolveRole,
   roleDoctorChecks,
   roleModelAllowed,
   validateResolvedRole,
 } from './resolver.js';
+import { parseRoleDocument } from './role-document.js';
 import { loadRoles } from './roles-boot.js';
 
 const PLANNER_MD = `---
@@ -89,6 +89,17 @@ describe('parseRoleDocument', () => {
     expect(() =>
       parseRoleDocument(`---\nrole: reviewer\npriority: high\n---\n# R\n`),
     ).toThrow(/unknown frontmatter key 'priority'/);
+  });
+
+  // A run without --role records the role `default`: a document of that
+  // name would be indistinguishable from it in trajectories and audit rows.
+  it("refuses the reserved role name 'default', declared either way", () => {
+    expect(() => parseRoleDocument(`---\nrole: default\n---\n# D\n`)).toThrow(
+      "role name 'default' is reserved for runs without --role",
+    );
+    expect(() => parseRoleDocument(`---\nname: default\n---\n# D\n`)).toThrow(
+      "role name 'default' is reserved for runs without --role",
+    );
   });
 });
 
@@ -301,7 +312,7 @@ Writes code.
 `;
 
   it('refuses a role declaring an enterprise-denied tool, naming the reason', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
     ]).policy;
@@ -315,7 +326,7 @@ Writes code.
   });
 
   it('refuses a role tool outside an enterprise allow list, never widening it', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -329,7 +340,7 @@ Writes code.
   });
 
   it('keeps a role whose tools the policy allows, never adding any', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       {
         layer: 'enterprise',
@@ -345,7 +356,7 @@ Writes code.
   });
 
   it('leaves a role alone when the enterprise layer has no tool policy', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { models: { allowed: ['faux/*'] } } },
     ]).policy;
@@ -374,7 +385,7 @@ Reads only.
 
   it('a deny-only policy does not refuse a role that declares no denied tool', async () => {
     const { resolveEffectivePolicy, isToolAllowedByEnterprise } = await import(
-      '../policy/enterprise.js'
+      '../policy/index.js'
     );
     const policy = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { tools: { deny: ['bash'] } } },
@@ -393,7 +404,7 @@ Reads only.
   });
 
   it('a deny-only policy still refuses a role declaring the denied tool, case-insensitively', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       { layer: 'enterprise', policy: { tools: { deny: ['Bash'] } } },
     ]).policy;
@@ -405,7 +416,7 @@ Reads only.
   });
 
   it('a denied tool stays refused when an allow list names it too', async () => {
-    const { resolveEffectivePolicy } = await import('../policy/enterprise.js');
+    const { resolveEffectivePolicy } = await import('../policy/index.js');
     const policy = resolveEffectivePolicy([
       {
         layer: 'enterprise',

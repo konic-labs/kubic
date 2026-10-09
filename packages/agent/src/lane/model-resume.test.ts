@@ -8,12 +8,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ModelSelectError } from '../model-select.js';
 import {
   BACKGROUND_CONTEXT,
-  type Context,
   createModels,
   fauxAssistantMessage,
   fauxProvider,
@@ -21,9 +20,10 @@ import {
   type Storage,
   SystemEntry,
 } from '../pi-boundary.js';
+import type { TestSession } from '../test-support/session-handle.js';
 import { bootLane, type Lane, PROMPT_SECTION } from './boot.js';
 
-vi.mock('./interceptors.js', () => ({
+vi.mock('./interceptors/index.js', () => ({
   policyInterceptorHooks: () => [],
 }));
 
@@ -76,15 +76,6 @@ afterEach(async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-type TestSession = {
-  id: string;
-  dir: string;
-  storage: Storage;
-  meta: { cwd: string; createdAt: string };
-  adopt(): Storage;
-  release(context: Context): Promise<void>;
-};
 function handle(storage: Storage, id = 'sess-1'): TestSession {
   return {
     id,

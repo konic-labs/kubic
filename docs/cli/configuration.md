@@ -3,8 +3,8 @@
 > Implementation:
 > `packages/host/src/config/config.ts` (layers, TOML, merge),
 > `runtime.ts` (the load the binary actually runs on), `config-cli.ts`
-> (`kubic config`), `secrets.ts` (request-time secrets), `stances.ts`
-> (refusals), `../host/src/policy/enterprise.ts` (the `[policy]` engine).
+> (`kubic config`), `stances.ts` (refusals), `../secret-refs/secrets.ts`
+> (request-time secrets) and `../policy/` (the `[policy]` engine).
 > This table matches that implementation exactly.
 
 ## Precedence: first layer wins
@@ -21,9 +21,9 @@ against every override attempt, the environment and the CLI included.
 | 2 | `product` | `/etc/kubic/product.toml` (or an explicit `productPath` override) | The distribution/vertical profile, below enterprise and above the user's own files. |
 | 3 | `global` | `~/.kubic/config.toml` | Your machine-wide defaults. |
 | 4 | `project` | `<projectRoot>/.kubic/config.toml` | Resolved as the nearest ancestor holding `.kubic/` (or the git top level), the cwd itself outside a repository — so `kubic config` and `kubic run --role` from a subdirectory read the same committed project as from the root. **Trust-gated**: refused by path before it is read (`ProjectUntrustedError`) until the project is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1` for one invocation) — the grant is recorded at, and checked against, that same root, so trusting the root covers runs from its subdirectories; absent file counts as an empty layer. |
-| 5 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. **Not yet populated**: no shipped caller sets a workspace root, so this layer never exists today. |
-| 6 | `session` | Supplied programmatically | Never a file. **Not yet populated**: no shipped caller supplies a session layer (attaching a session does not feed its recorded settings back), so this layer is always empty. |
-| 7 | `agent` | Supplied programmatically | Never a file. Lowest. **Not yet populated**: no shipped caller supplies an agent layer, so this layer is always empty. |
+| 5 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. **Unused**: no shipped caller sets a workspace root, so this layer never exists. |
+| 6 | `session` | Supplied programmatically | Never a file. **Unused**: no shipped caller supplies a session layer (attaching a session does not feed its recorded settings back), so this layer is always empty. |
+| 7 | `agent` | Supplied programmatically | Never a file. Lowest. **Unused**: no shipped caller supplies an agent layer, so this layer is always empty. |
 | — | `env` | The `KUBIC_*` overrides below | Above every file layer, below `enterprise`, below the CLI. |
 | — | `cli` | e.g. `--model`, `--thinking` | Highest, except against a frozen `enterprise` key. |
 
@@ -90,8 +90,8 @@ concurrency posture and every message — is on
 | `KUBIC_MODEL_THINKING` | Thinking level for the selected model (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Below `--thinking`, above `[model].thinking`, below the session's stored level and a frozen enterprise key (which ignores it and reports the attempt in `overriddenAttempts`); the lane clamps it to the effective model with a named notice. Malformed values fail the config load by name — `kubic config` included. |
 | `KUBIC_APPROVALS_ROUTE` | `ask-user` or `deny`. |
 | `KUBIC_JOURNAL_RETENTION_DAYS` | Journal age bound, in days (non-negative integer). |
-| `KUBIC_TRUST_PROJECT` | `1`/`true` accepts the project layer — `config.toml` and the project [`models.json`](#modelsjson) — for this invocation, above the persistent store and without recording anything. |
-| `KUBIC_SKIP_SETUP` | `1` skips the first-run setup a bare `kubic` on a terminal runs when there is no `~/.kubic/config.toml` (see [`kubic setup`](commands.md#kubic-setup)). |
+| `KUBIC_TRUST_PROJECT` | `1`/`true` accepts the project layer — `config.toml` and the project [`models.json`](models.md#modelsjson) — for this invocation, above the persistent store and without recording anything. |
+| `KUBIC_SKIP_SETUP` | `1` skips the first-run setup a bare `kubic` on a terminal runs when there is no `~/.kubic/config.toml` (see [`kubic setup`](models.md#kubic-setup)). |
 
 A malformed value fails closed with the variable named — it never silently
 falls back to a default.
@@ -99,7 +99,7 @@ falls back to a default.
 `KUBIC_PROVIDER` is not a config key: `KUBIC_PROVIDER=faux` selects the
 scripted **testing** provider for one invocation (no network, no model),
 and any other non-empty value is refused by name — see
-[the testing provider](commands.md#testing-provider-kubic_providerfaux).
+[the testing provider](run.md#testing-provider-kubic_providerfaux).
 
 ### The `bash` tool: timeouts and background jobs
 
@@ -166,9 +166,7 @@ time; a refused config simply leaves both without a window: prune then
 demands an explicit `--keep-days` rather than falling back to a default
 (deletion stays explicit either way), and `log` writes nothing.
 
-A minimal `.kubic/config.toml` that actually changes behaviour — this exact
-block is parsed and loaded by `config-docs.test.ts`, so the page can never
-drift from the parser:
+A minimal `.kubic/config.toml` that actually changes behaviour:
 
 ```toml
 [model]
@@ -202,35 +200,61 @@ every nested file's, child rules after the parent's; `.git/` and
 `.kubic/` are hard-skipped before any config. An empty entry (`[""]`) is
 refused by name — it would match nothing.
 
+## `kubic config [--json] [--model <provider/id>] [--thinking <level>]`
+
+The effective configuration with the layer each value came from — see
+[configuration](#seeing-the-effective-values). `--json`
+prints one pretty-printed JSON document. `--model <provider/id>` reports
+the config as if that session override were passed, so the `model.*` rows
+and the `selected model:` line carry the `(cli)` source the `run`/`tui`
+lane would use. `--thinking <level>` does the same for the thinking level:
+the `thinking level:` line carries the `(cli)` source the lane boots with.
+A refused config prints
+`error: <reason>` on stderr and exits 1; usage errors exit 2.
+
 ## Shape (canonical sections)
 
-`[agent]` name/systemPromptFile · `[model]` provider/id/thinking (`off`, `minimal`,
-`low`, `medium`, `high`, `xhigh`, `max`) + timeoutMs/maxRetries/maxRetryDelayMs/cacheRetention + escalate/maxEscalations ·
-`[approvals]` route (`ask-user` or `deny`), maxPendingMs, autoApprove,
-sessionScoped, requireJustification · `[permissions]` filesystem
-(`none`, `read`, `workspace-write`, `full`), shell (boolean or
-`read-only-allowlist`), network (`none`, `allowlist`, `full`), git
-(boolean, `workspace`, `full`), credentials (`none`, `allowlist`) — four
-of these cannot be expressed by the tool set and are reported as
-unsupported by `kubic doctor` and `kubic policy`, enforced as the named
-narrower level: network `allowlist` → `none` (no domain
-list exists, so every network command is blocked and raises the network
-approval trigger), credentials `allowlist` → `none` (no credential list
-exists, so every access to a listed credential path raises the credential
-trigger), filesystem `full` → `workspace-write`, git
-`full` → `workspace` ·
-`[journal]` retentionDays/maxBytes/outOfScope · `[roles.<name>]` model/tools/thinking/timeoutMs/maxRetries/maxRetryDelayMs/cacheRetention/models ·
-`[ui]` theme (a built-in name or a JSON
-theme path) /statusBar ·
-`[session]` store/dir/retentionDays/autoCompact/reserveTokens/keepRecentTokens · `[policy]` (the enterprise policy,
-below) · `[[audit]]` (sink/level, below). The canonical example is
-`packages/host/src/config/example.toml` (pinned by test — copy it to
-start). Unknown sections or keys are rejected (`ConfigError`).
+<!-- generated:config-sections -->
+- `[agent]`: `name`, `systemPromptFile`
+- `[model]`: `provider`, `id`, `thinking`, `timeoutMs`, `maxRetries`, `maxRetryDelayMs`, `cacheRetention`, `escalate`, `maxEscalations`
+- `[approvals]`: `route`, `maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification`
+- `[permissions]`: `filesystem`, `shell`, `network`, `git`, `credentials`
+- `[journal]`: `retentionDays`, `maxBytes`, `outOfScope`
+- `[roles.<name>]`, one table per name: `model`, `tools`, `requires`, `thinking`, `models`, `escalate`, `timeoutMs`, `maxRetries`, `maxRetryDelayMs`, `cacheRetention`
+- `[ui]`: `theme`, `statusBar`
+- `[session]`: `store`, `dir`, `retentionDays`, `autoCompact`, `reserveTokens`, `keepRecentTokens`
+- `[verify]`: `tests`, `build`, `lint`, `typecheck`, `timeoutMs`
+- `[policy]`: `allowed_models`, `allowed_providers`, `allowed_tools`, `denied_tools`, `network_policy`, `allowed_domains`, `filesystem_policy`, `data_policy`, `logging_policy`
+- `[[audit]]`, an array of tables: `sink` (required), `level` (required), `target`, `facility`
+- `skills`: a top-level key, not a section
+<!-- /generated:config-sections -->
 
-Plus one top-level key: `skills = ["...", ...]` —
-files or directories of skills, loaded with source `settings` (see
-[Settings skills](#settings-skills-skills-292) below). It is a key, not a
-`[skills]` section: a `[skills]` table is rejected like any unknown section.
+Unknown sections or keys are rejected (`ConfigError`). The canonical example
+is `packages/host/src/config/example.toml`, generated from the same schema as
+the list above — copy it to start.
+
+The value vocabularies: thinking levels `off`, `minimal`, `low`, `medium`,
+`high`, `xhigh`, `max`; approval routes `ask-user` or `deny`; permission
+classes filesystem (`none`, `read`, `workspace-write`, `full`), shell (boolean
+or `read-only-allowlist`), network (`none`, `allowlist`, `full`), git
+(boolean, `workspace`, `full`) and credentials (`none`, `allowlist`) — four of
+these cannot be expressed by the tool set and are reported as unsupported by
+`kubic doctor` and `kubic policy`, enforced as the named narrower level:
+network `allowlist` → `none` (no domain list exists, so every network command
+is blocked and raises the network approval trigger), credentials `allowlist`
+→ `none` (no credential list exists, so every access to a listed credential
+path raises the credential trigger), filesystem `full` → `workspace-write`,
+git `full` → `workspace`. `[ui] theme` is a built-in name or a JSON theme
+path.
+
+Every millisecond key (`timeoutMs`, `maxRetryDelayMs`, `maxPendingMs`) is at
+most 2147483647 (about 24.8 days), the longest delay a timer can hold: a
+longer one would fire at once, so the load refuses it by name.
+
+`skills = ["...", ...]` lists files or directories of skills, loaded with
+source `settings` (see [Settings skills](#settings-skills) below). It is a
+top-level key, not a `[skills]` section: a `[skills]` table is rejected like
+any unknown section.
 
 Every one of those keys is in the key-effect table below: **consumed** keys
 name the code path that reads them, **kept** keys are reserved with the
@@ -239,39 +263,42 @@ doctor`'s config check by name. `kubic config` prints the disposition of
 every effective value (`(project, consumed)`), so a config file can never
 quietly stop configuring anything.
 
+<!-- generated:config-keys -->
 | Key | Effect |
 | --- | --- |
+| `agent.name` | The lane's agent id: journal entries are attributed to it. Unset ⇒ `root`, unchanged. |
+| `agent.systemPromptFile` | Prompt augmentation: a path whose contents are read at load and appended to the assembled system prompt — ahead of the skills block — for `kubic run`, `kubic tui` and the live tiers of `kubic replay`. A leading `~/` expands to the home directory; a relative path resolves against the declaring config file's directory, so the shipped example's `SYSTEM.md` travels with `example.toml`. Global-layer paths are always allowed; a project-layer path applies only when the project is trusted (an untrusted project's file is refused pre-trust with the trust message, before it is read) and must resolve inside the project root — a trusted path outside it, or a symlink whose target lies outside it, is refused by name. A missing or unreadable file is a named `ConfigError`, never a silent skip. `kubic config` reports the effective (resolved) path; the contents never render. |
 | `model.provider`, `model.id` | Selects the provider/model for `kubic run` and `kubic tui` (`selectModel`); `--model` and `KUBIC_MODEL` beat it as the `cli`/`env` layers of the config load, and a frozen enterprise `[model]` beats all of them (announced on stderr). |
 | `model.escalate`, `model.maxEscalations`, `roles.<name>.escalate` | The escalation ladder: `escalate` lists the rungs as concrete `provider/id` refs in climbing order (wildcards refused per entry at load); a role's `escalate` wins outright for runs as that role, even an empty list (which freezes every `/model` switch — opting out of climbing, not of the gate). `maxEscalations` bounds the climbs per run, unset meaning the ladder length. Climbs are one-way (a down-step or off-ladder target is refused by name with the live model untouched) and recorded: `/model <ref>` climbs the ladder silently, `/escalate <ref> [reason]` climbs naming why, and three consecutive tool-failure turns climb one rung automatically — once per run, never back (`kubic run` settles one turn per invocation, so the automatic trigger lives on the `kubic tui` lane). Every climb appends an `escalation: <from> → <to> (<reason>)` transcript row and lands on the trajectory's `model.escalations` (per-model usage already attributes the spend each side of the move). |
 | `model.thinking` | The file-layer thinking default. The lane boots with the winner of `--thinking` > `KUBIC_MODEL_THINKING` > session record > role default > this key, clamped to the effective model's supported levels (a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite); the applied level is committed to the session and recorded in `trajectory.json`. A level the vocabulary does not know is refused by name at load. |
+| `model.timeoutMs`, `model.maxRetries`, `model.maxRetryDelayMs`, `model.cacheRetention` | Request options on the lane (`settings.stream`): `timeoutMs` bounds one provider request (a positive integer of milliseconds), `maxRetries` caps the provider/SDK retries inside one request attempt and `maxRetryDelayMs` caps the delay a server may ask for before a retry (non-negative integers: `0` disables retries / the cap), and `cacheRetention` is the prompt cache preference (`none`, `short`, `long`). `[roles.<name>]` layers each of them per key for runs as that role. A mistyped value is refused by name at load. |
 | `approvals.route` | Approval routing (`ask-user` \| `deny`), installed by `kubic run`, `kubic tui`, `kubic replay` and reported by doctor's `policy:installed` line. `deny` refuses every challenged call with `denied by policy route` (exit 4) and never opens the TUI overlay — `autoApprove` entries never apply under it (the lane denies them too, and doctor fails `policy:approvals` for the combination). `KUBIC_APPROVALS_ROUTE` overrides it. |
 | `approvals.maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification` | Installed on the lane (`run`, `tui`, `replay`) from the same projection doctor prints, so `policy:approvals` and `policy:installed` always show the same route and bound (doctor fails `policy-mismatch` if they ever differ). `maxPendingMs` bounds the TUI overlay: an unanswered ask denies on timeout. `autoApprove` is explicit-only and applies headless too (the audit record says `approved by autoApprove`), except for an always-ask capability (`kubic-state-write`): naming it is accepted but ignored — it takes the normal ask path (the TUI seat, or the instant no-surface refusal headless, never a `maxPendingMs` stall), `kubic doctor`'s `policy:approvals` line warns by name and `kubic config` counts it as not auto-approved. `requireJustification = true` denies any approval that carries no justification (the TUI overlay and `autoApprove` supply none, so every challenged call is refused). `sessionScoped = false` is refused by the config load: decisions are always stored per session. Only real answers (user, route, autoApprove) persist to `approvals.json` — a timeout denies the call but stores nothing, so a later surface can still ask about the same operation. |
 | `permissions.*` | Permission classes → the lane's derived tool allowlist. `shell = "read-only-allowlist"` keeps `bash` but enforces an explicit read-only command allowlist at the guard: every `|`/`||`/`&&`/`;`/`&`/newline segment must head with `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` or `git`, and then only in its read-only form — `git status`/`diff`/`log`/`show` (after global options like `-C`/`--no-pager`, without `--output`, and never `-c`/`--config-env`/`--exec-path`/`--upload-pack`/`--receive-pack`, which can execute code), `find` without `-exec*`/`-ok*`/`-delete`/`-fprint*`/`-fls`, `rg` without `--pre`/`--hostname-bin`. Redirection (`>`, `>>`, any fd form) is refused, `sed`/`perl` with `-i`/`--in-place` are refused, and any other verb (`tee`, `rm`, `npm`, `node`, `cp`, …) is blocked by name. Expansion and substitution are never interpreted and are refused outright — `$(…)`, backticks, `<(...)` process substitution and any unquoted `$` (single-quoted text is literal and stays readable) — because an allowed head verb could otherwise launder another command. The parser is lexical, so it over-blocks rather than under-blocks; `shell = true` is unchanged (no allowlist). |
 | `journal.retentionDays` | Journal age bound, enforced on every append. It is also the default keep window of `kubic journal prune` (`--keep-days` overrides it). |
 | `journal.maxBytes` | Journal byte bound, enforced on every append: the store — `index.jsonl` plus the blobs it references — is pruned to stay under it, and a pass that has to prune frees a tenth of the bound (the headroom the next appends need). Content addressing dedupes blobs, so a file toggling between two contents (a formatter fighting the agent, repeated `undo --step`) grows the journal through its lines alone; this key is what keeps that bounded. A positive integer (0 is refused by name: it is not "retention off" — unset is — it is a bound nothing fits). Unset ⇒ 100 MiB (`DEFAULT_JOURNAL_MAX_BYTES`). An entry whose own content cannot fit is refused before anything is written, so the tool call fails as `journal_failed` with the file untouched, and a pass that has to prune never drops the newest entry — the store stays over its bound by that entry instead. |
 | `journal.outOfScope` | Paths excluded from the baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`), plain paths only, empty entries refused by name. |
-| `agent.name` | The lane's agent id: journal entries are attributed to it. Unset ⇒ `root`, unchanged. |
-| `skills` | Settings skills: files or directories loaded with source `settings` on `kubic run` and `kubic tui` (see [Settings skills](#settings-skills-skills-292)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load. |
-| `agent.systemPromptFile` | Prompt augmentation: a path whose contents are read at load and appended to the assembled system prompt — ahead of the skills block — for `kubic run`, `kubic tui` and the live tiers of `kubic replay`. A leading `~/` expands to the home directory; a relative path resolves against the declaring config file's directory, so the shipped example's `SYSTEM.md` travels with `example.toml`. Global-layer paths are always allowed; a project-layer path applies only when the project is trusted (an untrusted project's file is refused pre-trust with the trust message, before it is read) and must resolve inside the project root — a trusted path outside it is refused by name. A missing or unreadable file is a named `ConfigError`, never a silent skip. `kubic config` reports the effective (resolved) path; the contents never render. |
 | `roles.<name>.model`, `roles.<name>.tools`, `roles.<name>.thinking`, `roles.<name>.requires`, `roles.<name>.models` | Per-role defaults layered under the role document for `kubic run --role <name>`: `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list, `thinking` is the role's thinking default — below the session's stored level and any `--thinking`/`KUBIC_MODEL_THINKING` override, above the `[model].thinking` file default — `requires` names tools that always require approval under the role — unioned with the document's own `requires:` list, never subtracted. `models` is the role's allowed model set: entries are `"provider/id"` or `"provider/*"` strings, or `{ id, thinking? }` tables whose thinking beats the flat role default for the matched model — an empty set (or none) allows every registered model, a malformed entry is refused by name at load, and selection plus every `/model` switch resolve against it, refusing out-of-set by name (`kubic config` renders the winning layer's list with provenance; `/scoped-models` reports the resolved set on the TUI lane). Each leaf is attributed to the layer that set it (enterprise > product > global > project > workspace > session > agent). A malformed model ref, an unknown thinking level, a malformed set entry, or a mistyped request option is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools + thinking + requires + models) and install the most restrictive merge of the config classes and the role's (a role declaring `network: none` runs under it even when config allows full); the TUI also takes the `[agent].name` agent id. No role, model or provider is invented when none of those levels sets one. `timeoutMs`/`maxRetries`/`maxRetryDelayMs`/`cacheRetention` layer over the `[model]` request tuning per key for runs as that role. |
 | `.kubic/roles/<name>.md` frontmatter `name`, `description`, `model` | The role document's own Pi-agent keys: `name` aliases `role` (a document disagreeing with itself is refused by name), `description` is shown by `kubic doctor` in the role detail, and `model` is a `provider/id` pin validated at parse (a malformed ref is refused with its reason before any lane boots). Precedence for the model pin: an explicit CLI pin beats `[roles.<name>].model`, which beats the document pin (a layer winning over the document is precedence, never an overridden attempt); the winning pin reaches `kubic run --role`/`kubic tui --role` through the existing role-model selection. |
-| `ui.theme` | TUI theme (token themes). A built-in name — `default` or `dark` (the shipped Konic brand palette), `light` (for light terminal backgrounds) or `terminal` (your terminal's own colours: no backgrounds of its own, semantic colours on the ANSI palette slots) — or a path to a JSON theme file, read relative to the current directory (an absolute path is taken as typed). Resolved and validated **before the alt-screen opens**: a missing file, malformed JSON, an unknown key or colour, an unknown `extends` base, or a value that is not `#rrggbb` is one `error: theme '<ref>': …` line on stderr and exit 2 (the message never quotes the file). A theme assigns colours to the design-token roles (`docs/ui/README.md`): `bg0`–`bg3` surfaces, `fg0`–`fg3` text levels, `accent`/`accentBg`, `ok`/`okBg`, `warn`/`warnBg`, `err`/`errBg`, `info`, `add`/`addBg`, `del`/`delBg`, `addWordBg`/`delWordBg` (the changed words of a diff line). Schema (v2): `{ "name": "mine", "extends": "dark", "colors": { "accent": "#00aaff", "bg2": "#202030" } }` — any subset of roles; the rest come from `extends` (`default`/`dark` when absent). A v1 file (exactly the seven keys `accent`, `warm`, `success`, `error`, `warning`, `muted`, `prompt`) is still accepted and mapped onto the dark palette (`accent`→accent, `success`→ok, `error`→err, `warning`→warn, `muted`→fg2, `prompt`→fg0; `warm` is accepted and unused); a file cannot mix v1 keys with `extends`. Every colour is downgraded to the terminal's colour level (truecolor RGB, else the nearest xterm-256 entry, else the nearest ANSI colour — surfaces drop their background at 16 colours except the selection — and the identity under `NO_COLOR`). Unset ⇒ `default`. |
-| `ui.statusBar` | Kept: the status bar is always shown; hiding it is a named follow-up — parsed and reported for forward-compat only. |
-| `session.store` | Kept: `jsonl` is the only store implemented; `sqlite`/`memory` are a separate decision — parsed and reported for forward-compat only. |
-| `session.dir` | Not yet implemented: sessions stay under `~/.kubic/sessions`; relocation is a named follow-up with no filed issue yet (session-lock placement and the runtime-exclude split must settle first). |
+| `ui.theme` | TUI theme (token themes). A built-in name — `default` or `dark` (the shipped Konic brand palette), `light` (for light terminal backgrounds) or `terminal` (your terminal's own colours: no backgrounds of its own, semantic colours on the ANSI palette slots) — or a path to a JSON theme file, read relative to the current directory (an absolute path is taken as typed). Resolved and validated **before the alt-screen opens**: a missing file, malformed JSON, an unknown key or colour, an unknown `extends` base, or a value that is not `#rrggbb` is one `error: theme '<ref>': …` line on stderr and exit 2 (the message never quotes the file). A theme assigns colours to the design-token roles: `bg0`–`bg3` surfaces, `fg0`–`fg3` text levels, `accent`/`accentBg`, `ok`/`okBg`, `warn`/`warnBg`, `err`/`errBg`, `info`, `add`/`addBg`, `del`/`delBg`, `addWordBg`/`delWordBg` (the changed words of a diff line). Schema (v2): `{ "name": "mine", "extends": "dark", "colors": { "accent": "#00aaff", "bg2": "#202030" } }` — any subset of roles; the rest come from `extends` (`default`/`dark` when absent). A v1 file (exactly the seven keys `accent`, `warm`, `success`, `error`, `warning`, `muted`, `prompt`) is still accepted and mapped onto the dark palette (`accent`→accent, `success`→ok, `error`→err, `warning`→warn, `muted`→fg2, `prompt`→fg0; `warm` is accepted and unused); a file cannot mix v1 keys with `extends`. Every colour is downgraded to the terminal's colour level (truecolor RGB, else the nearest xterm-256 entry, else the nearest ANSI colour — surfaces drop their background at 16 colours except the selection — and the identity under `NO_COLOR`). Unset ⇒ `default`. |
+| `ui.statusBar` | Kept: the status bar is always shown. The key is parsed and reported but hides nothing. |
+| `session.store` | Kept: `jsonl` is the only store. The key is parsed and reported; `sqlite` and `memory` are not implemented. |
+| `session.dir` | Not implemented: sessions stay under `~/.kubic/sessions`, and the key does not relocate them. |
+| `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. `kubic journal prune` reads `[journal] retentionDays` instead (see the paragraph below the table). |
 | `session.autoCompact` | Threshold compaction on the lane (`run`, `tui`): `false` disables it, `true` (and unset) keeps the automatic default. A non-boolean is refused by name. |
 | `session.reserveTokens` | Reserved-room tokens before the lane compacts: unset ⇒ 16384. A value that is not a positive integer is refused by name. The effective reserve is clamped per model to at most a quarter of its context window (an 8192-token model reserves 2048), so a small-window model compacts sooner than the configured figure; `kubic config` and `kubic doctor` print the effective reserve. |
 | `session.keepRecentTokens` | Verbatim recent-context window the lane keeps across a compaction: unset ⇒ 20000. A value that is not a positive integer is refused by name. The effective window is capped per model to a quarter of the room below its reserve (window − reserve), so it scales with the model: an 8192-token model keeps 1536, a 16384-token model 3072, a 32768-token model 6144, and the configured 20000 applies from a 96384-token window up. A `/compact` keeps at most 2000 tokens verbatim, whatever the window. |
-| `session.retentionDays` | Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. `kubic journal prune` reads `[journal] retentionDays` instead (see the paragraph below the table). |
 | `verify.tests`, `verify.build`, `verify.lint`, `verify.typecheck` | The gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. |
-| `verify.timeoutMs` | Per-command bound for the `[verify]` gates, a positive integer of milliseconds (default 600000). A command still running at the bound is killed and its gate is `fail`. |
+| `verify.timeoutMs` | Per-command bound for the `[verify]` gates, a positive integer of milliseconds up to 2147483647 (default 600000). A command still running at the bound is killed and its gate is `fail`. |
 | `policy.allowed_models` | The model gate: `provider/id`, `provider/*` (or `*` glob) patterns and bare model ids. A selection outside the list — `--model`, `[model]`, `KUBIC_MODEL`, a role pin, or the implicit first-available pick — exits 6 with a named policy refusal before any provider call; the implicit pick skips disallowed providers. It gates `kubic run`, `kubic tui` (boot and `/model` switches — a refused switch leaves the live model untouched) and the re-executing tiers of `kubic replay`. |
 | `policy.allowed_providers` | The provider gate, applied with `allowed_models`: both lists intersect, so a provider the list omits is refused even when a pattern would name the model. |
 | `policy.allowed_tools`, `policy.denied_tools` | The lane tool intersection: `kubic run`/`kubic tui` (and the re-executing tiers of `kubic replay`) activate only tools that survive it, and the system prompt's `tools:` line names exactly that set. A deny holds against every lower layer, a role document and the model — a role that declares a denied tool is refused by name, while a role that declares none of them is unaffected by a deny-only policy. With no allow list, only the deny list narrows; with one, anything outside it is refused. |
-| `policy.network_policy`, `policy.allowed_domains` | Parsed and resolved into the effective policy: `"proxy"` is carried as the engine's allowlist mode. **Not enforced today:** proxy-mediated enforcement is a named follow-up, so these keys protect nothing yet — `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` reports the one shape it can judge: an `allowlist` with no domains is unenforceable and fails `policy:enterprise-network`; proxy-mediated enforcement itself stays unreported. The engine mode names (`none`, `allowlist`, `full`) are accepted too. |
-| `policy.filesystem_policy` | Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from `[permissions]` classes today, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it. |
+| `policy.network_policy`, `policy.allowed_domains` | Parsed and resolved into the effective policy: `"proxy"` is carried as the engine's allowlist mode. **Not enforced:** Kubic has no proxy-mediated enforcement, so these keys protect nothing; `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` reports the one shape it can judge: an `allowlist` with no domains is unenforceable and fails `policy:enterprise-network`; proxy-mediated enforcement itself stays unreported. The engine mode names (`none`, `allowlist`, `full`) are accepted too. |
+| `policy.filesystem_policy` | Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from the `[permissions]` classes, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it. |
 | `policy.data_policy`, `policy.logging_policy` | Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced. |
-| `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory repo ledger (see [Audit sinks](#audit-sinks-audit)). |
+| `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory repo ledger (see [Audit sinks](enterprise.md#audit-sinks-audit)). |
+| `skills` | Settings skills: files or directories loaded with source `settings` on every lane a command boots — `kubic run`, `kubic tui`, the suite runs of `kubic eval`/`kubic benchmark` and the re-executing tiers of `kubic replay` (see [Settings skills](#settings-skills)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load. |
+<!-- /generated:config-keys -->
 
 **Two keys, two windows.** `kubic journal prune` removes journal entries older
 than `[journal] retentionDays`, read from the runtime load: the
@@ -292,7 +319,9 @@ skills = ["./team", "/opt/shared/skills"]
 
 A top-level array of skill files or directories. Each entry
 loads with source `settings` — like an explicit `--skill`, it applies even
-under `--no-skills` — on `kubic run` and `kubic tui`. Relative entries resolve against the directory of
+under `--no-skills` — on every lane a command boots: `kubic run`, `kubic tui`,
+the suite runs of `kubic eval`/`kubic benchmark` and the re-executing tiers
+of `kubic replay` (which discover skills at the pinned worktree). Relative entries resolve against the directory of
 the config file that declared them — a project config's `"../shared"`
 names the project's sibling wherever the run was invoked from — never the
 cwd; absolute entries pass through as written. `~` and env vars are not
@@ -334,7 +363,7 @@ after it settles, before it writes its trajectory:
 
 `kubic eval --trajectory`, the reference verifier and the RL exporters read
 these labels; see the signal and quality rules in
-[the eval package](../packages/eval.md#signals-and-patch-quality). With no
+[the eval package](../packages/eval.md). With no
 `[verify]` section nothing runs and every gate stays `unknown`. `kubic tui`
 turns are not verified.
 
@@ -343,423 +372,8 @@ they come only from layers you trust: a project `.kubic/config.toml` is
 refused until the project is trusted (see the trust gate above).
 Verification adds the commands' run time to every `kubic run`.
 
-### `autoApprove` capabilities
-
-`autoApprove` entries name capabilities — the strings `detectTriggers`
-(`packages/host/src/approvals.ts`) raises on tool calls. The known set
-(`CAPABILITIES`):
-
-| Capability | Raised by |
-| --- | --- |
-| `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …) — including one hidden inside `$(…)` (nested substitutions included), backticks, or after `eval`. |
-| `credentials` | An access to a listed credential location, under the effective `credentials` class — which enforces as `none`, `allowlist` included. Bash: home credential paths (`~/.aws/`, `~/.ssh/` — every child except the known-public `known_hosts*`, `authorized_keys*` and `*.pub`, so `~/.ssh/github` and `~/.ssh/*` raise, `~/.config/gh/`, `~/.config/gcloud/`, `~/.docker/config.json`, `~/.kube/config`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, `~/.azure/`) spelled `~`, `$HOME`, `${HOME}`, `/Users/<user>` or `/home/<user>`, plus workspace credential files (`.env`, `.env.*` except `.env.example`/`.env.sample`/`.env.template`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*` — the public `*.pub` halves excluded). Read-family tools (`read`, `ls`, `find`, `grep`): the same names in the `path`/`root` argument, as typed before the confine rewrite (a home path is rewritten before the tool opens it, but the ask sees it), and the name filters `grep.include` / `find.nameContains` when the filter is a substring of a credential name or contains one (`include: "env"` reaches `.env`, `include: "src/.env.local"` too) — filters shorter than 3 characters are not treated as credential selectors. Matching is case-folded, like the default macOS/Windows volumes. Lexical detection, not enforcement: an obfuscated or built-up path is a stated miss. Also fires via `requires:<tool>`. |
-| `git-push` | `git push`, `git remote add/set-url/remove/rename` — in any command segment (`ls; git push`, `cd x && git push`), after git global options (`git -C . push`, `git -c k=v push`, `--git-dir=…`, `--work-tree=…`, `--no-pager`; an option argument may be quoted: `git -C "my dir" push`) and after any command-position boundary: whitespace, `\| ; &`, `(` (`$(git push)`), a path (`/usr/bin/git push`), a backslash (`\git push`), a quote (`bash -c 'git push'`, `sh -c "git push"`) or a backtick. The word must be exactly `git` followed by whitespace — `mygit push`, `digit push`, `gitpush` and `git-lfs push` do not raise. |
-| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
-| `install` | Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv pip install`, `uv tool install`, `uvx`, `gem install`, `composer require/install`, `brew install`, `apt install`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs. |
-| `deploy` | Deploy verbs (`kubectl apply/create/delete/rollout`, `docker push`, `terraform apply`, `gh release create`). |
-| `outside-write` | A write outside the workspace: the `write`/`edit` tools, any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), a `tee` target, or a `cp`/`mv`/`install` destination. |
-| `privilege-escalation` | `sudo` anywhere in the command. |
-| `kubic-state-write` | A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (the project's, from a subdirectory) or `~/.kubic/` (the global `config.toml`) — or into the workspace's own `.git/` (hooks, `config`): a planted hook runs on the host's later git commands, so it asks too: the `write`/`edit` tools, any redirect target (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), a `tee` target, a `cp`/`mv`/`install` destination, or an `rm`/`mv` operand (deleting or moving control-plane state is tampering; a `cp` source is only read). Relative targets resolve against a preceding `cd`/`pushd`, quote-split and backslash-escaped segments are read as the shell reads them (`".kubic"/roles/r.md`), and `$HOME/`/`${HOME}/` count exactly like `~/`. **Always asks**: `autoApprove` and `--full-access` never answer it (an `autoApprove` entry naming it is ignored and warned about by `kubic doctor`). Writes into `.kubic/journal/`, `.kubic/audit/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (see [journal and safety](../architecture/journal-and-safety.md)). |
-
-`requires:<tool>` is accepted alongside them (the per-tool trigger). A name
-outside this set is reported by `kubic doctor` (`policy:approvals`), never
-silently ignored.
-
-Detection is a literal-pattern heuristic over the command string and the
-read-family tool paths, not
-sandbox-grade shell parsing — the posture is stated, not silent. Documented
-heuristics:
-
-- **Last-argument target** — for `tee`, `cp`, `mv`, and `install`, the
-  last whitespace-separated argument of the command segment is taken as
-  the write target (`cp a /etc/b` → `/etc/b`;
-  `install -m 644 a /usr/local/b` → `/usr/local/b`). A flag that reorders
-  arguments (`cp -t /etc a b`) points the heuristic at the wrong token, and
-  only the final named target of a multi-file `tee` is checked
-  (`tee /etc/x a.txt` writes `/etc/x` and is a documented silent miss —
-  apart from stated cases the heuristic errs toward over-triggering, not
-  uniformly so: a destination that is not the segment's last token can
-  still be missed, e.g. `echo $(cp a /etc/b )`).
-  A target lifted out of `$(…)` has that span's closing `)` trimmed
-  (`$(cp a /etc/b)` → `/etc/b`) — scoped to lifted tokens: a plain target
-  is never trimmed, so `tee '/work)'` names the literal sibling path
-  `/work)` and still raises outside-write. The outside check itself stays
-  path-boundary aware (`/work-evil` is not `/work`).
-- **Every redirect** — each redirect operator in the command is checked,
-  within one segment and across `;`, `&&`, `||`, `|` and newlines, so
-  `echo a > notes.txt && echo b > /etc/cron.d/x` raises outside-write.
-  Covered forms: `>`, `>>`, fd-prefixed (`2>`, `1>>`), `&>`, `&>>`,
-  clobber `>|`, and `>&` — an fd duplication (`2>&1`, `>&-`) is not a
-  file and is skipped, while `>& out.txt` names a file. The target is the
-  next token up to whitespace or a `|;&<>` character, read the way the
-  shell reads it: quotes and backslash escapes come off wherever they sit
-  (`echo x > ".."/x` and `> \../x` name `../x` and raise outside-write).
-  Stream pseudo-devices persist nothing and never raise: exactly
-  `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty` and `/dev/fd/<n>`
-  (so `cmd > out.txt 2>/dev/null` stays quiet); any other `/dev` target
-  still raises.
-- **Shell-expanded and `cd`-relative targets** — bash expands a target
-  before it writes, the detector does not, so a target starting with `~`
-  (`~/.bashrc`, `~root/x`) or `$` (`$HOME/.zshrc`, `${HOME}/x`,
-  `$OUT/file`) counts as outside-write, fail-closed. A `cd <dir>` or
-  `pushd <dir>` at a command START — at the start of the command or after
-  `;`, `&`, `|`, a newline or `(`, then any run of `{`, `then`, `do`, `else`,
-  `elif`, `if`, `while`, `until`, a `!` negation and the `command`/`builtin`
-  wrappers (`{ cd /tmp; echo x > y; }`, `if cd /tmp; then …`); a keyword inside an
-  argument (`git commit -m 'then cd /x'`) starts nothing — moves the
-  directory later relative targets resolve against: `cd /etc && echo x > y`
-  raises, `cd sub && echo x > y` does not. After a `cd` to an unknown place
-  (bare `cd`, `cd ~`, `cd $X`, `cd -`, any `popd`) every later relative target
-  raises. The `cd` trail is lexical, so it is only ONE of two candidates: a
-  target is outside if it is outside as TYPED (against the workspace) or as
-  resolved against the tracked directory. A subshell `(cd /etc); echo x > y`, a
-  conditional `false && cd sub; echo x > ../y` or a `cd` quoted into an
-  argument therefore over-trigger — they can never hide a write (a real `cd
-  sub && echo x > ../y` over-triggers too). A redirect on the `cd` itself
-  applies before it runs. A tracked directory longer than 1 KiB is treated as
-  unknown. A
-  `$VAR` in the middle of a target (`out/$f.log`) is not expanded and is
-  checked as written. Any target under `~/.kubic` (session state,
-  `posture.json`, `approvals.json`) — including a `write`/`edit` path —
-  raises outside-write even when the workspace is the home directory.
-  Tool paths are not shell-expanded: the `write` tool takes `~/.bashrc`
-  literally, as a workspace file.
-- **Control-plane targets** (`kubic-state-write`) — the same
-  target scan feeds the control-plane guard, with these additions. Every
-  target is classified TWICE and either candidate being control-plane counts:
-  as typed against the workspace, and resolved against the tracked
-  `cd`/`pushd` directory (`cd .kubic/roles && echo x > r.md` writes
-  `.kubic/roles/r.md`; `cd ~`, `cd $HOME/x` resolve against the home directory
-  here, unlike the outside-write rule above). The trail is lexical, so it only
-  ever adds a candidate: `(cd x); echo p > .kubic/journal/y` is still refused.
-  A redirect on the `cd` command itself (`cd .. > config.toml`) resolves against
-  the directory BEFORE that `cd`, and redirection words are never the
-  directory (`cd 2>/dev/null .kubic`), nor are `--` and `-L`/`-P`. `$PWD`, `${PWD}`
-  and `~+` are the current directory (`cd "$PWD/.kubic"`); `~-`, `$OLDPWD` and
-  a `cd` to an unknown place read a relative `.kubic` segment as the
-  workspace's own, fail-closed. Inner quotes and backslash escapes are removed
-  before matching (`".kubic"/roles/r.md`, `.k"ub"ic/…`, `\.kubic/…`), and `$HOME`,
-  `${HOME}` and `${HOME:-…}` expand like `~` (`$HOMEDIR` and `~user` do not).
-  Operands of `rm` and `mv` count as writes: `rm .kubic/journal/index.jsonl`
-  is refused outright, `rm .kubic/roles/r.md` asks. A glob or brace list that
-  COULD expand into `.kubic/journal`, `audit`, `sessions`, `config.toml` or
-  `roles` — or into the state directory itself — is refused, not just asked
-  (`rm .kubic/journa?/*`, `rm -rf .kubic/*`, `rm .kub*`, `rm .kubic/{journal,x}/y`);
-  it is deliberately conservative (a leading `*` may match a dotfile, and a
-  brace list past 32 expansions that names `.kubic` is refused). Still
-  misses, by design: a path built from a variable set elsewhere (`D=.kubic; echo
-  x > $D/roles/r.md`), `sed -i`, a script file, an interpreter (`bash -c 'cd
-  .kubic && …'`), `time cd`, `eval cd`, a subshell `cd` that undoes an earlier
-  one (`cd .kubic; (cd ..); echo x > config.toml`), a symlink, and a `cd` chain
-  that started from an unknown place before reaching `.kubic` (`cd $X && cd
-  .kubic && echo x > config.toml`).
-- **Git verb scan** — the `git` word is found after the boundaries listed
-  in the table, then the option run is walked token by token in linear time
-  (a long `--namespace --namespace …` chain cannot stall the scan; it runs
-  before every bash call). Words are read twice and either reading reaching
-  `push` raises: quote-aware (a quoted option argument is one word, a
-  backslash escapes the next character outside single quotes, a quote with no
-  closer is an ordinary character) and plain whitespace-split (the original
-  reading, the safety net for shell syntax the tokenizer misreads such as
-  `git -c user.name=O\'Brien push`). A `!` is a boundary too
-  (`-c alias.p='!git push'`). It only ever widens what raises, so the
-  over-trigger stays an ask: `git -c "a push" status` still reads as a push.
-- **`sudo` over-trigger** — `privilege-escalation` fires on the word `sudo`
-  anywhere in the raw command, quoted text included
-  (`echo "needs sudo"` raises it). A raised capability becomes an ask,
-  never a silent grant, so the false positive costs a confirmation.
-- **Indirection unwrap** — a destructive/network verb behind `$(…)`,
-  backticks, or `eval` raises the underlying capability, and unwrapping
-  runs to a fixpoint: single-level (`$(rm -rf /)`), eval-of-substitution
-  (`eval $(rm -rf /)`), and nested (`echo $(echo $(rm -rf /))`) forms all
-  raise. `$(…)` is collected with a bounded literal `$(…)`/`)` pairing scan
-  (depth cap 16; the cap's unmatched-opener markers still consume closers,
-  so the effective nesting threshold is 2× the cap — 31 nesting levels
-  raise, 32 stay unraised, pinned in the detector tests) — a stated bound,
-  never a fabricated unwrap.
-- **Credential paths** — the `credentials` trigger is lexical,
-  like every detector here: it recognizes the listed home locations in a
-  bash command (`~/.aws/credentials`, `$HOME/.ssh/id_rsa`, `/Users/x/.netrc`;
-  the `~`, `$HOME`, `${HOME}` and absolute home spellings), the listed file
-  names in a read-family tool path, and the `grep.include`/`find.nameContains`
-  name filters that select those files by substring (`include: "env"`
-  reaches `.env`; a filter shorter than 3 characters is not treated as a
-  credential selector). Matching is case-folded, like the filesystems it
-  guards (`.ENV`, `~/.AWS/credentials`). Over-triggering is deliberate
-  (`*.pem` is flagged whether or not it holds a key) and a raised credential
-  capability is an ask, never a silent grant; the known-public files
-  (`*.pub`, `authorized_keys*`, `known_hosts*`) stay quiet. Stated misses: a
-  path the list does not name, an obfuscated or split spelling
-  (`~/.a''ws/credentials`, `p=~/.ssh; cat $p/id_rsa`), a Windows-style
-  backslash spelling, and a credential reached indirectly (`bash -c`, a
-  script, a symlink). The `~/.ssh/*`
-  directory name also matches the network verb scan, so those commands raise
-  `network` as well.
-
-What remains out of scope — documented gaps, not silently handled:
-interpreter-based verbs (`bash -c "rm -rf …"`, `python3 -c`, `node -e` —
-the command is data to the literal patterns; a `git push` inside `bash -c '…'`
-is the one exception, caught because a quote is a boundary for the `git` word), network exfiltration via
-`python -c`/`node -e`/`npm`, substitution nesting past ~2× the depth cap,
-quoted or backslash-obfuscated verbs the literal patterns cannot see,
-whitespace tricks around redirection targets, git subcommands reached
-through an alias (`git config alias.p push; git p`), package managers
-not listed above, and installs run by a build script (`npm run setup`).
-The literal verb scan over-triggers on quoted text: `echo "git push
-later"` raises `git-push` (an ask, never a silent grant).
-
-One section is forbidden outright: **`[mcp]`** (third-party tools and MCP
-servers are not supported yet — doctor surfaces it as a
-`policy-mismatch` fail pointing at
-[doctor and debug](doctor-and-debug.md)).
-
-## Enterprise policy
-
-An enterprise admin can put a `[policy]` section in
-`/etc/kubic/config.toml` (or in `/etc/kubic/product.toml` for a
-product/vertical profile). It is the highest-precedence layer: a lower
-layer, a role document or the model can narrow it, never widen or remove
-it. One `EffectivePolicy` is resolved once per process at startup and
-threaded through the composition root.
-
-```toml
-[policy]
-allowed_models = ["claude-sonnet-4-6", "local/*"]
-allowed_providers = ["anthropic", "local"]
-allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
-denied_tools = ["network_fetch"]
-
-network_policy = "proxy"
-allowed_domains = ["registry.npmjs.org", "github.com"]
-
-filesystem_policy = "workspace-only"
-
-data_policy = "no-external-training"
-logging_policy = "full-audit"
-
-[[audit]]
-sink = "syslog"
-level = "privileged"
-```
-
-The keys, and the vocabulary reconciliation with the engine that consumes
-them:
-
-- `allowed_models` — `provider/id`, `provider/*`, `*` globs and bare model
-  ids. `allowed_providers` intersects with it. Both gate `kubic run`,
-  `kubic tui` (at boot and on every `/model` switch) and the re-executing
-  tiers of `kubic replay` (the explicit `--model` pin, `[model]`,
-  `KUBIC_MODEL`, a role pin, and the implicit first-available pick) before
-  any provider call.
-- `allowed_tools` / `denied_tools` — the lane's tool intersection. The
-  system prompt's `tools:` line and the active tool set are the same set;
-  a tool named in `denied_tools` cannot be re-enabled by a project config,
-  a role document or the model.
-- `network_policy` — `"proxy"` is carried as the engine's `allowlist`
-  mode; the engine names (`none`, `allowlist`, `full`) are accepted too.
-  Proxy-mediated enforcement is a named follow-up, so the value is **not
-  enforced** today; `kubic config` lists it (`kept`) instead of the section
-  being silently ignored.
-- `filesystem_policy` — `"workspace-only"` is the engine's
-  `workspace-write`; the engine level names are accepted too.
-- `data_policy`, `logging_policy` — parsed into the effective policy and
-  listed by `kubic config`; each one's enforcement status is the key-effect
-  row above, never a claim. `kubic doctor` does not report these keys yet:
-  `enterpriseDoctorChecks` (audit-sink, network-allowlist and
-  enforceability checks) has no caller, so a green doctor says
-  nothing about them.
-- `[[audit]]` — repeatable sink tables (`sink`, `level`, optional `target`
-  and `facility`). Unknown kinds, levels and keys are refused by name.
-  See [Audit sinks](#audit-sinks-audit).
-
-### Audit sinks (`[[audit]]`)
-
-Enterprises expect audit records to reach syslog or another org sink — a
-JSONL file inside a repo the agent can write to is not tamper-evident.
-Every audit row (decisions and privileged actions alike) fans out to each
-configured sink **plus** the mandatory repo ledger
-(`.kubic/audit/audit.jsonl`, read by `kubic audit`):
-
-```toml
-[[audit]]
-sink = "syslog"
-level = "privileged"
-
-[[audit]]
-sink = "file"
-level = "all"
-target = "/var/log/kubic.jsonl"
-```
-
-- `sink`: `syslog` (one RFC 5424 line per record), `file` (one JSON line
-  per record appended at the exact `target` path), or `memory`
-  (process-scoped, for embedders and tests).
-- `level`: `privileged` keeps approval decisions (`tool:<name>`), the
-  seven privileged actions, and the full-access revoke
-  (`posture:approvals` — the disable half of a privileged posture change travels with its grant review), dropping
-  everything else; `all` keeps every
-  row. The repo ledger always keeps everything regardless of level.
-- `target` (syslog): a unix datagram socket path (bare `/dev/log` or
-  `unix:/path`; the default is `/var/run/syslog` on macos and `/dev/log`
-  elsewhere) or a `host[:port]` UDP destination (port 514 when absent).
-  UDP delivery is best-effort by protocol design. `target` (file): the
-  exact file path (required). `memory` takes no target.
-- `facility` (syslog): an RFC 5424 facility name (`local0`–`local7`,
-  `user`, `authpriv`, …) or number 0–23; default `local0`. Unknown
-  facilities and malformed targets are refused by name when the sinks
-  build — the table is skipped (named on stderr and in `kubic doctor`)
-  while the repo ledger keeps recording.
-- A sink that fails at runtime records the failure and notes it on
-  stderr once per process; the repo write is never blocked. `kubic doctor`
-  lists every configured sink with a reachability probe (`audit:sink:*`)
-  plus any runtime failure the process recorded.
-
-Unknown keys inside `[policy]` fail closed and are named. `kubic policy
---tool <name>` answers from the merged enterprise and installed policy and
-names the deciding layer (`deny bash (enterprise)`), so the offer and
-`kubic run` cannot disagree.
-
-## models.json
-
-Custom (OpenAI-compatible) providers are declared in `models.json`, on top
-of Pi's built-in providers. Files, in load order:
-
-| Location | Trust |
-| --- | --- |
-| `~/.kubic/models/models.json` (global) | Always loaded — it is your own machine-local file, and the recommended place for provider config. |
-| `<projectRoot>/.kubic/models.json`, else `<projectRoot>/models.json` (project) | **Trust-gated** like the project `config.toml`: before it is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1`) it is never read, only named (`models.json ignored: <path> (project, untrusted — run 'kubic trust' or set KUBIC_TRUST_PROJECT=1 to load it)`), so a cloned repository cannot point a provider — and your key — at its own URL. |
-
-The **project root** is the nearest directory at or above the working
-directory that holds a `.git` entry (a repository or worktree top level) or
-a `.kubic/` directory — never your home directory, whose `.kubic/` is the
-global tree; with neither, the working directory itself. So `kubic run`,
-`kubic models` and `kubic doctor` see the same providers from any
-subdirectory.
-
-A project provider overrides a global provider with the same id. Every
-file is refused whole (never half-applied) and named when:
-
-- it is invalid JSON or fails the schema;
-- a provider id collides with a **built-in** provider (`anthropic`,
-  `openai`, …) — a custom provider can never replace a built-in's URL or
-  auth, trusted or not;
-- `apiKeyEnv` — or an `apiKey` / header `$VAR` — names a variable outside
-  the allowlist: a `KUBIC_*` name or a `*_API_KEY` name (`OPENROUTER_API_KEY`, `KUBIC_GATEWAY_TOKEN`). Anything
-  else (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, `HOME`) is refused, so a
-  file can never choose an arbitrary secret to send as a bearer token.
-  Without `apiKeyEnv` the key is read from `KUBIC_API_KEY`.
-
-Which files were found and their trust state is reported: `kubic models`
-and `kubic doctor` print a `loaded models.json: <path> (global|project,
-trusted): <ids>` / `models.json ignored: <path> …` line on stderr, doctor's
-`dep:models-json` check lists each file with `loaded`, `ignored, untrusted`
-or `invalid` (an invalid file fails the check), and `kubic run` prints a
-`models.json ignored: …` line on stderr (the `loaded` receipt only under
-`--debug`).
-
-### models.json schema
-
-The shape — `providers` is an object keyed by provider id (an array
-of entries with their own `id` is accepted as an alias):
-
-```json
-{
-  "providers": {
-    "local": {
-      "baseUrl": "http://127.0.0.1:8000/v1",
-      "api": "openai-completions",
-      "apiKey": "not-needed",
-      "models": [
-        { "id": "qwen3-coder-27b", "contextWindow": 131072, "maxTokens": 16384 }
-      ]
-    }
-  }
-}
-```
-
-| Provider key | Meaning |
-| --- | --- |
-| `baseUrl` | `http(s)` endpoint (required). |
-| `api` | `openai-completions` or `openai-responses` (required). |
-| `apiKey` | A literal key (e.g. `not-needed` for a keyless local server), an allowlisted `$VAR` (same allowlist as `apiKeyEnv`), or a `!command` resolved per request. Escaped `\$` / `\!` stay literal. Not together with `apiKeyEnv`. |
-| `apiKeyEnv` | The env variable holding the key (allowlist above; default `KUBIC_API_KEY`). |
-| `name`, `headers` | Display name; per-request headers (non-empty strings). Literal values ride every request statically; `$VAR` (allowlisted) and `!command` values resolve per request through the key auth instead and never reach the wire verbatim. |
-| `models` | Non-empty list of models (ids unique per provider). |
-
-| Model key | Meaning |
-| --- | --- |
-| `id`, `name`, `reasoning` | Model id (required), display name, reasoning support. |
-| `contextWindow`, `maxTokens` | Positive integers; `maxTokens` must be **less than** `contextWindow`, judged on the effective values (defaults `8192`/`2048`), so `contextWindow: 1024` alone is refused too. A `0` or fractional value is refused with the field named. **Set `contextWindow` for every model.** Compaction and the context gauge use the window: a model that omits it runs as an 8192-token model, so a 128k model compacts far too early. `kubic models` marks such a model `(default — set contextWindow)` and `kubic doctor` warns on it (`models-window:<provider>/<model>`). |
-| `cost` | `{input, output, cacheRead, cacheWrite}` in USD per 1M tokens; cache reads and writes are priced separately and reach `kubic models --json` as `cacheReadCost`/`cacheWriteCost`. The flat `inputCost`/`outputCost` keys still work — one place per field, never both. |
-| `input` | Input modalities: a non-empty list from `text`, `image` (default `["text"]`). |
-| `samplingParams`, `samplingParamsByThinkingLevel` | Extra request-body fields Pi assigns into the provider request verbatim (`temperature`, `top_p`, …). The by-level form is keyed by thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`); at request time the effective level's object is merged over `samplingParams`. An unknown level or a non-object body is refused with the field named. Supported for the OpenAI-compatible APIs this file declares (`openai-completions`, `openai-responses`). |
-
-## Secrets (never in config)
-
-Secrets never appear in config: a secret-shaped value or a secret ref in
-`config.toml` is refused by name. What ships:
-
-- **Provider keys from `models.json` are resolved at request time.** A
-  provider's `apiKeyEnv` names the environment variable holding its key; that
-  is a `$ENV_VAR` ref, resolved through the request-time resolver on **every**
-  model request (never cached; a missing or empty variable leaves the provider
-  unconfigured). The same holds for an `apiKey` written as an allowlisted
-  `$VAR` — except a missing variable fails the request closed naming it —
-  and for `$VAR` / `!command` header values, which resolve into the request's
-  auth headers instead of reaching the wire verbatim. An `apiKey` written
-  `\$literal` (or any other plain string) stays a literal key and never
-  touches the resolver. Availability checks (`kubic models`, the provider
-  probe) read presence only and are not a use.
-- **A `!command` ref runs a helper on every request.** The command and its
-  arguments are parsed quote-aware (`!op read "my vault/item"` stays one
-  argument — a quote opens grouping only at a word boundary, so a mid-word
-  quote like `don't` stays literal and the helper receives exactly what was
-  written) and executed directly — never through a shell — with a 10s
-  timeout and a 64 KiB output cap; an empty result, a failure, or a timeout
-  fails the request closed naming the provider and command. The check path
-  never executes it (an unknowable command counts as configured; a missing
-  binary or a broken helper surfaces at the first request). Commands run
-  only from trusted `models.json` files — an untrusted project file is
-  refused before it is read.
-- **Every use is audited.** Each resolution appends one record to the
-  audit ledger (`.kubic/audit/audit.jsonl`, read by `kubic audit`):
-  `what: credential:<provider>`, the ref as a sentinel
-  (`sentinel:$GW_API_KEY`), the role, and the purpose
-  (`model-request:<provider>`) — **never the value**.
-- **The value never persists.** Resolved values are redacted from the
-  `--debug` channel, and `kubic run` scrubs them from what the run leaves
-  behind: the session JSONL is written through a redacting bridge, and the
-  result (the `--json` envelope) and the trajectory's prompt are scrubbed
-  — so a provider that echoes the key it rejected in its error body does not
-  put it on disk or stdout (`[REDACTED]` in its place). A value is matched as
-  text only from **8 characters**: a short or dummy key (`gw`, `ollama` for
-  provider `ollama`) is not a secret worth blanking every word for, and it
-  never causes its own credential-use row to be dropped. Likewise a key that
-  is (or sits inside) one of the run's provider or model ids — LM Studio's
-  documented dummy key is its provider's name, `lm-studio` — is identity, not
-  a secret: it is never scrubbed out of the envelope or the session rows, and
-  its credential-use row is still written (the row names only the ref). The one gap: a
-  prompt that quotes the key is written to the session before the first
-  request resolves it, so that line is scrubbed from the trajectory and the
-  result but not from the session file. A trajectory export also redacts every
-  secret-classified env key (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`,
-  `*_CREDENTIALS`, and the Anthropic federation block below) to
-  `<redacted>` with the same classifier the tool spawn env uses. (`kubic tui` resolves and audits keys the same
-  way but does not yet scrub its session writes.)
-
-**Anthropic workload identity federation is secret whole.**
-`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`,
-`ANTHROPIC_IDENTITY_TOKEN_FILE` and the optional
-`ANTHROPIC_SERVICE_ACCOUNT_ID` / `ANTHROPIC_WORKSPACE_ID` match none of the
-suffix shapes above — the token key is a FILE path and the ids end in `_ID` —
-yet the block is the credential: the Anthropic SDK exchanges the file's
-identity token for a short-lived access token and refreshes it itself. All
-five are classified secret, so they are redacted from debug logs and from
-trajectory exports like any `*_TOKEN`. The token file's *contents* never
-pass through Kubic: Pi hands the SDK the path, and the SDK reads the file.
-Anthropic counts as **configured** in `kubic models` and `kubic doctor` when
-the three required variables are present (the two ids are optional), while an
-API key or `ANTHROPIC_AUTH_TOKEN`, when set, wins as it does in Pi.
+Each trigger, what it detects and the detection heuristics are on
+[approvals](approvals.md#autoapprove-capabilities).
 
 ## What lives where
 
@@ -785,8 +399,7 @@ not. The split, exactly as shipped:
   state is local wherever it is written), and the write never fails a run.
   This repository's own `.gitignore` ignores its whole `.kubic/` directory
   (`/.kubic/`) and also lists the same four rules, because `kubic doctor` checks
-  for those literal lines. The rules, the writer, and this page are pinned
-  together by `scripts/runtime-exclude.test.mjs` and the config tests.
+  for those literal lines.
 - **Models**: Pi's built-in providers (`anthropic`, `openai`, `google`,
   `amazon-bedrock`, …) are always registered; each is usable once its
   documented env key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
@@ -800,7 +413,7 @@ not. The split, exactly as shipped:
   listed or selected: the catalogue's image and classifier entries are never
   listed by `kubic models` and never picked by model selection. Custom
   providers come from `models.json` (see
-  [models.json](#modelsjson) above). A model without `contextWindow`/`maxTokens` gets
+  [models.json](models.md#modelsjson) above). A model without `contextWindow`/`maxTokens` gets
   fail-safe defaults `8192`/`2048` (small local servers overflow above
   them). The compaction reserve (`[session] reserveTokens`, default 16384) is
   clamped to a quarter of the model's window (an 8192-token model reserves

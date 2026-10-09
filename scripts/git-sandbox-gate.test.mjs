@@ -10,15 +10,17 @@
 // The rule this gate enforces:
 //
 //   any *.test.ts under packages/agent/src, packages/exec/src,
-//   packages/host/src or apps/kubic/src that spawns `git` directly
+//   packages/host/src, apps/kubic/src or apps/kubic/test that spawns `git` directly
 //   (execFileSync/spawnSync/execSync/execFile/spawn with a 'git' command,
-//   quoted or backtick) is an offender — importing the sandbox helper does
+//   quoted or backtick, a path ending in `/git`, or a name the file binds
+//   to one, the call split across lines or not) is an offender — importing
+//   the sandbox helper does
 //   NOT exempt a file (flag the bare spawn per line even in files that import
 //   the helper, so a half-migrated file stays red).
 //   Tests that need git call `sandbox.git(...)` / `sandbox.gitResult(...)`
 //   (scrubbed env) or activate the sandbox into process.env for
 //   production code that spawns git on the inherited environment.
-// Runs from `npm test` (node --test) so it gates CI alongside the other
+// Runs from `npm run check:gates` (node --test) so it gates CI alongside the other
 // script gates.
 import assert from 'node:assert/strict';
 import {
@@ -41,6 +43,7 @@ const SCOPED_DIRS = [
   join('packages', 'exec', 'src'),
   join('packages', 'host', 'src'),
   join('apps', 'kubic', 'src'),
+  join('apps', 'kubic', 'test'),
 ];
 
 // A direct `git` spawn: `execFileSync('git', …)`, `spawnSync("git", …)`,
@@ -52,9 +55,35 @@ const SCOPED_DIRS = [
 // method call: that goes through the ExecutionEnv seam, not
 // `child_process` directly (the fake's own unit tests drive
 // the seam with git argv and stay hermetic). The lookbehind keeps longer
-// identifiers (`myspawnSync(`) out as well.
-const DIRECT_GIT_SPAWN_RE =
-  /(?<![.\w])(?:execFileSync|spawnSync|execSync|execFile|spawn)\s*\(\s*(?:['"]git['"]|`git(?=[\s`$]))/;
+// identifiers (`myspawnSync(`) out as well. The scan runs over the whole
+// file, so a call split across lines (`execFileSync(\n  'git', …)`) matches
+// too.
+const SPAWN_CALL =
+  /(?<![.\w])(?:execFileSync|spawnSync|execSync|execFile|spawn)\s*\(\s*/;
+// The git binary as a literal — `'git'`, `"git"` or a path ending in
+// `/git` — or a backtick command that starts with one.
+const GIT_LITERAL =
+  /(?:['"](?:[^'"\n]*\/)?git['"]|`(?:[^`\n]*\/)?git(?=[\s`$]))/;
+// A name the file binds to the git binary (`const GIT = 'git'`), so a
+// spawn through it is caught as well.
+const GIT_NAME_BINDING =
+  /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*['"](?:[^'"\n]*\/)?git['"]/g;
+
+function directGitSpawns(text) {
+  const names = [...text.matchAll(GIT_NAME_BINDING)].map(
+    (match) => `${match[1].replace(/\$/g, '\\$')}(?![\\w$])`,
+  );
+  const pattern = new RegExp(
+    `${SPAWN_CALL.source}(?:${[GIT_LITERAL.source, ...names].join('|')})`,
+    'g',
+  );
+  // The 0-based line each spawn starts on, once per line.
+  const lines = new Set();
+  for (const match of text.matchAll(pattern)) {
+    lines.add(text.slice(0, match.index).split('\n').length - 1);
+  }
+  return [...lines].sort((a, b) => a - b);
+}
 
 function testFiles(root = ROOT) {
   const found = [];
@@ -79,11 +108,12 @@ function gitOffenders(root = ROOT, files = testFiles(root)) {
   const offenders = [];
   for (const file of files) {
     if (!file.endsWith('.test.ts')) continue;
-    const lines = readFileSync(file, 'utf8').split('\n');
-    for (const [index, line] of lines.entries()) {
-      if (DIRECT_GIT_SPAWN_RE.test(line)) {
-        offenders.push(`${relative(root, file)}:${index + 1}: ${line.trim()}`);
-      }
+    const text = readFileSync(file, 'utf8');
+    const lines = text.split('\n');
+    for (const index of directGitSpawns(text)) {
+      offenders.push(
+        `${relative(root, file)}:${index + 1}: ${lines[index]?.trim() ?? ''}`,
+      );
     }
   }
   return offenders;
@@ -94,9 +124,6 @@ const SCOPED_TESTS = testFiles();
 
 describe('real-git tests use the shared helper', () => {
   it('no agent, exec, host or apps test spawns git directly', () => {
-    // Source-text scan: the Stryker sandbox copy rewrites sources, so the
-    // check is meaningless there (mutation work is deferred).
-    if (process.env.STRYKER_MUTATOR_WORKER !== undefined) return;
     const offenders = gitOffenders(ROOT, SCOPED_TESTS);
     assert.deepEqual(
       offenders,
@@ -163,10 +190,26 @@ describe('real-git tests use the shared helper', () => {
         "execFileSync('git', ['init']);\n",
       );
       write('packages/exec/src/helper.ts', "execFileSync('git', ['x']);\n");
+      // A call split across lines, a path to git, and a name bound to git.
+      write(
+        'packages/exec/src/split.test.ts',
+        "execFileSync(\n  'git',\n  ['init'],\n);\n",
+      );
+      write(
+        'packages/agent/src/path.test.ts',
+        "spawnSync('/usr/bin/git', ['status']);\n",
+      );
+      write(
+        'packages/host/src/bound.test.ts',
+        "const GIT = 'git';\nexecFileSync(GIT, ['init']);\nexecFileSync(GITX, []);\n",
+      );
       assert.deepEqual(gitOffenders(dir), [
         `${join('apps', 'kubic', 'src', 'async.test.ts')}:2: execFile('git', ['status'], () => {});`,
         `${join('packages', 'agent', 'src', 'ops', 'raw.test.ts')}:1: const r = spawnSync("git", ['status']);`,
+        `${join('packages', 'agent', 'src', 'path.test.ts')}:1: spawnSync('/usr/bin/git', ['status']);`,
         `${join('packages', 'exec', 'src', 'raw.test.ts')}:2: execFileSync('git', ['init']);`,
+        `${join('packages', 'exec', 'src', 'split.test.ts')}:1: execFileSync(`,
+        `${join('packages', 'host', 'src', 'bound.test.ts')}:2: execFileSync(GIT, ['init']);`,
         `${join('packages', 'host', 'src', 'half.test.ts')}:2: execFileSync('git', ['init']);`,
         `${join('packages', 'host', 'src', 'outside.test.ts')}:1: execFileSync('git', ['init']);`,
         `${join('packages', 'host', 'src', 'tick.test.ts')}:2: execSync(\`git status\`);`,

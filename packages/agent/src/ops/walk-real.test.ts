@@ -15,9 +15,9 @@ import { join } from 'node:path';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { withReadRoots } from '@kubic/exec/read-roots';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createInvocation, MemoryMemoStore } from './memos.js';
+import { inv } from '../test-support/invocation.js';
 import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { OpContext } from './types.js';
 import { WALK_MAX_DEPTH, WALK_MAX_ENTRIES } from './walk.js';
 
 const dirs: string[] = [];
@@ -35,13 +35,6 @@ function tmp(prefix: string): string {
 
 function ctx(root: string): OpContext {
   return { env: new NodeExecutionEnv(root), sessionId: 's1', agentId: 'a1' };
-}
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
 }
 
 describe('walk ignore rules on the node seam', () => {

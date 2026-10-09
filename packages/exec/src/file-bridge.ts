@@ -1,7 +1,6 @@
 // Node file bridge: exec-owned durable file access.
-// All node:fs touching stays in this package (I/O confinement); Pi types
-// never cross here. The agent adapts this bridge to Pi's FileSystem for
-// JsonlSessionRepo — sync core wrapped async at the seam.
+// All node:fs access stays in this package (I/O confinement), and Pi types
+// never cross here.
 
 import {
   appendFileSync,
@@ -177,6 +176,7 @@ function sanitizePrefix(prefix: string): string {
   return prefix.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 32) || 'tmp-';
 }
 
+// biome-ignore lint/complexity/noExcessiveLinesPerFunction: the whole FileBridge, one short closure per method over `cwd`; it stays a plain object, not a class, because callers spread it (redactBridgeWrites wraps its writes).
 export function createNodeFileBridge(cwd: string): FileBridge {
   const absolutePath = (path: string): string => resolve(cwd, path);
   const ensureParent = (abs: string, mode?: number): void => {

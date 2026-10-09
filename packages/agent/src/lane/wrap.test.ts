@@ -3,7 +3,7 @@
 // registrations the Kubic extension is installed with, and the wrappers ride
 // the pi-durable `execute(args, api, context)` signature unchanged.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   BACKGROUND_CONTEXT,

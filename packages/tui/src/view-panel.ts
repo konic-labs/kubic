@@ -21,13 +21,13 @@ import type { DiffFileChange, DiffOp } from './diff-view.js';
 import { renderDiffLines } from './diff-view.js';
 import type { JournalFilter } from './journal-view.js';
 import { JournalView } from './journal-view.js';
-import { sanitizeLaneText } from './lane-cells.js';
+import { sanitizeLaneText } from './lane-text.js';
 import type { Component } from './tui-boundary.js';
 
 export type PanelMode = 'closed' | 'diff' | 'journal';
 
 // Structural journal-row shape: the fields the panels read, mirroring exec's
-// FileChange (packages/exec/src/journal-diff.ts) WITHOUT importing it — the
+// FileChange (packages/exec/src/journal/diff.ts) WITHOUT importing it — the
 // tui package must never import exec/agent/host implementation (dep-lint).
 // `before`/`after` are nullable exactly like FileChange's.
 export interface JournalChangeLike {
@@ -45,6 +45,7 @@ export interface JournalChangeLike {
 // An empty panel is not an empty frame: `kubic diff` prints `no changes` and
 // the panel says the same, so a keypress never yields a blank rectangle the
 // operator cannot tell apart from a broken view.
+/** @internal */
 export const PANEL_EMPTY_LINE = 'no changes';
 
 // Sanitise a journal row before it reaches a render function. The fields are

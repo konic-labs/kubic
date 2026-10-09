@@ -10,8 +10,7 @@ import { checkTree } from './dep-lint.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Every fixture is removed after the file: this suite builds ~50 trees per
-// run (and Stryker's tap run repeats it per mutant), so leaking them piles
-// up six-figure dir counts in the OS temp dir.
+// run, so leaking them piles up in the OS temp dir.
 const scratchDirs = [];
 after(() => {
   for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
@@ -104,6 +103,29 @@ describe('dep-lint', () => {
     );
   });
 
+  it('allows only the agent boundary to touch the Pi runtime modules', () => {
+    const ok = fixtureTree({
+      'packages/agent/src/pi-boundary.ts': `import type { Harness } from '@earendil-works/pi-durable';\n`,
+    });
+    assert.deepEqual(checkTree(ok), []);
+    // Another agent file, a look-alike name, and another package.
+    const bad = fixtureTree({
+      'packages/agent/src/tools.ts': `import { Harness } from '@earendil-works/pi-durable';\n`,
+      'packages/agent/src/fake-pi-boundary.ts': `import { complete } from '@earendil-works/pi-ai';\n`,
+      'packages/host/src/dispatch.ts': `import { chord } from '@earendil-works/chord';\n`,
+    });
+    assert.deepEqual(
+      checkTree(bad)
+        .filter((v) => v.kind === 'pi')
+        .map((v) => v.file),
+      [
+        join('packages', 'agent', 'src', 'fake-pi-boundary.ts'),
+        join('packages', 'agent', 'src', 'tools.ts'),
+        join('packages', 'host', 'src', 'dispatch.ts'),
+      ],
+    );
+  });
+
   it('allows exec to import node:fs for the Node binding', () => {
     const dir = fixtureTree({
       'packages/exec/src/env.ts': `import { readFileSync } from 'node:fs';\n`,
@@ -174,11 +196,61 @@ describe('dep-lint', () => {
     );
   });
 
+  it('fails when production code imports the root test fixtures', () => {
+    const dir = fixtureTree({
+      'packages/tui/src/screen.ts': `import { terminalRig } from '../../../test/fake-terminal.js';\n`,
+      'packages/tui/src/screen.test.ts': `import { terminalRig } from '../../../test/fake-terminal.js';\n`,
+      'test/fake-terminal.ts': `export const terminalRig = 1;\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir).map((v) => [v.kind, v.file, v.to]),
+      [
+        [
+          'test-support',
+          join('packages', 'tui', 'src', 'screen.ts'),
+          '../../../test/fake-terminal.js',
+        ],
+      ],
+    );
+  });
+
+  it('allows one argv parser: extra-typings in the app root', () => {
+    const dir = fixtureTree({
+      'packages/host/src/cli.ts': `import yargs from 'yargs';\n`,
+      'packages/host/src/flags.ts': `import { parseArgs } from 'node:util';\n`,
+      'packages/host/src/inspect.ts': `import { inspect } from 'node:util';\n`,
+      'packages/tui/src/keys.ts': `import { Command } from '@commander-js/extra-typings';\n`,
+      'apps/kubic/src/program.ts': `import { Command } from '@commander-js/extra-typings';\n`,
+      'packages/host/src/cli.test.ts': `import { Command } from 'commander';\n`,
+    });
+    assert.deepEqual(
+      checkTree(dir)
+        .filter((v) => v.kind === 'argv')
+        .map((v) => [v.file, v.to]),
+      [
+        [join('packages', 'host', 'src', 'cli.ts'), 'yargs'],
+        [join('packages', 'host', 'src', 'flags.ts'), 'node:util'],
+        [
+          join('packages', 'tui', 'src', 'keys.ts'),
+          '@commander-js/extra-typings',
+        ],
+      ],
+    );
+  });
+
   it('allows test files and test-support modules to import test-support', () => {
     const dir = fixtureTree({
       'packages/host/src/feature.test.ts': `import { fake } from './test-support/fake.js';\n`,
       'packages/host/src/test-support/fake.ts': `import { base } from './base.js';\n`,
       'packages/host/src/test-support/base.ts': `export const base = 1;\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('allows test-support modules and app test folders to import node:fs', () => {
+    const dir = fixtureTree({
+      'packages/host/src/test-support/temp.ts': `import { mkdtempSync } from 'node:fs';\n`,
+      'apps/kubic/test/fixtures/temp.ts': `import { mkdtempSync } from 'node:fs';\n`,
     });
     assert.deepEqual(checkTree(dir), []);
   });
@@ -272,6 +344,29 @@ describe('dep-lint', () => {
       'packages/tui/src/ok.ts': `import { c } from '@kubic/core';\n`,
       'packages/tui/node_modules/dep/index.ts': `import { d } from '@kubic/host';\n`,
       'packages/tui/dist/bundle.ts': `import { d } from '@kubic/host';\n`,
+    });
+    assert.deepEqual(checkTree(dir), []);
+  });
+
+  it('fails when a host folder imports another folder past its entry', () => {
+    const dir = fixtureTree({
+      'packages/host/src/doctor/doctor.ts': `import { runRunCommand } from '../run/run-cli.js';\n`,
+    });
+    assert.deepEqual(checkTree(dir), [
+      {
+        kind: 'folder',
+        from: 'host/doctor',
+        to: 'host/run',
+        file: join('packages', 'host', 'src', 'doctor', 'doctor.ts'),
+        line: 1,
+      },
+    ]);
+  });
+
+  it('allows a host folder to import another folder through its entry, and its own modules', () => {
+    const dir = fixtureTree({
+      'packages/host/src/doctor/doctor.ts': `import { runRunCommand } from '../run/index.js';\nimport { render } from './doctor-render.js';\n`,
+      'packages/host/src/doctor/checks/limits.ts': `import { DoctorCheck } from '../doctor.js';\n`,
     });
     assert.deepEqual(checkTree(dir), []);
   });
@@ -464,7 +559,7 @@ describe('dep-lint', () => {
 
   it('flags a package test reaching the app root', () => {
     const dir = fixtureTree({
-      'packages/host/src/run-prod-path.test.ts': `import { d } from '../../../apps/kubic/src/prod-runners.js';\n`,
+      'packages/host/src/wiring.test.ts': `import { d } from '../../../apps/kubic/src/prod-runners.js';\n`,
     });
     const violations = checkTree(dir);
     assert.ok(

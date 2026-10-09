@@ -72,6 +72,18 @@ for the details.
 
 Prerequisites: Node >= 22.19 (`node --version`).
 
+From npm, once Kubic is published there, install it globally or run it
+without installing:
+
+```bash
+npm install -g kubic
+kubic --version
+npx kubic --version
+```
+
+The package carries an `npm-shrinkwrap.json`, so an install gets the
+dependency versions Kubic was tested with.
+
 From a fresh clone, run these commands from the repository root:
 
 ```bash
@@ -91,7 +103,7 @@ prints `doctor: 16 pass, 6 warn, 1 fail, 0 skip`. Its one failure is
 honest limits and the detection-only policy note. See
 [`docs/cli/doctor-and-debug.md`](docs/cli/doctor-and-debug.md). With a provider key
 in your environment, `./bin/kubic.js setup` saves a default model to
-`~/.kubic/config.toml`; see [`docs/cli/commands.md`](docs/cli/commands.md#kubic-setup).
+`~/.kubic/config.toml`; see [`docs/cli/models.md`](docs/cli/models.md#kubic-setup).
 
 `dist/` is gitignored build output: `npm run build` bundles the CLI into one
 file, `dist/kubic.js`, with esbuild (`scripts/build.mjs`). Third-party packages
@@ -103,13 +115,14 @@ byte-equivalent.
 | Path | What it is |
 | --- | --- |
 | [`bin/kubic.js`](bin/kubic.js) | Committed `kubic` executable, a wrapper over the `dist/` build output. |
-| [`apps/kubic/`](apps/kubic/) | CLI composition root (`src/main.ts` wires the host and the TUI). |
-| [`packages/`](docs/packages/) | Feature packages, one overview page per package under `docs/packages/`. |
+| [`apps/kubic/`](apps/kubic/) | CLI composition root: `src/main.ts` wires the host and the TUI, and `test/` holds the end-to-end tests. |
+| [`packages/`](packages/) | The packages: `core`, `exec`, `agent`, `host`, `trajectory`, `eval` and `tui`, each with an overview page under [`docs/packages/`](docs/packages/README.md). |
+| [`scripts/`](scripts/) | The build and the repository gates, each gate with its own `node --test` test. |
+| [`test/`](test/) | Fixtures shared by every package's tests: the fake terminal, temp directories and the hermetic environment. |
 | [`docs/`](docs/README.md) | Reference docs: the CLI, the architecture, the packages and the contributor guide. |
 
-Session state lives in `~/.kubic/sessions/`, one state directory per session
-(`journal/`, `spans.jsonl`, the approvals posture and the session lock), plus the
-transcript files. Nothing prunes these for you: `kubic sessions prune` lists
+Session state lives in `~/.kubic/sessions/`, one directory per session: the
+session's durable storage, its journal, spans, approvals posture and lock. Nothing prunes these for you: `kubic sessions prune` lists
 candidates by default and deletes only with `--yes` or a yes at its terminal
 prompt. A session that is locked by a live process is never touched.
 

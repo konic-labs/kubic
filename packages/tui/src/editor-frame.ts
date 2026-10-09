@@ -111,6 +111,7 @@ export function frameEditorLines(
 }
 
 /** `m:ss`, or `h:mm:ss` past an hour. */
+/** @internal */
 export function formatTurnClock(elapsedMs: number): string {
   const total = Math.max(0, Math.floor(elapsedMs / 1000));
   const hours = Math.floor(total / 3600);

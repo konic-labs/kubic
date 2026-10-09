@@ -80,6 +80,7 @@ function lineReporter(
   };
 }
 
+/** @internal */
 export function createLogger(options: LoggerOptions): CliLogger {
   const theme = options.theme ?? createCliTheme('none');
   const instance = createConsola({

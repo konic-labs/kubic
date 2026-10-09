@@ -7,7 +7,7 @@
 //
 // Exit codes: 0 report, 1 load failure (a broken config fails closed here
 // too — the operator sees the named reason, not a silent default); a usage
-// error is commander's (exit 2, apps/kubic/src/commands/session.ts).
+// error is commander's (exit 2, apps/kubic/src/commands/setup.ts).
 
 import {
   type CommandResult,
@@ -16,12 +16,9 @@ import {
 } from '@kubic/core/cli/exit-codes';
 import { formatJson } from '@kubic/core/cli/output';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
-import { type CliIo, diagnosticsOf } from '../cli-io.js';
-import {
-  effectiveConfigView,
-  type RuntimeConfig,
-  renderEffectiveConfig,
-} from './runtime.js';
+import { type CliIo, diagnosticsOf } from '../cli/index.js';
+import type { RuntimeConfig } from './runtime-types.js';
+import { effectiveConfigView, renderEffectiveConfig } from './runtime-view.js';
 
 export interface ConfigCommandDeps extends CliIo {
   // One load, injected by the composition root: the CLI never re-derives

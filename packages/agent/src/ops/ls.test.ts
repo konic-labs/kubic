@@ -3,7 +3,7 @@
 // the total when the cap stopped the listing. FakeExecutionEnv fs only —
 // no real filesystem.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { describe, expect, it } from 'vitest';
 import { lsOperation } from './ls.js';
 import { createInvocation, MemoryMemoStore } from './memos.js';

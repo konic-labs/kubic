@@ -10,7 +10,7 @@
   "ignoreExportsUsedInFile": false,
 
   // mkfifo is a POSIX utility, not an npm dependency: the exec journal test
-  // (packages/exec/src/journal-reconcile-run.test.ts) calls it to make a pipe.
+  // (packages/exec/src/journal/reconcile-run.test.ts) calls it to make a pipe.
   "ignoreBinaries": ["mkfifo"],
 
   "workspaces": {
@@ -18,6 +18,17 @@
     // every module they import is reached. bin/kubic.js is an entry through the
     // root package.json "bin" field.
     ".": {
+      // The root manifest is the one npm installs, so it declares every
+      // runtime dependency, the Pi packages included. packages/agent and
+      // packages/tui import and declare those too, which is where knip
+      // counts the use; `npm run check:pins` keeps the two declarations equal.
+      "ignoreDependencies": [
+        "@earendil-works/chord",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-durable",
+        "@earendil-works/pi-telemetry",
+        "@earendil-works/pi-tui"
+      ],
       "entry": ["scripts/*.mjs", "test/*.ts"],
       "project": ["**/*.ts", "**/*.mjs"]
     },

@@ -1,40 +1,37 @@
-// TreeView: always-visible one-node tree.
-// Tree always visible one node with live tool calls; one-node +
-// collapsing; TreeView; click expand/collapse, wheel
-// chains; glyphs ✓/●/◌ with the head row's $cost in/out tokens: the head row
-// and its tool children. Tool rows carry their args + outcome and the ✗ error
-// glyph; calls are grouped per turn (run-start closes a group) and truncation
-// is measured in columns.
+// The agent tree: one row for the run, with its tool calls as children. The
+// head row carries the status glyph (✓ ● ◌) and the run's cost and tokens; a
+// tool row carries its argument summary and outcome, and ✗ when the call
+// failed. Calls are grouped per turn, earlier turns fold to one line each, and
+// truncation is measured in columns. A click toggles the tree; the wheel
+// passes through to the transcript underneath.
 //
-// The lane feed accepts the agent's KubicLaneEvent shape structurally
-// (packages/agent/src/lane/events.ts) WITHOUT importing it: the tui
-// package must never import host/agent implementation (dep-lint), so
-// only the fields the tree reads are typed here. `usage` rows sum into the
-// head row; `fault` events are ignored.
+// The tree reads only `TreeLaneSnapshot`, which the host projector folds from
+// the lane: the tui package never imports agent or host code (dep-lint), so
+// the fields it reads are typed here.
 
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
-import {
-  sanitizeLaneText,
-  summarizeToolArguments,
-  summarizeToolOutcome,
-} from './lane-cells.js';
+import { summarizeToolArguments, summarizeToolOutcome } from './lane-cells.js';
+import { sanitizeLaneText } from './lane-text.js';
 import { formatStatusCost } from './status-bar.js';
 import { tuiTheme } from './theme.js';
 import type { Component, MouseRegionHandler } from './tui-boundary.js';
 import { MouseRegion, truncateToWidth } from './tui-boundary.js';
 
+/** @internal */
 export type RunStatus = 'idle' | 'running' | 'done';
+/** @internal */
 export type ToolCallState = 'running' | 'done';
 
+/** @internal */
 export function statusGlyph(status: RunStatus): string {
   if (status === 'running') return '●';
   if (status === 'done') return '✓';
   return '◌';
 }
 
-// A finished call that failed gets its own glyph — ✓ on an error
-// was the bug. The colour is applied at render time (styleTreeLine), so the
+// A finished call that failed gets its own glyph, never ✓. The colour is applied at render time (styleTreeLine), so the
 // glyph stays distinct with NO_COLOR too.
+/** @internal */
 export function toolGlyph(state: ToolCallState, error = false): string {
   if (state === 'running') return '●';
   return error ? '✗' : '✓';
@@ -84,6 +81,7 @@ export interface TreeState {
   usage: TreeUsage;
 }
 
+/** @internal */
 export function createTreeState(label = DEFAULT_RUN_ROLE): TreeState {
   return {
     label,
@@ -95,6 +93,7 @@ export function createTreeState(label = DEFAULT_RUN_ROLE): TreeState {
   };
 }
 
+/** @internal */
 export function toggleTree(state: TreeState): void {
   state.collapsed = !state.collapsed;
 }
@@ -107,10 +106,10 @@ function previousDurationMs(state: TreeState): number {
   return state.previousTurns.reduce((sum, turn) => sum + turn.durationMs, 0);
 }
 
-// The tree renders the replicated presentation state the
-// host projector folds — there is ONE lane input (the snapshot below), not a
-// second event-driven path beside it. The summarizers stay here, so the state
-// never carries a display string.
+// The tree's one lane input: the replicated presentation state the host
+// projector folds. The summarizers stay here, so the state never carries a
+// display string.
+/** @internal */
 export interface TreeToolSnapshot {
   readonly toolCallId: string;
   readonly toolName: string;
@@ -135,8 +134,7 @@ export function applyTreeSnapshot(
   state: TreeState,
   lane: TreeLaneSnapshot,
 ): void {
-  // A new turn (the session goes back to running) closes the previous group, the
-  // same boundary the run-start event draws in the event-driven path.
+  // A new turn (the session goes back to running) closes the previous group.
   if (
     lane.status === 'running' &&
     state.status !== 'running' &&
@@ -173,6 +171,7 @@ export function applyTreeSnapshot(
   }
 }
 
+/** @internal */
 export function collapsedSummary(state: TreeState): string {
   const calls = previousCalls(state) + state.tools.length;
   const total =
@@ -228,6 +227,7 @@ function fitLine(line: string, width: number): string {
 
 // Pure headless render (no VirtualTerminal in Pi 0.85.1): callers render
 // these lines directly like renderLayout in layout.test.ts.
+/** @internal */
 export function renderTreeLines(state: TreeState, width: number): string[] {
   const w = Math.max(0, Math.floor(width));
   const lines = [headLine(state)];

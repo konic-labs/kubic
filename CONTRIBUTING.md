@@ -17,22 +17,16 @@ npm run build
 
 ## Before you open a pull request
 
-Run the checks that CI's test job runs, in this order (the mutation jobs are
-switched off in `.github/workflows/ci.yml`):
+Run what CI's test job runs, in this order:
 
 ```sh
-npm run typecheck
-npm run lint
-npm run lint:deps
-npm run lint:dead
-npm run lint:dead:prod
-npm run check:pi
-npm run docs:check
-npm test
-npm run test:unit
-npm run build
-npm run test:binary-contract
+npm run check                         # every static gate
+npm test                              # the test suite
+npm run build && npm run test:binary  # the built binary
 ```
+
+[docs/contributing.md](docs/contributing.md#before-you-push) lists the gates
+`npm run check` runs and why each repo script exists.
 
 A change that alters behaviour ships its documentation page in the same commit.
 

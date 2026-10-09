@@ -16,7 +16,7 @@ instruction can reach too. Kubic is a single trust zone, and these docs
 never imply otherwise.
 
 This is announced, not buried: every process start announces it from one
-source (`packages/host/src/limits/no-isolation-notice.ts`), so the two surfaces
+source (`packages/host/src/doctor/no-isolation-notice.ts`), so the two surfaces
 cannot drift apart. `kubic run` prints the three-line warning block on
 stderr before the first turn; `kubic tui` shows the one-line form in the
 welcome block from the first render and prints the full text on `/safety`. The opt-out

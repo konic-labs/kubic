@@ -1,12 +1,12 @@
 // The project-trust question, restyled: one row
 // with the full disclosure, one key to answer, and `v` showing the file.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCliTheme } from '@kubic/core/cli/theme';
-import { ProjectTrustStore } from '@kubic/host/config/trust-store';
-import { afterEach, describe, expect, it } from 'vitest';
-import { resolveInteractiveProjectTrust } from './config-runtime.js';
+import { ProjectTrustStore } from '@kubic/host/config';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../test/temp-dir.js';
+import { resolveInteractiveProjectTrust } from './config/load.js';
 import {
   TRUST_VIEW_MAX_LINES,
   trustFileLines,
@@ -14,18 +14,6 @@ import {
 } from './trust-question.js';
 
 const plain = createCliTheme('none');
-const made: string[] = [];
-
-afterEach(() => {
-  for (const dir of made.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  made.push(dir);
-  return dir;
-}
 
 describe('the trust question', () => {
   it('is one row in the first screen language with the full disclosure', () => {
@@ -57,7 +45,7 @@ describe('the trust question', () => {
   });
 
   it('shows the file without its escapes, bounded', () => {
-    const dir = tmp('trust-view-');
+    const dir = tempDir('trust-view-');
     const path = join(dir, 'config.toml');
     writeFileSync(
       path,
@@ -77,8 +65,8 @@ describe('the trust question', () => {
   });
 
   it('records yes, shows the file on view and records nothing for not now', async () => {
-    const home = tmp('trust-home-');
-    const project = tmp('trust-proj-');
+    const home = tempDir('trust-home-');
+    const project = tempDir('trust-proj-');
     mkdirSync(join(project, '.kubic'), { recursive: true });
     writeFileSync(join(project, '.kubic', 'config.toml'), '[journal]\n');
     const store = new ProjectTrustStore(join(home, '.kubic', 'trust.json'));

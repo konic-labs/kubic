@@ -1,4 +1,4 @@
-// Kubic TUI theme (TUI polish; tokens).
+// The Kubic TUI theme.
 // The colours come from the shared design tokens in packages/core/src/ui:
 // a palette (dark/default, light, terminal or a JSON theme file) bound to the
 // terminal's colour depth. `TuiTheme` keeps the named styles every view
@@ -87,6 +87,7 @@ export function createThemeFromPalette(
 }
 
 /** The default (dark brand) theme at a colour depth. */
+/** @internal */
 export function createTuiTheme(level: ColorLevel): TuiTheme {
   return createThemeFromPalette(builtinPalette('dark'), level, 'dark');
 }

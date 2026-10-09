@@ -6,6 +6,7 @@
 // env (post-allowlist + role grant), never the intended config:
 // callers must pass capturedFrom: 'used' or the build is refused.
 
+import { EXIT_USAGE, type ExitCode } from '@kubic/core/cli/exit-codes';
 import { redactSecretEnv } from '@kubic/core/secret-keys';
 import {
   isTrajectoryFailureCode,
@@ -34,8 +35,10 @@ import {
 
 // Observations longer than this keep their byte count but are cut —
 // trajectories stay shareable without hauling full tool output.
+/** @internal */
 export const MAX_OBSERVATION_BYTES = 8 * 1024;
 
+/** @internal */
 export type TrajectoryExportErrorCode =
   | 'missing-provenance'
   | 'invalid-provenance'
@@ -47,9 +50,10 @@ export type TrajectoryExportErrorCode =
   | 'invalid-usage'
   | 'invalid-escalation';
 
+/** @internal */
 export class TrajectoryExportError extends Error {
   readonly code: TrajectoryExportErrorCode;
-  readonly exitCode = 2;
+  readonly exitCode: ExitCode = EXIT_USAGE;
 
   constructor(code: TrajectoryExportErrorCode, message: string) {
     super(message);

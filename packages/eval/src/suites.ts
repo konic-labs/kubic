@@ -37,6 +37,7 @@ export interface EvalSuite {
   fixture?: EvalSuiteFixture;
 }
 
+/** @internal */
 export const EVAL_SUITES: readonly EvalSuite[] = [
   {
     id: 'swe-bench-mini',

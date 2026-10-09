@@ -8,13 +8,13 @@ import {
   CompactionEntry,
   fauxAssistantMessage,
 } from '../pi-boundary.js';
-import type { RetryDecision } from './failures.js';
-import { RetryBudget } from './failures.js';
 import {
   bootFauxLane,
   type FauxLane,
   type FauxResponseStep,
-} from './test-harness.js';
+} from '../test-support/lane-harness.js';
+import type { RetryDecision } from './failures.js';
+import { RetryBudget } from './failures.js';
 import { recoverOverflowTurn, runTurnWithOverflowRecovery } from './turn.js';
 
 const LANES: FauxLane[] = [];

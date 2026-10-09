@@ -44,10 +44,8 @@ export interface SlashCommandSpec {
   readonly argumentHint?: string;
 }
 
-// The shipped command set. `/model`, `/thinking` and `/compact` ship from
-// their own issues and are listed here because they
-// exist: a palette that hides working capabilities is worse than one that
-// names them.
+// The shipped command set. Every working command is listed: a palette that
+// hides working capabilities is worse than one that names them.
 export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   {
     name: 'help',
@@ -199,7 +197,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   },
 ];
 
-export const SLASH_COMMAND_NAMES: ReadonlySet<string> = new Set(
+const SLASH_COMMAND_NAMES: ReadonlySet<string> = new Set(
   SLASH_COMMANDS.map((spec) => spec.name),
 );
 
@@ -245,6 +243,7 @@ export function parseKnownSlashCommand(
 
 // The commands whose name starts with the draft's command prefix (`'he'` →
 // `/help`), for the autocomplete.
+/** @internal */
 export function matchingSlashCommands(
   prefix: string,
   commands: readonly SlashCommandSpec[] = SLASH_COMMANDS,

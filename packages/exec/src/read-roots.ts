@@ -17,7 +17,7 @@ import {
   type FileSystem,
   NodeExecutionEnv,
   type Provenance,
-} from './env.js';
+} from './env/index.js';
 
 // The root an absolute path lies in (the root itself or below it), if any.
 // A relative path never matches: it is a workspace path by definition.

@@ -2,9 +2,10 @@
 // model picker's provider groups, keyless providers, folding and thinking
 // row, and the list picker every other "choose one" uses.
 import { describe, expect, it } from 'vitest';
+import { clampThinking } from './app/overlays.js';
 import { createApprovalSurface } from './approval-surface.js';
 import type { ApprovalOverlayTui } from './approval-view.js';
-import { clampThinking, createTuiApp } from './tui-app.js';
+import { createTuiApp } from './tui-app.js';
 import type { Component } from './tui-boundary.js';
 
 function setup() {

@@ -13,9 +13,10 @@ Kubic's agent runtime is built on the Pi agent harness by Mario Zechner
 - `@earendil-works/pi-telemetry`
 - `@earendil-works/pi-tui`
 
-Upstream: <https://github.com/earendil-works/pi>. Pinned versions and their
-licences are recorded in `package-lock.json`; each package ships its own MIT
-licence text under `node_modules/@earendil-works/*/`.
+Upstream: <https://github.com/earendil-works/pi>. Each package is a direct
+dependency pinned to an exact version in the root `package.json`, the manifest
+npm installs, and ships its own MIT licence text under
+`node_modules/@earendil-works/*/`.
 
 ## CLI stack (runtime dependencies)
 

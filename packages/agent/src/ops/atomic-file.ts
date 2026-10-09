@@ -26,11 +26,13 @@ export interface PreImage {
 // stays text up to there, and above it the journal keeps the change visible
 // at a bounded cost — undo reports the entry non-reversible, exactly as it
 // does for a binary pre-image or the sweep's hash-only after-side.
+/** @internal */
 export const PREIMAGE_MAX_BYTES = 8 * 1024 * 1024;
 
 // Chunk size for that streamed hashing: the journal's own streamed-hash chunk,
 // imported rather than re-declared so there is one source of truth for "how
 // much of a file is held at once".
+/** @internal */
 export const PREIMAGE_CHUNK_BYTES = HASH_CHUNK_BYTES;
 
 // Reads the file's bytes when the seam can (readFileRange), so the recorded

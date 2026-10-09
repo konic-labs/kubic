@@ -6,8 +6,8 @@
   "type": "module",
   "exports": {
     "./env": {
-      "source": "./src/env.ts",
-      "default": "./src/env.ts"
+      "source": "./src/env/index.ts",
+      "default": "./src/env/index.ts"
     },
     "./file-bridge": {
       "source": "./src/file-bridge.ts",
@@ -22,24 +22,8 @@
       "default": "./src/ignore.ts"
     },
     "./journal": {
-      "source": "./src/journal.ts",
-      "default": "./src/journal.ts"
-    },
-    "./journal-diff": {
-      "source": "./src/journal-diff.ts",
-      "default": "./src/journal-diff.ts"
-    },
-    "./journal-reconcile": {
-      "source": "./src/journal-reconcile.ts",
-      "default": "./src/journal-reconcile.ts"
-    },
-    "./journal-status": {
-      "source": "./src/journal-status.ts",
-      "default": "./src/journal-status.ts"
-    },
-    "./journal-undo": {
-      "source": "./src/journal-undo.ts",
-      "default": "./src/journal-undo.ts"
+      "source": "./src/journal/index.ts",
+      "default": "./src/journal/index.ts"
     },
     "./lock-file": {
       "source": "./src/lock-file.ts",
@@ -64,6 +48,10 @@
     "./test-support/env-fakes": {
       "source": "./src/test-support/env-fakes.ts",
       "default": "./src/test-support/env-fakes.ts"
+    },
+    "./test-support/fake-env": {
+      "source": "./src/test-support/fake-env.ts",
+      "default": "./src/test-support/fake-env.ts"
     },
     "./test-support/git-sandbox": {
       "source": "./src/test-support/git-sandbox.ts",

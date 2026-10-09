@@ -1,7 +1,7 @@
 // Shared .gitignore-subset matcher. The journal baseline
 // and the find/grep walk both call `isIgnored`, so these pin the semantics
-// they share — plus the adversarial-pattern bound the old regex compiler
-// lacked (a wildcard-heavy .gitignore must not cost exponential time).
+// they share, plus the adversarial-pattern bound (a wildcard-heavy
+// .gitignore must not cost exponential time).
 import { describe, expect, it } from 'vitest';
 import { isIgnored, parseIgnoreFile } from './ignore.js';
 
@@ -60,10 +60,10 @@ describe('gitignore-subset matcher', () => {
   });
 
   it('matches a wildcard-heavy pattern without regex backtracking', () => {
-    // `*a*a*a*a*a*a` against 'a'*80+'c': the old compiler emitted nested
-    // `[^/]*` runs and explored them exponentially (~1.6s for this input,
-    // minutes for a handful more a's). The linear matcher answers in
-    // microseconds; the ceiling is a complexity bound, not a benchmark.
+    // `*a*a*a*a*a*a` against 'a'*80+'c': a backtracking regex explores the
+    // nested `[^/]*` runs exponentially (seconds for this input, minutes for
+    // a handful more a's). The linear matcher answers in microseconds; the
+    // ceiling is a complexity bound, not a benchmark.
     const rules = parseIgnoreFile('*a*a*a*a*a*a\n');
     const name = `${'a'.repeat(80)}c`;
     const start = performance.now();

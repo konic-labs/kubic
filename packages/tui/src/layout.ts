@@ -1,14 +1,14 @@
-// VStack root (panel row; order). Rows top to bottom: the one-row header; the
-// TreeView (sized to its content, hidden below 80 cols and wherever the
+// The layout root, a VStack. Rows top to bottom: the one-row header; the
+// TreeView (sized to its content, hidden below 80 columns and wherever the
 // caller turns it off); the ScrollView transcript (grow 1, follow-end); the
-// inspectable panel (diff / journal, basis 12, present only while open); the
-// transient notice row (0–2 rows); the editor; the one-row status line; the
-// key-hint row. Slots are Components — contents belong to their own issues;
-// this module owns arrangement only.
+// diff / journal panel (basis 12, present only while open); the transient
+// notice row (0–2 rows); the editor; the one-row status line; the key-hint
+// row. Slots are Components; this module owns arrangement only.
 
 import type { Component } from './tui-boundary.js';
 import { VStack } from './tui-boundary.js';
 
+/** @internal */
 export const NARROW_COLUMNS = 80;
 
 // The panel row's height while a panel is open. Same basis as
@@ -22,8 +22,9 @@ interface Viewport {
   height: number;
 }
 
-// The tree row sizes to its content up to this many rows (TUI polish: a
-// fixed 12-row block left most of the top of the screen blank in Kubic).
+// The tree row sizes to its content up to this many rows, so a short tree
+// never leaves the top of the screen blank.
+/** @internal */
 export const TREE_MAX_ROWS = 6;
 
 export interface LayoutSlots {

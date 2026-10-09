@@ -4,33 +4,19 @@
 // and the file's own ending and BOM are restored on write. LF files must be
 // byte-for-byte unaffected.
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { FileJournalStore } from '@kubic/exec/journal';
-import { applyUndo, planUndo } from '@kubic/exec/journal-undo';
-import { afterEach, describe, expect, it } from 'vitest';
-import { createInvocation, MemoryMemoStore } from './memos.js';
+import { applyUndo, FileJournalStore, planUndo } from '@kubic/exec/journal';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
+import { inv } from '../test-support/invocation.js';
 import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
-
-const dirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  dirs.push(dir);
-  return dir;
-}
+import type { OpContext } from './types.js';
 
 function setup(): { root: string; journal: FileJournalStore; c: OpContext } {
-  const root = tmp('edit-tool-');
-  const journal = new FileJournalStore(tmp('edit-tool-j-'));
+  const root = tempDir('edit-tool-');
+  const journal = new FileJournalStore(tempDir('edit-tool-j-'));
   const c: OpContext = {
     env: new NodeExecutionEnv(root),
     sessionId: 's1',
@@ -39,13 +25,6 @@ function setup(): { root: string; journal: FileJournalStore; c: OpContext } {
     journal,
   };
   return { root, journal, c };
-}
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
 }
 
 describe('edit line endings and BOM', () => {

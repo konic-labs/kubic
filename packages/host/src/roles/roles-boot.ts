@@ -8,23 +8,27 @@
 // injected, so tests drive fixtures while prod passes the real FileBridge.
 
 import type { PermissionClasses } from '@kubic/agent/permissions';
+import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import type { FileBridge } from '@kubic/exec/file-bridge';
-import type { DoctorCheck } from '../doctor.js';
-import type { EffectivePolicy } from '../policy/enterprise.js';
+import type { DoctorCheck } from '../doctor/index.js';
+import type { EffectivePolicy } from '../policy/index.js';
 import {
   BUILTIN_PRESET_SOURCE,
   BUILTIN_ROLE_PRESETS,
 } from './builtin-presets.js';
 import type { RoleLayerInput } from './resolver.js';
 import {
-  type ParsedRoleDoc,
-  parseRoleDocument,
   type ResolvedRole,
-  RoleParseError,
   RoleRefusedError,
   resolveRole,
   roleDoctorChecks,
 } from './resolver.js';
+import type { ParsedRoleDoc } from './role-document.js';
+import {
+  parseRoleDocument,
+  RESERVED_ROLE_REASON,
+  RoleParseError,
+} from './role-document.js';
 
 const ROLES_DIR = '.kubic/roles';
 
@@ -44,6 +48,7 @@ function isAbsentDir(error: unknown, dir: string): boolean {
   return path === undefined || path === dir;
 }
 
+/** @internal */
 export class RoleBootError extends Error {
   constructor(message: string) {
     super(message);
@@ -99,6 +104,7 @@ export interface RolesDirInput {
 // or a project document the workspace overrides both with.
 type RoleSource = 'builtin' | 'global' | 'repo';
 
+/** @internal */
 export interface LoadedRoles {
   docs: ParsedRoleDoc[];
   // The markdown behind each doc, keyed by role name — the repo file's text
@@ -191,6 +197,7 @@ function listSourceDir(
 // mistaken for "no roles configured". A refusal is NOT fatal here
 // — the set is reported so doctor can fail it; the lane boot is where a
 // refused role stops a run.
+/** @internal */
 export function loadRoles(input: RolesDirInput): LoadedRoles {
   const root = input.projectRoot ?? input.cwd;
   const dir = `${root}/${ROLES_DIR}`;
@@ -200,118 +207,72 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
     input.trustProject !== undefined
       ? input.trustProject(root)
       : (input.trusted ?? false);
-  const withheld: Array<{ name: string; reason: string }> = [];
-  // The global personal documents, read under the same
-  // per-document rules as the repo ones — a listed document that cannot
-  // be read throws named with its own path, a parse failure is recorded
-  // in `invalid` — but never under the trust gate: only the repo
-  // documents are withheld from untrusted roots. Loaded below, after the
-  // shared `invalid` record exists.
-  const globalDocs: Array<{
-    doc: ParsedRoleDoc;
-    text: string;
-    path: string;
-  }> = [];
-  // Each entry is read and parsed as ITSELF — the text always comes from the
-  // path that was listed, never re-derived from the parsed role name (a
-  // document whose file stem differs from its `role:` line is legal: it
-  // registers under the declared name). A parse failure is named with the
-  // document's own path so a typo'd frontmatter cannot be mistaken for "no
-  // roles configured".
-  const repoDocs: Array<{ doc: ParsedRoleDoc; text: string; path: string }> =
-    [];
   // A document that fails to parse is recorded here — with
   // the file stem, since the declared name is unknowable — instead of
   // aborting the whole load. Only the selected document can block
   // selection (see selectRole); the rest surface in doctor.
   const invalid: Array<{ name: string; path: string; reason: string }> = [];
-  let entries: Array<{ name: string; path: string }>;
-  // Load the global personal documents here — after
-  // `invalid` exists, before the repo layer below. Never trust-gated.
-  if (input.home !== undefined) {
-    for (const entry of listSourceDir(
-      input.bridge,
-      `${input.home}/.kubic/roles`,
-    )) {
-      let text: string;
-      try {
-        text = input.bridge.readTextFile(entry.path);
-      } catch (error) {
-        throw new RoleBootError(
-          `role document ${entry.path} is unreadable: ${error instanceof Error ? error.message : String(error)}`,
+  // The global personal documents, read under the same
+  // per-document rules as the repo ones, but never under the trust gate:
+  // only the repo documents are withheld from untrusted roots.
+  const globalDocs =
+    input.home === undefined
+      ? []
+      : readRoleDocuments(
+          input.bridge,
+          listSourceDir(input.bridge, `${input.home}/.kubic/roles`),
+          invalid,
         );
-      }
-      try {
-        globalDocs.push({
-          doc: parseRoleDocument(text),
-          text,
-          path: entry.path,
-        });
-      } catch (error) {
-        if (error instanceof RoleParseError) {
-          invalid.push({
-            name: entry.name.slice(0, -'.md'.length),
-            path: entry.path,
-            reason: error.message,
-          });
-          continue;
-        }
-        throw error;
-      }
-    }
-  }
-  if (!repoTrusted) {
-    // Untrusted: name what is withheld (stems only — contents are never
-    // read) so doctor and `--role` can say what trust would unlock. An
-    // unlistable or absent dir withholds nothing by name (the trust
-    // refusal in selectRole still applies to anything actually there).
-    // Nothing is read below: entries stays empty.
-    entries = [];
-    try {
-      for (const entry of input.bridge.listDir(dir)) {
-        if (!entry.isDirectory && entry.name.endsWith('.md')) {
-          const name = entry.name.slice(0, -'.md'.length);
-          withheld.push({
-            name,
-            reason: `project role '${name}' withheld: untrusted project root ${root} (trust it with 'kubic trust' or set KUBIC_TRUST_PROJECT=1)`,
-          });
-        }
-      }
-      withheld.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    } catch {
-      // Absent or unreadable dir: nothing to name.
-    }
-  } else {
-    try {
-      entries = input.bridge
-        .listDir(dir)
-        .filter((entry) => !entry.isDirectory && entry.name.endsWith('.md'))
-        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-        .map((entry) => ({ name: entry.name, path: entry.path }));
-    } catch (error) {
-      // An absent `.kubic/roles/` is the NORMAL case, not a failure: most
-      // workspaces have no role documents and the default is unaffected.
-      // Letting the raw ENOENT escape would make every `kubic doctor` red, since
-      // the probe is wired to the binary. An unreadable directory that
-      // DOES exist still throws — the distinction is between "nothing there"
-      // and "there but broken", and only the former is silent.
-      if (!isAbsentDir(error, dir)) throw error;
-      entries = [];
-    }
-  }
+  const repoDocs = repoTrusted
+    ? readRoleDocuments(input.bridge, listSourceDir(input.bridge, dir), invalid)
+    : [];
+  const withheld = repoTrusted ? [] : withheldRoles(input.bridge, dir, root);
+  const duplicates = forkedRoleNames(globalDocs, repoDocs);
+  const dupNames = new Set(duplicates.map((dup) => dup.name));
+  const { docs, texts, sources } = withBuiltins([
+    ...globalDocs
+      .filter(({ doc }) => !dupNames.has(doc.name))
+      .map((entry) => ({ ...entry, source: 'global' as const })),
+    ...repoDocs
+      .filter(({ doc }) => !dupNames.has(doc.name))
+      .map((entry) => ({ ...entry, source: 'repo' as const })),
+  ]);
+  const { resolved, refused } = resolveRoles(docs, input);
+  return {
+    docs,
+    texts,
+    sources,
+    resolved,
+    refused,
+    withheld,
+    invalid,
+    duplicates,
+  };
+}
+
+// Each entry is read and parsed as ITSELF — the text always comes from the
+// path that was listed, never re-derived from the parsed role name (a
+// document whose file stem differs from its `role:` line is legal: it
+// registers under the declared name). A listed document that cannot be read
+// throws, named with its own path; a parse failure is recorded in `invalid`
+// under the file stem.
+function readRoleDocuments(
+  bridge: Pick<FileBridge, 'readTextFile'>,
+  entries: Array<{ name: string; path: string }>,
+  invalid: Array<{ name: string; path: string; reason: string }>,
+): Array<{ doc: ParsedRoleDoc; text: string; path: string }> {
+  const docs: Array<{ doc: ParsedRoleDoc; text: string; path: string }> = [];
   for (const entry of entries) {
     let text: string;
     try {
-      text = input.bridge.readTextFile(entry.path);
+      text = bridge.readTextFile(entry.path);
     } catch (error) {
-      // A listed document that cannot be read is a real failure, and it is
-      // named with its own path.
       throw new RoleBootError(
         `role document ${entry.path} is unreadable: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
     try {
-      repoDocs.push({ doc: parseRoleDocument(text), text, path: entry.path });
+      docs.push({ doc: parseRoleDocument(text), text, path: entry.path });
     } catch (error) {
       if (error instanceof RoleParseError) {
         invalid.push({
@@ -324,40 +285,65 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
       throw error;
     }
   }
-  // Partition out repo-vs-repo duplicate declared names —
-  // only uniquely-declared documents reach the builtin merge below.
-  const byName = new Map<string, string[]>();
-  for (const { doc, path } of repoDocs) {
-    byName.set(doc.name, [...(byName.get(doc.name) ?? []), path]);
+  return docs;
+}
+
+// Untrusted: name what is withheld (stems only — contents are never
+// read) so doctor and `--role` can say what trust would unlock. An
+// unlistable or absent dir withholds nothing by name (the trust
+// refusal in selectRole still applies to anything actually there).
+function withheldRoles(
+  bridge: Pick<FileBridge, 'listDir'>,
+  dir: string,
+  root: string,
+): Array<{ name: string; reason: string }> {
+  const withheld: Array<{ name: string; reason: string }> = [];
+  try {
+    for (const entry of bridge.listDir(dir)) {
+      if (!entry.isDirectory && entry.name.endsWith('.md')) {
+        const name = entry.name.slice(0, -'.md'.length);
+        withheld.push({
+          name,
+          reason: `project role '${name}' withheld: untrusted project root ${root} (trust it with 'kubic trust' or set KUBIC_TRUST_PROJECT=1)`,
+        });
+      }
+    }
+    withheld.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  } catch {
+    // Absent or unreadable dir: nothing to name.
   }
+  return withheld;
+}
+
+// Declared names claimed twice within one layer. A global name claimed twice
+// resolves to nothing, exactly like a repo fork. A name claimed once globally
+// and once (uniquely) in the repo is NOT a fork: both layers pass the filter
+// and the project document wins by precedence in the merge. A name forked in
+// EITHER layer poisons the name everywhere: an ambiguous project layer never
+// silently falls back to the global copy.
+function forkedRoleNames(
+  globalDocs: ReadonlyArray<{ doc: ParsedRoleDoc; path: string }>,
+  repoDocs: ReadonlyArray<{ doc: ParsedRoleDoc; path: string }>,
+): Array<{ name: string; paths: string[] }> {
   const duplicates: Array<{ name: string; paths: string[] }> = [];
-  for (const [name, paths] of byName) {
-    if (paths.length > 1) duplicates.push({ name, paths });
+  for (const layer of [repoDocs, globalDocs]) {
+    const byName = new Map<string, string[]>();
+    for (const { doc, path } of layer) {
+      byName.set(doc.name, [...(byName.get(doc.name) ?? []), path]);
+    }
+    for (const [name, paths] of byName) {
+      if (paths.length > 1) duplicates.push({ name, paths });
+    }
   }
-  // The same partitioning for global-vs-global forks — a
-  // global name claimed twice resolves to nothing, exactly like a repo
-  // fork. A name claimed once globally and once (uniquely) in the repo
-  // is NOT a fork: both layers pass the filter and the project document
-  // wins by precedence in the merge below. A name forked in EITHER
-  // layer poisons the name everywhere: an ambiguous project layer never
-  // silently falls back to the global copy.
-  const globalByName = new Map<string, string[]>();
-  for (const { doc, path } of globalDocs) {
-    globalByName.set(doc.name, [...(globalByName.get(doc.name) ?? []), path]);
-  }
-  for (const [name, paths] of globalByName) {
-    if (paths.length > 1) duplicates.push({ name, paths });
-  }
-  duplicates.sort((a, b) => (a.name < b.name ? -1 : 1));
-  const dupNames = new Set(duplicates.map((dup) => dup.name));
-  const { docs, texts, sources } = withBuiltins([
-    ...globalDocs
-      .filter(({ doc }) => !dupNames.has(doc.name))
-      .map((entry) => ({ ...entry, source: 'global' as const })),
-    ...repoDocs
-      .filter(({ doc }) => !dupNames.has(doc.name))
-      .map((entry) => ({ ...entry, source: 'repo' as const })),
-  ]);
+  return duplicates.sort((a, b) => (a.name < b.name ? -1 : 1));
+}
+
+// Each document resolved under the config layers and the enterprise tool
+// policy; a refused one is reported by name, never thrown.
+function resolveRoles(
+  docs: readonly ParsedRoleDoc[],
+  input: RolesDirInput,
+): Pick<LoadedRoles, 'resolved' | 'refused'> {
   const resolved: ResolvedRole[] = [];
   const refused: Array<{ name: string; reason: string }> = [];
   for (const doc of docs) {
@@ -377,16 +363,7 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
       throw error;
     }
   }
-  return {
-    docs,
-    texts,
-    sources,
-    resolved,
-    refused,
-    withheld,
-    invalid,
-    duplicates,
-  };
+  return { resolved, refused };
 }
 
 // The role a lane boot runs as. `--role` names it; an absent flag means no
@@ -419,6 +396,11 @@ function duplicateRefusal(dup: { name: string; paths: string[] }): string {
 }
 
 export function selectRole(input: RoleSelectionInput): SelectedRole {
+  if (input.role === DEFAULT_RUN_ROLE) {
+    throw new RoleBootError(
+      `${RESERVED_ROLE_REASON}; omit --role to run without one`,
+    );
+  }
   const loaded = loadRoles(input);
   // A forked name is refused before anything else — no copy
   // wins, not even a same-named builtin.
@@ -443,9 +425,14 @@ export function selectRole(input: RoleSelectionInput): SelectedRole {
     // learn it is trust, not a typo, that blocks them.
     const held = loaded.withheld.find((entry) => entry.name === input.role);
     if (held !== undefined) throw new RoleBootError(held.reason);
+    // A withheld document is never read, so its declared role may differ
+    // from its file name: name the withheld files too, so a name that trust
+    // would unlock does not read as a typo. The builtins always load, so
+    // the loaded list is never empty.
     const known = loaded.docs.map((entry) => entry.name).join(', ');
+    const withheldNames = loaded.withheld.map((entry) => entry.name).join(', ');
     throw new RoleBootError(
-      `no role document for '${input.role}' under ${ROLES_DIR}${known === '' ? ' (no role documents found)' : ` (loaded: ${known})`}`,
+      `no role document for '${input.role}' under ${ROLES_DIR} (loaded: ${known}${withheldNames === '' ? '' : `; withheld by project trust: ${withheldNames}`})`,
     );
   }
   const resolved = resolveRole(doc, input.layers ?? [], {

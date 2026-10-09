@@ -6,10 +6,9 @@ rationale, package APIs and CLI behaviour never mix.
 | Area | Directory | Belongs here | Does not belong here |
 | --- | --- | --- | --- |
 | Architecture | [architecture/](architecture/README.md) | Topology and why: the in-process runtime, the change journal, the approvals safety model, the package map | API signatures, CLI flags, config keys |
-| Packages | [packages/](packages/README.md) | One page per package: public API, contracts, dependency neighbours | Architecture rationale, CLI usage |
+| Packages | [packages/](packages/README.md) | One page per package: entry points, invariants, neighbours | Architecture rationale, CLI usage |
 | CLI & operations | [cli/](cli/README.md) | Commands, flags, exit codes, configuration, `doctor` diagnostics | Package internals |
 | Contributing | [contributing.md](contributing.md) | Workflow, Conventional Commits, the docs-update rule | Feature documentation |
-| UI design | [ui/](ui/README.md) | The terminal design system: colour tokens, glyphs, key map, screen mockups | Implementation details, CLI flags |
 
 ## Pages
 
@@ -27,7 +26,7 @@ rationale, package APIs and CLI behaviour never mix.
 | --- | --- |
 | `packages/core` | [packages/core.md](packages/core.md) |
 | `packages/exec` | [packages/exec.md](packages/exec.md) |
-| `packages/agent` | [agent.md](packages/agent.md) |
+| `packages/agent` | [packages/agent.md](packages/agent.md) |
 | `packages/host` | [packages/host.md](packages/host.md) |
 | `packages/trajectory` | [packages/trajectory.md](packages/trajectory.md) |
 | `packages/eval` | [packages/eval.md](packages/eval.md) |
@@ -38,12 +37,21 @@ rationale, package APIs and CLI behaviour never mix.
 
 | Page | Covers |
 | --- | --- |
-| [commands.md](cli/commands.md) | Every `kubic` command and flag |
+| [commands.md](cli/commands.md) | The command index: global behaviour and where each command is documented |
+| [run.md](cli/run.md) | `kubic run`, `kubic attach`, `kubic resume` |
+| [tui.md](cli/tui.md) | `kubic tui`: the interactive surface |
+| [tui-keys.md](cli/tui-keys.md) | The TUI's screen layout, keys and keybindings file |
+| [approvals.md](cli/approvals.md) | The approval card and what each trigger detects |
+| [sessions.md](cli/sessions.md) | `kubic sessions`: listing, forking and pruning sessions |
+| [journal.md](cli/journal.md) | `kubic diff`, `undo`, `log`, `status`, `git`, `commit`, `journal prune` |
+| [models.md](cli/models.md) | `kubic models`, `kubic setup`, `models.json` and provider keys |
+| [analysis.md](cli/analysis.md) | `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy`, `audit` |
 | [exit-codes.md](cli/exit-codes.md) | The exit-code table |
-| [configuration.md](cli/configuration.md) | Config precedence and secrets |
+| [configuration.md](cli/configuration.md) | Config layers, keys and `kubic config` |
+| [enterprise.md](cli/enterprise.md) | The managed `[policy]` layer and its audit sinks |
 | [doctor-and-debug.md](cli/doctor-and-debug.md) | `kubic doctor` diagnostics and debugging |
 | [tools.md](cli/tools.md) | The tools the model calls |
-| [trust.md](cli/trust.md) | Project trust |
+| [trust.md](cli/trust.md) | Project trust and `kubic trust` |
 | [skills.md](cli/skills.md) | `kubic skills`: which skills loaded and why any were left out |
 | [contributing.md](contributing.md) | Contributor workflow |
 | [contributing-cli.md](contributing-cli.md) | Building CLI commands: the commander registry, exit codes, `--json`, output helpers |
@@ -55,8 +63,9 @@ rationale, package APIs and CLI behaviour never mix.
    behaviour operators see. Cross-link instead of duplicating.
 2. **Docs change with the code.** A behaviour change ships its docs page
    in the same commit. See [contributing.md](contributing.md).
-3. **No broken internal links.** `npm run docs:check` must pass. External
-   URLs and same-page anchors are exempt.
+3. **No broken internal links.** `npm run docs:check` must pass: every
+   relative link resolves, and every anchor names a heading on its page.
+   External URLs are not fetched.
 4. **Honest limits, stated plainly.** Kubic has no isolation, and the
    docs never imply otherwise.
 

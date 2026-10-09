@@ -16,6 +16,7 @@ import type {
 } from './tui-boundary.js';
 
 /** How many files one popup offers: large repos stay responsive. */
+/** @internal */
 export const FILE_MENTION_MAX = 50;
 
 const basename = (path: string): string =>
@@ -36,6 +37,7 @@ function isSubsequence(query: string, text: string): boolean {
  * does, then the path contains it, then a fuzzy (in-order) match; ties go
  * to the shorter path, then alphabetical.
  */
+/** @internal */
 export function rankFileMentions(
   files: readonly string[],
   query: string,

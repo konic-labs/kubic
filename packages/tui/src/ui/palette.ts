@@ -52,6 +52,7 @@ export interface PaletteItem {
   readonly recent?: boolean;
 }
 
+/** @internal */
 export interface PaletteMatch {
   readonly item: PaletteItem;
   /** Matched indices in `item.text`, and in `item.detail`. */
@@ -61,6 +62,7 @@ export interface PaletteMatch {
   readonly score: number;
 }
 
+/** @internal */
 export interface PaletteGroupView {
   readonly group: PaletteGroupId;
   readonly rows: readonly PaletteMatch[];
@@ -170,6 +172,7 @@ function groupMatches(
   );
 }
 
+/** @internal */
 export function paletteGroups(state: PaletteState): PaletteGroupView[] {
   const views: PaletteGroupView[] = [];
   for (const group of PALETTE_GROUP_ORDER) {
@@ -186,6 +189,7 @@ export function paletteGroups(state: PaletteState): PaletteGroupView[] {
 }
 
 /** The rows on screen, in order (what `selected` indexes). */
+/** @internal */
 export function paletteRows(state: PaletteState): PaletteMatch[] {
   return paletteGroups(state).flatMap((view) => view.rows);
 }

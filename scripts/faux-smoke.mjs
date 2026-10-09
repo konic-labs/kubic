@@ -2,7 +2,7 @@
 // drives `kubic run` end to end — real lane, real tools, real session
 // store and journal — with Pi's faux provider answering, so no network, no
 // credentials and no paid tokens are involved. Run after `npm run build`
-// (it is part of `npm run test:binary-contract`).
+// (it is part of `npm run test:binary`).
 //
 // Probes (each under a hermetic HOME and a scratch cwd):
 //   - `run -p hello --json`: exit 0, one JSON envelope line, status

@@ -30,7 +30,7 @@ import type {
   GitStageResult,
   GitStatusResult,
   GitWorktreeListResult,
-} from './git.js';
+} from './git/index.js';
 import {
   gitBranchOperation,
   gitCheckpointOperation,
@@ -43,7 +43,7 @@ import {
   gitStageOperation,
   gitStatusOperation,
   gitWorktreeListOperation,
-} from './git.js';
+} from './git/index.js';
 import type { GrepResult } from './grep.js';
 import { GREP_DEFAULT_MAX, grepOperation } from './grep.js';
 import type { LsResult } from './ls.js';

@@ -4,17 +4,19 @@
 // eval) read it with parseTrajectoryExport — no shim, no adapter.
 //
 // Shape ownership (read-only — this package never modifies them):
-//   Provenance/ExecutionEnv in packages/exec/src/env.ts,
+//   Provenance/ExecutionEnv in packages/exec/src/env/contracts.ts,
 //   ResultStatus in packages/agent/src/lane/settle.ts,
-//   FileChange diffs in packages/exec/src/journal-diff.ts,
-//   ApprovalPolicy/verdicts in packages/host/src/approvals.ts,
+//   FileChange diffs in packages/exec/src/journal/diff.ts,
+//   ApprovalPolicy/verdicts in packages/host/src/approvals/policy.ts,
 //   KubicUsageRow in packages/agent/src/usage.ts,
 //   FAILURE_CODES in packages/agent/src/lane/failures.ts.
 // This package imports none of them (dep-lint: trajectory sits below the
 // runtime implementations) — the structural interfaces below are
 // snapshots of those shapes, pinned by the golden fixture test.
 
+import { EXIT_USAGE, type ExitCode } from '@kubic/core/cli/exit-codes';
 export const SCHEMA_VERSION = '1.0';
+/** @internal */
 export const SCHEMA_MAJOR = 1;
 
 export type JsonValue =
@@ -28,6 +30,7 @@ export type JsonValue =
 // Failure taxonomy — snapshot of FAILURE_CODES owned by
 // packages/agent/src/lane/failures.ts. The agent owns the spelling;
 // this list is pinned equal by test so a drift breaks loudly here.
+/** @internal */
 export const TRAJECTORY_FAILURE_CODES = [
   'model_failed',
   'model_refused',
@@ -55,6 +58,7 @@ export function isTrajectoryFailureCode(
   return (TRAJECTORY_FAILURE_CODES as readonly string[]).includes(value);
 }
 
+/** @internal */
 export const RESULT_STATUSES = [
   'completed',
   'failed',
@@ -229,6 +233,7 @@ export interface TrajectoryExport {
 
 // Closed-world field coverage: adding or removing a trajectory section breaks
 // compilation here, so the contract cannot drift silently.
+/** @internal */
 export const TRAJECTORY_FIELDS = {
   schema_version: true,
   task: true,
@@ -252,9 +257,12 @@ export const TRAJECTORY_FIELDS = {
 
 export type TrajectorySchemaErrorCode = 'unknown-major' | 'malformed';
 
+// An export this reader cannot take — an unknown major version, or a file
+// that is not a valid export — is an invalid input: the usage code, never
+// `turn_limit`'s 3.
 export class TrajectorySchemaError extends Error {
   readonly code: TrajectorySchemaErrorCode;
-  readonly exitCode = 3;
+  readonly exitCode: ExitCode = EXIT_USAGE;
 
   constructor(code: TrajectorySchemaErrorCode, message: string) {
     super(message);
@@ -300,9 +308,8 @@ type FieldType =
   | 'object|null'
   | 'string[]';
 
-// The required keys of every object section. `transfer` is gone, and
-// `actions`/`observations`/`approvals` are arrays, so they are listed
-// separately below.
+// The required keys of every object section. `actions`, `observations` and
+// `approvals` are arrays, so they are listed separately below.
 const SECTION_FIELDS: Readonly<
   Record<string, Readonly<Record<string, FieldType>>>
 > = {

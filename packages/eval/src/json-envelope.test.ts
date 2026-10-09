@@ -1,5 +1,5 @@
 // `--json` envelopes are one two-space-indented document (core formatJson),
-// like every other command's (docs/cli/commands.md, analysis shared rules).
+// like every other command's (docs/cli/analysis.md, the shared rules).
 
 import { formatJson } from '@kubic/core/cli/output';
 import { describe, expect, it } from 'vitest';

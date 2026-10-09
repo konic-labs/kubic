@@ -1,12 +1,9 @@
-// ApprovalSurface: the TUI's answer seat for the host's approval asks. This is
-// the module that turns approval-view.ts from a dead component into the surface
-// the installed policy needs.
+// ApprovalSurface: the TUI's answer seat for the host's approval asks.
 //
-// Why this exists at all: the host installs the approval ask on the run path
-// (packages/host/src/approvals.ts) but no command could answer it —
-// the headless runner has no TTY and the TUI had no overlay — so every
-// challenged call was refused with NO_ANSWER_SURFACE_REASON. The TUI is the
-// only command with a user attached, so it is the one that has to collect the
+// The host installs the approval ask on the run path
+// (packages/host/src/approvals/install.ts). The headless runner has no TTY, so
+// there it refuses every challenged call with NO_ANSWER_SURFACE_REASON; the TUI
+// is the only command with a user attached, so it is the one that collects the
 // verdict. The surface owns:
 //
 //   - the queue: the lane challenges one call at a time, but the decider may
@@ -39,11 +36,12 @@ import {
   approvalKeyProblems,
   resolveApprovalKey,
 } from './approval-view.js';
-import { sanitizeLaneText } from './lane-cells.js';
+import { sanitizeLaneText } from './lane-text.js';
 import { matchesKey } from './tui-boundary.js';
 
 // The reason recorded when the session cannot collect a verdict. Named
 // once: the deny that a quit produces must read the same everywhere.
+/** @internal */
 export const APPROVAL_CANCELLED_REASON = 'the approval was never answered';
 
 export interface ApprovalSurfaceOptions {
@@ -162,7 +160,7 @@ export interface ApprovalSurface {
   checkKeys(reserved?: ReadonlyArray<string>): boolean;
   keys(): Record<ApprovalAction, readonly string[]>;
   // The answer seat itself: field-for-field the host's
-  // `PolicyInput.answer` shape (packages/host/src/approvals.ts), typed
+  // `PolicyInput.answer` shape (packages/host/src/approvals/installed-policy.ts), typed
   // structurally because the TUI package must not import host implementation
   // — the composition root's own typecheck pins the compatibility. Asking
   // through `seat` is the ONLY way in: it delegates to ask(), so the ingress
@@ -246,6 +244,7 @@ function decisionFor(action: ApprovalAction): ApprovalDecision {
   return { approved: false, reason: 'denied by the user' };
 }
 
+// biome-ignore lint/complexity/noExcessiveLinesPerFunction: one state machine (the queue, the shown ask, its arming window and timer) whose short methods share that state; it stays a closure, not a class, because `seat` is handed out as a plain function.
 export function createApprovalSurface(
   options: ApprovalSurfaceOptions = {},
 ): ApprovalSurface {

@@ -1,6 +1,5 @@
-// Built-in benchmark suites
-// mutation hardening: exact shape assertions so dropped/added suites,
-// flipped stub flags, or a findSuite rewrite cannot survive.
+// Built-in benchmark suites: exact shape assertions, so a dropped or added
+// suite, a flipped stub flag or a findSuite rewrite fails here.
 import { describe, expect, it } from 'vitest';
 import { EVAL_CATEGORIES } from './categories.js';
 import { EVAL_SUITES, findSuite, resolveSuites } from './suites.js';

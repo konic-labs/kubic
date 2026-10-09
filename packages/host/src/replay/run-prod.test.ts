@@ -5,8 +5,8 @@
 import { buildTrajectoryExport } from '@kubic/trajectory/export';
 import type { TrajectoryExport } from '@kubic/trajectory/schema';
 import { describe, expect, it } from 'vitest';
-import type { ReplayRunRequest } from './replay.js';
 import { createProdReplayRun } from './run-prod.js';
+import type { ReplayRunRequest } from './types.js';
 
 function fixtureTrajectory(objective = 'Fix the widget'): TrajectoryExport {
   return buildTrajectoryExport({

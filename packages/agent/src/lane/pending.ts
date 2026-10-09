@@ -27,8 +27,7 @@
 // always free for the next prompt afterwards.
 //
 // The decisions are driven by the pi-durable Harness only; the parameter is
-// the structural subset of the Lane (built in parallel), so this
-// module lands and compiles before that issue does.
+// the structural subset of the Lane this module needs.
 
 import {
   BACKGROUND_CONTEXT,

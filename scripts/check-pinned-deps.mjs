@@ -1,9 +1,13 @@
-// Exact-pin check (extended to the CLI stack).
-// Every dependency spec in every workspace package.json must be an exact
-// version — no ^, ~, or ranges — so Pi upgrades AND third-party upgrades
-// (commander, consola, @clack/prompts, dev tooling) are
-// always deliberate. `overrides` entries stay Pi-only (they may pin nested
-// transitive versions by design).
+// Dependency pin check, over the root manifest and every workspace manifest:
+//   - every dependency spec is an exact version (no ^, ~ or range), so Pi
+//     upgrades and third-party upgrades (the CLI stack, dev tooling) are
+//     always deliberate;
+//   - no manifest has `overrides`: npm applies them only in this checkout,
+//     never when someone installs kubic, so a pin that matters is a
+//     dependency instead;
+//   - every workspace dependency is declared by the root manifest with the
+//     same spec. The root is the package npm installs, so its dependencies
+//     are the runtime tree a user gets.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -14,22 +18,15 @@ const EXACT_RE = /^\d+\.\d+\.\d+(-[\w.]+)?$/;
 function packageJsonFiles(root) {
   const files = [join(root, 'package.json')];
   for (const area of ['packages', 'apps']) {
-    // Stryker disable next-line ArrayDeclaration: a junk seed entry fails
-    // statSync and is skipped, so the file list is identical.
     let entries = [];
     try {
       entries = readdirSync(join(root, area));
-      // Stryker disable next-line BlockStatement: without `continue`,
-      // `entries` is still [] and the loop below is a no-op.
     } catch {
       continue;
     }
     for (const e of entries) {
       const f = join(root, area, e, 'package.json');
       try {
-        // Stryker disable next-line ConditionalExpression: pushing a
-        // non-file is unobservable — readFileSync/parse throw and the
-        // entry is skipped just the same.
         if (statSync(f).isFile()) files.push(f);
       } catch {
         // no manifest — nothing to check
@@ -41,15 +38,11 @@ function packageJsonFiles(root) {
 
 export function checkPinned(root) {
   const violations = [];
-  for (const file of packageJsonFiles(root)) {
-    let manifest;
-    try {
-      // Stryker disable next-line StringLiteral: "" encoding returns a
-      // Buffer and JSON.parse coerces it identically.
-      manifest = JSON.parse(readFileSync(file, 'utf8'));
-    } catch {
-      continue;
-    }
+  const [rootFile, ...workspaceFiles] = packageJsonFiles(root);
+  const rootDeps = readManifest(rootFile)?.dependencies ?? {};
+  for (const file of [rootFile, ...workspaceFiles]) {
+    const manifest = readManifest(file);
+    if (manifest === undefined) continue;
     for (const section of [
       'dependencies',
       'devDependencies',
@@ -57,9 +50,6 @@ export function checkPinned(root) {
       'optionalDependencies',
     ]) {
       for (const [dep, spec] of Object.entries(manifest[section] ?? {})) {
-        // Stryker disable next-line ConditionalExpression: dropping the
-        // typeof guard is unobservable — no non-string JSON value
-        // stringifies to an exact-version match.
         if (typeof spec !== 'string' || !EXACT_RE.test(spec)) {
           violations.push({
             file: relative(root, file),
@@ -71,13 +61,29 @@ export function checkPinned(root) {
       }
     }
     for (const [dep, spec] of Object.entries(manifest.overrides ?? {})) {
-      if (!dep.startsWith('@earendil-works/')) continue;
-      if (typeof spec === 'string' && !EXACT_RE.test(spec)) {
+      violations.push({
+        file: relative(root, file),
+        dep,
+        spec,
+        reason: 'override',
+      });
+    }
+    if (file === rootFile) continue;
+    for (const [dep, spec] of Object.entries(manifest.dependencies ?? {})) {
+      if (!Object.hasOwn(rootDeps, dep)) {
         violations.push({
           file: relative(root, file),
           dep,
           spec,
-          reason: 'range-not-exact',
+          reason: 'missing-from-root',
+        });
+      } else if (rootDeps[dep] !== spec) {
+        violations.push({
+          file: relative(root, file),
+          dep,
+          spec,
+          reason: 'differs-from-root',
+          rootSpec: rootDeps[dep],
         });
       }
     }
@@ -85,18 +91,36 @@ export function checkPinned(root) {
   return violations;
 }
 
+function readManifest(file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+// One line per violation, naming what to change.
+export function describeViolation(v) {
+  switch (v.reason) {
+    case 'override':
+      return `${v.file}: overrides.${v.dep} is refused: overrides never reach an npm install of kubic, so pin it as a dependency instead`;
+    case 'missing-from-root':
+      return `${v.file}: ${v.dep}@${v.spec} is not declared by the root package.json, the manifest npm installs`;
+    case 'differs-from-root':
+      return `${v.file}: ${v.dep}@${v.spec} differs from the root package.json's ${v.rootSpec}`;
+    default:
+      return `${v.file}: ${v.dep}@${v.spec} is not an exact pin`;
+  }
+}
+
 const isMain = import.meta.main;
 if (isMain) {
   const root =
     process.argv[2] ?? join(dirname(fileURLToPath(import.meta.url)), '..');
   const violations = checkPinned(root);
-  for (const v of violations) {
-    console.log(
-      `${v.file}: ${v.dep}@${v.spec} is not an exact pin (${v.reason})`,
-    );
-  }
+  for (const v of violations) console.log(describeViolation(v));
   if (violations.length > 0) {
-    console.log(`${violations.length} unpinned dependency(ies)`);
+    console.log(`${violations.length} dependency pin problem(s)`);
     process.exit(1);
   }
   console.log('dependency pins OK');

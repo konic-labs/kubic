@@ -1,7 +1,6 @@
-// Kubic colour tokens (/README.md "Colour tokens").
-// One set of semantic roles for every terminal surface. A palette assigns a
-// colour value to each role; `style.ts` turns roles into escape sequences for
-// the terminal's colour depth.
+// Kubic colour tokens: one set of semantic roles for every terminal
+// surface. A palette assigns a colour value to each role; `style.ts` turns
+// roles into escape sequences for the terminal's colour depth.
 //
 // A colour value is one of:
 //   '#rrggbb'  — an exact colour, downgraded to 256/16 colours as needed;
@@ -75,7 +74,7 @@ export function ansiSlot(value: ColorValue): number | undefined {
   return slot >= 0 && slot <= 15 ? slot : undefined;
 }
 
-// The Konic brand on a near-black terminal (docs/ui values).
+// The Konic brand on a near-black terminal.
 export const DARK_PALETTE: Palette = {
   bg0: '#0a0a0c',
   bg1: '#111115',
@@ -104,6 +103,7 @@ export const DARK_PALETTE: Palette = {
 
 // The same roles for a light terminal background: dark text on near-white
 // surfaces, Konic red deepened so it keeps its contrast on white.
+/** @internal */
 export const LIGHT_PALETTE: Palette = {
   bg0: '#ffffff',
   bg1: '#f3f3f6',
@@ -134,6 +134,7 @@ export const LIGHT_PALETTE: Palette = {
 // image backgrounds show through), semantic roles on the ANSI palette slots
 // so the user's terminal theme decides the actual colours. Selection uses
 // bright black, the one background most palettes keep readable.
+/** @internal */
 export const TERMINAL_PALETTE: Palette = {
   bg0: 'none',
   bg1: 'none',

@@ -44,7 +44,7 @@ function describeTarget(args: unknown[]): string {
 // A loopback destination never leaves the machine, so a test that owns a
 // local server (`createServer` on port 0) stays hermetic; only egress is
 // refused. `undefined`/empty host means Node's default, localhost.
-// Exported for the contract test (hermetic-test-env.test.ts).
+// Exported for the contract test (apps/kubic/test/hermetic-env.test.ts).
 export function isLoopbackHost(host: unknown): boolean {
   if (host === undefined || host === '' || host === null) return true;
   if (typeof host !== 'string') return false;

@@ -3,21 +3,14 @@
 // the lane's OperationKillRegistry. The TUI reuses one registry for the whole
 // session, so a handle per completed call is an unbounded leak.
 
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { describe, expect, it } from 'vitest';
 import { OperationKillRegistry } from '../lane/abort.js';
-import { createInvocation, MemoryMemoStore } from './memos.js';
+import { inv } from '../test-support/invocation.js';
 import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
+import type { OpContext } from './types.js';
 
 const posix = process.platform !== 'win32';
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
-}
 
 describe('bash kill registry retention', () => {
   it.runIf(posix)(

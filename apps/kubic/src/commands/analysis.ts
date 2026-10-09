@@ -17,15 +17,17 @@ import {
   DATASET_TYPES,
   type ExportCommandOptions,
 } from '@kubic/eval/export-cli';
-import type { CostOptions } from '@kubic/host/ops/cost/cost-cli';
-import type { AuditOptions } from '@kubic/host/policy/audit-cli';
-import type { PolicyOptions } from '@kubic/host/policy/policy-cli';
-import type { ReplayCommandOptions } from '@kubic/host/replay/replay';
+import type { AuditOptions } from '@kubic/host/audit';
+import type { CostOptions } from '@kubic/host/cost';
+import type { PolicyOptions } from '@kubic/host/policy';
+import type { ReplayCommandOptions } from '@kubic/host/replay';
+import { examples } from '../cli/argv.js';
 import type { CommandRegistrar, KubicProgram } from '../cli/context.js';
-import type { CliConfigResult } from '../config-runtime.js';
+import type { CliConfigResult } from '../config/load.js';
 
 // One analysis runner: commander's parsed options plus the process-wide
-// config load in, the command's result out (production wiring: ../prod-runners.ts).
+// config load in, the command's result out (production wiring:
+// ../runners/analysis.ts).
 type AnalysisRunner<Options> = (
   options: Options,
   config: CliConfigResult,
@@ -43,7 +45,7 @@ export interface AnalysisRunners {
 
 // `--session <id>`: read the session's own trajectory
 // (<sessions-root>/<id>/trajectory.json) instead of naming the file. The
-// prod runner resolves it (./run-trajectory.ts resolveSessionTrajectory).
+// prod runner resolves it (./run/trajectory.ts resolveSessionTrajectory).
 interface SessionOption {
   readonly session?: string;
 }
@@ -66,10 +68,6 @@ const THINKING_HELP = 'thinking level, recorded verbatim';
 // eval --trajectory reads model/thinking/worktree from the export: the flag
 // only cross-checks it.
 const FROM_EXPORT = '; --trajectory reads it from the export';
-
-function examples(lines: readonly string[]): string {
-  return `\nExamples:\n${lines.map((line) => `  $ ${line}`).join('\n')}`;
-}
 
 function command(
   program: KubicProgram,

@@ -5,181 +5,81 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    "./approval-timeout": {
-      "source": "./src/approval-timeout.ts",
-      "default": "./src/approval-timeout.ts"
-    },
     "./approvals": {
-      "source": "./src/approvals.ts",
-      "default": "./src/approvals.ts"
+      "source": "./src/approvals/index.ts",
+      "default": "./src/approvals/index.ts"
     },
-    "./config/config": {
-      "source": "./src/config/config.ts",
-      "default": "./src/config/config.ts"
+    "./audit": {
+      "source": "./src/audit/index.ts",
+      "default": "./src/audit/index.ts"
     },
-    "./config/config-cli": {
-      "source": "./src/config/config-cli.ts",
-      "default": "./src/config/config-cli.ts"
+    "./cli": {
+      "source": "./src/cli/index.ts",
+      "default": "./src/cli/index.ts"
     },
-    "./config/config-doctor": {
-      "source": "./src/config/config-doctor.ts",
-      "default": "./src/config/config-doctor.ts"
+    "./config": {
+      "source": "./src/config/index.ts",
+      "default": "./src/config/index.ts"
     },
-    "./config/model-key-audit": {
-      "source": "./src/config/model-key-audit.ts",
-      "default": "./src/config/model-key-audit.ts"
+    "./config/schema": {
+      "source": "./src/config/schema.ts",
+      "default": "./src/config/schema.ts"
     },
-    "./config/runtime": {
-      "source": "./src/config/runtime.ts",
-      "default": "./src/config/runtime.ts"
-    },
-    "./config/secrets": {
-      "source": "./src/config/secrets.ts",
-      "default": "./src/config/secrets.ts"
-    },
-    "./config/trust-store": {
-      "source": "./src/config/trust-store.ts",
-      "default": "./src/config/trust-store.ts"
+    "./cost": {
+      "source": "./src/cost/index.ts",
+      "default": "./src/cost/index.ts"
     },
     "./doctor": {
-      "source": "./src/doctor.ts",
-      "default": "./src/doctor.ts"
+      "source": "./src/doctor/index.ts",
+      "default": "./src/doctor/index.ts"
     },
-    "./doctor-full-access": {
-      "source": "./src/doctor-full-access.ts",
-      "default": "./src/doctor-full-access.ts"
+    "./git": {
+      "source": "./src/git/index.ts",
+      "default": "./src/git/index.ts"
     },
-    "./faux-provider": {
-      "source": "./src/faux-provider.ts",
-      "default": "./src/faux-provider.ts"
+    "./journal": {
+      "source": "./src/journal/index.ts",
+      "default": "./src/journal/index.ts"
     },
-    "./git-cli": {
-      "source": "./src/git-cli.ts",
-      "default": "./src/git-cli.ts"
+    "./models": {
+      "source": "./src/models/index.ts",
+      "default": "./src/models/index.ts"
     },
-    "./journal-cli": {
-      "source": "./src/journal-cli.ts",
-      "default": "./src/journal-cli.ts"
+    "./policy": {
+      "source": "./src/policy/index.ts",
+      "default": "./src/policy/index.ts"
     },
-    "./limits/doctor-limits": {
-      "source": "./src/limits/doctor-limits.ts",
-      "default": "./src/limits/doctor-limits.ts"
+    "./presentation": {
+      "source": "./src/presentation/index.ts",
+      "default": "./src/presentation/index.ts"
     },
-    "./limits/no-isolation-notice": {
-      "source": "./src/limits/no-isolation-notice.ts",
-      "default": "./src/limits/no-isolation-notice.ts"
+    "./replay": {
+      "source": "./src/replay/index.ts",
+      "default": "./src/replay/index.ts"
     },
-    "./models-cli": {
-      "source": "./src/models-cli.ts",
-      "default": "./src/models-cli.ts"
+    "./roles": {
+      "source": "./src/roles/index.ts",
+      "default": "./src/roles/index.ts"
     },
-    "./ops/cost/cost-cli": {
-      "source": "./src/ops/cost/cost-cli.ts",
-      "default": "./src/ops/cost/cost-cli.ts"
+    "./run": {
+      "source": "./src/run/index.ts",
+      "default": "./src/run/index.ts"
     },
-    "./ops/cost/session-cost": {
-      "source": "./src/ops/cost/session-cost.ts",
-      "default": "./src/ops/cost/session-cost.ts"
+    "./secret-refs": {
+      "source": "./src/secret-refs/index.ts",
+      "default": "./src/secret-refs/index.ts"
     },
-    "./policy/audit": {
-      "source": "./src/policy/audit.ts",
-      "default": "./src/policy/audit.ts"
+    "./sessions": {
+      "source": "./src/sessions/index.ts",
+      "default": "./src/sessions/index.ts"
     },
-    "./policy/audit-cli": {
-      "source": "./src/policy/audit-cli.ts",
-      "default": "./src/policy/audit-cli.ts"
-    },
-    "./policy/audit-ledger": {
-      "source": "./src/policy/audit-ledger.ts",
-      "default": "./src/policy/audit-ledger.ts"
-    },
-    "./policy/enterprise": {
-      "source": "./src/policy/enterprise.ts",
-      "default": "./src/policy/enterprise.ts"
-    },
-    "./policy/policy-cli": {
-      "source": "./src/policy/policy-cli.ts",
-      "default": "./src/policy/policy-cli.ts"
-    },
-    "./presentation/projector": {
-      "source": "./src/presentation/projector.ts",
-      "default": "./src/presentation/projector.ts"
-    },
-    "./project-root": {
-      "source": "./src/project-root.ts",
-      "default": "./src/project-root.ts"
-    },
-    "./provider-key-hints": {
-      "source": "./src/provider-key-hints.ts",
-      "default": "./src/provider-key-hints.ts"
-    },
-    "./replay/replay": {
-      "source": "./src/replay/replay.ts",
-      "default": "./src/replay/replay.ts"
-    },
-    "./replay/run-prod": {
-      "source": "./src/replay/run-prod.ts",
-      "default": "./src/replay/run-prod.ts"
-    },
-    "./roles/resolver": {
-      "source": "./src/roles/resolver.ts",
-      "default": "./src/roles/resolver.ts"
-    },
-    "./roles/roles-boot": {
-      "source": "./src/roles/roles-boot.ts",
-      "default": "./src/roles/roles-boot.ts"
-    },
-    "./run-cli": {
-      "source": "./src/run-cli.ts",
-      "default": "./src/run-cli.ts"
-    },
-    "./run-spans": {
-      "source": "./src/run-spans.ts",
-      "default": "./src/run-spans.ts"
-    },
-    "./session-summaries": {
-      "source": "./src/session-summaries.ts",
-      "default": "./src/session-summaries.ts"
-    },
-    "./sessions-cli": {
-      "source": "./src/sessions-cli.ts",
-      "default": "./src/sessions-cli.ts"
-    },
-    "./sessions-prune": {
-      "source": "./src/sessions-prune.ts",
-      "default": "./src/sessions-prune.ts"
-    },
-    "./setup-cli": {
-      "source": "./src/setup-cli.ts",
-      "default": "./src/setup-cli.ts"
-    },
-    "./skills-boot": {
-      "source": "./src/skills-boot.ts",
-      "default": "./src/skills-boot.ts"
-    },
-    "./skills-cli": {
-      "source": "./src/skills-cli.ts",
-      "default": "./src/skills-cli.ts"
-    },
-    "./spans": {
-      "source": "./src/spans.ts",
-      "default": "./src/spans.ts"
+    "./skills": {
+      "source": "./src/skills/index.ts",
+      "default": "./src/skills/index.ts"
     },
     "./test-support/audit-fixtures": {
       "source": "./src/test-support/audit-fixtures.ts",
       "default": "./src/test-support/audit-fixtures.ts"
-    },
-    "./trajectory/run-trajectory": {
-      "source": "./src/trajectory/run-trajectory.ts",
-      "default": "./src/trajectory/run-trajectory.ts"
-    },
-    "./trust-cli": {
-      "source": "./src/trust-cli.ts",
-      "default": "./src/trust-cli.ts"
-    },
-    "./verify/verifier": {
-      "source": "./src/verify/verifier.ts",
-      "default": "./src/verify/verifier.ts"
     }
   }
 }

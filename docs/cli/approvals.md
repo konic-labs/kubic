@@ -1,0 +1,314 @@
+# Approvals
+
+> When a tool call needs your decision, how you answer it in the TUI, and
+> what each trigger detects. The policy keys are on
+> [configuration](configuration.md). Back to the [command index](commands.md).
+
+## The approval card
+
+A challenged call turns the editor into an **approval card** instead of being
+refused: an amber frame with the
+`APPROVAL` badge, the tool and `1 of N`; the exact command (`$ …`, its
+destructive words bold) — or, for an `edit` or `write`, the diff it would make
+against the file on disk (`+A −R` in the frame); one plain-language row for the
+reason (`▲ destructive   it can delete or overwrite files`), the working
+directory (and, for a file change, that the journal keeps the old file), the
+next waiting ask (`next: …`), and the keys. `?` opens the model's own
+explanation. The transcript above stays readable — `PgUp` scrolls it — while
+the header shows `1 WAITING`, the call's card `◆ waiting for you` and the
+status line `needs approval`. Each capability a call trips is asked on its
+own, so a command that is both destructive and networked is `1 of 2`, then
+`2 of 2`. The card names the tool class and the exact command, so the decision
+is made on what was actually asked, not on the tool's name. The command is shown **whole**:
+it is the same text the approval key is computed from, wrapped across rows and
+never silently cut, with three display-only changes. Control, bidi, zero-width
+and other default-ignorable characters (including the Hangul fillers
+`\u3164`/`\u115f` and tag characters) are shown as visible escapes such as
+`\x1b` or `\u202e`; a literal `[REDACTED]` in the command is shown as
+`\x5bREDACTED]`, so the marker only ever means "a value was hidden here"; and
+secret **values** are replaced with `[REDACTED]`. That redaction is narrow on
+purpose — the dialog exists so you see what runs, and a hidden word can be the
+destructive verb:
+
+- It replaces known key shapes (`sk-…`, `AKIA…`, `ghp_…`, `xox…-` with a
+  realistic length and a word boundary, so `task-…` or `ghost_database` are
+  not keys), the value in `NAME=value` (no whitespace around the `=`), in
+  `name: value` (spaces or tabs after the colon), the operand of a
+  secret-named flag on the same line (`--token abc`), an `Authorization:`
+  header value with its scheme, and a bare `bearer …` followed by a
+  credential-looking run (20+ characters mixing letters and digits).
+- It never replaces the next command word: `find / -name secret -delete`,
+  `echo bearer rm -rf ~/work`, `SECRET_KEY= shred -u x` (an empty value),
+  `secret:/etc` (a mount) and `release-token:main` (a refspec) are shown exactly
+  as written, and a value never spans a newline.
+- It never redacts anything the shell would expand: a value containing
+  `$(…)`, a backtick, `${…}` or `$NAME` is shown verbatim, so
+  `API_KEY="$(curl … | sh)" npm test` reads as what it runs.
+
+One-line summaries (audit detail, trajectory) are different text: they keep the broader block-reason redaction —
+the same secret-shape table the audit backstop uses (`sk-…`, `AKIA…`,
+`ghp_…`, `xox…-`, PEM headers), the full credential after an `Authorization:`
+header or a bare `bearer`/`basic` scheme, a `-u`/`--user`/`--proxy-user`
+`user:password` operand, and URL userinfo (`https://user:pw@host`) — and, when
+they shorten a command, say so: `… (+N chars)`. The narrow redaction is what
+the approval card's command shows — it carries the full command to the seat
+that decides, with the operator still seeing the host and the flag. The summary's broad
+redaction is the safe over-redacting one.
+
+Rows wrap by terminal **display columns**, not by character count: wide (CJK)
+characters count two columns, and a combining sequence or an emoji cluster is
+never split, so every character of the command appears in the rows and none is
+cut by the card's edge. A command taller than a page (8 rows) shows one page at
+a time with an explicit `… lines 1–8 of N` marker, and `v` pages through it;
+on an edit, `v` opens the whole diff (twelve rows show by default). When the
+card does not fit — it needs its own rows plus six more for the header, the
+status line, the key hints and three rows of transcript — it **fails closed**:
+it says `the terminal is too short to show this command — enlarge it` and
+every allow key (`a`, `Ctrl-S`) is inert until the terminal is tall enough, so
+you can never allow what you cannot see. `d` (after arming) and `Esc` (at
+once) still deny, and the card re-checks on every frame and key, so enlarging
+the terminal restores it. The card is the same at every width; below 60
+columns its reason rows keep only their labels and the keys wrap. Denying
+leaves the session running; the transcript shows the refusal instead of the
+call's result. Quitting with an ask still pending denies it, so a shutdown
+cannot strand the turn.
+
+An approval is consent to run code with your authority, so keys typed for
+the editor can never produce one. Asks arrive while you may be typing the
+next prompt, so the card is a capturing modal: while it shows, printable
+keys are dropped instead of reaching your draft (the global keys `Ctrl-C`,
+`Ctrl-D`, `Ctrl-T`, `Ctrl-O`, `Ctrl-R` and `Ctrl-X` still work). Three rules keep type-ahead and a held key from answering:
+
+- **Arming delay, 400 ms.** Each request — including the next queued one —
+  starts with decision keys ignored and the hint row reading
+  `… keys unlock in a moment · [Esc] deny now`. `Esc` (deny) is the only key
+  that acts immediately.
+- **Quiet period, 1.5 s.** Every other key while the overlay shows — a
+  dropped letter, a decision key pressed too early, a `v` page turn, a global
+  key, or a key-repeat event — restarts the unlock, and this time it needs 1.5 s
+  of quiet since the *last* such key (a thinking pause in prose is about half a
+  second, so 400 ms would not be enough). The hint row re-locks while it runs.
+  A lone decision key pressed after the overlay has been quiet for the
+  period still decides at once.
+- **Held keys.** Terminals that report key events flag repeats and they are
+  ignored. Terminals that do not (Terminal.app, VTE, tmux) send a held `a` as
+  plain repeated bytes; a decision key that arrives within 700 ms of the
+  *same* key is therefore treated as a repeat — swallowed, and it restarts the
+  quiet period. `Esc` is exempt.
+
+Once armed the hint row shows the live keys:
+`a` allows once, `Ctrl-S` allows for the session — a key ordinary typing
+cannot produce — and `d` or `Esc` denies. The keys live in the approval key
+registry, which refuses a map where two actions share a key, allow-session
+is a prose key, or an approval key shadows one of the global keys.
+
+These keys are classified by the terminal library's key decoder, not by
+matching raw bytes, so they work on terminals that negotiate the Kitty
+keyboard protocol (`Esc` arrives as `\x1b[27u` rather than `\x1b`, `Ctrl-D`
+as `\x1b[100;5u`, `Ctrl-C` as `\x1b[27;5;99~`) as well as on terminals that
+send the legacy control bytes. On terminals that also report key-release
+and key-repeat events (Kitty, Ghostty, WezTerm, foot, recent iTerm2), each
+key acts on its press only: a release is ignored, so a toggle never
+cancels itself on key-up and a `Ctrl-C` cancel or an `Esc` deny never
+becomes a quit. A held key repeats in the editor (held `Backspace` keeps
+deleting), but repeats of the global keys and the approval keys are
+ignored — a held `Ctrl-O` does not strobe the panel. Every key repaints
+the screen at once, including while no turn is running. A refused cancel is reported in the editor
+footer (`cancel failed: …`) instead of being swallowed — the turn keeps
+running and the key is never a silent no-op.
+
+Quitting leaves the alternate screen first (autowrap, cursor, mouse and
+keyboard modes restored) and **then** prints the final document on your
+main screen, so it stays in your scrollback: the whole last frame at the
+terminal's width — header, tree, the transcript including the last
+assistant answer, notice row, editor, status line and key hints — on stdout,
+without the
+editor's cursor artifacts (the hardware-cursor marker and the inverse-video
+cursor cell are stripped, as Pi's own stop path strips the marker). A crash
+restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Ctrl-D`, `SIGINT` or stdin EOF while a turn runs (and `Esc`/`Ctrl-C` from their *second* press: the first one cancels the turn and keeps the session): the turn
+is aborted (durably recorded in the session, so a resumed session shows no
+unfinished work), every tool process group it started is killed, and
+the loop waits for it to settle (footer: `cancelling…`, at most 3 s) before
+the end-of-run reconciliation sweep and the session close — so a killed
+tool's last write is still journaled and no child keeps running after the
+TUI exits. A further `Ctrl-C` (or `SIGINT`) during that wait exits at once — a real press only: the repeat and release events a
+Kitty-class terminal reports for a held `Ctrl-C` are ignored, like every
+other repeat of a global key. The 3 s bound covers the whole drain, the abort request included: an abort that never answers does not block the quit (the registered kills still run, and a kill registered after
+that drain is run once more when the session closes).
+Before the screen is restored the quit drains stdin for a moment (the Kitty
+keyboard protocol is popped first), so the release of the quitting key —
+which can arrive late over SSH — is swallowed instead of printing as
+`[27;1:3u` in your shell.
+
+## `autoApprove` capabilities
+
+`autoApprove` entries name capabilities — the strings `detectTriggers`
+(`packages/host/src/approvals/triggers.ts`) raises on tool calls. The known set
+(`CAPABILITIES`):
+
+| Capability | Raised by |
+| --- | --- |
+| `network` | A network command under `network = "none"` (`curl`, `wget`, `ssh`, `scp`, …) — including one hidden inside `$(…)` (nested substitutions included), backticks, or after `eval`. |
+| `credentials` | An access to a listed credential location, under the effective `credentials` class — which enforces as `none`, `allowlist` included. Bash: home credential paths (`~/.aws/`, `~/.ssh/` — every child except the known-public `known_hosts*`, `authorized_keys*` and `*.pub`, so `~/.ssh/github` and `~/.ssh/*` raise, `~/.config/gh/`, `~/.config/gcloud/`, `~/.docker/config.json`, `~/.kube/config`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, `~/.azure/`) spelled `~`, `$HOME`, `${HOME}`, `/Users/<user>` or `/home/<user>`, plus workspace credential files (`.env`, `.env.*` except `.env.example`/`.env.sample`/`.env.template`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*` — the public `*.pub` halves excluded). Read-family tools (`read`, `ls`, `find`, `grep`): the same names in the `path`/`root` argument, as typed before the confine rewrite (a home path is rewritten before the tool opens it, but the ask sees it), and the name filters `grep.include` / `find.nameContains` when the filter is a substring of a credential name or contains one (`include: "env"` reaches `.env`, `include: "src/.env.local"` too) — filters shorter than 3 characters are not treated as credential selectors. Matching is case-folded, like the default macOS/Windows volumes. Lexical detection, not enforcement: an obfuscated or built-up path is a stated miss. Also fires via `requires:<tool>`. |
+| `git-push` | `git push`, `git remote add/set-url/remove/rename` — in any command segment (`ls; git push`, `cd x && git push`), after git global options (`git -C . push`, `git -c k=v push`, `--git-dir=…`, `--work-tree=…`, `--no-pager`; an option argument may be quoted: `git -C "my dir" push`) and after any command-position boundary: whitespace, `\| ; &`, `(` (`$(git push)`), a path (`/usr/bin/git push`), a backslash (`\git push`), a quote (`bash -c 'git push'`, `sh -c "git push"`) or a backtick. The word must be exactly `git` followed by whitespace — `mygit push`, `digit push`, `gitpush` and `git-lfs push` do not raise. |
+| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. |
+| `install` | Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv pip install`, `uv tool install`, `uvx`, `gem install`, `composer require/install`, `brew install`, `apt install`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs. |
+| `deploy` | Deploy verbs (`kubectl apply/create/delete/rollout`, `docker push`, `terraform apply`, `gh release create`). |
+| `outside-write` | A write outside the workspace: the `write`/`edit` tools, any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), a `tee` target, or a `cp`/`mv`/`install` destination. |
+| `privilege-escalation` | `sudo` anywhere in the command. |
+| `kubic-state-write` | A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (the project's, from a subdirectory) or `~/.kubic/` (the global `config.toml`) — or into the workspace's own `.git/` (hooks, `config`): a planted hook runs on the host's later git commands, so it asks too: the `write`/`edit` tools, any redirect target (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), a `tee` target, a `cp`/`mv`/`install` destination, or an `rm`/`mv` operand (deleting or moving control-plane state is tampering; a `cp` source is only read). Relative targets resolve against a preceding `cd`/`pushd`, quote-split and backslash-escaped segments are read as the shell reads them (`".kubic"/roles/r.md`), and `$HOME/`/`${HOME}/` count exactly like `~/`. **Always asks**: `autoApprove` and `--full-access` never answer it (an `autoApprove` entry naming it is ignored and warned about by `kubic doctor`). Writes into `.kubic/journal/`, `.kubic/audit/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (see [journal and safety](../architecture/journal-and-safety.md)). |
+
+`requires:<tool>` is accepted alongside them (the per-tool trigger). A name
+outside this set is reported by `kubic doctor` (`policy:approvals`), never
+silently ignored.
+
+Detection is a literal-pattern heuristic over the command string and the
+read-family tool paths, not
+sandbox-grade shell parsing — the posture is stated, not silent. Documented
+heuristics:
+
+- **Last-argument target** — for `tee`, `cp`, `mv`, and `install`, the
+  last whitespace-separated argument of the command segment is taken as
+  the write target (`cp a /etc/b` → `/etc/b`;
+  `install -m 644 a /usr/local/b` → `/usr/local/b`). A flag that reorders
+  arguments (`cp -t /etc a b`) points the heuristic at the wrong token, and
+  only the final named target of a multi-file `tee` is checked
+  (`tee /etc/x a.txt` writes `/etc/x` and is a documented silent miss —
+  apart from stated cases the heuristic errs toward over-triggering, not
+  uniformly so: a destination that is not the segment's last token can
+  still be missed, e.g. `echo $(cp a /etc/b )`).
+  A target lifted out of `$(…)` has that span's closing `)` trimmed
+  (`$(cp a /etc/b)` → `/etc/b`) — scoped to lifted tokens: a plain target
+  is never trimmed, so `tee '/work)'` names the literal sibling path
+  `/work)` and still raises outside-write. The outside check itself stays
+  path-boundary aware (`/work-evil` is not `/work`).
+- **Every redirect** — each redirect operator in the command is checked,
+  within one segment and across `;`, `&&`, `||`, `|` and newlines, so
+  `echo a > notes.txt && echo b > /etc/cron.d/x` raises outside-write.
+  Covered forms: `>`, `>>`, fd-prefixed (`2>`, `1>>`), `&>`, `&>>`,
+  clobber `>|`, and `>&` — an fd duplication (`2>&1`, `>&-`) is not a
+  file and is skipped, while `>& out.txt` names a file. The target is the
+  next token up to whitespace or a `|;&<>` character, read the way the
+  shell reads it: quotes and backslash escapes come off wherever they sit
+  (`echo x > ".."/x` and `> \../x` name `../x` and raise outside-write).
+  Stream pseudo-devices persist nothing and never raise: exactly
+  `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty` and `/dev/fd/<n>`
+  (so `cmd > out.txt 2>/dev/null` stays quiet); any other `/dev` target
+  still raises.
+- **Shell-expanded and `cd`-relative targets** — bash expands a target
+  before it writes, the detector does not, so a target starting with `~`
+  (`~/.bashrc`, `~root/x`) or `$` (`$HOME/.zshrc`, `${HOME}/x`,
+  `$OUT/file`) counts as outside-write, fail-closed. A `cd <dir>` or
+  `pushd <dir>` at a command START — at the start of the command or after
+  `;`, `&`, `|`, a newline or `(`, then any run of `{`, `then`, `do`, `else`,
+  `elif`, `if`, `while`, `until`, a `!` negation and the `command`/`builtin`
+  wrappers (`{ cd /tmp; echo x > y; }`, `if cd /tmp; then …`); a keyword inside an
+  argument (`git commit -m 'then cd /x'`) starts nothing — moves the
+  directory later relative targets resolve against: `cd /etc && echo x > y`
+  raises, `cd sub && echo x > y` does not. After a `cd` to an unknown place
+  (bare `cd`, `cd ~`, `cd $X`, `cd -`, any `popd`) every later relative target
+  raises. The `cd` trail is lexical, so it is only ONE of two candidates: a
+  target is outside if it is outside as TYPED (against the workspace) or as
+  resolved against the tracked directory. A subshell `(cd /etc); echo x > y`, a
+  conditional `false && cd sub; echo x > ../y` or a `cd` quoted into an
+  argument therefore over-trigger — they can never hide a write (a real `cd
+  sub && echo x > ../y` over-triggers too). A redirect on the `cd` itself
+  applies before it runs. A tracked directory longer than 1 KiB is treated as
+  unknown. A
+  `$VAR` in the middle of a target (`out/$f.log`) is not expanded and is
+  checked as written. Any target under `~/.kubic` (session state,
+  `posture.json`, `approvals.json`) — including a `write`/`edit` path —
+  raises outside-write even when the workspace is the home directory.
+  Tool paths are not shell-expanded: the `write` tool takes `~/.bashrc`
+  literally, as a workspace file.
+- **Control-plane targets** (`kubic-state-write`) — the same
+  target scan feeds the control-plane guard, with these additions. Every
+  target is classified TWICE and either candidate being control-plane counts:
+  as typed against the workspace, and resolved against the tracked
+  `cd`/`pushd` directory (`cd .kubic/roles && echo x > r.md` writes
+  `.kubic/roles/r.md`; `cd ~`, `cd $HOME/x` resolve against the home directory
+  here, unlike the outside-write rule above). The trail is lexical, so it only
+  ever adds a candidate: `(cd x); echo p > .kubic/journal/y` is still refused.
+  A redirect on the `cd` command itself (`cd .. > config.toml`) resolves against
+  the directory BEFORE that `cd`, and redirection words are never the
+  directory (`cd 2>/dev/null .kubic`), nor are `--` and `-L`/`-P`. `$PWD`, `${PWD}`
+  and `~+` are the current directory (`cd "$PWD/.kubic"`); `~-`, `$OLDPWD` and
+  a `cd` to an unknown place read a relative `.kubic` segment as the
+  workspace's own, fail-closed. Inner quotes and backslash escapes are removed
+  before matching (`".kubic"/roles/r.md`, `.k"ub"ic/…`, `\.kubic/…`), and `$HOME`,
+  `${HOME}` and `${HOME:-…}` expand like `~` (`$HOMEDIR` and `~user` do not).
+  Operands of `rm` and `mv` count as writes: `rm .kubic/journal/index.jsonl`
+  is refused outright, `rm .kubic/roles/r.md` asks. A glob or brace list that
+  COULD expand into `.kubic/journal`, `audit`, `sessions`, `config.toml` or
+  `roles` — or into the state directory itself — is refused, not just asked
+  (`rm .kubic/journa?/*`, `rm -rf .kubic/*`, `rm .kub*`, `rm .kubic/{journal,x}/y`);
+  it is deliberately conservative (a leading `*` may match a dotfile, and a
+  brace list past 32 expansions that names `.kubic` is refused). Still
+  misses, by design: a path built from a variable set elsewhere (`D=.kubic; echo
+  x > $D/roles/r.md`), `sed -i`, a script file, an interpreter (`bash -c 'cd
+  .kubic && …'`), `time cd`, `eval cd`, a subshell `cd` that undoes an earlier
+  one (`cd .kubic; (cd ..); echo x > config.toml`), a symlink, and a `cd` chain
+  that started from an unknown place before reaching `.kubic` (`cd $X && cd
+  .kubic && echo x > config.toml`).
+- **Git verb scan** — the `git` word is found after the boundaries listed
+  in the table, then the option run is walked token by token in linear time
+  (a long `--namespace --namespace …` chain cannot stall the scan; it runs
+  before every bash call). Words are read twice and either reading reaching
+  `push` raises: quote-aware (a quoted option argument is one word, a
+  backslash escapes the next character outside single quotes, a quote with no
+  closer is an ordinary character) and plain whitespace-split (the original
+  reading, the safety net for shell syntax the tokenizer misreads such as
+  `git -c user.name=O\'Brien push`). A `!` is a boundary too
+  (`-c alias.p='!git push'`). It only ever widens what raises, so the
+  over-trigger stays an ask: `git -c "a push" status` still reads as a push.
+- **`sudo` over-trigger** — `privilege-escalation` fires on the word `sudo`
+  anywhere in the raw command, quoted text included
+  (`echo "needs sudo"` raises it). A raised capability becomes an ask,
+  never a silent grant, so the false positive costs a confirmation.
+- **Indirection unwrap** — a destructive/network verb behind `$(…)`,
+  backticks, or `eval` raises the underlying capability, and unwrapping
+  runs to a fixpoint: single-level (`$(rm -rf /)`), eval-of-substitution
+  (`eval $(rm -rf /)`), and nested (`echo $(echo $(rm -rf /))`) forms all
+  raise. `$(…)` is collected with a bounded literal `$(…)`/`)` pairing scan
+  (depth cap 16; the cap's unmatched-opener markers still consume closers,
+  so the effective nesting threshold is 2× the cap — 31 nesting levels
+  raise, 32 stay unraised, pinned in the detector tests) — a stated bound,
+  never a fabricated unwrap.
+- **Credential paths** — the `credentials` trigger is lexical,
+  like every detector here: it recognizes the listed home locations in a
+  bash command (`~/.aws/credentials`, `$HOME/.ssh/id_rsa`, `/Users/x/.netrc`;
+  the `~`, `$HOME`, `${HOME}` and absolute home spellings), the listed file
+  names in a read-family tool path, and the `grep.include`/`find.nameContains`
+  name filters that select those files by substring (`include: "env"`
+  reaches `.env`; a filter shorter than 3 characters is not treated as a
+  credential selector). Matching is case-folded, like the filesystems it
+  guards (`.ENV`, `~/.AWS/credentials`). Over-triggering is deliberate
+  (`*.pem` is flagged whether or not it holds a key) and a raised credential
+  capability is an ask, never a silent grant; the known-public files
+  (`*.pub`, `authorized_keys*`, `known_hosts*`) stay quiet. Stated misses: a
+  path the list does not name, an obfuscated or split spelling
+  (`~/.a''ws/credentials`, `p=~/.ssh; cat $p/id_rsa`), a Windows-style
+  backslash spelling, and a credential reached indirectly (`bash -c`, a
+  script, a symlink). The `~/.ssh/*`
+  directory name also matches the network verb scan, so those commands raise
+  `network` as well.
+
+What remains out of scope — documented gaps, not silently handled:
+interpreter-based verbs (`bash -c "rm -rf …"`, `python3 -c`, `node -e` —
+the command is data to the literal patterns; a `git push` inside `bash -c '…'`
+is the one exception, caught because a quote is a boundary for the `git` word), network exfiltration via
+`python -c`/`node -e`/`npm`, substitution nesting past ~2× the depth cap,
+quoted or backslash-obfuscated verbs the literal patterns cannot see,
+whitespace tricks around redirection targets, git subcommands reached
+through an alias (`git config alias.p push; git p`), `git` reached through
+a variable or a name built at run time (`g=git; $g push`, `$g config …`:
+the `git-push` and `.git/config` checks read the literal word `git`, though
+`$(git push)` and `eval "git config …"` raise), package managers
+not listed above, and installs run by a build script (`npm run setup`).
+The literal verb scan over-triggers on quoted text: `echo "git push
+later"` raises `git-push` (an ask, never a silent grant).
+
+One section is forbidden outright: **`[mcp]`** (third-party tools and MCP
+servers are not supported yet — doctor surfaces it as a
+`policy-mismatch` fail pointing at
+[doctor and debug](doctor-and-debug.md)).

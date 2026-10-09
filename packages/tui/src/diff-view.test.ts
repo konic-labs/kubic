@@ -1,7 +1,7 @@
 // Single-file journal diff rendering.
 // Text only, no VirtualTerminal in Pi 0.85.1: headless snapshots render
 // directly like layout.test.ts. Structural DiffFileChange mirrors exec
-// FileChange (journal-diff.ts) without importing it — tui must never
+// FileChange (the exec journal/diff.ts) without importing it — tui must never
 // import exec/host/agent implementation (dep-lint).
 import { describe, expect, it } from 'vitest';
 import {
@@ -193,7 +193,7 @@ describe('diff placeholders', () => {
   });
 });
 
-describe('diff mutation hardening', () => {
+describe('diff view exact rendering', () => {
   it('badges the header for unattributed reconciliation entries', () => {
     expect(renderDiffHeader({ ...WRITE_EDIT, unattributed: true })).toBe(
       'a.txt — write [unattributed]',

@@ -8,15 +8,14 @@ import {
   entriesToCells,
   forkPickerRows,
   type LaneEntryLike,
-  sanitizeLaneText,
   summarizeToolArguments,
   summarizeToolOutcome,
-  TAB_STOP,
   TOOL_DETAIL_MAX_CHARS,
   TOOL_OUTCOME_MAX_CHARS,
   TOOL_RESULT_MAX_CHARS,
   userPromptsOf,
 } from './lane-cells.js';
+import { sanitizeLaneText, TAB_STOP } from './lane-text.js';
 import { visibleWidth } from './tui-boundary.js';
 
 function userEntry(id: string, seq: number, text: string) {

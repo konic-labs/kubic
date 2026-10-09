@@ -197,7 +197,7 @@ describe('the card at every width', () => {
     );
   });
 
-  it('renders the same card at and above the old overlay width', async () => {
+  it('renders the inline card at the approval minimum width, never an overlay', async () => {
     const app = createTuiApp({
       approvalSurface: createApprovalSurface({ armingMs: 0 }),
       sessionId: SESSION,

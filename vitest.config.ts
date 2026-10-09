@@ -7,9 +7,14 @@ export default defineConfig({
     conditions: ['source'],
   },
   test: {
-    // `apps/*/src` is collected too: the composition root's
-    // dispatch seam is a testable surface, not a silently-unrun directory.
-    include: ['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts'],
+    // Unit tests sit beside their modules under `src/`; the composition
+    // root's integration tests, which drive `kubic run`, `kubic tui` and the
+    // command front door through the real wiring, live in `apps/*/test/`.
+    include: [
+      'packages/*/src/**/*.test.ts',
+      'apps/*/src/**/*.test.ts',
+      'apps/*/test/**/*.test.ts',
+    ],
     environment: 'node',
     // Hermetic env: temp HOME, no ambient KUBIC_* variables,
     // non-loopback TCP connects refused — see test/hermetic-env.ts. Credential-shaped
@@ -22,12 +27,21 @@ export default defineConfig({
       './test/vitest-setup.ts',
       './vitest.setup.ts',
     ],
-    // Half the cores, not vitest's cores-1 default: several coding agents
-    // often run the suite at once on one laptop. The suite is ~10s either way.
+    // Half the cores, not vitest's cores-1 default, so a run leaves room for
+    // other work on the machine.
     maxWorkers: '50%',
-    // Stryker instruments every expression, which makes CPU-bound tests
-    // (e.g. the 8 MiB read-bound scan) several times slower on CI runners.
-    testTimeout:
-      process.env.STRYKER_MUTATOR_WORKER === undefined ? 5_000 : 30_000,
+    testTimeout: 5_000,
+    // `npm run test:coverage`: the product's own sources, without the tests
+    // and their support code.
+    coverage: {
+      provider: 'v8',
+      include: ['packages/*/src/**/*.ts', 'apps/*/src/**/*.ts'],
+      exclude: ['**/*.test.ts', '**/test-support/**'],
+      reporter: ['text-summary', 'json-summary', 'html'],
+      reportsDirectory: 'coverage',
+      // Floors a point under the measured coverage: a change that drops it
+      // fails the run.
+      thresholds: { statements: 92, branches: 85, functions: 93, lines: 93 },
+    },
   },
 });

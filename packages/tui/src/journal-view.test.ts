@@ -143,7 +143,7 @@ describe('journal view', () => {
   });
 });
 
-describe('journal mutation hardening', () => {
+describe('journal view exact rendering', () => {
   it('setChanges repaints the snapshot to the new file set', () => {
     const view = new JournalView(changes().slice(0, 1));
     expect(view.render(100).join('\n')).toContain('--- a/a.txt');

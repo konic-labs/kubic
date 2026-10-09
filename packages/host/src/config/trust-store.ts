@@ -29,7 +29,7 @@ import {
   createNodeFileBridge,
   updateFileLocked,
 } from '@kubic/exec/file-bridge';
-import { RUNTIME_ENV_OVERRIDES } from './runtime.js';
+import { RUNTIME_ENV_OVERRIDES } from './runtime-env.js';
 
 // A recorded decision: true (trusted), false (declined), or null (no
 // decision recorded — the store never persists this).

@@ -1,6 +1,6 @@
-// Terminal display width for CLI output (moved from table.ts for the output
-// kit). Cells, not UTF-16 length: ANSI escapes and zero-width
-// code points count 0, wide CJK and emoji count 2.
+// Terminal display width for CLI output, in cells rather than UTF-16 length:
+// ANSI escapes and zero-width code points count 0, wide CJK and emoji
+// count 2.
 
 import { stripVTControlCharacters } from 'node:util';
 

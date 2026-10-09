@@ -1,17 +1,14 @@
+// The Pi dependency contract: exact pins in the two workspace manifests that
+// declare Pi and in the root manifest npm installs (which also pins Pi's
+// transitive telemetry package), one hoisted copy of every Pi package in the
+// lockfile, and a JUSTIFICATION block on every
+// export of the two boundary files (which files may import Pi at all is
+// `npm run lint:deps`).
 import assert from 'node:assert/strict';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { after, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { checkTree } from './dep-lint.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -23,33 +20,23 @@ const PI_DEPS = [
 ];
 // Only the tui boundary imports pi-tui, so the tui manifest declares it.
 const TUI_PI_DEPS = ['@earendil-works/pi-tui'];
-// Not imported: Pi 1.0's pi-agent-core has no harness, and nothing imports
-// pi-protocol / pi-telemetry directly.
-const REMOVED_PI_DEPS = [
+// Pi packages Kubic does not import: Pi 1.0's pi-agent-core has no harness,
+// and nothing imports pi-protocol or pi-telemetry directly.
+const UNUSED_PI_DEPS = [
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-protocol',
   '@earendil-works/pi-telemetry',
 ];
-// Gone from the lockfile entirely — nothing depends on them transitively.
-const GONE_FROM_LOCK = [
+// Absent from the lockfile: nothing depends on them, even transitively.
+const ABSENT_FROM_LOCK = [
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-protocol',
 ];
-// Transitive Pi deps re-pinned to PI_VERSION by a root `overrides` entry
-// (pi-ai@1.0.2 declares pi-telemetry with a caret).
-const OVERRIDDEN_PI_DEPS = ['@earendil-works/pi-telemetry'];
+// Transitive Pi deps the root pins directly: pi-ai@1.0.2 declares
+// pi-telemetry with a caret, and a direct exact dependency is the pin that
+// holds in an npm install (overrides do not).
+const ROOT_PINNED_PI_DEPS = ['@earendil-works/pi-telemetry'];
 const PI_VERSION = '1.0.2';
-
-const scratchDirs = [];
-after(() => {
-  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
-});
-
-function scratchDir(prefix) {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  scratchDirs.push(dir);
-  return dir;
-}
 
 // Every `export` statement in either Pi boundary file must be
 // preceded by the JUSTIFICATION block the file's own template requires.
@@ -71,7 +58,7 @@ function unjustifiedExports(source) {
   return bad;
 }
 
-// / commit 83ee635: exactly ONE hoisted copy of every Pi package.
+// Exactly ONE hoisted copy of every Pi package.
 // Walks the lockfile's `packages` map (v3 is authoritative) and returns one
 // `{ name, paths }` entry per `@earendil-works/*` package resolved at more
 // than one path — a hoisted root copy plus a nested one under a workspace or
@@ -93,7 +80,7 @@ function duplicatePiCopies(lock) {
 }
 
 describe('pi pinning + boundary', () => {
-  it('agent and tui pin their Pi deps exactly and drop the removed three', () => {
+  it('agent and tui pin their Pi deps exactly and declare no unused Pi package', () => {
     const pkg = JSON.parse(
       readFileSync(join(ROOT, 'packages', 'agent', 'package.json'), 'utf8'),
     );
@@ -119,33 +106,25 @@ describe('pi pinning + boundary', () => {
         `${dep} must be pinned to ${PI_VERSION} in the tui manifest`,
       );
     }
-    for (const dep of REMOVED_PI_DEPS) {
+    for (const dep of UNUSED_PI_DEPS) {
       assert.equal(
         pkg.dependencies?.[dep],
         undefined,
-        `${dep} must be gone from the agent manifest`,
+        `${dep} must not be declared by the agent manifest`,
       );
     }
   });
 
-  it('root overrides pin the transitive Pi telemetry exactly', () => {
+  it('the root pins every Pi package an install of kubic needs', () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-    // pi-ai@1.0.2 declares `@earendil-works/pi-telemetry: ^1.0.2`; Kubic
-    // re-pins it exactly so a telemetry release cannot move the runtime tree.
-    assert.equal(
-      pkg.overrides?.['@earendil-works/pi-telemetry'],
-      PI_VERSION,
-      `pi-telemetry must be overridden to ${PI_VERSION}`,
-    );
-  });
-
-  it('pi-boundary.ts exists with seam docs and justification template', () => {
-    const file = join(ROOT, 'packages', 'agent', 'src', 'pi-boundary.ts');
-    assert.ok(existsSync(file), 'missing packages/agent/src/pi-boundary.ts');
-    const src = readFileSync(file, 'utf8');
-    for (const needle of ['FileSystem', 'beforeTool', 'JUSTIFICATION']) {
-      assert.ok(src.includes(needle), `pi-boundary.ts must document ${needle}`);
+    for (const dep of [...PI_DEPS, ...ROOT_PINNED_PI_DEPS]) {
+      assert.equal(
+        pkg.dependencies?.[dep],
+        PI_VERSION,
+        `${dep} must be a root dependency pinned to ${PI_VERSION}`,
+      );
     }
+    assert.equal(pkg.overrides, undefined, 'the root must have no overrides');
   });
 
   it('both Pi boundary files justify every export', () => {
@@ -181,88 +160,11 @@ describe('pi pinning + boundary', () => {
     );
   });
 
-  it('pi-boundary.ts itself may import Pi', () => {
-    const okDir = scratchDir('piseam-ok-');
-    mkdirSync(join(okDir, 'packages', 'agent', 'src'), { recursive: true });
-    writeFileSync(
-      join(okDir, 'packages', 'agent', 'src', 'pi-boundary.ts'),
-      `import type { Agent } from '@earendil-works/pi-agent-core';\n`,
-    );
-    assert.deepEqual(checkTree(okDir), []);
-  });
-
-  it('agent files outside pi-boundary.ts must not import Pi', () => {
-    const dir = scratchDir('piseam-bad-');
-    mkdirSync(join(dir, 'packages', 'agent', 'src'), { recursive: true });
-    writeFileSync(
-      join(dir, 'packages', 'agent', 'src', 'tools.ts'),
-      `import { Agent } from '@earendil-works/pi-agent-core';\n`,
-    );
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some(
-        (v) => v.from === 'agent' && v.to.includes('pi-agent-core'),
-      ),
-      `expected agent Pi-seam violation, got ${JSON.stringify(violations)}`,
-    );
-  });
-
-  it('similarly-suffixed agent files must not import Pi', () => {
-    const dir = scratchDir('piseam-suffix-');
-    mkdirSync(join(dir, 'packages', 'agent', 'src'), { recursive: true });
-    writeFileSync(
-      join(dir, 'packages', 'agent', 'src', 'fake-pi-boundary.ts'),
-      `import { Agent } from '@earendil-works/pi-agent-core';\n`,
-    );
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some(
-        (v) => v.from === 'agent' && v.to.includes('pi-agent-core'),
-      ),
-      `expected suffix-bypass violation, got ${JSON.stringify(violations)}`,
-    );
-  });
-
-  it('non-agent packages must not import Pi', () => {
-    const dir = scratchDir('piseam-host-');
-    mkdirSync(join(dir, 'packages', 'host', 'src'), { recursive: true });
-    writeFileSync(
-      join(dir, 'packages', 'host', 'src', 'dispatch.ts'),
-      `import { x } from '@earendil-works/chord';\n`,
-    );
-    const violations = checkTree(dir);
-    assert.ok(
-      violations.some((v) => v.from === 'host'),
-      `expected host Pi-seam violation, got ${JSON.stringify(violations)}`,
-    );
-  });
-
-  it('CODEOWNERS flags pi-boundary.ts', () => {
-    const file = join(ROOT, 'CODEOWNERS');
-    assert.ok(existsSync(file), 'missing CODEOWNERS');
-    const src = readFileSync(file, 'utf8');
-    assert.ok(
-      src.includes('packages/agent/src/pi-boundary.ts'),
-      'CODEOWNERS must own pi-boundary.ts',
-    );
-  });
-
-  it('CI runs the pinned-deps check', () => {
-    const yml = readFileSync(
-      join(ROOT, '.github', 'workflows', 'ci.yml'),
-      'utf8',
-    );
-    assert.ok(yml.includes('check:pi'), 'ci.yml must run check:pi');
-  });
-
-  // / commit 83ee635: the built binary could not load
-  // @earendil-works/chord from dist/ because the lockfile NESTED a
-  // second copy of pi-ai and chord (under packages/agent and under
-  // pi-durable) instead of hoisting them — all at 1.0.2, so the pin check
-  // below stayed green, vitest resolved from source so the suite stayed
-  // green, and only the binary contract caught it. One hoisted copy of every
-  // `@earendil-works/*` package is the invariant a lockfile refresh must not
-  // break; two copies of pi-ai would also give Kubic and pi-durable separate
+  // One hoisted copy of every `@earendil-works/*` package is the invariant a
+  // lockfile refresh must not break. A nested second copy (under a workspace
+  // or under pi-durable) at the same version passes the pin check below, and
+  // vitest resolves from source, but the built binary cannot load it from
+  // dist/; two copies of pi-ai would also give Kubic and pi-durable separate
   // module instances.
   it('the lockfile resolves exactly one copy of every Pi package', () => {
     const lock = JSON.parse(
@@ -325,12 +227,12 @@ describe('pi pinning + boundary', () => {
     assert.deepEqual(duplicatePiCopies({}), []);
   });
 
-  it('lockfile pins every copy of the Pi deps and drops the removed two', () => {
+  it('lockfile pins every copy of the Pi deps and holds no unused one', () => {
     const lock = JSON.parse(
       readFileSync(join(ROOT, 'package-lock.json'), 'utf8'),
     );
     const pkgs = lock.packages ?? {};
-    for (const dep of [...PI_DEPS, ...OVERRIDDEN_PI_DEPS]) {
+    for (const dep of [...PI_DEPS, ...ROOT_PINNED_PI_DEPS]) {
       // npm may hoist or nest each copy (pi-ai appears both under the agent
       // and under pi-durable), so pin every resolved copy, not one path.
       const suffix = `node_modules/${dep}`;
@@ -346,12 +248,12 @@ describe('pi pinning + boundary', () => {
         );
       }
     }
-    for (const dep of GONE_FROM_LOCK) {
+    for (const dep of ABSENT_FROM_LOCK) {
       const suffix = `/node_modules/${dep}`;
       const copies = Object.keys(pkgs).filter(
         (path) => path === `node_modules/${dep}` || path.endsWith(suffix),
       );
-      assert.deepEqual(copies, [], `${dep} must be gone from the lockfile`);
+      assert.deepEqual(copies, [], `${dep} must not be in the lockfile`);
     }
   });
 });

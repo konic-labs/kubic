@@ -4,14 +4,13 @@
 // tool absence.
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_ROLE_NAMES, BUILTIN_ROLE_PRESETS } from './builtin-presets.js';
-
 import {
-  type ParsedRoleDoc,
-  parseRoleDocument,
   resolveRole,
   roleDoctorChecks,
   validateResolvedRole,
 } from './resolver.js';
+import type { ParsedRoleDoc } from './role-document.js';
+import { parseRoleDocument } from './role-document.js';
 
 function docNamed(docs: ParsedRoleDoc[], name: string): ParsedRoleDoc {
   const found = docs.find((doc) => doc.name === name);

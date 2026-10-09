@@ -400,8 +400,8 @@ describe('tree tool detail', () => {
       const line = renderTreeLines(state, width)[1] ?? '';
       expect(visibleWidth(line)).toBeLessThanOrEqual(width);
     }
-    // A cut that lands on a glyph boundary fills the row exactly: the old
-    // String.length math counted a CJK glyph as one column and overflowed.
+    // A cut that lands on a glyph boundary fills the row exactly; counting
+    // String.length would take a CJK glyph as one column and overflow.
     const exact = renderTreeLines(state, 14)[1] ?? '';
     expect(visibleWidth(exact)).toBe(14);
     expect(exact).toContain('…');
@@ -443,7 +443,7 @@ describe('tree tool detail', () => {
   });
 });
 
-describe('tree mutation hardening', () => {
+describe('tree exact rendering', () => {
   it('ignores non-toggle keys without toggling or refocusing', () => {
     const state = createTreeState();
     let editorFocus = 0;

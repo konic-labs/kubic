@@ -60,8 +60,7 @@ describe('MCP arrival requirements', () => {
   });
 });
 
-// Refusal-path hardening: a surviving "refusal removed" mutant
-// is a P0 test bug, so every refusal branch pins exact errors.
+// Every refusal branch pins its exact error, so a removed refusal fails here.
 describe('MCP refusal hardening', () => {
   it('passes through non-object configs without false positives', () => {
     expect(() => assertNoMcpConfig([])).not.toThrow();

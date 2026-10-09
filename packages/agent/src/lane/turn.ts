@@ -42,6 +42,7 @@ export const TURN_BUSY_REASON = 'busy';
 export type TurnAbortReason = 'guard' | 'user' | 'signal';
 
 // Failure code, or the one refusal Kubic raises itself (busy).
+/** @internal */
 export type TurnFailureReason = FailureCode | typeof TURN_BUSY_REASON;
 
 export type TurnOutcome =
@@ -67,6 +68,7 @@ export function turnAbort(reason: TurnAbortReason, message: string): TurnAbort {
   return new TurnAbort(reason, message);
 }
 
+/** @internal */
 export function turnAbortReasonOf(cause: unknown): TurnAbortReason | undefined {
   return cause instanceof TurnAbort ? cause.turnAbort : undefined;
 }
@@ -272,6 +274,7 @@ export interface OverflowRecoveryOptions {
 const OVERFLOW_RECOVERY_FOCUS =
   'The context overflowed mid-run; keep what a single retry of the current task needs.';
 
+/** @internal */
 export async function recoverOverflowTurn(
   lane: Lane,
   prompt: string,

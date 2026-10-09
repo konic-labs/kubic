@@ -11,7 +11,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FakeExecutionEnv } from '@kubic/exec/env';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
@@ -26,6 +26,7 @@ import {
   SystemEntry,
 } from '../pi-boundary.js';
 import { PromptCacheError } from '../prompts.js';
+import type { TestSession } from '../test-support/session-handle.js';
 import {
   assemblePrompt,
   bootLane,
@@ -35,7 +36,7 @@ import {
   splitModelId,
 } from './boot.js';
 
-vi.mock('./interceptors.js', () => ({
+vi.mock('./interceptors/index.js', () => ({
   policyInterceptorHooks: () => [],
 }));
 
@@ -164,18 +165,6 @@ afterEach(async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-// The handle, built directly (its type does not exist yet): storage,
-// metadata and an idempotent release. The boot must treat release as the
-// caller's job and only close the harness.
-type TestSession = {
-  id: string;
-  dir: string;
-  storage: Storage;
-  meta: { cwd: string; createdAt: string };
-  adopt(): Storage;
-  release(context: Context): Promise<void>;
-};
 function handle(storage: Storage, id = 'sess-1'): TestSession {
   return {
     id,

@@ -3,51 +3,25 @@
 // session-scoped spill file, whose path the notice and `BashResult.spillPath`
 // name — the dropped head (often the first error) stays recoverable.
 
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { NodeExecutionEnv } from '@kubic/exec/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { createSessionSpillSink } from '../spill.js';
+import { inv } from '../test-support/invocation.js';
 import { BASH_RESULT_MAX_CHARS, BASH_RESULT_MAX_LINES } from './bash.js';
-import { createInvocation, MemoryMemoStore } from './memos.js';
 import { callOperation } from './registry.js';
-import type { OpContext, ToolInvocation } from './types.js';
-
-const dirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true });
-});
-
-function tmp(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  dirs.push(dir);
-  return dir;
-}
+import type { OpContext } from './types.js';
 
 /** A real workspace + a real session dir with the real session sink. */
 function ctx(): OpContext {
   return {
-    env: new NodeExecutionEnv(tmp('bash-tool-ws-')),
+    env: new NodeExecutionEnv(tempDir('bash-tool-ws-')),
     sessionId: 's1',
     agentId: 'a1',
-    spill: createSessionSpillSink(tmp('bash-tool-session-')),
+    spill: createSessionSpillSink(tempDir('bash-tool-session-')),
   };
-}
-
-function inv(): ToolInvocation {
-  return createInvocation(
-    { invocationId: 'inv-1', operationId: 'op-1', turnId: 't-1' },
-    new MemoryMemoStore(),
-  );
 }
 
 function writeCommand(script: string): string {

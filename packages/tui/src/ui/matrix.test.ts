@@ -31,7 +31,8 @@ import {
   createTuiTheme,
   setTuiTheme,
 } from '../theme.js';
-import { createTranscriptView, type TranscriptEntry } from '../transcript.js';
+import { createTranscriptView } from '../transcript.js';
+import type { TranscriptEntry } from '../transcript-entry.js';
 import { visibleWidth } from '../tui-boundary.js';
 import { renderKeyHintRow } from './key-hints.js';
 import { fitLine } from './line.js';

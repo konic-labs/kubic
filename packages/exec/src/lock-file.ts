@@ -115,6 +115,7 @@ const LINUX_CLOCK_TICK_MS = 10;
  * so the field arithmetic is pinned by a fixture test on every platform
  * (the file reads themselves only exist on Linux).
  */
+/** @internal */
 export function procStartTimeFromStat(
   stat: string,
   bootTimeMs: number,
@@ -178,9 +179,8 @@ export function processStartTimeOf(pid: number): number | undefined {
  * generation and every loser sees EEXIST. Returns `true` when this call's
  * payload landed, `false` when an occupant is already there (left
  * untouched). The temp name is dropped either way, so no litter survives.
- * A temp-name collision (EEXIST on the exclusive create —
- * vanishingly rare, but raw-thrown before) retries under a fresh name
- * instead of throwing. LOCAL FILESYSTEM ONLY, like every lock read here.
+ * A temp-name collision (EEXIST on the exclusive create, vanishingly rare)
+ * retries under a fresh name instead of throwing. LOCAL FILESYSTEM ONLY, like every lock read here.
  */
 export function claimLockLink(lockPath: string, payload: string): boolean {
   const dir = dirname(lockPath);
@@ -195,8 +195,10 @@ export function claimLockLink(lockPath: string, payload: string): boolean {
     try {
       writeFileSync(tmp, payload, { flag: 'wx', mode: 0o600 });
     } catch (error) {
-      // Our own temp name is taken: retry under a fresh one. Anything
-      // else is a real I/O failure and still throws.
+      // Our own temp name is taken: retry under a fresh one, three names
+      // at most (the attempt index is part of the name, so a collision
+      // needs a leftover with this pid, millisecond and random stamp).
+      // Anything else is a real I/O failure and still throws.
       if ((error as { code?: string } | null)?.code === 'EEXIST' && attempt < 2)
         continue;
       throw error;

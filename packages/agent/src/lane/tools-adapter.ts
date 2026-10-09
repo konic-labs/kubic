@@ -87,10 +87,10 @@ export interface KubicToolContext {
   spill?: SpillSink;
 }
 
-// What a tool result records for the UI and the transcript. No consumer
-// reads it today, but the record keeps naming
-// the call and the invocation). A union, not optional fields: pi-durable
-// types tool details as JsonValue, which has no `undefined` property.
+// What a tool result records beside the model's text: the call's ids, the
+// failure code, and for edit and write the display record the TUI draws its
+// inline diff from. A union, not optional fields: pi-durable types tool
+// details as JsonValue, which has no `undefined` property.
 type KubicToolDetails =
   | {
       readonly ok: true;
@@ -145,8 +145,7 @@ function displayRecord(display: ToolDisplay): DisplayRecord {
 // an order of magnitude above every Kubic cap, so the harness's trimming can
 // never be the binding bound and the model sees exactly what the op
 // rendered; they exist only as a memory backstop for the running-output
-// buffer and for today's deliberately unbounded results (git_diff,
-// git_show). Pinned by test so lowering them is a deliberate, visible act.
+// buffer. Pinned by test so lowering them is a deliberate, visible act.
 const OUTPUT_BACKSTOP = {
   maxBytes: 8 * 1024 * 1024,
   maxLines: 100_000,
@@ -265,6 +264,7 @@ function renderReadText(result: ReadResult): string {
 }
 
 // `[grep /<pattern>/: N matches]` + one `path:line: text` per match.
+/** @internal */
 export function renderGrepText(result: GrepResult): string {
   const count = result.matches.length;
   // A cut result names WHICH cap stopped it: the walk's entry

@@ -11,17 +11,15 @@ import type { CommandResult, ExitCode } from '@kubic/core/cli/exit-codes';
 import { runBenchmarkCommand, runEvalCommand } from '@kubic/eval/cli';
 import { runExportCommand } from '@kubic/eval/export-cli';
 import { makeExport } from '@kubic/eval/test-support/fixtures';
-import { runCostCommand } from '@kubic/host/ops/cost/cost-cli';
-import { AUDIT_FIELDS } from '@kubic/host/policy/audit';
-import { runAuditCommand } from '@kubic/host/policy/audit-cli';
-import { resolveEffectivePolicy } from '@kubic/host/policy/enterprise';
-import { runPolicyCommand } from '@kubic/host/policy/policy-cli';
-import { runReplayCommand } from '@kubic/host/replay/replay';
+import { AUDIT_FIELDS, runAuditCommand } from '@kubic/host/audit';
+import { runCostCommand } from '@kubic/host/cost';
+import { resolveEffectivePolicy, runPolicyCommand } from '@kubic/host/policy';
+import { runReplayCommand } from '@kubic/host/replay';
 import { EXAMPLE_AUDIT_RECORD } from '@kubic/host/test-support/audit-fixtures';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { CommandContext, DispatchRunners } from '../cli/context.js';
 import { createKubicProgram, runKubicProgram } from '../cli/program.js';
-import type { CliConfigResult } from '../config-runtime.js';
+import type { CliConfigResult } from '../config/load.js';
 import { type AnalysisRunners, registerAnalysisCommands } from './analysis.js';
 
 const CONFIG = {} as CliConfigResult;
@@ -58,7 +56,7 @@ async function kubic(argv: readonly string[], real = false): Promise<Run> {
     err: (line: string) => err.push(line),
   };
   const program = createKubicProgram(channels, {
-    versionLine: 'kubic 0.0.0 (license: MIT)',
+    versionLine: 'kubic 1.2.3 (license: MIT)',
     rootHelp: 'usage: kubic <analysis>',
   });
   const handlers = realRunners(channels);
@@ -437,7 +435,7 @@ describe('analysis commands: parsed options reach the runners', () => {
 
 // The multi-agent flags this release removed are usage errors (exit 2), and
 // their runners never start: a script still passing them fails loudly.
-describe('analysis commands: removed multi-agent flags are usage errors', () => {
+describe('analysis commands refuse multi-agent flags as usage errors', () => {
   it('eval and benchmark refuse --generation before any suite runs', async () => {
     const cases: readonly (readonly string[])[] = [
       [

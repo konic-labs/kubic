@@ -51,9 +51,12 @@ export interface BashResult {
 // A command the model gives no timeout still has one, and a
 // model-supplied timeout is clamped to a maximum — a turn can never be
 // held open indefinitely by one bash call.
+/** @internal */
 export const BASH_DEFAULT_TIMEOUT_SEC = 120;
+/** @internal */
 export const BASH_MAX_TIMEOUT_SEC = 600;
 
+/** @internal */
 export interface BashPolicy {
   /** Seconds applied when the model supplies no timeout. */
   defaultTimeoutSec: number;
@@ -97,6 +100,7 @@ function positiveSeconds(
  * malformed value fails closed with the variable named — never a silent
  * fallback to the default.
  */
+/** @internal */
 export function resolveBashPolicy(
   env: Record<string, string | undefined>,
 ): BashPolicy {

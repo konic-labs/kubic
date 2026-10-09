@@ -308,9 +308,8 @@ type FieldType =
   | 'object|null'
   | 'string[]';
 
-// The required keys of every object section. `transfer` is gone, and
-// `actions`/`observations`/`approvals` are arrays, so they are listed
-// separately below.
+// The required keys of every object section. `actions`, `observations` and
+// `approvals` are arrays, so they are listed separately below.
 const SECTION_FIELDS: Readonly<
   Record<string, Readonly<Record<string, FieldType>>>
 > = {

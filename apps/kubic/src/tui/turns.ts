@@ -1,5 +1,6 @@
 // The turns of the interactive loop: the prompt turn driver over the current
 // boot, the busy latch, and one accepted prompt run to its settlement.
+import type { KubicLaneEvent } from '@kubic/agent/lane/events';
 import type { TuiContext } from './context.js';
 import { footerForOutcome } from './outcome.js';
 import { TuiTurnRunner } from './turn-runner.js';
@@ -8,6 +9,17 @@ import type { TuiTurnDriver, TuiTurnOptions } from './types.js';
 // The one builtin whose writes bypass the journal's own recording: a turn that
 // ran it needs the reconcile sweep at settlement.
 const SHELL_TOOL_NAME = 'bash';
+
+// The lane events that commit something the next request carries (a
+// response, a tool result, a prompt, a compaction summary), so the context
+// gauge measures again.
+const COMMITS: ReadonlySet<KubicLaneEvent['type']> = new Set([
+  'usage',
+  'tool-end',
+  'entry',
+  'snapshot',
+  'compaction',
+]);
 
 // The prompt turn driver over the current boot's lane (none without one).
 // `/new` and `/resume` replace the lane, so the drivers are rebuilt: a
@@ -28,6 +40,7 @@ export function buildTurn(ctx: TuiContext): TuiTurnRunner | undefined {
         if (event.toolName === SHELL_TOOL_NAME) ctx.shellRanThisTurn = true;
         ctx.journalFeed?.request();
       }
+      if (COMMITS.has(event.type)) void ctx.contextMeter?.request();
       // A fresh inbox list replaces the queued rows (it is
       // a snapshot); a `run-start` names the submission the harness
       // just PLACED, so its row becomes the pending echo instead.

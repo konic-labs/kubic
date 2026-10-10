@@ -131,6 +131,12 @@ export interface TuiLaneLoop {
   // a window that belongs to a model the session does not run.
   contextLimits?: (provider: string, id: string) => ContextLimits;
   /**
+   * The size of the context the next request carries, counted the way the
+   * compaction trigger counts it, for the gauge. Absent (injected viewer
+   * loops) leaves the gauge off.
+   */
+  contextTokens?: (context: Context) => Promise<number>;
+  /**
    * The thinking level the live conversation's agent carries (the
    * `pi.agent` document), for `/thinking`'s report and the cycle key.
    */

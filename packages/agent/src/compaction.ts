@@ -258,6 +258,22 @@ export interface CompactionLane {
   readonly manualKeep?: ManualKeepScope;
 }
 
+/**
+ * The size of the context the next request carries, counted the way the
+ * compaction trigger counts it: the newest response's reported usage (its
+ * output included, since the reply rides along) plus an estimate of every
+ * message committed after it (tool results, the next prompt). After a
+ * compaction the summary and the kept messages are estimated until the next
+ * response reports real usage.
+ */
+export async function measureContext(
+  lane: Pick<CompactionLane, 'conversation'>,
+  context: Context,
+): Promise<number> {
+  const view = await lane.conversation.context(context);
+  return estimateContextTokens(view.messages).tokens;
+}
+
 interface ManualCompactionAdmission {
   taskId: TaskId<CompactionResult>;
   // The context estimate at admission (Pi's own estimate over the derived

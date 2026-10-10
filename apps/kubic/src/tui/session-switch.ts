@@ -95,6 +95,7 @@ async function adoptBoot(ctx: TuiContext, next: TuiLaneBoot): Promise<void> {
       .join(' · '),
   );
   ctx.journalFeed?.now();
+  void ctx.contextMeter?.request();
   await ctx.turn?.refreshTranscript();
   // After the first read: a transcript snapshot replaces the notice
   // cells, so an earlier append would be wiped. The alt-screen is up, so

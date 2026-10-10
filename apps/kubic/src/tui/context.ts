@@ -14,6 +14,7 @@ import type { TuiApp } from '@kubic/tui/tui-app';
 import type { Terminal } from '@kubic/tui/tui-boundary';
 import type { TuiChrome } from './chrome.js';
 import type { JournalPanelFeed } from './commands/journal.js';
+import type { ContextMeter } from './context-meter.js';
 import type { TuiLifecycle } from './lifecycle.js';
 import type { TuiBootFlags, TuiRunDeps } from './options.js';
 import type { TuiTurnRunner } from './turn-runner.js';
@@ -51,6 +52,8 @@ export class TuiContext {
   wired = false;
   // The Ctrl-O / Ctrl-R panels' feed over the current boot's journal.
   journalFeed: JournalPanelFeed | undefined;
+  // The context gauge's reading over the current boot's lane.
+  contextMeter: ContextMeter | undefined;
   // Set when a shell tool ended in the turn in flight — the only
   // builtin whose writes bypass the journal, so the only reason a settlement
   // needs the reconcile sweep (which walks and hashes the whole workspace:

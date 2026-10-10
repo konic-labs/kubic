@@ -97,6 +97,9 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         compactionThreshold: limits.compactionThreshold,
       });
     },
+    setContextTokens: (tokens) => {
+      status.setState({ ...status.getState(), contextTokens: tokens });
+    },
     onSubmit: (handler) => {
       core.submitHandler = handler;
     },
@@ -150,6 +153,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
         ...status.getState(),
         sessionId: options.sessionId,
         journalChanges: 0,
+        contextTokens: undefined,
       });
       status.setRows([...(options.usage ?? [])]);
       // The old session's blocks are gone.

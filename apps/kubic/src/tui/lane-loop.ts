@@ -5,6 +5,7 @@
 import {
   DEFAULT_RESERVE_TOKENS,
   effectiveReserveTokens,
+  measureContext,
   runCompactCommand,
 } from '@kubic/agent/compaction';
 import { abortLane, forgetLaneKills } from '@kubic/agent/lane/abort';
@@ -87,6 +88,7 @@ export function tuiLoop(
     // prompt as the summarizer instructions, under the manual keep window.
     compact: (focus, loopContext, options) =>
       runCompactCommand(lane, focus, loopContext, options),
+    contextTokens: (loopContext) => measureContext(lane, loopContext),
     // The shared abort+drain (conversation.abort, every kill
     // attempted, failures aggregated) and the settled-turn forget.
     abort: async (loopContext) => {

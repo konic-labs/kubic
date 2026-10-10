@@ -293,6 +293,9 @@ export interface TuiApp {
     contextWindow?: number;
     compactionThreshold?: number;
   }): void;
+  // The context gauge's reading: the size of the context the next request
+  // carries, re-measured by the root after every commit.
+  setContextTokens(tokens: number): void;
   onSubmit(handler: (prompt: string) => TuiSubmitOutcome | undefined): void;
   setBusy(busy: boolean): void;
   isBusy(): boolean;

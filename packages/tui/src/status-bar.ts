@@ -54,15 +54,6 @@ export interface StatusSummary {
   readonly cacheRead: number;
   readonly cacheWrite: number;
   readonly costTotal: number;
-  // The prompt size of the last COMMITTED request — its input
-  // plus BOTH cache counters. pi-ai normalises `input` to exclude the cached
-  // prefix it reused (cacheRead) and the prefix it wrote (cacheWrite), so
-  // input + cacheRead + cacheWrite is the context the model actually
-  // processed, the same quantity the harness's own compaction baseline
-  // counts. Undefined until a row names its committed entry: the seeded
-  // `pi.usage` buckets are cumulative, so reading them here would show
-  // total spend as context pressure.
-  readonly contextTokens?: number;
 }
 
 export function summarizeStatusRows(
@@ -74,7 +65,6 @@ export function summarizeStatusRows(
   let cacheRead = 0;
   let cacheWrite = 0;
   let costTotal = 0;
-  let contextTokens: number | undefined;
   for (const row of rows) {
     requests += 1;
     input += row.usage.input;
@@ -82,20 +72,8 @@ export function summarizeStatusRows(
     cacheRead += row.usage.cacheRead;
     cacheWrite += row.usage.cacheWrite;
     costTotal += row.usage.cost.total;
-    if (row.entryId !== undefined) {
-      contextTokens =
-        row.usage.input + row.usage.cacheRead + row.usage.cacheWrite;
-    }
   }
-  return {
-    requests,
-    input,
-    output,
-    cacheRead,
-    cacheWrite,
-    costTotal,
-    contextTokens,
-  };
+  return { requests, input, output, cacheRead, cacheWrite, costTotal };
 }
 
 export function formatStatusCost(total: number): string {
@@ -128,6 +106,11 @@ export interface StatusBarState {
   // an unknown window must never render a made-up percentage.
   readonly contextWindow?: number;
   readonly compactionThreshold?: number;
+  // The size of the context the next request carries, as the lane measures
+  // it after every commit (the newest response whole, plus an estimate of
+  // what was committed after it). Absent until the first reading. The usage
+  // rows never stand in for it: they are spend, not context.
+  readonly contextTokens?: number;
   // The turn state word, when the running turn started (the
   // spinner's clock), and the session journal's change count.
   readonly turn?: StatusTurnState;
@@ -177,17 +160,16 @@ interface StatusSegments {
   readonly journal: string;
 }
 
-// The context gauge. Unknown (no window, or no committed
-// request yet) means no segment at all — a wrong percentage is worse than a
-// missing one. At or above the compaction threshold the gauge and the
-// percentage take the warning colour: the next turn is about to compact.
+// The context gauge. Unknown (no window, or no reading
+// yet) means no segment at all — a wrong percentage is worse than a missing
+// one. At or above the compaction threshold the gauge and the percentage
+// take the warning colour: the next turn is about to compact.
 function contextParts(
   ui: UiTheme,
   state: StatusBarState,
-  summary: StatusSummary,
 ): Pick<StatusSegments, 'ctxGauge' | 'ctxPercent' | 'ctxWindow'> {
   const window = state.contextWindow;
-  const used = summary.contextTokens;
+  const used = state.contextTokens;
   if (window === undefined || !(window > 0) || used === undefined) {
     return { ctxGauge: '', ctxPercent: '', ctxWindow: '' };
   }
@@ -270,7 +252,7 @@ export function renderStatusLine(
   const segments: StatusSegments = {
     model: ui.fg('fg1')(state.model),
     thinking: state.thinking === '' ? '' : ui.fg('fg2')(` · ${state.thinking}`),
-    ...contextParts(ui, state, summary),
+    ...contextParts(ui, state),
     cost: ui.fg('fg1')(formatCost(summary.costTotal)),
     journal:
       changes > 0

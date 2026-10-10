@@ -288,7 +288,7 @@ describe('tui app root', () => {
     expect(app.render(100).join('\n')).toContain('$0.020');
   });
 
-  it('renders the context gauge from the seed and follows setContextLimits', () => {
+  it('renders the measured context against the seeded window and follows setContextLimits', () => {
     const app = createTuiApp({
       sessionId: SESSION,
       model: MODEL,
@@ -296,34 +296,28 @@ describe('tui app root', () => {
       contextWindow: 1000,
       compactionThreshold: 500,
     });
-    // A committed request (an entry id) whose prompt was 420 tokens.
-    app.setUsage([
-      {
-        model: MODEL,
-        provider: 'faux',
-        entryId: 'e1',
-        usage: {
-          input: 300,
-          output: 5,
-          cacheRead: 120,
-          cacheWrite: 0,
-          totalTokens: 425,
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            total: 0.02,
-          },
-        },
-      },
-    ]);
+    // No reading yet: no gauge.
+    expect(app.render(120).join('\n')).not.toContain('ctx ');
+    app.setContextTokens(420);
     expect(app.render(120).join('\n')).toContain('42% of 1k');
     // A switch to a model with a wider window moves the gauge.
     app.setContextLimits({ contextWindow: 4000, compactionThreshold: 3000 });
     expect(app.render(120).join('\n')).toContain('11% of 4k');
     // A model whose window is unknown clears it: no made-up percentage.
     app.setContextLimits({});
+    expect(app.render(120).join('\n')).not.toContain('ctx ');
+  });
+
+  it('drops the context reading when the session changes', () => {
+    const app = createTuiApp({
+      sessionId: SESSION,
+      model: MODEL,
+      approvalsSkipped: false,
+      contextWindow: 1000,
+    });
+    app.setContextTokens(420);
+    app.resetSession({ sessionId: 'sess-next', model: MODEL });
+    // The next session's own reading replaces it; until then, no gauge.
     expect(app.render(120).join('\n')).not.toContain('ctx ');
   });
 

@@ -16,9 +16,11 @@ import {
   effectiveReserveTokens,
   KEEP_RECENT_TOKENS,
   MAX_RESERVE_FRACTION,
+  measureContext,
   runManualCompaction,
 } from './compaction.js';
 import {
+  AssistantEntry,
   BACKGROUND_CONTEXT,
   CompactionEntry,
   createModels,
@@ -510,5 +512,60 @@ describe('runManualCompaction (the TUI /compact path)', () => {
     expect(outcome.status).toBe('failed');
     expect(outcome.error).toMatch(/ghost|not available/i);
     expect(await compactionEntries(result.root)).toHaveLength(0);
+  });
+});
+
+// ─── measureContext: the context gauge reading ───────────────────────────
+
+/** Usage of the newest committed response. */
+async function lastResponseUsage(root: OpenResult['root']): Promise<{
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+}> {
+  const page = await root.entries({}, 100, undefined, BACKGROUND_CONTEXT);
+  const response = page.items
+    .filter((entry) => AssistantEntry.is(entry))
+    .at(-1);
+  const message = response?.model?.[0];
+  if (message?.role !== 'assistant') throw new Error('no committed response');
+  return message.usage;
+}
+
+describe('measureContext (the context gauge reading)', () => {
+  it('counts the newest response whole, then estimates what was committed after it', async () => {
+    const result = await openLane({
+      models: [{ id: 'large', contextWindow: 100000, maxTokens: 20000 }],
+      compaction: compactionSettings({ currentWindow: () => 100000 }),
+      reply: () => text('a', 300),
+    });
+    await turn(result.root, text('u1', 200));
+    const lane = { harness: result.harness, conversation: result.root };
+
+    const usage = await lastResponseUsage(result.root);
+    const answered = await measureContext(lane, BACKGROUND_CONTEXT);
+    // The reply rides along in the next request, so its output counts.
+    expect(usage.output).toBe(300);
+    expect(answered).toBe(
+      usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+    );
+
+    // A message committed after the response (a tool result, the next
+    // prompt) is in no usage yet, so it is estimated.
+    const write = await result.root.submit(
+      {
+        type: 'write',
+        entry: {
+          kind: 'test.note',
+          model: [
+            { role: 'user', content: text('note', 400), timestamp: Date.now() },
+          ],
+        },
+      },
+      BACKGROUND_CONTEXT,
+    );
+    await write.wait(BACKGROUND_CONTEXT);
+    expect(await measureContext(lane, BACKGROUND_CONTEXT)).toBe(answered + 400);
   });
 });

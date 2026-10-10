@@ -130,8 +130,12 @@ Three one-row surfaces frame the transcript. Top to bottom:
   31% of 200k  │  $0.031  │  journal 2 changes` with the turn's
   state word on the right — `ready`, `working` (the mark becomes the
   spinner), `needs approval`, `cancelling…` or `error` (the last turn
-  failed; the next one clears it). The context gauge appears once the lane
-  has reported a committed request and the model's window is known; it turns
+  failed; the next one clears it). The context gauge shows the size of the
+  context the next request carries, counted the way compaction counts it:
+  the newest response's reported usage, its reply included, plus an estimate
+  of everything committed after it. It is measured again after every commit,
+  so a large tool result moves it mid-turn, and a resumed session shows it
+  from the first frame. It needs the model's window to be known; it turns
   to the warning colour at or above the auto-compaction threshold (window
   minus the reserve; roughly 87% of a 128k window, higher on larger ones), so
   the warning is the signal that the next turn will compact. The journal

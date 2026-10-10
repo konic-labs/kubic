@@ -91,23 +91,6 @@ describe('status aggregates', () => {
     expect(summary.requests).toBe(0);
     expect(formatStatusCost(summary.costTotal)).toBe('$0.00');
   });
-
-  it('reports the last committed request as the context size', () => {
-    const summary = summarizeStatusRows([
-      // Seeded cumulative buckets are not a request: no entry id.
-      row({ usage: { ...priced().usage, input: 5000, cacheRead: 900 } }),
-      row({
-        entryId: 'e1',
-        usage: { ...priced().usage, input: 300, cacheRead: 120 },
-      }),
-      row({
-        entryId: 'e2',
-        usage: { ...priced().usage, input: 420, cacheRead: 0, cacheWrite: 0 },
-      }),
-    ]);
-    expect(summary.contextTokens).toBe(420);
-    expect(summarizeStatusRows([priced()]).contextTokens).toBeUndefined();
-  });
 });
 
 function state(over: Partial<StatusBarState>): StatusBarState {
@@ -149,14 +132,6 @@ const line = (over: Partial<StatusBarState>, width: number): string =>
 const between = (left: string, right: string, width: number): string =>
   `${left}${' '.repeat(width - visibleWidth(left) - visibleWidth(right))}${right}`;
 
-// A committed request whose prompt was `input + cacheRead` tokens.
-function requestRow(input: number, cacheRead: number): StatusUsageRow {
-  return row({
-    entryId: 'e1',
-    usage: { ...priced().usage, input, cacheRead, cacheWrite: 0 },
-  });
-}
-
 describe('status line', () => {
   it('renders model · thinking, cost and the state word on one row', () => {
     expect(line({ rows: [priced()] }, 100)).toBe(
@@ -172,16 +147,13 @@ describe('status line', () => {
         thinking: 'high',
         rows: [
           row({
-            entryId: 'e1',
             usage: {
               ...priced().usage,
-              input: 62000,
-              cacheRead: 0,
-              cacheWrite: 0,
               cost: { ...priced().usage.cost, total: 0.031 },
             },
           }),
         ],
+        contextTokens: 62000,
         contextWindow: 200000,
         journalChanges: 2,
       },
@@ -226,7 +198,8 @@ describe('status line', () => {
 
   it('drops the window, journal, gauge, thinking and ctx in that order', () => {
     const busy: Partial<StatusBarState> = {
-      rows: [requestRow(300, 120)],
+      rows: [priced()],
+      contextTokens: 420,
       contextWindow: 1000,
       journalChanges: 3,
     };
@@ -266,7 +239,7 @@ describe('status line', () => {
     const open = rich.open({ bg: 'bg1' });
     for (const width of [20, 40, 60, 80, 100, 120, 200]) {
       const over = {
-        rows: [requestRow(300, 120)],
+        contextTokens: 420,
         contextWindow: 1000,
         journalChanges: 2,
       };
@@ -315,29 +288,46 @@ describe('status line', () => {
 });
 
 describe('context-window gauge', () => {
-  // A committed request whose prompt was 420 tokens (300 new + 120 cached)
-  // against a 1000-token window: `ctx 42%`.
-  it('renders 42% for a 1000-token window and a 420-token request', () => {
-    expect(
-      line({ rows: [requestRow(300, 120)], contextWindow: 1000 }, 100),
-    ).toContain('42%');
+  // A measured context of 420 tokens against a 1000-token window: `ctx 42%`.
+  it('renders 42% for a 1000-token window and a 420-token context', () => {
+    expect(line({ contextTokens: 420, contextWindow: 1000 }, 100)).toContain(
+      '42%',
+    );
   });
 
   it('hides the gauge when the context window is unknown', () => {
-    expect(line({ rows: [requestRow(300, 120)] }, 100)).not.toContain('ctx');
+    expect(line({ contextTokens: 420 }, 100)).not.toContain('ctx');
   });
 
-  it('hides the gauge until a committed request reports its prompt size', () => {
-    // A seeded cumulative bucket is not context pressure.
+  it('hides the gauge until the context is measured', () => {
     expect(line({ rows: [priced()], contextWindow: 1000 }, 100)).not.toContain(
       'ctx',
     );
   });
 
+  it('reads the measured context, never the usage rows', () => {
+    // The rows are spend: a resumed session's seeded buckets are cumulative,
+    // and even a committed response's own prompt leaves out its reply and
+    // everything committed after it.
+    const response = row({
+      entryId: 'e1',
+      usage: { ...priced().usage, input: 900, cacheRead: 0, cacheWrite: 0 },
+    });
+    const text = line(
+      { rows: [response], contextTokens: 120, contextWindow: 1000 },
+      100,
+    );
+    expect(text).toContain(' 12% of 1k');
+    expect(text).not.toContain('90%');
+  });
+
   it('warns at or above the compaction threshold, never below it', () => {
-    const rows = [requestRow(300, 120)];
     const below = renderStatusLine(
-      state({ rows, contextWindow: 1000, compactionThreshold: 500 }),
+      state({
+        contextTokens: 420,
+        contextWindow: 1000,
+        compactionThreshold: 500,
+      }),
       100,
       rich,
       NOW,
@@ -345,7 +335,11 @@ describe('context-window gauge', () => {
     expect(below).toContain(rich.fg('fg1')('42%'));
     expect(below).not.toContain(rich.fg('warn')('42%'));
     const at = renderStatusLine(
-      state({ rows, contextWindow: 1000, compactionThreshold: 420 }),
+      state({
+        contextTokens: 420,
+        contextWindow: 1000,
+        compactionThreshold: 420,
+      }),
       100,
       rich,
       NOW,
@@ -354,25 +348,10 @@ describe('context-window gauge', () => {
     expect(at).toContain(rich.fg('warn')('━━━━'));
   });
 
-  it('clamps a window smaller than the request instead of exceeding 100%', () => {
-    expect(
-      line({ rows: [requestRow(300, 120)], contextWindow: 100 }, 100),
-    ).toContain('ctx ━━━━━━━━━━ 100%');
-  });
-
-  it('counts the cache-write prefix, not just the reused one', () => {
-    // The first request of a session (or one after the cache TTL lapses)
-    // writes the whole prefix: pi's `input` is then only the new user text,
-    // and a gauge that ignored cacheWrite would read 0% while the context is
-    // nearly 7% of a 128k window.
-    const rowWithWrite = row({
-      entryId: 'e1',
-      usage: { ...priced().usage, input: 30, cacheRead: 0, cacheWrite: 9000 },
-    });
-    const summary = summarizeStatusRows([rowWithWrite]);
-    expect(summary.contextTokens).toBe(9030);
-    const text = line({ rows: [rowWithWrite], contextWindow: 128000 }, 120);
-    expect(text).toContain(' 7% of 128k');
+  it('clamps a window smaller than the context instead of exceeding 100%', () => {
+    expect(line({ contextTokens: 420, contextWindow: 100 }, 100)).toContain(
+      'ctx ━━━━━━━━━━ 100%',
+    );
   });
 });
 

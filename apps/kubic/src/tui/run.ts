@@ -52,6 +52,7 @@ import {
 } from './commands/appearance.js';
 import { journalPanelFeed } from './commands/journal.js';
 import { TuiContext } from './context.js';
+import { contextMeter } from './context-meter.js';
 import { laneEntryFor } from './entries.js';
 import { TuiInput } from './input.js';
 import { TuiLifecycle } from './lifecycle.js';
@@ -265,6 +266,8 @@ async function runLoop(
   ctx.terminal = deps.createTerminal();
   ctx.journalFeed = journalPanelFeed(ctx);
   ctx.journalFeed?.now();
+  ctx.contextMeter = contextMeter(ctx);
+  void ctx.contextMeter.request();
   ctx.turn = buildTurn(ctx);
   ctx.chrome = new TuiChrome(ctx);
   ctx.lifecycle = new TuiLifecycle(ctx);

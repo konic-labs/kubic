@@ -88,6 +88,11 @@ scratch/
 .kubic/audit/
 
 # ---------------------------------------------------------------------------
+# Maintainer-local release notes, not part of the repository.
+# ---------------------------------------------------------------------------
+/docs/publish-checklist.md
+
+# ---------------------------------------------------------------------------
 # Private agent instructions: the development process of the AI agents that
 # build Kubic. Local only, deliberately not part of the released codebase
 # (public files must not reference or depend on it).

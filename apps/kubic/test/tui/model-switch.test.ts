@@ -342,6 +342,8 @@ describe('/model on the kubic tui path', () => {
     fake.feed('\x10');
     await waitFor(() => fake.frame.includes('COMMANDS'));
     expect(fake.frame).toContain('tab next group');
+    // Browsing lists every command first; a search reaches the model rows.
+    for (const ch of 'big') fake.feed(ch);
     await waitFor(() => fake.frame.includes('faux/big  current'));
     // Esc closes it and the hint row is the editor's again.
     const mark = fake.mark();

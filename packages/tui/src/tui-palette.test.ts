@@ -100,7 +100,7 @@ describe('the ^P palette', () => {
     expect(app.isPaletteOpen()).toBe(true);
     // 80 cells on a 120-column terminal, 70% of the rows at most.
     expect(open()?.options).toMatchObject({ width: 80, maxHeight: '70%' });
-    expect(frame()).toContain('┌─ ^P ─');
+    expect(frame()).toContain('┌─ Command palette ─');
     expect(frame()).toContain('COMMANDS');
     expect(frame()).toContain('/help');
     await settle();

@@ -178,7 +178,7 @@ describe('palette state', () => {
     expect(shape(query('claude nothing'))).toEqual([]);
   });
 
-  it('an empty query shows the recent commands and the current model', () => {
+  it('an empty query lists every command, recent first, and the current model', () => {
     expect(shape(query(''))).toEqual([
       ['commands', ['/model', '/models', '/mode', '/help']],
       ['models', ['anthropic/claude-sonnet-5-5']],
@@ -186,7 +186,21 @@ describe('palette state', () => {
     const recent = ALL.map((item) =>
       item.value === '/help' ? { ...item, recent: true } : item,
     );
-    expect(shape(query('', recent))[0]).toEqual(['commands', ['/help']]);
+    expect(shape(query('', recent))[0]).toEqual([
+      'commands',
+      ['/help', '/model', '/models', '/mode'],
+    ]);
+  });
+
+  it('browsing reaches every command with the arrows', () => {
+    const many: PaletteItem[] = Array.from({ length: 10 }, (_, i) => ({
+      group: 'commands',
+      value: `/c${i}`,
+      text: `/c${i}`,
+    }));
+    const state = query('', many);
+    expect(paletteRows(state)).toHaveLength(10);
+    expect(selectedPaletteItem(movePalette(state, 9))?.value).toBe('/c9');
   });
 
   it('caps a group until tab focuses it', () => {
@@ -241,7 +255,7 @@ describe('palette state', () => {
 describe('palette render', () => {
   it('reads like the design at depth none', () => {
     expect(render(query('mod'))).toEqual([
-      '┌─ ^P ─────────────────────────────────────────────────────────────────────────┐',
+      `┌─ Command palette ${'─'.repeat(55)} ^P ─┐`,
       '│ › mod                                                              5 results │',
       '├──────────────────────────────────────────────────────────────────────────────┤',
       '│ COMMANDS                                                                     │',
@@ -270,7 +284,7 @@ describe('palette render', () => {
 
   it('says there is nothing to show', () => {
     expect(render(query('zzz'))).toEqual([
-      '┌─ ^P ─────────────────────────────────────────────────────────────────────────┐',
+      `┌─ Command palette ${'─'.repeat(55)} ^P ─┐`,
       '│ › zzz                                                              0 results │',
       '├──────────────────────────────────────────────────────────────────────────────┤',
       '│  no matches — esc to close                                                   │',

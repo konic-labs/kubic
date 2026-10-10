@@ -158,12 +158,14 @@ Three one-row surfaces frame the transcript. Top to bottom:
   marked `● … current`), **SESSIONS** (this project's other sessions, by
   their first prompt, with their age and turns — the rows `/resume` lists)
   and **FILES** (the project's files, at most 2,000). A group with
-  nothing matching is hidden, and each shows at most six rows until `tab`
-  focuses it. Every word of the query must match a row's name in order, or
-  appear in a command's summary (ranked below a name match); the matched
-  letters are drawn in the accent colour, and the best match of any group is
-  selected. With nothing typed it shows the commands this session ran (the
-  first six commands before any) and the live model. `⏎` runs the row: a
+  nothing matching is hidden, and while a query is typed each shows at most
+  six rows until `tab` focuses it. Every word of the query must match a
+  row's name in order, or appear in a command's summary (ranked below a name
+  match); the matched letters are drawn in the accent colour, and the best
+  match of any group is selected. With nothing typed it lists every command,
+  the ones this session ran first, so the arrows reach all of them; the live
+  model follows. The box is titled `Command palette`, with its key on the
+  right. `⏎` runs the row: a
   command runs exactly as if it were typed (one that needs its argument —
   `/image <path>` — is put in the editor to finish), a model switches
   like `/model`, a session resumes like `/resume`, a file inserts

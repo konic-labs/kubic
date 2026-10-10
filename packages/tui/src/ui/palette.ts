@@ -1,9 +1,11 @@
-// The ^P command palette. One fuzzy search over four groups — COMMANDS, MODELS,
-// SESSIONS, FILES, in that order — each hidden when nothing in it matches
-// and capped at PALETTE_GROUP_ROWS until `tab` focuses it. Pi's fuzzyMatch
-// ranks (the row's text first, a command's summary at a lower weight) and
-// fuzzyPositions marks the matched letters. An empty query shows the recent
-// commands and the current model. Pure: state in, state or lines out.
+// The command palette (^P). One fuzzy search over four groups — COMMANDS,
+// MODELS, SESSIONS, FILES, in that order — each hidden when nothing in it
+// matches and, while searching, capped at PALETTE_GROUP_ROWS until `tab`
+// focuses it. Pi's fuzzyMatch ranks (the row's text first, a command's
+// summary at a lower weight) and fuzzyPositions marks the matched letters.
+// An empty query lists every command, the recent ones first, and the current
+// model; a list taller than the overlay scrolls with the selection. Pure:
+// state in, state or lines out.
 
 import type { UiTheme } from '@kubic/core/ui/style';
 import { fuzzyMatch, visibleWidth } from '../tui-boundary.js';
@@ -146,13 +148,14 @@ function groupMatches(
   const items = state.items.filter((item) => item.group === group);
   const words = terms(state.query);
   if (words.length === 0) {
-    // Browsing: a focused group lists everything; otherwise the recent
-    // commands (the first page of the registry before any) and the model
-    // in use.
+    // Browsing: a focused group lists everything; the commands list every
+    // command, the recent ones first, so the arrows reach all of them; the
+    // models show the one in use.
     if (state.focus === group) return items.map(plain);
     if (group === 'commands') {
       const recent = items.filter((item) => item.recent === true);
-      return (recent.length > 0 ? recent : items).map(plain);
+      const rest = items.filter((item) => item.recent !== true);
+      return [...recent, ...rest].map(plain);
     }
     if (group === 'models') {
       return items.filter((item) => item.current === true).map(plain);
@@ -178,10 +181,15 @@ export function paletteGroups(state: PaletteState): PaletteGroupView[] {
   for (const group of PALETTE_GROUP_ORDER) {
     const matches = groupMatches(state, group);
     if (matches.length === 0) continue;
+    // Browsing never caps the commands: the list scrolls instead.
+    const browsingCommands =
+      group === 'commands' && terms(state.query).length === 0;
     views.push({
       group,
       rows:
-        state.focus === group ? matches : matches.slice(0, PALETTE_GROUP_ROWS),
+        state.focus === group || browsingCommands
+          ? matches
+          : matches.slice(0, PALETTE_GROUP_ROWS),
       total: matches.length,
     });
   }
@@ -399,6 +407,8 @@ function windowAround<T extends { readonly row?: number }>(
   return lines.slice(start, start + room);
 }
 
+const PALETTE_TITLE = 'Command palette';
+
 export function renderPalette(
   ui: UiTheme,
   state: PaletteState,
@@ -410,9 +420,13 @@ export function renderPalette(
   const border = ui.fg('fg1');
   const framed = (content: string): string =>
     `${border('│')}${content}${border('│')}`;
-  const key = ui.style({ fg: 'accent', bold: true })(options.keyLabel);
-  const dashes = Math.max(0, w - 5 - visibleWidth(options.keyLabel));
-  const top = `${border('┌─ ')}${key}${border(` ${'─'.repeat(dashes)}┐`)}`;
+  const title = ui.style({ fg: 'accent', bold: true })(PALETTE_TITLE);
+  const keyLabel = ui.fg('fg2')(options.keyLabel);
+  const dashes = Math.max(
+    0,
+    w - 8 - visibleWidth(PALETTE_TITLE) - visibleWidth(options.keyLabel),
+  );
+  const top = `${border('┌─ ')}${title}${border(` ${'─'.repeat(dashes)} `)}${keyLabel}${border(' ─┐')}`;
   const count = paletteResultCount(state);
   const query = leftRight(
     `${ui.style({ fg: 'accent', bold: true })(' › ')}${options.input}`,

@@ -7,7 +7,8 @@
 over one session), adapts Kubic's operations into the tools the model
 calls, stores sessions, compacts context and classifies failures. Every
 Pi import goes through `src/pi-boundary.ts`, and the pi-boundary gate
-fails a re-export that carries no `JUSTIFICATION:` block. What each tool
+fails a re-export that carries no `JUSTIFICATION:` block. `CODEOWNERS`
+puts every change to that file in front of a maintainer. What each tool
 accepts, returns and bounds is on the [tools page](../cli/tools.md).
 
 ## Entry points

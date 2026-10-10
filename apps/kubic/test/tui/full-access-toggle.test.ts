@@ -81,7 +81,7 @@ describe('the TUI full-access toggle', () => {
     // Alt+A asks: the dialog names the consequence and its deliberate key.
     fake.inject('\u001ba');
     await waitFor(() =>
-      fake.output().includes('enable full access for this session?'),
+      fake.output().includes('turn approvals off for this session?'),
     );
     expect(fake.output()).toContain(
       'every challenged call in this session will run without asking',
@@ -93,7 +93,7 @@ describe('the TUI full-access toggle', () => {
     // Ctrl-S confirms: the file, the ledger and the bar all move.
     fake.inject('\u0013');
     await waitFor(() =>
-      fake.output().includes('full access ON for this session'),
+      fake.output().includes('approvals: OFF — every challenged call'),
     );
     expect(fake.output()).toContain('approvals OFF (full-access)');
     expect(
@@ -109,10 +109,12 @@ describe('the TUI full-access toggle', () => {
     const before = fake.writes.length;
     fake.inject('\u001ba');
     await waitFor(() =>
-      fake.output().includes('enforced again — the next challenged call asks'),
+      fake
+        .output()
+        .includes('approvals: on again — the next challenged call asks'),
     );
     expect(fake.writes.slice(before).join('')).not.toContain(
-      'enable full access',
+      'turn approvals off',
     );
     expect(fake.output()).toContain('approvals on');
     expect(
@@ -159,13 +161,13 @@ describe('the TUI full-access toggle', () => {
     await waitFor(() => fake.started === 1);
     fake.inject('\u001ba');
     await waitFor(() =>
-      fake.output().includes('enable full access for this session?'),
+      fake.output().includes('turn approvals off for this session?'),
     );
     // `y`, `yes` and a bare Enter are all swallowed: the dialog stays and
     // nothing is recorded.
     for (const key of ['y', 'e', 's', '\r']) fake.inject(key);
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(fake.output()).toContain('enable full access for this session?');
+    expect(fake.output()).toContain('turn approvals off for this session?');
     expect(
       new FileApprovalStore(join(sessionsRoot, sessionId)).loadPosture()
         .fullAccess,
@@ -186,7 +188,7 @@ describe('the TUI full-access toggle', () => {
     expect((await pending).exitCode).toBe(0);
   });
 
-  it('answers /approvals on|off and reports the live posture', async () => {
+  it('turns approvals on and off by name, confirming before off', async () => {
     const workspace = tmpRoot('ws-');
     const sessionsRoot = tmpRoot('sessions-');
     const fake = fakeTerminal(120, 30);
@@ -216,17 +218,17 @@ describe('the TUI full-access toggle', () => {
     };
     run('/approvals');
     await waitFor(() =>
-      fake.output().includes('approvals: enforced — challenged calls ask'),
+      fake.output().includes('approvals: on — challenged calls ask'),
     );
-    // `off` while already off is a REPORT — no
-    // dialog, no second posture row for a change that did not happen.
-    const beforeOff = fake.writes.length;
-    run('/approvals off');
+    // `on` while already on is a REPORT — no
+    // dialog, no posture row for a change that did not happen.
+    const beforeOn = fake.writes.length;
+    run('/approvals on');
     await waitFor(() =>
-      fake.output().includes('approvals: enforced — nothing to change'),
+      fake.output().includes('approvals: already on — challenged calls ask'),
     );
     expect(postureRows(workspace)).toHaveLength(0);
-    expect(fake.writes.slice(beforeOff).join('')).not.toContain(
+    expect(fake.writes.slice(beforeOn).join('')).not.toContain(
       'posture:approvals',
     );
     // A malformed argument is refused by name.
@@ -234,28 +236,26 @@ describe('the TUI full-access toggle', () => {
     await waitFor(() =>
       fake.output().includes("approvals: expected 'on' or 'off'"),
     );
-    // `on` opens the same confirmation; Ctrl-S confirms it.
-    run('/approvals on');
+    // `off` opens the confirmation; Ctrl-S confirms it.
+    run('/approvals off');
     await waitFor(() =>
-      fake.output().includes('enable full access for this session?'),
+      fake.output().includes('turn approvals off for this session?'),
     );
     fake.inject('\u0013');
     await waitFor(() =>
-      fake.output().includes('full access ON for this session'),
+      fake.output().includes('approvals: OFF — every challenged call'),
     );
     run('/approvals');
     await waitFor(() =>
-      fake.output().includes('approvals: full access ON for this session'),
+      fake.output().includes('approvals: OFF — full access for this session'),
     );
-    // Finding 1's mirror: `on` while already on is a report — it must NOT
-    // toggle off, and it must not open a dialog that would.
-    const beforeOn = fake.writes.length;
-    run('/approvals on');
-    await waitFor(() =>
-      fake.output().includes('approvals: full access already ON'),
-    );
-    expect(fake.writes.slice(beforeOn).join('')).not.toContain(
-      'enable full access for this session?',
+    // `off` while already off is a report — it must NOT
+    // toggle back on, and it must not open a dialog.
+    const beforeOff = fake.writes.length;
+    run('/approvals off');
+    await waitFor(() => fake.output().includes('approvals: already OFF'));
+    expect(fake.writes.slice(beforeOff).join('')).not.toContain(
+      'turn approvals off for this session?',
     );
     expect(
       new FileApprovalStore(join(sessionsRoot, sessionId)).loadPosture()
@@ -264,24 +264,22 @@ describe('the TUI full-access toggle', () => {
     expect(postureRows(workspace).map((row) => row.what)).toEqual([
       'posture:full-access',
     ]);
-    // And the explicit direction still turns it off, immediately.
-    run('/approvals off');
+    // And the explicit direction turns approvals back on, immediately.
+    run('/approvals on');
     await waitFor(() =>
-      fake.output().includes('enforced again — the next challenged call asks'),
+      fake
+        .output()
+        .includes('approvals: on again — the next challenged call asks'),
     );
     expect(postureRows(workspace).map((row) => row.what)).toEqual([
       'posture:full-access',
       'posture:approvals',
     ]);
-    // The revoke's transcript notice is the live warning: it names the session
-    // and what the next challenged call does.
-    await waitFor(() =>
-      fake
-        .output()
-        .includes(
-          `full-access revoked for session ${sessionId} — every challenged call asks again`,
-        ),
-    );
+    expect(postureRows(workspace).map((row) => row.posture)).toEqual([
+      'full-access',
+      'approvals',
+    ]);
+
     fake.inject('\u0003');
     fake.inject('\u0003');
     expect((await pending).exitCode).toBe(0);
@@ -333,7 +331,7 @@ describe('the TUI full-access toggle', () => {
     // No dialog was opened, so Ctrl-S and Esc still belong to the approval:
     // nothing was recorded for a flip that never started.
     expect(fake.writes.slice(before).join('')).not.toContain(
-      'enable full access for this session?',
+      'turn approvals off for this session?',
     );
     expect(postureRows(workspace)).toHaveLength(0);
     // Esc answers the pending request (denies it) rather than a dialog.

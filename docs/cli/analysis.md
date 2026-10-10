@@ -378,9 +378,9 @@ this file.
   run start, `none` outside git. A row that genuinely knows no better keeps
   the honest `unknown` instead of inventing a value.
 - Enabling full access (`--dangerously-skip-approvals` on `kubic`, `tui`,
-  `run` or `sessions create`, or the in-session `Alt+A` / `/approvals on`
-  toggle) appends one `posture:full-access` row naming the session and the
-  command; turning it back off (`Alt+A` again, or `/approvals off`) appends
+  `run` or `sessions create`, or the in-session `Alt+A` / `/approvals off`)
+  appends one `posture:full-access` row naming the session and the
+  command; turning approvals back on (`Alt+A` again, or `/approvals on`) appends
   one `posture:approvals` row, so the ledger carries the posture history in
   order. A flip that would change nothing (the direction is already in
   force) is reported on the footer and writes no row. A `posture.json`

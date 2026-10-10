@@ -33,30 +33,29 @@ export const sessionCommands: TuiCommandTable = {
       if (argument === '') {
         ctx.say(
           ctx.fullAccessLive()
-            ? 'approvals: full access ON for this session'
-            : 'approvals: enforced — challenged calls ask',
+            ? 'approvals: OFF — full access for this session'
+            : 'approvals: on — challenged calls ask',
         );
         return 'accepted';
       }
-      // The argument names a DIRECTION,
-      // so it never flips the other way. `on` in a session that is
-      // already on is a report (it must not toggle off, and it must
-      // not open a dialog that would); `off` in a session that is
-      // already off is a report too — never a second no-op row for a
-      // change that did not happen. Only `Alt+A` toggles.
+      // The argument names the state of APPROVALS (the header's
+      // `approvals on` / `approvals OFF`), so it never flips the other way.
+      // `on` in a session that is already on is a report, and so is `off`
+      // in a session that is already off — no dialog, and no posture row for
+      // a change that did not happen. Only `Alt+A` toggles.
       if (argument === 'on') {
-        if (ctx.fullAccessLive()) {
-          ctx.say('approvals: full access already ON for this session');
-          return 'accepted';
-        }
-        return openFullAccessConfirm(ctx);
-      }
-      if (argument === 'off') {
         if (!ctx.fullAccessLive()) {
-          ctx.say('approvals: enforced — nothing to change');
+          ctx.say('approvals: already on — challenged calls ask');
           return 'accepted';
         }
         return applyFullAccess(ctx, false);
+      }
+      if (argument === 'off') {
+        if (ctx.fullAccessLive()) {
+          ctx.say('approvals: already OFF — full access for this session');
+          return 'accepted';
+        }
+        return openFullAccessConfirm(ctx);
       }
       return refuse(
         ctx,
@@ -88,8 +87,8 @@ function applyFullAccess(ctx: TuiContext, enabled: boolean): TuiSubmitOutcome {
     ctx.app.appendNotice([grant.warning]);
     ctx.app.setEditorFooter(
       enabled
-        ? 'approvals: full access ON for this session — every challenged call runs without asking'
-        : 'approvals: enforced again — the next challenged call asks',
+        ? 'approvals: OFF — every challenged call in this session runs without asking'
+        : 'approvals: on again — the next challenged call asks',
     );
   } catch (error) {
     ctx.app.setEditorFooter(
@@ -100,8 +99,9 @@ function applyFullAccess(ctx: TuiContext, enabled: boolean): TuiSubmitOutcome {
   return 'accepted';
 }
 
-// Enabling asks first (the dialog names the consequence); disabling is
-// immediate. The dialog accepts only its deliberate key.
+// Turning approvals off asks first (the dialog names the consequence);
+// turning them back on is immediate. The dialog accepts only its deliberate
+// key.
 //
 // The confirmation is a modal of its
 // own and `Alt+A` is a GLOBAL key, so it would otherwise open OVER a
@@ -115,7 +115,7 @@ function openFullAccessConfirm(ctx: TuiContext): TuiSubmitOutcome {
     return refuse(ctx, 'approvals: answer the pending request first');
   }
   const opened = ctx.app.openConfirm({
-    title: 'enable full access for this session?',
+    title: 'turn approvals off for this session?',
     body: [
       'every challenged call in this session will run without asking',
       'the change is written to posture.json and one audit row',

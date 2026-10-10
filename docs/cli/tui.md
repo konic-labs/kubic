@@ -102,10 +102,11 @@ full access for the session it opens or resumes, through the same path as
 `warning:` line on stderr before the screen opens. A lane that `/new` or
 `/resume` boots in full access names its notice as a transcript row, since the
 screen is already up. In the session itself the
-same posture can be toggled with `Alt+A` or `/approvals on|off`:
-`Alt+A` flips whichever way the session is currently in, while `on`/`off`
-name a direction and only report when it is already in force; enabling asks
-for confirmation first, disabling is immediate, and both write
+same posture can be toggled with `Alt+A` or `/approvals off|on`:
+`Alt+A` flips whichever way the session is currently in, while `off`/`on`
+name the state of approvals and only report when it is already in force;
+turning approvals off (full access) asks for confirmation first, turning them
+back on is immediate, and both write
 the same posture file and audit rows — the installed policy reads the change
 live, so the very next challenged call follows it, and the indicator moves in
 the same frame. The header shows `approvals OFF (full-access)` from the

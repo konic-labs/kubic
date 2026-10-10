@@ -91,7 +91,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     // response to an approval request (the vocabulary's `approval.respond`
     // needs a request id this has none of).
     name: 'approvals',
-    summary: 'toggle full access for this session',
+    summary: 'turn approvals on or off for this session (off = full access)',
     usage: '/approvals [on|off]',
     keys: 'Alt+A',
     keyAction: 'approvals.fullAccess',

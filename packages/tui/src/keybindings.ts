@@ -200,7 +200,11 @@ export class KeybindingsError extends Error {
  */
 /** @internal */
 export function canonicalKey(id: string): string | undefined {
-  const parts = id.trim().toLowerCase().split('+');
+  const trimmed = id.trim();
+  // A lone capital is the shifted letter: a legacy terminal sends `L` for
+  // Shift+L, and pi-tui's parseKey hands it on as `L`.
+  if (/^[A-Z]$/.test(trimmed)) return `shift+${trimmed.toLowerCase()}`;
+  const parts = trimmed.toLowerCase().split('+');
   const key = parts.pop();
   if (key === undefined) return undefined;
   const name = key;

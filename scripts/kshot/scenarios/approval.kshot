@@ -1,0 +1,15 @@
+# The approval card for a destructive shell command, then Esc denying it.
+size 120 36
+sh git init -q . && printf 'hello\n' > notes.txt && git add notes.txt && git -c user.email=kshot@example.com -c user.name=kshot commit -qm init
+start node $REPO/bin/kubic.js tui
+waitfor faux/echo
+idle
+type faux:tool bash {"command":"rm -rf build"}
+key Enter
+waitfor APPROVAL 10000
+idle 900
+snap approval-card
+key Escape
+waitfor denied by the user
+idle
+snap denied

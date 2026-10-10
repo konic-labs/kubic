@@ -21,6 +21,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:binary": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs",
+    "kshot": "npm run build && python3 scripts/kshot/kshot.py",
     "release:stage": "node scripts/release-stage.mjs",
     "release:contract": "node scripts/pack-install-contract.mjs",
     "check": "npm run typecheck && npm run lint && npm run lint:deps && npm run lint:dead && npm run lint:dead:prod && npm run check:pins && npm run docs:check && npm run check:gates",

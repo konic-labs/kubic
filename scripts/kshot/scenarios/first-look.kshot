@@ -1,0 +1,15 @@
+# The first screen, one faux turn and the command palette.
+size 120 36
+sh git init -q . && printf 'hello\n' > notes.txt && git add notes.txt && git -c user.email=kshot@example.com -c user.name=kshot commit -qm init
+start node $REPO/bin/kubic.js tui
+waitfor faux/echo
+idle
+snap first-screen
+type hello there
+key Enter
+waitfor faux echo: hello there
+idle
+snap after-a-turn
+key C-p
+idle
+snap palette

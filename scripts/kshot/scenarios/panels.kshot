@@ -1,0 +1,34 @@
+# The diff and journal panels over two changed files, Esc, then the confirm
+# dialog that /approvals off opens.
+size 120 40
+sh git init -q . && python3 -c "open('app.py', 'w').write(''.join('line %d\\n' % i for i in range(1, 41)))" && printf 'hello\n' > notes.txt && git add app.py notes.txt && git -c user.email=kshot@example.com -c user.name=kshot commit -qm init
+start node $REPO/bin/kubic.js tui
+waitfor faux/echo
+idle
+type faux:tool write {"path":"notes.txt","content":"hello\nworld\nfrom kubic\n"}
+key Enter
+waitfor returned
+idle
+type faux:tool write {"path":"app.py","content":"line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline TWENTY (changed)\nan inserted line\nline 21\nline 22\nline 23\nline 24\nline 25\nline 26\nline 27\nline 28\nline 29\nline 30\nline 31\nline 32\nline 33\nline 34\nline 35\nline 36\nline 37\nline 38\nline 39\nline 40\n"}
+key Enter
+waitfor TWENTY
+idle 600
+key C-o
+idle
+snap diff-panel
+key C-r
+idle
+snap journal-panel
+key M-Down
+idle
+snap journal-paged
+key Escape
+idle
+snap after-esc
+type /approvals off
+key Enter
+idle
+snap confirm
+key Escape
+idle
+snap confirm-cancelled

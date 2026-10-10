@@ -71,6 +71,10 @@ tmp/
 .tmp/
 scratch/
 *.local
+__pycache__/
+
+# kshot's screenshots (npm run kshot -- <scenario>).
+/.kshot/
 
 # ---------------------------------------------------------------------------
 # Kubic's own local state. The checkout's `.kubic/` directory holds local

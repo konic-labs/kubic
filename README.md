@@ -92,7 +92,7 @@ npm run build
 ./bin/kubic.js --version
 ```
 
-The last command prints `kubic 0.0.0 (license: MIT)` and exits 0. Equivalent
+The last command prints `kubic 0.1.2 (license: MIT)` and exits 0. Equivalent
 invocations: `npx kubic --version` (the `bin` entry, no install needed),
 `npm run kubic -- --version` (the same binary through npm), and
 `node dist/kubic.js --version` (the bundled build output directly).

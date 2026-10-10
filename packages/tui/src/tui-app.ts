@@ -39,6 +39,7 @@ import { OverlayController } from './app/overlays.js';
 import { PaletteController } from './app/palette-controller.js';
 import { PanelController } from './app/panel.js';
 import { QuitArming } from './app/quit.js';
+import { SessionTreeController } from './app/session-tree.js';
 import { SessionView } from './app/session-view.js';
 import { TurnView } from './app/turn-view.js';
 import type { TuiApp, TuiAppSeed } from './app/types.js';
@@ -65,6 +66,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   core.palette = new PaletteController(core);
   core.blocks = new BlockMode(core);
   core.approvals = new ApprovalsController(core);
+  core.sessionTree = new SessionTreeController(core);
   const root = buildAppLayout(core);
   const { editor, transcript, status, session, turn, panel } = core;
   editor.allowEmptySubmit = (): boolean => turn.pendingAttachments > 0;
@@ -128,6 +130,8 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
     openKeysOverlay: () => core.overlays.openKeys(),
     openConfirm: (options) => core.overlays.openConfirm(options),
     isConfirmOpen: () => core.overlays.confirm !== undefined,
+    openSessionTree: (options) => core.sessionTree.open(options),
+    isSessionTreeOpen: () => core.sessionTree.view !== undefined,
     setRecentSessions: (sessions) => session.setRecentSessions(sessions),
     appendNotice: (lines) => turn.appendNotice(lines),
     // `/session` — id, workspace, model, thinking level, tokens and

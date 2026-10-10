@@ -1,8 +1,8 @@
-// Pi-durable
-// branches by forking, so `/fork <entry>` and `/tree` fork the live session
-// into a NEW session and switch the TUI to it. The next prompt continues from
-// the fork; the abandoned path stays in the original session. Faux provider,
-// the real boot path; temp dirs cleaned up in afterEach.
+// `/fork <entry>` copies the live session into a NEW session at the entry and
+// switches the TUI to it; `/tree` branches the session in place (a pi-durable
+// fork of the lane inside the same storage). Either way the next prompt
+// continues from the chosen point and the abandoned path stays whole. Faux
+// provider, the real boot path; temp dirs cleaned up in afterEach.
 import { readdirSync } from 'node:fs';
 import {
   attachSession,
@@ -146,31 +146,39 @@ describe('/fork and /tree in the TUI', () => {
     ]);
   });
 
-  it('/tree forks before the picked prompt and puts it back in the editor', {
+  it('/tree branches the session in place before the picked prompt, and shows both branches', {
     timeout: 30000,
   }, async () => {
-    const sessionsRoot = tempDir('tui-fork-tree-sessions-');
-    const workspace = tempDir('tui-fork-tree-ws-');
+    const sessionsRoot = tempDir('tui-tree-sessions-');
+    const workspace = tempDir('tui-tree-ws-');
     const source = await twoTurnSource(sessionsRoot, workspace);
     const tui = openTui(sessionsRoot, workspace, source.id, ['retried']);
     await waitFor(() => tui.fake.counts.started === 1);
     tui.type('/tree');
-    // The picker lists the prompts newest first; Enter takes `second`.
-    await waitFor(() =>
-      plain(tui.fake.frame).includes('fork before this prompt'),
-    );
+    // The tree opens on the current entry, the reply `two`; Up reaches the
+    // prompt before it.
+    await waitFor(() => plain(tui.fake.frame).includes('(4/4)'));
+    expect(plain(tui.fake.frame)).toContain('Session tree');
+    tui.fake.feed('\x1b[A');
+    await waitFor(() => plain(tui.fake.frame).includes('(3/4)'));
     tui.fake.feed('\r');
     await waitFor(() =>
-      plain(tui.fake.frame).includes('(edit the prompt and press enter)'),
+      plain(tui.fake.frame).includes('edit the prompt and press enter'),
     );
-    // The editor holds the picked prompt: Enter resubmits it on the fork.
+    // The editor holds the picked prompt: Enter resubmits it on the branch.
     tui.fake.feed('\r');
     await waitFor(() => plain(tui.fake.frame).includes('retried'));
+    // Both branches hang off `one`, the current one first.
+    tui.type('/tree');
+    await waitFor(() => plain(tui.fake.frame).includes('└⊟ user: second'));
+    expect(plain(tui.fake.frame)).toContain('├⊟ • user: second');
+    tui.fake.feed('\x1b');
     tui.fake.feed('\x04');
     expect((await tui.exit).exitCode).toBe(0);
 
-    const [forkId] = sessionDirs(sessionsRoot).filter((id) => id !== source.id);
-    expect(await transcriptOf(sessionsRoot, forkId as string)).toEqual([
+    // No new session: the branch lives in this one, which now runs it.
+    expect(sessionDirs(sessionsRoot)).toEqual([source.id]);
+    expect(await transcriptOf(sessionsRoot, source.id)).toEqual([
       'first',
       'one',
       'second',

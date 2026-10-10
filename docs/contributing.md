@@ -188,7 +188,8 @@ snap after-read
 `waitfor` waits for text on the screen, `idle` for the screen to hold still,
 and `key` takes tmux key names (`Enter`, `Escape`, `C-p`, `M-Down`). The
 scenarios in `scripts/kshot/scenarios/` cover the first screen, the palette,
-the panels and the confirm dialog, the approval card and the context gauge.
+the panels and the confirm dialog, the approval card, the context gauge and
+the session tree.
 A step that fails writes the screen at that moment as `error.png`.
 
 The PNG redraws the terminal's grid with a monospace font (JetBrains Mono,

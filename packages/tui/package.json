@@ -45,6 +45,10 @@
       "source": "./src/screen.ts",
       "default": "./src/screen.ts"
     },
+    "./session-tree": {
+      "source": "./src/session-tree.ts",
+      "default": "./src/session-tree.ts"
+    },
     "./slash-commands": {
       "source": "./src/slash-commands.ts",
       "default": "./src/slash-commands.ts"

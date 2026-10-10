@@ -3,6 +3,7 @@
 // list the registry's specs; the submit path runs these handlers, so every
 // listed command does something and nothing else is a command.
 import { sessionSwitchCommands } from '../session-switch.js';
+import { sessionTreeCommands } from '../session-tree.js';
 import { appearanceCommands } from './appearance.js';
 import { compactCommands } from './compact.js';
 import type { TuiCommandHandler } from './handler.js';
@@ -17,6 +18,7 @@ export const TUI_COMMANDS: ReadonlyMap<string, TuiCommandHandler> = new Map(
     ...helpCommands,
     ...sessionCommands,
     ...sessionSwitchCommands,
+    ...sessionTreeCommands,
     ...journalCommands,
     ...modelCommands,
     ...compactCommands,

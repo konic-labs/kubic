@@ -22,7 +22,8 @@ export type {
 } from '@earendil-works/pi-tui';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-tui values (Editor, Markdown, ScrollView, Text,
-//     VStack, TuiAltScreen, ProcessTerminal, key helpers, width helpers)
+//     VStack, TuiAltScreen, ProcessTerminal, key helpers, width helpers
+//     including sliceByColumn, which pans the session tree sideways)
 //   used by: packages/tui/src/* (the rendered views and the headless
 //     snapshot tests; the pickers are Kubic's own list)
 //   why Pi has no alternative: these are the upstream implementations of the
@@ -77,6 +78,7 @@ export {
   /** @internal */ resetCapabilitiesCache,
   ScrollView,
   /** @internal */ setCapabilities,
+  sliceByColumn,
   /** @internal */ Text,
   TuiAltScreen,
   truncateToWidth,

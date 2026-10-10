@@ -40,6 +40,7 @@ const KEY_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['session', ['session.', 'model.', 'approvals.']],
   ['transcript', ['transcript.', 'view.']],
   ['panels', ['panel.']],
+  ['session tree', ['tree.']],
   ['approvals', ['approval.']],
 ];
 

@@ -20,8 +20,11 @@ import {
  * editor has focus (the panel pair only while a panel is open), so they share
  * one conflict space; `approval` keys act only while an approval shows, and
  * the approval owns the keys first, so they conflict only with each other.
+ * `tree` keys act only while the session tree (`/tree`) is open, which owns
+ * every key, so they too conflict only with each other.
  */
-type KeyScope = 'global' | 'panel' | 'approval';
+type KeyScope = 'global' | 'panel' | 'approval' | 'tree';
+type ConflictSpace = 'editor' | 'approval' | 'tree';
 
 interface ActionSpec {
   readonly scope: KeyScope;
@@ -158,6 +161,97 @@ export const KEY_ACTIONS = {
     scope: 'approval',
     keys: ['?'],
     description: 'approval: show why the model asked',
+  },
+  // The session tree's keys: pi's, so the two trees move alike.
+  'tree.up': {
+    scope: 'tree',
+    keys: ['up'],
+    description: 'session tree: previous entry (wraps)',
+  },
+  'tree.down': {
+    scope: 'tree',
+    keys: ['down'],
+    description: 'session tree: next entry (wraps)',
+  },
+  'tree.pageUp': {
+    scope: 'tree',
+    keys: ['left', 'pageup'],
+    description: 'session tree: a page up',
+  },
+  'tree.pageDown': {
+    scope: 'tree',
+    keys: ['right', 'pagedown'],
+    description: 'session tree: a page down',
+  },
+  'tree.foldOrUp': {
+    scope: 'tree',
+    keys: ['alt+left', 'ctrl+left'],
+    description: 'session tree: fold the branch, or go to its start',
+  },
+  'tree.unfoldOrDown': {
+    scope: 'tree',
+    keys: ['alt+right', 'ctrl+right'],
+    description: 'session tree: unfold the branch, or go to the next one',
+  },
+  'tree.select': {
+    scope: 'tree',
+    keys: ['enter'],
+    description: 'session tree: go to the selected entry',
+  },
+  'tree.close': {
+    scope: 'tree',
+    keys: ['escape'],
+    description: 'session tree: clear the search, else close',
+  },
+  'tree.copy': {
+    scope: 'tree',
+    keys: ['ctrl+x'],
+    description: 'session tree: copy the selected entry',
+  },
+  'tree.label': {
+    scope: 'tree',
+    keys: ['shift+l'],
+    description: 'session tree: label the selected entry',
+  },
+  'tree.labelTime': {
+    scope: 'tree',
+    keys: ['shift+t'],
+    description: 'session tree: show when labels were set',
+  },
+  'tree.filter.default': {
+    scope: 'tree',
+    keys: ['ctrl+d'],
+    description: 'session tree: the default view',
+  },
+  'tree.filter.noTools': {
+    scope: 'tree',
+    keys: ['ctrl+t'],
+    description: 'session tree: hide tool results',
+  },
+  'tree.filter.userOnly': {
+    scope: 'tree',
+    keys: ['ctrl+u'],
+    description: 'session tree: prompts only',
+  },
+  'tree.filter.labeledOnly': {
+    scope: 'tree',
+    keys: ['ctrl+l'],
+    description: 'session tree: labelled entries only',
+  },
+  'tree.filter.all': {
+    scope: 'tree',
+    keys: ['ctrl+a'],
+    description: 'session tree: every entry',
+  },
+  'tree.filter.next': {
+    scope: 'tree',
+    keys: ['ctrl+o'],
+    description: 'session tree: the next filter',
+  },
+  'tree.filter.previous': {
+    scope: 'tree',
+    keys: ['ctrl+shift+o'],
+    description: 'session tree: the previous filter',
   },
 } as const satisfies Record<string, ActionSpec>;
 
@@ -301,8 +395,8 @@ export interface KeyRegistry {
   readonly notices: readonly string[];
 }
 
-const conflictSpace = (scope: KeyScope): 'editor' | 'approval' =>
-  scope === 'approval' ? 'approval' : 'editor';
+const conflictSpace = (scope: KeyScope): ConflictSpace =>
+  scope === 'approval' || scope === 'tree' ? scope : 'editor';
 
 /**
  * Resolve the defaults with the user's overrides. A user binding beats a
@@ -357,7 +451,7 @@ export function createKeyRegistry(
       notices.push(`keybinding: ${action} is unbound`);
     }
   }
-  const lookup = (space: 'editor' | 'approval', keyId: string | undefined) => {
+  const lookup = (space: ConflictSpace, keyId: string | undefined) => {
     if (keyId === undefined) return undefined;
     const canonical = canonicalKey(keyId);
     return canonical === undefined
@@ -369,9 +463,9 @@ export function createKeyRegistry(
     actionFor: (scope, keyId) => {
       const action = lookup(conflictSpace(scope), keyId);
       if (action === undefined) return undefined;
-      const actual = KEY_ACTIONS[action].scope;
-      if (scope === 'approval') return action;
-      return actual === 'approval' ? undefined : action;
+      // The approval and tree spaces hold only their own actions.
+      if (scope === 'approval' || scope === 'tree') return action;
+      return KEY_ACTIONS[action].scope === 'approval' ? undefined : action;
     },
     isGlobalKey: (keyId) => {
       const action = lookup('editor', keyId);

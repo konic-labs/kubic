@@ -21,6 +21,7 @@ import type { OverlayController } from './overlays.js';
 import type { PaletteController } from './palette-controller.js';
 import type { PanelController } from './panel.js';
 import type { QuitArming } from './quit.js';
+import type { SessionTreeController } from './session-tree.js';
 import type { SessionView } from './session-view.js';
 import type { TurnView } from './turn-view.js';
 import type { TuiAppSeed, TuiSubmitOutcome } from './types.js';
@@ -50,6 +51,7 @@ export class AppCore {
   palette!: PaletteController;
   blocks!: BlockMode;
   approvals!: ApprovalsController;
+  sessionTree!: SessionTreeController;
 
   constructor(seed: TuiAppSeed) {
     this.seed = seed;

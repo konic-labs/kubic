@@ -14,6 +14,7 @@ import type {
 import type { PromptEditor } from '../editor-view.js';
 import type { KeyRegistry } from '../keybindings.js';
 import type { LaneEntryLike } from '../lane-cells.js';
+import type { TreeEntryLike } from '../session-tree.js';
 import type { StatusBar, StatusUsageRow } from '../status-bar.js';
 import type { TranscriptView } from '../transcript.js';
 import type { TreeView } from '../tree.js';
@@ -238,6 +239,19 @@ export interface TuiPaletteSources {
 // sure?"). The accept key is explicit and deliberate — never a bare
 // printable letter — and every other key is swallowed while it shows, so
 // text typed ahead in the editor can never accept it.
+export interface TuiSessionTreeOptions {
+  /** The session's entries, parents first. */
+  readonly entries: readonly TreeEntryLike[];
+  /** The entry the session is at. */
+  readonly currentId: string | null;
+  /** Where the selection starts (default: the current entry). */
+  readonly selectedId?: string;
+  readonly onSelect: (entry: TreeEntryLike) => void;
+  readonly onCancel?: () => void;
+  /** A label saved, or removed (`undefined`), on an entry. */
+  readonly onLabel?: (entryId: string, label: string | undefined) => void;
+}
+
 export interface TuiConfirmOptions {
   readonly title: string;
   readonly body: readonly string[];
@@ -363,6 +377,10 @@ export interface TuiApp {
   openConfirm(options: TuiConfirmOptions): boolean;
   /** Whether a confirmation is showing (a public accessor for embedders). */
   isConfirmOpen(): boolean;
+  // `/tree`: the session tree in the editor's place until an entry is
+  // chosen (Enter) or it is closed (Esc).
+  openSessionTree(options: TuiSessionTreeOptions): void;
+  isSessionTreeOpen(): boolean;
   // The images the next echoed prompt carries, set by
   // the loop together with the submit it accepted.
   setPendingImages(images: readonly LaneImagePart[]): void;

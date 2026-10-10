@@ -19,6 +19,13 @@ its own generated help (`kubic sessions prune --help`).
 
 | `prune [--keep-days <n>] [--keep-session <id>]... [--yes] [--dry-run]` | Retention for session **state dirs** (`<sessions-root>/<id>/`): **lists by default, deletes only with `--yes`** (or a yes at the terminal prompt). See [Session retention](#session-retention-prune) below. |
 
+A session can hold several **branches**: the TUI's `/tree` moves a session to
+an earlier point in place, as a pi-durable fork of its lane inside the same
+storage, and the branch it leaves stays in the session. `attach`, `run
+--session` and `tui --session` follow the branch the session is on, and
+`kubic cost` counts every branch. `fork` is the command that copies a session
+into a new one.
+
 Usage errors exit 2 on stderr: a missing subcommand (the group action prints
 `error: sessions needs a subcommand (create | list | attach | fork | prune)`;
 `--json` alone lists), an unknown option, a missing value, `attach` without an

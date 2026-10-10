@@ -1,0 +1,17 @@
+# The context gauge: the first frame, after a large file is read, after a reply.
+size 120 30
+sh python3 -c "open('big.txt', 'w').write(('x' * 99 + '\n') * 400)"
+start node $REPO/bin/kubic.js tui
+waitfor faux/echo
+idle
+snap first-frame
+type faux:tool read {"path":"big.txt"}
+key Enter
+waitfor returned
+idle 600
+snap after-read
+type hello there
+key Enter
+waitfor faux echo: hello there
+idle 600
+snap after-reply

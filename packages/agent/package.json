@@ -17,6 +17,10 @@
       "source": "./src/lane/boot.ts",
       "default": "./src/lane/boot.ts"
     },
+    "./lane/branches": {
+      "source": "./src/lane/branches.ts",
+      "default": "./src/lane/branches.ts"
+    },
     "./lane/events": {
       "source": "./src/lane/events.ts",
       "default": "./src/lane/events.ts"

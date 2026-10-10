@@ -1,0 +1,14 @@
+# The command palette: every command reachable with the arrows, then a search.
+size 120 36
+start node $REPO/bin/kubic.js tui
+waitfor faux/echo
+idle
+key C-p
+idle
+snap palette-open
+key Down Down Down Down Down Down Down Down Down Down
+idle
+snap palette-ten-down
+type model
+idle
+snap palette-search

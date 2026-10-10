@@ -78,6 +78,7 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 | `git-sandbox-gate.test.mjs` | Real-git tests go through the shared sandbox: a direct git spawn reads the developer's own git config. |
 | `license.test.mjs` | MIT on every manifest, the NOTICE attributions, and a permissive license for every runtime dependency in the lockfile. |
 | `build-contract.test.mjs` | The packaging story: the ESM root manifest, the `kubic` bin wrapper loading `dist/kubic.js`, `dist/` ignored, the Node floor. |
+| `kshot/kshot.py` | Screenshots of the real TUI, driven by a scenario (`npm run kshot -- <scenario>`; see [Seeing the TUI](#seeing-the-tui)). Its tests are Python, and `kshot.test.mjs` runs them wherever `python3` is installed. |
 
 ### Dead-code gate
 
@@ -151,6 +152,49 @@ are re-exported.
   spans lines, names a path to git or a variable bound to it.
 - **Colour.** Tests never depend on the shell's colour variables:
   `FORCE_COLOR=3`, `FORCE_COLOR=0` and `NO_COLOR=1` runs all pass.
+
+## Seeing the TUI
+
+Headless snapshots pin what a render function returns; kshot shows what a
+terminal shows. It runs the built `kubic tui` in a real pseudo-terminal
+inside a private tmux server, drives it from a scenario file, and writes
+each snapshot as a PNG, the plain text and the raw ANSI:
+
+```sh
+npm run kshot -- panels    # builds, then writes .kshot/panels/*.png
+```
+
+It needs tmux, and Python 3 with Pillow (`python3 -m pip install Pillow`);
+nothing else in the repo depends on them. The app runs on the faux provider
+with a fresh `HOME` and a minimal environment, so no key or setting of yours
+reaches it. A prompt of the form `faux:tool <name> <json arguments>` makes
+the faux model call that tool.
+
+A scenario has one step per line. The full list is at the top of
+`scripts/kshot/kshot.py`:
+
+```text
+size 120 36
+sh printf 'hello\n' > notes.txt
+start node $REPO/bin/kubic.js tui
+waitfor faux/echo
+type faux:tool read {"path":"notes.txt"}
+key Enter
+waitfor returned
+idle
+snap after-read
+```
+
+`waitfor` waits for text on the screen, `idle` for the screen to hold still,
+and `key` takes tmux key names (`Enter`, `Escape`, `C-p`, `M-Down`). The
+scenarios in `scripts/kshot/scenarios/` cover the first screen, the palette,
+the panels and the confirm dialog, the approval card, the context gauge and
+the session tree.
+A step that fails writes the screen at that moment as `error.png`.
+
+The PNG redraws the terminal's grid with a monospace font (JetBrains Mono,
+Menlo, DejaVu Sans Mono or Liberation Mono, or `--font FILE`): layout, glyphs
+and colours are exact, while font rendering can differ from your terminal's.
 
 ## Code conventions
 

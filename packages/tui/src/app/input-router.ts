@@ -75,6 +75,16 @@ export const INPUT_ROUTES: readonly InputRoute[] = [
         ? core.approvals.handleKey(data, keyId)
         : undefined,
   },
+  // The session tree owns every key while it shows in the editor's place:
+  // its own actions, and typing for its search.
+  {
+    name: 'session-tree',
+    run: (core, { data, keyId }) => {
+      if (core.sessionTree.view === undefined) return undefined;
+      core.sessionTree.handleKey(data, keyId);
+      return consumed();
+    },
+  },
   // The palette is modal like the picker: Esc/Ctrl-C close
   // it, every other key is its own (a stray global key never acts
   // behind it). A terminal resized below its minimum closes it.

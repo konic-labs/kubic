@@ -6,6 +6,7 @@ import type {
   ManualCompactionOutcome,
 } from '@kubic/agent/compaction';
 import type { OperationKillRegistry } from '@kubic/agent/lane/abort';
+import type { LaneTarget, SessionTree } from '@kubic/agent/lane/branches';
 import type { LaneEventSink } from '@kubic/agent/lane/events';
 import type { TurnOutcome } from '@kubic/agent/lane/turn';
 import type {
@@ -136,6 +137,20 @@ export interface TuiLaneLoop {
    * loops) leaves the gauge off.
    */
   contextTokens?: (context: Context) => Promise<number>;
+  /**
+   * The session's branches (`/tree`): read them, move the lane to the branch
+   * that ends at an entry (a new fork there when none does; the next boot
+   * runs it), and label an entry.
+   */
+  sessionTree?: {
+    read(context: Context): Promise<SessionTree>;
+    moveTo(target: LaneTarget, context: Context): Promise<number>;
+    label(
+      entryId: number,
+      text: string | undefined,
+      context: Context,
+    ): Promise<void>;
+  };
   /**
    * The thinking level the live conversation's agent carries (the
    * `pi.agent` document), for `/thinking`'s report and the cycle key.

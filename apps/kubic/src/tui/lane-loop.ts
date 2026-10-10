@@ -10,6 +10,11 @@ import {
 } from '@kubic/agent/compaction';
 import { abortLane, forgetLaneKills } from '@kubic/agent/lane/abort';
 import { escalateLaneModel, type Lane } from '@kubic/agent/lane/boot';
+import {
+  moveLaneTo,
+  readSessionTree,
+  writeEntryLabel,
+} from '@kubic/agent/lane/branches';
 import { subscribeLaneEvents } from '@kubic/agent/lane/events';
 import {
   entriesToTranscript,
@@ -89,6 +94,12 @@ export function tuiLoop(
     compact: (focus, loopContext, options) =>
       runCompactCommand(lane, focus, loopContext, options),
     contextTokens: (loopContext) => measureContext(lane, loopContext),
+    sessionTree: {
+      read: (loopContext) => readSessionTree(lane, loopContext),
+      moveTo: (target, loopContext) => moveLaneTo(lane, target, loopContext),
+      label: (entryId, text, loopContext) =>
+        writeEntryLabel(lane, entryId, text, loopContext),
+    },
     // The shared abort+drain (conversation.abort, every kill
     // attempted, failures aggregated) and the settled-turn forget.
     abort: async (loopContext) => {

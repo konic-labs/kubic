@@ -1,0 +1,61 @@
+# The session tree: three turns (one calls a tool), /tree, a branch that
+# retries the last prompt, the tree with both branches, the prompts-only
+# filter, a label, a fold, and Esc.
+size 120 40
+sh printf 'hello\n' > notes.txt
+start node $REPO/bin/kubic.js tui
+waitfor faux/echo
+idle
+type What is a binary tree?
+key Enter
+waitfor faux echo: What is a binary tree?
+idle
+type faux:tool read {"path":"notes.txt"}
+key Enter
+waitfor returned
+idle
+type Explain recursion briefly
+key Enter
+waitfor faux echo: Explain recursion briefly
+idle
+type /tree
+key Enter
+waitfor Session tree
+idle
+snap tree-open
+key Up
+idle
+key Enter
+waitfor edit the prompt
+idle
+snap branch-editor
+key End Space
+type in one sentence.
+key Enter
+waitfor in one sentence.
+idle 800
+type /tree
+key Enter
+waitfor Session tree
+idle
+snap tree-branched
+key C-u
+idle
+snap tree-prompts-only
+key C-u
+key Up Up Up
+key L
+idle
+snap tree-label-input
+type checkpoint
+key Enter
+idle
+snap tree-labelled
+key M-Left
+idle
+key M-Left
+idle
+snap tree-folded
+key Escape
+idle
+snap tree-closed

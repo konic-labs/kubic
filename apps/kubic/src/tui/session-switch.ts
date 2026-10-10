@@ -1,13 +1,11 @@
-// `/new`, `/resume`, `/fork` and `/tree`: the session is swapped under the
-// running TUI. The next lane boots FIRST (a failed boot keeps the session the
-// operator was in), the previous one closes, and every lane-bound object and
-// session-scoped surface is rebuilt — the alt-screen, the terminal and the app
-// itself are never torn down.
-import type { EntryRecord } from '@kubic/agent/pi-boundary';
+// `/new`, `/resume` and `/fork`: the session is swapped under the running TUI
+// (and `/tree` reboots it in place on another branch). The next lane boots
+// FIRST (a failed boot keeps the session the operator was in), the previous
+// one closes, and every lane-bound object and session-scoped surface is
+// rebuilt — the alt-screen, the terminal and the app itself are never torn
+// down.
 import { formatCost } from '@kubic/core/cli/kit';
 import type { SessionSummary } from '@kubic/host/sessions';
-import type { ForkPoint } from '@kubic/tui/lane-cells';
-import { forkPickerRows, userPromptsOf } from '@kubic/tui/lane-cells';
 import type { TuiPickerRow, TuiSubmitOutcome } from '@kubic/tui/tui-app';
 import { formatAge } from '@kubic/tui/ui/palette';
 import {
@@ -16,7 +14,6 @@ import {
   type TuiCommandTable,
 } from './commands/handler.js';
 import type { TuiContext } from './context.js';
-import { laneEntryFor } from './entries.js';
 import { buildTurn } from './turns.js';
 import type { TuiLaneBoot } from './types.js';
 
@@ -33,12 +30,6 @@ export const sessionSwitchCommands: TuiCommandTable = {
       return openResumePicker(ctx);
     },
   },
-  tree: {
-    run(ctx, { busy }) {
-      if (busy) return busyRefusal(ctx, 'fork');
-      return openTreePicker(ctx);
-    },
-  },
   fork: {
     run(ctx, { argument, busy }) {
       if (busy) return busyRefusal(ctx, 'fork');
@@ -53,6 +44,20 @@ export const sessionSwitchCommands: TuiCommandTable = {
     },
   },
 };
+
+/**
+ * The session reopened in place: its next boot runs the branch its record
+ * now names (`/tree` moved it). The boot holds the session's lock, so this
+ * one closes first.
+ */
+export async function rebootSession(ctx: TuiContext): Promise<void> {
+  const previous = ctx.boot;
+  await previous.close?.();
+  await adoptBoot(
+    ctx,
+    await ctx.deps.bootLane(previous.sessionId, ctx.surface.seat, ctx.flags),
+  );
+}
 
 async function rebindSession(
   ctx: TuiContext,
@@ -314,64 +319,6 @@ function runFork(
     })
     .finally(() => {
       ctx.render();
-    });
-  return 'accepted';
-}
-
-// `/tree`: the lane's earlier prompts, each forking just BEFORE itself.
-function openTreePicker(ctx: TuiContext): TuiSubmitOutcome {
-  const loop = ctx.boot.loop;
-  if (loop === undefined || ctx.boot.forkAt === undefined) {
-    return refuse(ctx, 'tree: this session cannot fork');
-  }
-  void loop
-    .entries(loop.context)
-    .then((raw) => {
-      if (ctx.stopped) return;
-      const sorted = [...raw].sort((a, b) => Number(a.id) - Number(b.id));
-      const points: ForkPoint[] = [];
-      for (let i = 1; i < sorted.length; i += 1) {
-        const lane = laneEntryFor(sorted[i] as EntryRecord);
-        const text = lane === undefined ? undefined : userPromptsOf([lane])[0];
-        if (text === undefined) continue;
-        points.push({
-          entryId: Number(sorted[i]?.id),
-          at: Number(sorted[i - 1]?.id),
-          text,
-        });
-      }
-      if (points.length === 0) {
-        ctx.app.setEditorFooter('tree: no earlier prompts to fork from');
-        ctx.screen?.render();
-        return;
-      }
-      const opened = ctx.app.openPicker({
-        rows: forkPickerRows(points),
-        onSelect: (value) => {
-          const [at, entryId] = value.split(':').map(Number);
-          const point = points.find((p) => p.entryId === entryId);
-          if (at === undefined || point === undefined) return;
-          runFork(ctx, at, point.text);
-        },
-        onCancel: () => {
-          if (ctx.stopped) return;
-          ctx.app.setEditorFooter('tree: cancelled');
-          ctx.screen?.render();
-        },
-      });
-      if (!opened) {
-        ctx.app.setEditorFooter(
-          'tree needs a wider terminal — use kubic sessions fork',
-        );
-      }
-      ctx.screen?.render();
-    })
-    .catch((error: unknown) => {
-      if (ctx.stopped) return;
-      ctx.app.setEditorFooter(
-        `tree: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      ctx.screen?.render();
     });
   return 'accepted';
 }

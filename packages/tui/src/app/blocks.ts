@@ -6,7 +6,7 @@
 import type { ApprovalOverlayHandle } from '../approval-view.js';
 import { BlockViewer } from '../block-viewer.js';
 import type { KeyAction } from '../keybindings.js';
-import { CLIPBOARD_MAX_BYTES, copySize, formatSize } from '../ui/clipboard.js';
+import { copyWithNotice } from './copy.js';
 import type { AppCore } from './core.js';
 import type { TuiInputResult } from './types.js';
 
@@ -122,18 +122,7 @@ export class BlockMode {
   }
 
   private copyText(text: string): void {
-    const { noticeRow, seed } = this.core;
-    const size = copySize(text);
-    if (size > CLIPBOARD_MAX_BYTES) {
-      noticeRow.setFooter('too large to copy — ⏎ view and select');
-    } else if (seed.clipboard === undefined || !seed.clipboard(text)) {
-      noticeRow.setFooter(
-        'copy: this terminal does not take clipboard writes (OSC 52)',
-      );
-    } else {
-      noticeRow.setFooter(`copied ${formatSize(size)}`);
-    }
-    this.core.requestRender();
+    copyWithNotice(this.core, text);
   }
 
   // The selected block, whole, in the framed viewer.

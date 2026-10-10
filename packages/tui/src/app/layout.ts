@@ -147,6 +147,8 @@ function editorSlot(core: AppCore): Component {
           core.approvals.cardOptions(),
         );
       }
+      const tree = core.sessionTree.view;
+      if (tree !== undefined) return tree.render(tuiTheme().ui, width);
       const inner = width - EDITOR_FRAME_CELLS;
       return frameEditorLines(
         tuiTheme().ui,
@@ -174,6 +176,8 @@ function hintContext(core: AppCore): HintContext {
       ? 'approval'
       : 'approvalInput';
   }
+  const tree = core.sessionTree.view;
+  if (tree !== undefined) return tree.editingLabel ? 'treeLabel' : 'tree';
   if (core.palette.current !== undefined) return 'palette';
   if (core.blocks.viewer !== undefined) return 'overlay';
   if (core.blocks.selected !== undefined) return 'blocks';

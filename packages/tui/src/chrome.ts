@@ -176,6 +176,9 @@ export type HintContext =
   | 'blocks'
   // A confirmation dialog owns the keys.
   | 'confirm'
+  // The session tree is open, or its label input is.
+  | 'tree'
+  | 'treeLabel'
   // The diff or journal panel is open.
   | 'panel';
 
@@ -270,6 +273,16 @@ export function keyHintSet(
       ],
       right: ['esc', 'keep current'],
     };
+  }
+  // The tree's header lists its keys; the row says how to leave.
+  if (context === 'tree') {
+    return {
+      hints: [...bound('tree.select', 'go to entry')],
+      right: ['esc', 'close'],
+    };
+  }
+  if (context === 'treeLabel') {
+    return { hints: [['⏎', 'save label']], right: ['esc', 'back to the tree'] };
   }
   if (context === 'confirm') {
     const accept = options.confirm;

@@ -43,6 +43,7 @@ describe('input routing', () => {
       'release',
       'repeat',
       'approval',
+      'session-tree',
       'palette',
       'block-viewer',
       'block-mode',

@@ -155,6 +155,22 @@ Three one-row surfaces frame the transcript. Top to bottom:
   ⏎ run  tab next group  → details … esc close`. With the model picker
   open: `↑↓ move  ⏎ switch  → expand provider … esc keep current`. With
   another picker or a dialog open: `↑↓ move  ⏎ select  esc cancel`.
+- **The session tree** (`/tree`): the session's branches, in the editor's
+  place, as pi draws them. Under a title, a line of its keys and the search,
+  one row per entry: `user:` and `assistant:` rows, a tool call as
+  `[read: notes.txt]`, a branch point's children under `├⊟` / `└⊟`, and a
+  `•` on the path to the current entry, which is where the selection starts.
+  `↑`/`↓` move (wrapping), `←`/`→` page, `alt+←`/`alt+→` fold a branch or
+  jump to the start of its segment (and unfold or jump to the next branch
+  point), Enter goes to the selected entry, Esc clears the search and then
+  closes. Typing searches: every word must appear in a row. `^D` shows the
+  default rows, `^T` hides tool results, `^U` shows prompts only, `^L` only
+  labelled entries and `^A` everything (the same key again returns to the
+  default); `^O` and `^⇧O` cycle the filters. `L` labels the selected entry
+  (an empty label removes it), `T` shows when labels were set, and `^X`
+  copies the entry's text. Labels are kept with the session. The list takes
+  half the terminal; a deep row pans the tree sideways so its text stays in
+  view.
 - **The palette** (`Ctrl-P`): one fuzzy search over four groups,
   in this order — **COMMANDS** (the slash-command registry: name, summary,
   and the key the bindings give it now), **MODELS** (the usable catalogue,
@@ -208,7 +224,7 @@ the built-in palette; see `[ui] theme` under
 | `/new` | Close the current session and boot a fresh one **without leaving the alt-screen**: the transcript, tree, usage rows and panels clear, and the next prompt runs on the new lane. The old session stays on disk (`kubic sessions list`). Refused while a turn runs (`session: finish the current turn before switching`) — the lane swap is the quit path's race, not a mid-turn one. |
 | `/resume` | Pick one of this project's other sessions (newest first, at most 30): each row is its first prompt, with its age, turns and cost (`2m ago · 4 turns · $0.03`), read without a lock the way `kubic cost` reads. A session another `kubic` holds is greyed `in use by another kubic` and cannot be chosen. Choosing one attaches to it and loads its transcript, in the same alt-screen. Needs a terminal wide enough for the picker — otherwise the footer says so. Refused while a turn runs, like `/new`. |
 | `/theme [name]` | **Theme picker**: the built-ins `dark`, `light` and `terminal`, and the configured `[ui] theme` file if there is one. Moving the selection previews each theme live; `Enter` keeps it for this session and prints `to keep it: [ui] theme = "<name>" in ~/.kubic/config.toml` (the config is never written); `Esc` restores the theme from before. `/theme <name>` switches directly; an unknown name is refused with the choices. |
-| `/tree` | Pick an earlier prompt and **retry from there in a fork** (`session.fork`): a picker lists this session's prompts newest first (`#<entry>  <prompt>`); choosing one forks the session into a **new** session just *before* that prompt (the same fork as `kubic sessions fork --at`), switches the TUI to it in the same alt-screen, and puts the prompt back in the editor to edit and resend. The original session is untouched and keeps the abandoned path (`kubic tui --session <old id>` / `/resume` returns to it). Needs a terminal wide enough for the picker; refused while a turn runs. |
+| `/tree` | Open the **session tree** in the editor's place (see *The session tree* above): every entry of the session's branches, and a `•` on the path to where the session is now. Enter on a prompt branches just *before* it and puts the prompt back in the editor to edit and resend; Enter on any other entry continues from there. The session moves onto that point **in place**: the branch it leaves stays in the session, and `/tree` goes back to it at any time (`/fork` is the command that copies a session into a new one). Refused while a turn runs. |
 | `/fork <entry>` | Fork this session **at** `<entry>` (inclusive; `kubic sessions attach <id> --ids` prints the ids) into a new session and switch to it, the editor left as it was. `/fork` without an integer entry is refused with the usage line. A fork that fails (an entry the session does not have) re-attaches the session you were in and names the reason on the footer. Refused while a turn runs. |
 | `/diff` | Open the diff panel — the same panel `Ctrl-O` toggles. |
 | `/undo` | Restore the session journal's changes (the same plan/apply path as `kubic undo`, without `--step`): the footer reports `undo: N restored, M skipped` and warnings land in the transcript. Refused while a turn runs (`undo: finish the current turn before switching`) — it rewrites the workspace the turn is working in. |
@@ -278,7 +294,8 @@ default action loses that key (`keybinding: ctrl+r now runs panel.diff
 unbound` when nothing is left). Two user bindings on one key are a conflict —
 the first action in the table below keeps it and both are named. Approval
 keys conflict only with each other (the approval owns the keys while it
-shows, which is why `Esc` can be both the global cancel and the approval deny).
+shows, which is why `Esc` can be both the global cancel and the approval deny),
+and so do the session tree's, which owns every key while it is open.
 **A broken file refuses the boot** (`error: keybindings '<file>': …`, exit 2,
 nothing opens): invalid JSON, an unknown action, a malformed key id, or a
 file that is not a regular file or is over 64 KB. A missing file means the
@@ -310,3 +327,21 @@ shipped bindings.
 | `approval.allowEdits` | `shift+a` | approval: allow all edits this turn |
 | `approval.explain` | `?` | approval: show why the model asked (the card's explanation row) |
 | `approval.page` | `v` | approval: next page of a long command |
+| `tree.up` | `up` | session tree: previous entry (wraps) |
+| `tree.down` | `down` | session tree: next entry (wraps) |
+| `tree.pageUp` | `left`, `pageup` | session tree: a page up |
+| `tree.pageDown` | `right`, `pagedown` | session tree: a page down |
+| `tree.foldOrUp` | `alt+left`, `ctrl+left` | session tree: fold the branch, or go to its start |
+| `tree.unfoldOrDown` | `alt+right`, `ctrl+right` | session tree: unfold the branch, or go to the next one |
+| `tree.select` | `enter` | session tree: go to the selected entry |
+| `tree.close` | `escape` | session tree: clear the search, else close |
+| `tree.copy` | `ctrl+x` | session tree: copy the selected entry |
+| `tree.label` | `shift+l` | session tree: label the selected entry |
+| `tree.labelTime` | `shift+t` | session tree: show when labels were set |
+| `tree.filter.default` | `ctrl+d` | session tree: the default view |
+| `tree.filter.noTools` | `ctrl+t` | session tree: hide tool results |
+| `tree.filter.userOnly` | `ctrl+u` | session tree: prompts only |
+| `tree.filter.labeledOnly` | `ctrl+l` | session tree: labelled entries only |
+| `tree.filter.all` | `ctrl+a` | session tree: every entry |
+| `tree.filter.next` | `ctrl+o` | session tree: the next filter |
+| `tree.filter.previous` | `ctrl+shift+o` | session tree: the previous filter |

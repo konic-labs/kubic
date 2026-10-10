@@ -55,6 +55,20 @@ describe('keybinding registry defaults', () => {
     const keys = createKeyRegistry({ 'panel.diff': ['ctrl+shift+f'] });
     expect(keys.actionFor('global', 'shift+ctrl+f')).toBe('panel.diff');
   });
+
+  it('reads a capital letter as the shifted key, as pi-tui does', () => {
+    // A legacy terminal sends `L` for Shift+L; pi-tui parses it as `L`.
+    expect(canonicalKey('L')).toBe('shift+l');
+    expect(canonicalKey('l')).toBe('l');
+    expect(canonicalKey('ctrl+L')).toBe('ctrl+l');
+    expect(DEFAULT_KEY_REGISTRY.actionFor('tree', 'L')).toBe('tree.label');
+    expect(DEFAULT_KEY_REGISTRY.actionFor('approval', 'A')).toBe(
+      'approval.allowEdits',
+    );
+    expect(DEFAULT_KEY_REGISTRY.actionFor('approval', 'a')).toBe(
+      'approval.allowOnce',
+    );
+  });
 });
 
 describe('keybinding overrides', () => {

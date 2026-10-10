@@ -71,11 +71,11 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     command: 'session.attach',
   },
   {
-    // Pi-durable branches by forking,
-    // so both commands fork the live session into a NEW one and switch to it;
-    // the original keeps the abandoned path.
+    // A branch is a fork of the lane inside the session: `/tree` moves the
+    // lane between branches in place, while `/fork` copies the session into
+    // a new one.
     name: 'tree',
-    summary: 'pick an earlier prompt and retry from there in a fork',
+    summary: 'browse the session’s branches and go to any entry',
     usage: '/tree',
     command: 'session.fork',
   },

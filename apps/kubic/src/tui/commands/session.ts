@@ -115,13 +115,15 @@ function openFullAccessConfirm(ctx: TuiContext): TuiSubmitOutcome {
     return refuse(ctx, 'approvals: answer the pending request first');
   }
   const opened = ctx.app.openConfirm({
-    title: 'turn approvals off for this session?',
+    title: 'Turn approvals off for this session?',
     body: [
-      'every challenged call in this session will run without asking',
-      'the change is written to posture.json and one audit row',
+      'Every challenged call in this session runs without asking.',
+      'The change is written to posture.json and one audit row.',
     ],
     confirmKey: 'ctrl+s',
     confirmLabel: 'Ctrl-S',
+    confirmAction: 'turn off',
+    cancelAction: 'keep on',
     onConfirm: () => {
       applyFullAccess(ctx, true);
     },

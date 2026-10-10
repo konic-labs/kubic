@@ -5,13 +5,13 @@ import type {
   ApprovalOverlayHandle,
   ApprovalOverlayOptions,
 } from '../approval-view.js';
-import { approvalOverlayOptions } from '../approval-view.js';
 import { keyCap } from '../chrome.js';
+import { CONFIRM_WIDTH, renderConfirm } from '../confirm-view.js';
 import { KEY_ACTIONS, type KeyAction } from '../keybindings.js';
 import { sanitizeLaneText } from '../lane-text.js';
 import { PickerView } from '../picker-view.js';
 import { tuiTheme } from '../theme.js';
-import { type Component, truncateToWidth } from '../tui-boundary.js';
+import type { Component } from '../tui-boundary.js';
 import { leftRight } from '../ui/line.js';
 import { formatContextWindow } from '../ui/palette.js';
 import type { PickerGroup } from '../ui/picker.js';
@@ -290,11 +290,31 @@ export class OverlayController {
     if (host === undefined) return false;
     this.closeConfirm('cancel');
     const view: Component = {
-      render: (width: number): string[] => renderConfirm(options, width),
+      render: (width: number): string[] =>
+        renderConfirm(
+          tuiTheme().ui,
+          {
+            title: sanitizeLaneText(options.title),
+            body: options.body.map((line) => sanitizeLaneText(line)),
+            confirmKey: keyCap(options.confirmKey),
+            confirmAction: options.confirmAction ?? 'confirm',
+            cancelAction: options.cancelAction ?? 'cancel',
+          },
+          width,
+        ),
       invalidate: (): void => {},
     };
+    const core = this.core;
     this.confirm = {
-      handle: host.showOverlay(view, approvalOverlayOptions()),
+      handle: host.showOverlay(view, {
+        // A fixed width that a narrow terminal clips, read per frame.
+        get width(): number {
+          const columns =
+            core.overlayHost?.terminal?.columns ?? CONFIRM_WIDTH + 4;
+          return Math.max(12, Math.min(CONFIRM_WIDTH, columns - 4));
+        },
+        anchor: 'center',
+      }),
       options,
     };
     host.requestRender?.();
@@ -399,17 +419,4 @@ function modelPickerGroups(options: TuiModelPickerOptions): PickerGroup[] {
         }),
     };
   });
-}
-
-// The confirmation dialog's body. Presentation only — the app
-// owns the keys, the loop owns what the verdict does.
-function renderConfirm(options: TuiConfirmOptions, width: number): string[] {
-  const theme = tuiTheme();
-  const w = Math.max(1, width);
-  return [
-    theme.accentBold(truncateToWidth(options.title, w, '…')),
-    ...options.body.map((line) => truncateToWidth(theme.muted(line), w, '…')),
-    '',
-    theme.dim(`[${options.confirmLabel}] confirm · [Esc] cancel`),
-  ];
 }

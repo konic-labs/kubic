@@ -173,13 +173,21 @@ export type HintContext =
   | 'overlay'
   | 'palette'
   | 'model'
-  | 'blocks';
+  | 'blocks'
+  // A confirmation dialog owns the keys.
+  | 'confirm'
+  // The diff or journal panel is open.
+  | 'panel';
 
 export interface HintSetOptions {
   /** Whether `@` completes files (a file source exists). */
   readonly files?: boolean;
   /** The newline key that works on this terminal (`⇧⏎` or `^J`). */
   readonly newline?: string;
+  /** The open panel, for the `panel` context. */
+  readonly panel?: 'diff' | 'journal';
+  /** The confirmation's accept key and what it does, for `confirm`. */
+  readonly confirm?: { readonly key: string; readonly label: string };
 }
 
 export interface HintSet {
@@ -261,6 +269,26 @@ export function keyHintSet(
         ['→', 'expand provider'],
       ],
       right: ['esc', 'keep current'],
+    };
+  }
+  if (context === 'confirm') {
+    const accept = options.confirm;
+    return {
+      hints: accept === undefined ? [] : [[accept.key, accept.label]],
+      right: ['esc', 'cancel'],
+    };
+  }
+  // The open panel's own keys; the other panel's key switches to it.
+  if (context === 'panel') {
+    const diff = options.panel !== 'journal';
+    return {
+      hints: [
+        ...bound('panel.next', diff ? 'next file' : 'next page'),
+        ...bound('panel.previous', diff ? 'previous file' : 'previous page'),
+        ...bound('panel.diff', diff ? 'close' : 'diff'),
+        ...bound('panel.journal', diff ? 'journal' : 'close'),
+      ],
+      right: ['esc', 'close'],
     };
   }
   if (context === 'overlay') {

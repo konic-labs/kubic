@@ -192,13 +192,18 @@ type GlobalAction = (
 // rebound key acts and the old key falls through to the editor.
 const GLOBAL_ACTIONS: Partial<Record<KeyAction, GlobalAction>> = {
   // Esc never quits. It closes the editor's dropdown (the
-  // overlays above close themselves), interrupts a running turn — the
-  // root makes the same cancel as a first Ctrl-C — and on an idle, empty
-  // editor walks the blocks.
+  // overlays above close themselves), then an open panel, interrupts a
+  // running turn — the root makes the same cancel as a first Ctrl-C — and
+  // on an idle, empty editor walks the blocks.
   'app.cancel': (core, { data }) => {
     core.approvals.denyPending();
     if (core.editor.isShowingAutocomplete()) {
       core.editor.handleInput(data);
+      return consumed();
+    }
+    // An open panel is the top layer: Esc closes it before it interrupts.
+    if (core.panel.isOpen()) {
+      core.panel.set('closed');
       return consumed();
     }
     if (core.turn.busy) {

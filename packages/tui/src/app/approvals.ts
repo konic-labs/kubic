@@ -84,11 +84,12 @@ export class ApprovalsController {
     const { core } = this;
     const surface = core.approvalSurface;
     core.overlayHost = host;
-    // While the palette or a picker is open the screen behind
-    // it is dimmed; the key-hint row at the bottom stays lit.
+    // While the palette, a picker or a confirmation is open the screen
+    // behind it is dimmed; the key-hint row at the bottom stays lit.
     host.baseFilter = (lines: string[]): string[] =>
       core.palette.current !== undefined ||
       core.overlays.picker !== undefined ||
+      core.overlays.confirm !== undefined ||
       core.blocks.viewer !== undefined
         ? dimFrame(tuiTheme().ui, lines)
         : lines;

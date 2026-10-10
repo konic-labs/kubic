@@ -19,6 +19,8 @@ import { describe, expect, it } from 'vitest';
 // One shared fake Terminal: the panel's ScrollView is laid out
 // only by the live alt-screen, so its scrolling is asserted on real frames.
 import { fakeTerminal } from '../../../test/fake-terminal.js';
+import { panelBodyRows } from './app/panel.js';
+import { PANEL_MAX_ROWS } from './layout.js';
 import { bootScreen } from './screen.js';
 import type { JournalChangeLike } from './tui-app.js';
 import { createTuiApp } from './tui-app.js';
@@ -43,6 +45,12 @@ function presentation(
     connection: { status: 'connected' },
   };
 }
+
+// The frame's words: the panels paint their rows, and the assertions read
+// the text.
+const SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
+const words = (lines: readonly string[]): string =>
+  lines.join('\n').replace(SGR, '');
 
 const SESSION = 'sess-views';
 const MODEL = 'test-model';
@@ -104,8 +112,8 @@ function appWithRun(
 describe('diff panel', () => {
   it('is not on screen before its key is pressed', () => {
     const app = appWithRun();
-    const frame = app.render(100).join('\n');
-    expect(frame).not.toContain('--- a/src/app.ts');
+    const frame = words(app.render(100));
+    expect(frame).not.toContain('src/app.ts  edit');
   });
 
   it('renders the current run changes on Ctrl-O (legacy byte)', () => {
@@ -113,27 +121,22 @@ describe('diff panel', () => {
     const result = app.handleInput(OPEN_DIFF);
     expect(result.consumed).toBe(true);
     expect(result.quit).toBe(false);
-    const frame = app.render(100).join('\n');
-    // The diff view's own header (op label) plus the block exec's renderDiff
-    // prints for the file.
-    expect(frame).toContain('src/app.ts — edit');
-    expect(frame).toContain('--- a/src/app.ts');
-    expect(frame).toContain('+++ b/src/app.ts');
-    // The unified hunks: the changed line is there in both directions. The
-    // header is the real one the shared algorithm emits (context 3 clamped to
-    // the two-line file: @@ -1,2 +1,2 @@).
-    expect(frame).toContain('-const a = 1;');
-    expect(frame).toContain('+const a = 2;');
-    expect(frame).toContain('@@ -1,2 +1,2 @@');
+    const frame = words(app.render(100));
+    // The box's title, the file's header band (path, op, counts) and the
+    // hunk's rows, numbered like the transcript's tool cards.
+    expect(frame).toContain('Diff · last change');
+    expect(frame).toContain('src/app.ts  edit');
+    expect(frame).toContain('1 − const a = 1;');
+    expect(frame).toContain('1 + const a = 2;');
   });
 
   it('toggles back off on Ctrl-O (Kitty CSI-u encoding)', () => {
     const app = appWithRun();
     app.handleInput(OPEN_DIFF_KITTY);
-    expect(app.render(100).join('\n')).toContain('--- a/src/app.ts');
+    expect(words(app.render(100))).toContain('src/app.ts  edit');
     const result = app.handleInput(OPEN_DIFF);
     expect(result.consumed).toBe(true);
-    expect(app.render(100).join('\n')).not.toContain('--- a/src/app.ts');
+    expect(words(app.render(100))).not.toContain('src/app.ts  edit');
   });
 
   it('shows only the selected tool call, not other calls in the journal', () => {
@@ -148,17 +151,17 @@ describe('diff panel', () => {
       }),
     ]);
     app.handleInput(OPEN_DIFF);
-    const frame = app.render(100).join('\n');
-    expect(frame).toContain('--- a/src/app.ts');
+    const frame = words(app.render(100));
+    expect(frame).toContain('src/app.ts  edit');
     expect(frame).not.toContain('other/file.md');
     // Pinning the other call swaps the view to that call's effects.
     app.setDiffToolCall('tc-2');
-    const swapped = app.render(100).join('\n');
-    expect(swapped).toContain('other/file.md — write');
+    const swapped = words(app.render(100));
+    expect(swapped).toContain('other/file.md  write');
     expect(swapped).not.toContain('src/app.ts');
     // Releasing the pin hands the selection back to the run's own call.
     app.setDiffToolCall(null);
-    expect(app.render(100).join('\n')).toContain('src/app.ts — edit');
+    expect(words(app.render(100))).toContain('src/app.ts  edit');
   });
 
   it('says so plainly when the pinned call changed nothing', () => {
@@ -228,11 +231,11 @@ describe('diff panel multi-file and scrolling', () => {
         after: 'hello\n',
       }),
     ]);
-    const doc = panel.lines(100).join('\n');
-    expect(doc).toContain('--- a/src/app.ts');
-    expect(doc).toContain('--- a/other/file.md');
-    expect(doc).toContain('(file 1/2)');
-    expect(doc).toContain('(file 2/2)');
+    const doc = words(panel.lines(100));
+    expect(doc).toContain('src/app.ts  edit');
+    expect(doc).toContain('other/file.md  write');
+    expect(doc).toContain('+1 −1  1/2');
+    expect(doc).toContain('+0 −0  2/2');
   });
 
   it('reveals the second file by scrolling the panel', () => {
@@ -247,12 +250,12 @@ describe('diff panel multi-file and scrolling', () => {
     ]);
     app.handleInput(OPEN_DIFF);
     const screen = live(app);
-    expect(screen.frame()).toContain('(file 1/2)');
-    expect(screen.frame()).not.toContain('--- a/other/file.md');
+    expect(screen.frame()).toContain('+40 −40  1/2');
+    expect(screen.frame()).not.toContain('other/file.md');
     app.panelScrollTo(10_000);
     screen.render();
-    expect(screen.frame()).toContain('--- a/other/file.md');
-    expect(screen.frame()).toContain('(file 2/2)');
+    expect(screen.frame()).toContain('other/file.md  write');
+    expect(screen.frame()).toContain('+0 −0  2/2');
     screen.stop();
   });
 
@@ -269,7 +272,7 @@ describe('diff panel multi-file and scrolling', () => {
     app.panelScrollTo(0);
     expect(app.panelScrollTop()).toBe(0);
     screen.render();
-    expect(screen.frame()).toContain('-line 0');
+    expect(screen.frame()).toContain('1 − line 0');
     screen.stop();
   });
 
@@ -287,14 +290,14 @@ describe('diff panel multi-file and scrolling', () => {
     const screen = live(app);
     expect(app.handleInput(ALT_DOWN_KITTY).consumed).toBe(true);
     screen.render();
-    expect(screen.frame()).toContain('--- a/other/file.md');
+    expect(screen.frame()).toContain('other/file.md  write');
     app.handleInput(ALT_UP);
     screen.render();
-    expect(screen.frame()).toContain('--- a/big.txt');
+    expect(screen.frame()).toContain('big.txt  edit');
     // Cycling wraps: from the first file, alt+up reaches the last one.
     app.handleInput(ALT_UP);
     screen.render();
-    expect(screen.frame()).toContain('--- a/other/file.md');
+    expect(screen.frame()).toContain('other/file.md  write');
     screen.stop();
   });
 
@@ -313,6 +316,31 @@ describe('diff panel multi-file and scrolling', () => {
     for (let i = 0; i < 30; i += 1) app.handleInput(ALT_DOWN);
     screen.render();
     expect(screen.frame()).toContain('file-29.txt');
+    screen.stop();
+  });
+
+  it('says where the viewport is in the closing rule once the body scrolls', () => {
+    const app = appWithRun([longChange()]);
+    app.handleInput(OPEN_DIFF);
+    const screen = live(app);
+    // 40 removed and 40 added rows under the file's header band.
+    expect(screen.frame()).toMatch(/└─+ 1–\d+ of 81 ──┘/u);
+    screen.stop();
+  });
+
+  it('keeps its rows when the transcript is long', () => {
+    const app = appWithRun([longChange()]);
+    app.appendNotice(Array.from({ length: 200 }, (_, i) => `note ${i}`));
+    app.handleInput(OPEN_DIFF);
+    const screen = live(app);
+    const lines = screen.frame().split('\n');
+    const top = lines.findIndex((line) => line.includes('Diff · last change'));
+    const bottom = lines.findIndex(
+      (line, index) => index > top && line.startsWith('└'),
+    );
+    // This screen has no overlay seat, so the terminal height is unknown and
+    // the body takes the full cap.
+    expect(bottom - top - 1).toBe(PANEL_MAX_ROWS);
     screen.stop();
   });
 
@@ -340,7 +368,7 @@ describe('diff panel multi-file and scrolling', () => {
     screen.render();
     expect(app.panelMode()).toBe('diff');
     expect(app.panelScrollTop()).toBe(0);
-    expect(screen.frame()).toContain('-line 0');
+    expect(screen.frame()).toContain('1 − line 0');
     screen.stop();
   });
 });
@@ -359,17 +387,18 @@ describe('journal panel', () => {
     ]);
     const result = app.handleInput(OPEN_JOURNAL);
     expect(result.consumed).toBe(true);
-    const frame = app.render(100).join('\n');
-    expect(frame).toContain('--- a/src/app.ts');
-    expect(frame).toContain('--- a/other/file.md');
+    const frame = words(app.render(100));
+    expect(frame).toContain('Journal · this session');
+    expect(frame).toContain('src/app.ts  edit');
+    expect(frame).toContain('other/file.md  write');
   });
 
   it('opens on the Kitty CSI-u encoding and toggles off', () => {
     const app = appWithRun();
     expect(app.handleInput(OPEN_JOURNAL_KITTY).consumed).toBe(true);
-    expect(app.render(100).join('\n')).toContain('--- a/src/app.ts');
+    expect(words(app.render(100))).toContain('Journal · this session');
     app.handleInput(OPEN_JOURNAL);
-    expect(app.render(100).join('\n')).not.toContain('--- a/src/app.ts');
+    expect(words(app.render(100))).not.toContain('Journal · this session');
   });
 
   it('uses the path filter journal-view.ts implements', () => {
@@ -379,11 +408,11 @@ describe('journal panel', () => {
     ]);
     app.handleInput(OPEN_JOURNAL);
     app.setJournalFilter({ path: 'other/file.md' });
-    const frame = app.render(100).join('\n');
-    expect(frame).toContain('--- a/other/file.md');
-    expect(frame).not.toContain('--- a/src/app.ts');
+    const frame = words(app.render(100));
+    expect(frame).toContain('other/file.md  write');
+    expect(frame).not.toContain('src/app.ts');
     app.setJournalFilter({});
-    expect(app.render(100).join('\n')).toContain('--- a/src/app.ts');
+    expect(words(app.render(100))).toContain('src/app.ts  edit');
   });
 
   it('reports an empty journal instead of an empty frame', () => {
@@ -396,13 +425,38 @@ describe('journal panel', () => {
     const app = appWithRun();
     app.handleInput(OPEN_DIFF);
     app.handleInput(OPEN_JOURNAL);
-    const frame = app.render(100).join('\n');
-    // The journal body has no op-labelled header line (the CLI does not print
-    // one), the diff view's first line does — so the header is the tell.
-    expect(frame).toContain('--- a/src/app.ts');
-    expect(frame).not.toContain('src/app.ts — edit');
+    const frame = words(app.render(100));
+    // The title rule names the panel on screen.
+    expect(frame).toContain('Journal · this session');
+    expect(frame).not.toContain('Diff · last change');
     app.handleInput(OPEN_DIFF);
-    expect(app.render(100).join('\n')).toContain('src/app.ts — edit');
+    expect(words(app.render(100))).toContain('Diff · last change');
+  });
+});
+
+describe('the panel box', () => {
+  it('names the panel and counts its files and lines in the title rule', () => {
+    const app = appWithRun([change(), change({ path: 'b.ts' })]);
+    app.handleInput(OPEN_JOURNAL);
+    expect(words(app.render(100))).toMatch(
+      /┌─ Journal · this session ─+ 2 files {2}\+2 −2 ──┐/u,
+    );
+  });
+
+  it('closes on Esc, before Esc does anything else', () => {
+    const app = appWithRun();
+    app.handleInput(OPEN_DIFF);
+    expect(app.handleInput(ESC).consumed).toBe(true);
+    expect(app.panelMode()).toBe('closed');
+    expect(words(app.render(100))).not.toContain('Diff · last change');
+  });
+
+  it('takes half the terminal less the rows around it, within the cap', () => {
+    expect(panelBodyRows(undefined)).toBe(PANEL_MAX_ROWS);
+    expect(panelBodyRows(80)).toBe(PANEL_MAX_ROWS);
+    expect(panelBodyRows(30)).toBe(11);
+    expect(panelBodyRows(12)).toBe(2);
+    expect(panelBodyRows(4)).toBe(1);
   });
 });
 
@@ -436,8 +490,8 @@ describe('panel content is untrusted', () => {
   it('keeps the panel reachable on a narrow terminal where the tree hides', () => {
     const app = appWithRun();
     app.handleInput(OPEN_DIFF);
-    const frame = app.render(70).join('\n');
-    expect(frame).toContain('--- a/src/app.ts');
+    const frame = words(app.render(70));
+    expect(frame).toContain('src/app.ts  edit');
     // The tree itself is still hidden by the rule (the status line's own
     // `●` mark is not a tree node).
     expect(frame).not.toMatch(/[✓●◌] default/);

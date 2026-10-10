@@ -1,16 +1,19 @@
-// JournalView: file→hunks journal diffs.
-// Text only. The path filter mirrors `kubic diff --path` (host
-// journal-cli.ts over exec diffEntries): exact match on path.
-// Each file contributes the ---/+++/`# toolCall=` marker/hunk block exec's
-// renderDiff prints for it (the op-labelled header is omitted here — the CLI
-// does not print it); the corrupt and content-not-captured markers are not
-// drawn. Binary/missing blobs become placeholders via diff-view.ts; this
-// module never throws on them.
+// The journal panel's document: every change in the session journal as one
+// row (what happened to which file, how many lines, when), then each file's
+// own section of hunks. The path filter mirrors `kubic diff --path` (host
+// journal-cli.ts over exec diffEntries): exact match on the path.
 
-import type { DiffFileChange, DiffRenderOptions } from './diff-view.js';
-import { renderDiffLines } from './diff-view.js';
-import type { Component } from './tui-boundary.js';
-import { Text } from './tui-boundary.js';
+import type { UiTheme } from '@kubic/core/ui/style';
+import {
+  type ChangeCounts,
+  changeRows,
+  countRows,
+  type DiffFileChange,
+  renderChange,
+  renderCounts,
+  renderOp,
+} from './diff-view.js';
+import { fitLine, leftRight } from './ui/line.js';
 
 export interface JournalFilter {
   readonly path?: string;
@@ -29,59 +32,59 @@ export function filterJournalChanges(
   );
 }
 
-// Multi-file text: the per-file blocks of exec's renderDiff, one after the
-// other, with the `no changes` empty case journal-cli.ts prints.
-/** @internal */
-export function renderJournalLines(
+// The local wall-clock minute of a change: `14:05`.
+function clock(timestamp: number): string {
+  const at = new Date(timestamp);
+  const two = (value: number): string => String(value).padStart(2, '0');
+  return `${two(at.getHours())}:${two(at.getMinutes())}`;
+}
+
+const countsText = (counts: ChangeCounts): string =>
+  `+${counts.added} −${counts.removed}`;
+
+/** The added and removed lines of every change, summed. */
+export function totalCounts(
   changes: ReadonlyArray<DiffFileChange>,
-  options: DiffRenderOptions = {},
+): ChangeCounts {
+  let added = 0;
+  let removed = 0;
+  for (const change of changes) {
+    const counts = countRows(changeRows(change).rows);
+    added += counts.added;
+    removed += counts.removed;
+  }
+  return { added, removed };
+}
+
+/**
+ * The list, then the sections. The counts column is right-aligned across the
+ * rows, so a long session reads as a table.
+ */
+export function renderJournalLines(
+  ui: UiTheme,
+  changes: ReadonlyArray<DiffFileChange>,
+  width: number,
 ): string[] {
-  if (changes.length === 0) return ['no changes'];
-  return changes.flatMap((change) => renderDiffLines(change, options).slice(1));
-}
-
-export interface JournalViewOptions extends DiffRenderOptions {
-  readonly filter?: JournalFilter;
-}
-
-export class JournalView implements Component {
-  private readonly body: Text;
-  private all: DiffFileChange[];
-  private filter: JournalFilter;
-  private options: DiffRenderOptions;
-
-  constructor(
-    changes: ReadonlyArray<DiffFileChange> = [],
-    options: JournalViewOptions = {},
-  ) {
-    this.body = new Text('');
-    this.all = [...changes];
-    const { filter, ...rest } = options;
-    this.filter = filter ?? {};
-    this.options = rest;
-    this.paint();
-  }
-
-  setChanges(changes: ReadonlyArray<DiffFileChange>): void {
-    this.all = [...changes];
-    this.paint();
-  }
-
-  setFilter(filter: JournalFilter): void {
-    this.filter = filter;
-    this.paint();
-  }
-
-  render(width: number): string[] {
-    return this.body.render(width);
-  }
-
-  invalidate(): void {
-    this.body.invalidate();
-  }
-
-  private paint(): void {
-    const visible = filterJournalChanges(this.all, this.filter);
-    this.body.setText(renderJournalLines(visible, this.options).join('\n'));
-  }
+  if (changes.length === 0) return [fitLine(ui.fg('fg2')('no changes'), width)];
+  const counted = changes.map((change) => ({
+    change,
+    counts: countRows(changeRows(change).rows),
+  }));
+  const column = Math.max(
+    ...counted.map(({ counts }) => countsText(counts).length),
+  );
+  const list = counted.map(({ change, counts }) => {
+    const pad = ' '.repeat(column - countsText(counts).length);
+    const flag = change.unattributed
+      ? `  ${ui.fg('warn')('unattributed')}`
+      : '';
+    const left = ` ${renderOp(ui, change.op, 6)}  ${ui.fg('fg0')(change.path)}${flag}`;
+    const right = `${pad}${renderCounts(ui, counts)}  ${ui.fg('fg2')(clock(change.timestamp))} `;
+    return leftRight(left, right, width);
+  });
+  const sections = changes.flatMap((change) => [
+    '',
+    ...renderChange(ui, change, width),
+  ]);
+  return [...list, ...sections];
 }

@@ -1,16 +1,20 @@
-// Diff rendering: single-file journal diffs.
-// Text only (fallback carries the whole view — no image diffs).
-// Pure render functions: the panel (view-panel.ts) owns the document and the
-// scrolling, so there is no per-view Component wrapper left here.
+// Diff rendering: one journal change as a section of the diff and journal
+// panels. Pure render functions: the panel (view-panel.ts) owns the document
+// and the scrolling.
 //
 // Structural DiffFileChange mirrors exec FileChange
 // (packages/exec/src/journal/diff.ts) WITHOUT importing it: the tui
 // package must never import exec/host/agent implementation (dep-lint),
 // so only the fields this view reads are typed here. unifiedHunks is a copy
-// of exec's unifiedHunks (the TUI cannot import it); the per-file block below
-// follows exec's renderDiff: ---/+++, the `# toolCall=` marker, then hunks.
-// The op label lives on the op-labelled header line, which the CLI does not
-// print.
+// of exec's unifiedHunks (the TUI cannot import it), so the panels show the
+// hunks `kubic diff` prints, drawn the way the transcript's tool cards draw
+// theirs (ui/diff-block.ts).
+
+import type { UiTheme } from '@kubic/core/ui/style';
+import type { TokenRole } from '@kubic/core/ui/tokens';
+import { type DiffRow, renderDiffRows } from './ui/diff-block.js';
+import { fitLine, leftRight } from './ui/line.js';
+import { fillLine } from './ui/surface.js';
 
 export type DiffOp = 'write' | 'edit' | 'create' | 'delete' | 'rename';
 
@@ -24,17 +28,6 @@ export interface DiffFileChange {
   readonly reversible: boolean;
   readonly before: string | null;
   readonly after: string | null;
-}
-
-export interface DiffRenderOptions {
-  readonly context?: number;
-  readonly width?: number;
-  readonly maxLines?: number;
-  // `(file k/N)` appended to the op-labelled header, so a
-  // multi-file panel says which file of how many it is showing. Only the TUI
-  // diff panel sets it — `kubic diff` output never carries it (the journal
-  // view drops the op-labelled header line entirely).
-  readonly fileOrdinal?: { readonly index: number; readonly total: number };
 }
 
 // Binary detection: journal blobs are text; a NUL byte means the
@@ -100,82 +93,161 @@ export function unifiedHunks(
   return [`@@ -${from + 1},${aCount} +${from + 1},${bCount} @@`, ...body];
 }
 
-// Path header with the op label (write/edit/create/delete/rename) plus
-// the unattributed badge for reconciliation-only entries.
-/** @internal */
-export function renderDiffHeader(change: DiffFileChange): string {
-  return `${change.path} — ${change.op}${change.unattributed ? ' [unattributed]' : ''}`;
-}
-
+// Why a change shows no rows: binary content, or a side whose blob is missing
+// (pruned, corrupt, or a reconciliation pre-image). create/delete
+// legitimately have one null side.
 function placeholderFor(change: DiffFileChange): string | null {
   if (
     (change.before !== null && isBinaryText(change.before)) ||
     (change.after !== null && isBinaryText(change.after))
   ) {
-    return `~ binary content not shown: ${change.path}`;
+    return 'binary content not shown';
   }
-  // create/delete legitimately have one null side; any other null side
-  // is a missing blob (pruned, corrupt, or reconciliation pre-image).
   if (change.before === null && change.op !== 'create') {
-    return `~ content unavailable: ${change.path} (missing before-blob)`;
+    return 'content unavailable (missing before-blob)';
   }
   if (change.after === null && change.op !== 'delete') {
-    return `~ content unavailable: ${change.path} (missing after-blob)`;
+    return 'content unavailable (missing after-blob)';
   }
   return null;
 }
 
-function truncateLine(line: string, width: number): string {
-  if (line.length <= width) return line;
-  if (width <= 0) return '';
-  return `${line.slice(0, width - 1)}…`;
+// The final newline is a line terminator, not a line: hunked as it is, a
+// file ending in `\n` would show an empty last line in every diff.
+function withoutFinalNewline(text: string): string {
+  return text.endsWith('\n') ? text.slice(0, -1) : text;
 }
 
-// Full single-file view: op-labelled header, then the block exec's renderDiff
-// prints for the file (---/+++, the `# toolCall=` marker, then hunks). The
-// corrupt and content-not-captured markers renderDiff can add are not drawn
-// here. Placeholders replace hunks for binary/missing content — the view never
-// throws on null or binary sides.
-export function renderDiffLines(
+const HUNK_HEADER = /^@@ -(\d+),\d+ \+(\d+),\d+ @@$/u;
+
+/**
+ * One change as diff-block rows, numbered the way the transcript's tool cards
+ * number theirs: removed rows carry the old line number, every other row the
+ * new one. A `⋮` gap row stands for unchanged lines left out above or below
+ * the hunk. `note` says why there are no rows (binary or missing content, a
+ * rename that kept the content, a change to the final newline only).
+ */
+export function changeRows(
   change: DiffFileChange,
-  options: DiffRenderOptions = {},
-): string[] {
-  const who = `toolCall=${change.toolCallId ?? 'none'}`;
-  const flags = [
-    change.unattributed ? 'unattributed' : null,
-    change.reversible ? null : 'non-reversible',
-  ].filter((f) => f !== null);
-  const header = renderDiffHeader(change);
-  let lines = [
-    options.fileOrdinal === undefined
-      ? header
-      : `${header} (file ${options.fileOrdinal.index}/${options.fileOrdinal.total})`,
-    `--- a/${change.path}`,
-    `+++ b/${change.path}`,
-    `# ${who}${flags.length > 0 ? ` [${flags.join(', ')}]` : ''}`,
-  ];
+  context = 3,
+): { readonly rows: readonly DiffRow[]; readonly note?: string } {
   const placeholder = placeholderFor(change);
-  if (placeholder !== null) {
-    lines.push(placeholder);
-  } else {
-    lines.push(
-      ...unifiedHunks(
-        change.before ?? '',
-        change.after ?? '',
-        options.context ?? 3,
-      ),
-    );
+  if (placeholder !== null) return { rows: [], note: placeholder };
+  const before = withoutFinalNewline(change.before ?? '');
+  const after = withoutFinalNewline(change.after ?? '');
+  // An empty side has no lines at all (split would give it one empty line),
+  // so a created or emptied file is all one kind of row.
+  if (before === '' || after === '') {
+    if (before === after) return { rows: [], note: 'empty file' };
+    const kind = before === '' ? 'add' : 'del';
+    return {
+      rows: (before === '' ? after : before)
+        .split('\n')
+        .map((text, index) => ({ kind, number: String(index + 1), text })),
+    };
   }
-  if (options.width !== undefined) {
-    const w = Math.max(0, Math.floor(options.width));
-    lines = lines.map((line) => truncateLine(line, w));
+  const [header, ...body] = unifiedHunks(before, after, context);
+  const at = header === undefined ? null : HUNK_HEADER.exec(header);
+  if (at === null) {
+    if (change.op === 'rename') return { rows: [], note: 'content unchanged' };
+    return { rows: [], note: 'only the final newline changed' };
   }
-  if (options.maxLines !== undefined) {
-    const max = Math.max(0, Math.floor(options.maxLines));
-    if (lines.length > max) {
-      const dropped = lines.length - max;
-      lines = [...lines.slice(0, max), `… (${dropped} more lines)`];
+  let oldLine = Number(at[1]);
+  let newLine = Number(at[2]);
+  const rows: DiffRow[] = [];
+  const gap: DiffRow = { kind: 'gap', number: '', text: '' };
+  if (oldLine > 1) rows.push(gap);
+  for (const line of body) {
+    const text = line.slice(1);
+    if (line.startsWith('-')) {
+      rows.push({ kind: 'del', number: String(oldLine), text });
+      oldLine += 1;
+    } else if (line.startsWith('+')) {
+      rows.push({ kind: 'add', number: String(newLine), text });
+      newLine += 1;
+    } else {
+      rows.push({ kind: 'context', number: String(newLine), text });
+      oldLine += 1;
+      newLine += 1;
     }
   }
-  return lines;
+  if (oldLine <= before.split('\n').length) rows.push(gap);
+  return { rows };
+}
+
+export interface ChangeCounts {
+  readonly added: number;
+  readonly removed: number;
+}
+
+export function countRows(rows: readonly DiffRow[]): ChangeCounts {
+  let added = 0;
+  let removed = 0;
+  for (const row of rows) {
+    if (row.kind === 'add') added += 1;
+    else if (row.kind === 'del') removed += 1;
+  }
+  return { added, removed };
+}
+
+/** `+12 −4` in the diff colours; a zero stays quiet. */
+export function renderCounts(ui: UiTheme, counts: ChangeCounts): string {
+  const added = ui.fg(counts.added === 0 ? 'fg3' : 'add')(`+${counts.added}`);
+  const removed = ui.fg(counts.removed === 0 ? 'fg3' : 'del')(
+    `−${counts.removed}`,
+  );
+  return `${added} ${removed}`;
+}
+
+// The op as a word in its own colour: what was born, what died, what moved.
+const OP_ROLE: Record<DiffOp, TokenRole> = {
+  write: 'info',
+  edit: 'info',
+  create: 'ok',
+  delete: 'err',
+  rename: 'warn',
+};
+
+/** The op word, padded to `width` so a column of them lines up. */
+export function renderOp(ui: UiTheme, op: DiffOp, width = 0): string {
+  return ui.fg(OP_ROLE[op])(op.padEnd(width));
+}
+
+export interface ChangeRenderOptions {
+  /** `1/3` on the header, when the change is one file of several. */
+  readonly ordinal?: { readonly index: number; readonly total: number };
+}
+
+/**
+ * One file's section: a header band (path, op, flags, counts) and its rows,
+ * or a note when there are none.
+ */
+export function renderChange(
+  ui: UiTheme,
+  change: DiffFileChange,
+  width: number,
+  options: ChangeRenderOptions = {},
+): string[] {
+  const { rows, note } = changeRows(change);
+  const flags = [
+    change.unattributed ? 'unattributed' : null,
+    change.reversible ? null : 'not reversible',
+  ].filter((flag) => flag !== null);
+  const left = `${ui.style({ fg: 'fg0', bold: true })(change.path)}  ${renderOp(ui, change.op)}${
+    flags.length === 0 ? '' : ` ${ui.fg('warn')(flags.join(' · '))}`
+  }`;
+  const ordinal =
+    options.ordinal === undefined || options.ordinal.total < 2
+      ? ''
+      : `  ${ui.fg('fg2')(`${options.ordinal.index}/${options.ordinal.total}`)}`;
+  const right = `${renderCounts(ui, countRows(rows))}${ordinal}`;
+  const header = fillLine(
+    ui,
+    ` ${leftRight(left, `${right} `, width - 1)}`,
+    width,
+    'bg2',
+  );
+  if (note !== undefined)
+    return [header, fitLine(ui.fg('fg2')(`  ~ ${note}`), width)];
+  return [header, ...renderDiffRows(ui, rows, width)];
 }

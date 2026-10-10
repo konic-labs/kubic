@@ -77,7 +77,7 @@ export {
   /** @internal */ resetCapabilitiesCache,
   ScrollView,
   /** @internal */ setCapabilities,
-  Text,
+  /** @internal */ Text,
   TuiAltScreen,
   truncateToWidth,
   VStack,

@@ -228,6 +228,36 @@ describe('key-hint sets', () => {
     });
   });
 
+  it('an open panel shows its own keys, and Esc closes it', () => {
+    expect(
+      keyHintSet('panel', DEFAULT_KEY_REGISTRY, { panel: 'diff' }),
+    ).toEqual({
+      hints: [
+        ['alt+↓', 'next file'],
+        ['alt+↑', 'previous file'],
+        ['^O', 'close'],
+        ['^R', 'journal'],
+      ],
+      right: ['esc', 'close'],
+    });
+    expect(
+      keyHintSet('panel', DEFAULT_KEY_REGISTRY, { panel: 'journal' }).hints,
+    ).toEqual([
+      ['alt+↓', 'next page'],
+      ['alt+↑', 'previous page'],
+      ['^O', 'diff'],
+      ['^R', 'close'],
+    ]);
+  });
+
+  it('a confirmation shows its accept key and what it does', () => {
+    expect(
+      keyHintSet('confirm', DEFAULT_KEY_REGISTRY, {
+        confirm: { key: '^S', label: 'turn off' },
+      }),
+    ).toEqual({ hints: [['^S', 'turn off']], right: ['esc', 'cancel'] });
+  });
+
   it('follows a rebind and hides an unbound action', () => {
     const keys = createKeyRegistry({
       'app.palette': ['ctrl+k'],

@@ -81,12 +81,13 @@ describe('the TUI full-access toggle', () => {
     // Alt+A asks: the dialog names the consequence and its deliberate key.
     fake.inject('\u001ba');
     await waitFor(() =>
-      fake.output().includes('turn approvals off for this session?'),
+      fake.output().includes('Turn approvals off for this session?'),
     );
     expect(fake.output()).toContain(
-      'every challenged call in this session will run without asking',
+      'Every challenged call in this session runs without asking.',
     );
-    expect(fake.output()).toContain('[Ctrl-S] confirm');
+    expect(fake.output()).toContain('turn off');
+    expect(fake.output()).toContain('keep on');
     // Nothing is recorded before the verdict.
     expect(postureRows(workspace)).toHaveLength(0);
 
@@ -114,7 +115,7 @@ describe('the TUI full-access toggle', () => {
         .includes('approvals: on again — the next challenged call asks'),
     );
     expect(fake.writes.slice(before).join('')).not.toContain(
-      'turn approvals off',
+      'Turn approvals off',
     );
     expect(fake.output()).toContain('approvals on');
     expect(
@@ -161,13 +162,13 @@ describe('the TUI full-access toggle', () => {
     await waitFor(() => fake.started === 1);
     fake.inject('\u001ba');
     await waitFor(() =>
-      fake.output().includes('turn approvals off for this session?'),
+      fake.output().includes('Turn approvals off for this session?'),
     );
     // `y`, `yes` and a bare Enter are all swallowed: the dialog stays and
     // nothing is recorded.
     for (const key of ['y', 'e', 's', '\r']) fake.inject(key);
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(fake.output()).toContain('turn approvals off for this session?');
+    expect(fake.output()).toContain('Turn approvals off for this session?');
     expect(
       new FileApprovalStore(join(sessionsRoot, sessionId)).loadPosture()
         .fullAccess,
@@ -239,7 +240,7 @@ describe('the TUI full-access toggle', () => {
     // `off` opens the confirmation; Ctrl-S confirms it.
     run('/approvals off');
     await waitFor(() =>
-      fake.output().includes('turn approvals off for this session?'),
+      fake.output().includes('Turn approvals off for this session?'),
     );
     fake.inject('\u0013');
     await waitFor(() =>
@@ -255,7 +256,7 @@ describe('the TUI full-access toggle', () => {
     run('/approvals off');
     await waitFor(() => fake.output().includes('approvals: already OFF'));
     expect(fake.writes.slice(beforeOff).join('')).not.toContain(
-      'turn approvals off for this session?',
+      'Turn approvals off for this session?',
     );
     expect(
       new FileApprovalStore(join(sessionsRoot, sessionId)).loadPosture()
@@ -331,7 +332,7 @@ describe('the TUI full-access toggle', () => {
     // No dialog was opened, so Ctrl-S and Esc still belong to the approval:
     // nothing was recorded for a flip that never started.
     expect(fake.writes.slice(before).join('')).not.toContain(
-      'turn approvals off for this session?',
+      'Turn approvals off for this session?',
     );
     expect(postureRows(workspace)).toHaveLength(0);
     // Esc answers the pending request (denies it) rather than a dialog.

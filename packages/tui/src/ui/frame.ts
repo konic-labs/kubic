@@ -20,10 +20,12 @@ export interface FrameOptions {
   readonly sides?: 'both' | 'left' | 'none';
   /** A background role for body lines (painted edge to edge inside). */
   readonly bodyBg?: TokenRole;
+  /** Labels inside the bottom rule, left and right. */
+  readonly footer?: string;
+  readonly footerRight?: string;
 }
 
 /** The inner width a frame of `width` cells leaves for the body. */
-/** @internal */
 export function frameInnerWidth(
   width: number,
   sides: FrameOptions['sides'] = 'both',
@@ -98,6 +100,8 @@ export function frameLines(
     closed ? glyphs.bottomRight : '',
     glyphs.horizontal,
     color,
+    options.footer,
+    options.footerRight,
   );
   const edge = paint(glyphs.vertical);
   const bg = options.bodyBg;

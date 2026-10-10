@@ -5,6 +5,7 @@
 import { renderApprovalCard } from '../approval-card.js';
 import {
   type HintContext,
+  keyCap,
   keyHintSet,
   renderHeader,
   shortSessionId,
@@ -64,15 +65,30 @@ export function buildAppLayout(core: AppCore): VStack {
     tree: core.tree,
     treeVisible: () => !core.tree.isCollapsed(),
     transcript: core.transcript.component,
-    panel: { component: core.panel.scroll, isOpen: () => core.panel.isOpen() },
+    panel: {
+      component: core.panel.scroll,
+      isOpen: () => core.panel.isOpen(),
+      top: core.panel.top,
+      bottom: core.panel.bottom,
+    },
     notice: core.noticeRow,
     editor: editorSlot(core),
     status: core.status,
     hints: lineComponent((width) => {
+      const confirm = core.overlays.confirm?.options;
       const set = keyHintSet(hintContext(core), core.keys, {
         files: seed.listFiles !== undefined,
         // Shift+Enter is a newline only where the terminal reports it.
         newline: isKittyProtocolActive() ? '⇧⏎' : '^J',
+        ...(core.panel.mode === 'closed' ? {} : { panel: core.panel.mode }),
+        ...(confirm === undefined
+          ? {}
+          : {
+              confirm: {
+                key: keyCap(confirm.confirmKey),
+                label: confirm.confirmAction ?? 'confirm',
+              },
+            }),
       });
       return renderKeyHintRow(tuiTheme().ui, set.hints, width, set.right);
     }),
@@ -161,13 +177,10 @@ function hintContext(core: AppCore): HintContext {
   if (core.palette.current !== undefined) return 'palette';
   if (core.blocks.viewer !== undefined) return 'overlay';
   if (core.blocks.selected !== undefined) return 'blocks';
+  if (core.overlays.confirm !== undefined) return 'confirm';
   if (core.overlays.picker?.kind === 'model') return 'model';
-  if (
-    core.overlays.picker !== undefined ||
-    core.overlays.confirm !== undefined
-  ) {
-    return 'overlay';
-  }
+  if (core.overlays.picker !== undefined) return 'overlay';
+  if (core.panel.isOpen()) return 'panel';
   return core.turn.busy ? 'working' : 'idle';
 }
 

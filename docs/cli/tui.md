@@ -186,7 +186,7 @@ the journal (and both panels) as its tool call ends. A change made with
 `bash` is not intercepted, so it is journaled by the reconciliation sweep —
 which, in the TUI, runs when a turn that used `bash` **settles** (before the
 panels refresh), not only at quit: after such a turn `Ctrl-R` lists the
-change as `unattributed` (plus `non-reversible` when no pre-image exists —
+change as `unattributed` (plus `not reversible` when no pre-image exists —
 a bash edit of a committed file carries its git pre-image and undoes) and
 `Ctrl-O` follows it. The sweep
 walks and hashes the workspace, so turns that ran no `bash` do not pay for
@@ -208,8 +208,10 @@ control sequences before they are drawn: whole SGR/OSC sequences (so
 overwrites collapsed to what the terminal would show, and tabs expanded by
 column.
 
-Both panel rows scroll: the mouse wheel over the panel moves it (it does not
-chain to the transcript while the panel can still scroll), and
+Each panel opens in its own box between the transcript and the editor,
+sized to its content up to half the terminal; `Esc` (or its own key again)
+closes it. Both panels scroll: the mouse wheel over the panel moves it (it
+does not chain to the transcript while the panel can still scroll), and
 `Alt-↓` / `Alt-↑` move through the open panel — the diff panel's files, or a
 page of the journal panel. A freshly opened panel starts at its first file,
 and a repaint (new journal rows arriving) never yanks the viewport.

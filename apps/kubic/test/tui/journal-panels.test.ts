@@ -37,6 +37,10 @@ afterEach(() => {
 
 type Step = Parameters<typeof fauxAssistantMessage>[0];
 
+// The words of the terminal writes, without their styles and cursor moves.
+const CSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, 'g');
+const words = (text: string): string => text.replace(CSI, '');
+
 function recordingTerminal() {
   return terminalRig(120, 40);
 }
@@ -190,7 +194,7 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     const mark = fake.mark();
     fake.feed('\x0f');
     await waitFor(() => fake.since(mark).includes('hello.txt'));
-    expect(fake.since(mark)).toContain('+hi there');
+    expect(words(fake.since(mark))).toContain('1 + hi there');
     expect(fake.since(mark)).not.toContain('no changes');
     fake.feed('\x04');
     expect((await exit).exitCode).toBe(0);
@@ -261,10 +265,11 @@ describe('the Ctrl-O / Ctrl-R panels read the session journal', () => {
     mark = fake.mark();
     fake.feed('\x12');
     await waitFor(() => fake.since(mark).includes('shellfile.txt'));
-    // The journal listing is `kubic diff`'s text: the swept row is named as
-    // what it is (unattributed: the sweep cannot know which call wrote it).
-    expect(fake.since(mark)).toContain('+++ b/shellfile.txt');
-    expect(fake.since(mark)).toContain('unattributed, non-reversible');
+    // The swept row is named as what it is (unattributed: the sweep cannot
+    // know which call wrote it).
+    expect(words(fake.since(mark))).toContain(
+      'create  shellfile.txt  unattributed',
+    );
     fake.feed('\x04');
     expect((await exit).exitCode).toBe(0);
   });

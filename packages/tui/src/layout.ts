@@ -1,9 +1,10 @@
 // The layout root, a VStack. Rows top to bottom: the one-row header; the
 // TreeView (sized to its content, hidden below 80 columns and wherever the
 // caller turns it off); the ScrollView transcript (grow 1, follow-end); the
-// diff / journal panel (basis 12, present only while open); the transient
-// notice row (0–2 rows); the editor; the one-row status line; the key-hint
-// row. Slots are Components; this module owns arrangement only.
+// diff / journal panel (its title rule, a body sized to its content up to a
+// cap, its closing rule; present only while open); the transient notice row
+// (0–2 rows); the editor; the one-row status line; the key-hint row. Slots
+// are Components; this module owns arrangement only.
 
 import type { Component } from './tui-boundary.js';
 import { VStack } from './tui-boundary.js';
@@ -11,9 +12,9 @@ import { VStack } from './tui-boundary.js';
 /** @internal */
 export const NARROW_COLUMNS = 80;
 
-// The panel row's height while a panel is open. Same basis as
-// the tree so toggling a panel does not resize the transcript unevenly.
-const PANEL_BASIS = 12;
+// The most rows an open panel's body takes; a shorter document takes only
+// its own rows, and a longer one scrolls.
+export const PANEL_MAX_ROWS = 16;
 
 // Structural viewport (matches Pi's LayoutViewport {width, height} without
 // importing its layout internals through the seam).
@@ -45,10 +46,16 @@ export interface LayoutSlots {
   hints?: Component;
   // The diff/journal panel row. Optional so the four-row
   // arrangement is unchanged for callers that have no panel; when present,
-  // the row is only laid out while `panel.isOpen()` — a closed panel must
+  // the rows are only laid out while `panel.isOpen()` — a closed panel must
   // not reserve blank rows. NOT width-gated: an operator on a narrow
-  // terminal still gets the panels (only the tree collapses there).
-  panel?: { component: Component; isOpen: () => boolean };
+  // terminal still gets the panels (only the tree collapses there). `top`
+  // and `bottom` are the box's one-row rules around the scrolling body.
+  panel?: {
+    component: Component;
+    isOpen: () => boolean;
+    top?: Component;
+    bottom?: Component;
+  };
 }
 
 export function buildLayoutRoot(slots: LayoutSlots): VStack {
@@ -90,13 +97,30 @@ export function buildLayoutRoot(slots: LayoutSlots): VStack {
     // Read through the slot, not a captured boolean: the callback runs per
     // render, so a toggle takes effect on the next frame.
     const panel = slots.panel;
+    const open = (): boolean => panel.isOpen();
+    if (panel.top !== undefined) {
+      rows.push({ component: panel.top, basis: 1, shrink: 0, visible: open });
+    }
+    // The body never shrinks: rows shrink in proportion to their size, and
+    // the transcript measures as its whole content, so a long transcript
+    // would squeeze an open panel to nothing. The body measures at most the
+    // rows the terminal can spare instead (app/panel.ts).
     rows.push({
       component: panel.component,
-      basis: PANEL_BASIS,
-      shrink: 1,
-      minSize: 3,
-      visible: (): boolean => panel.isOpen(),
+      basis: 'auto',
+      shrink: 0,
+      minSize: 1,
+      maxSize: PANEL_MAX_ROWS,
+      visible: open,
     });
+    if (panel.bottom !== undefined) {
+      rows.push({
+        component: panel.bottom,
+        basis: 1,
+        shrink: 0,
+        visible: open,
+      });
+    }
   }
   if (slots.notice !== undefined) {
     rows.push({ component: slots.notice, basis: 'auto', shrink: 0 });

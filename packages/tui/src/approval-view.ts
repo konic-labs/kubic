@@ -45,9 +45,8 @@ export type ApprovalDecision =
   | { approved: true; by: string; edited?: { command: string } }
   | { approved: false; reason: string };
 
-// Overlay geometry: centered 70% width / 60% height, visible at
-// 80+ columns. Approvals are an inline card now; the question
-// and confirm dialogs still use this overlay.
+// Approvals render as an inline card at every width, never as an overlay;
+// the tests check both sides of this width.
 /** @internal */
 export const APPROVAL_MIN_WIDTH = 80;
 
@@ -70,21 +69,6 @@ export interface ApprovalOverlayOptions {
     | 'right-center';
   readonly visible?: (termWidth: number, termHeight: number) => boolean;
   readonly nonCapturing?: boolean;
-}
-
-// The overlay's size caps, as percentages of the terminal.
-const APPROVAL_OVERLAY_WIDTH_PERCENT = 70;
-const APPROVAL_OVERLAY_HEIGHT_PERCENT = 60;
-
-export function approvalOverlayOptions(): ApprovalOverlayOptions {
-  return {
-    width: `${APPROVAL_OVERLAY_WIDTH_PERCENT}%`,
-    maxHeight: `${APPROVAL_OVERLAY_HEIGHT_PERCENT}%`,
-    anchor: 'center',
-    // Capturing by design: the modal takes focus on show (nonCapturing
-    // is never set). Narrow terminals skip the overlay via visible.
-    visible: (termWidth: number): boolean => termWidth >= APPROVAL_MIN_WIDTH,
-  };
 }
 
 // The key that pages a long command (or opens an edit's whole

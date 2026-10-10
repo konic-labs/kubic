@@ -86,6 +86,14 @@ describe('frames', () => {
     expect(lines[2]).toBe('┗━━━━━━━━━━━━━━━━━━━');
   });
 
+  it('labels the bottom rule too', () => {
+    const lines = frameLines(plain, ['body'], 24, {
+      footer: 'keys',
+      footerRight: '1–4 of 9',
+    });
+    expect(lines[2]).toBe('└─ keys ─── 1–4 of 9 ──┘');
+  });
+
   it('drops labels that do not fit and keeps the corners', () => {
     const lines = frameLines(plain, [], 8, { title: 'a very long title' });
     expect(lines[0]).toBe('┌──────┐');

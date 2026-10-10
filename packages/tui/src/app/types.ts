@@ -245,6 +245,10 @@ export interface TuiConfirmOptions {
   readonly confirmKey: string;
   /** Its label for the hint row (`'Ctrl-S'`). */
   readonly confirmLabel: string;
+  /** What accepting does, on its key cap (`'turn off'`); default `confirm`. */
+  readonly confirmAction?: string;
+  /** What cancelling keeps, on the Esc cap (`'keep on'`); default `cancel`. */
+  readonly cancelAction?: string;
   readonly onConfirm: () => void;
   readonly onCancel?: () => void;
 }

@@ -1,15 +1,27 @@
-// Single-file journal diff rendering.
-// Text only, no VirtualTerminal in Pi 0.85.1: headless snapshots render
-// directly like layout.test.ts. Structural DiffFileChange mirrors exec
-// FileChange (the exec journal/diff.ts) without importing it — tui must never
-// import exec/host/agent implementation (dep-lint).
+// One journal change as a panel section: the rows (numbered like the
+// transcript's tool cards, with gaps for the lines left out) and the section's
+// header band. Plain text at depth none reads like the design. Structural
+// DiffFileChange mirrors exec FileChange (the exec journal/diff.ts) without
+// importing it — tui must never import exec/host/agent implementation
+// (dep-lint).
+import { createUiTheme } from '@kubic/core/ui/style';
+import { DARK_PALETTE } from '@kubic/core/ui/tokens';
 import { describe, expect, it } from 'vitest';
 import {
+  changeRows,
+  countRows,
   isBinaryText,
-  renderDiffHeader,
-  renderDiffLines,
+  renderChange,
+  renderCounts,
   unifiedHunks,
 } from './diff-view.js';
+import { visibleWidth } from './tui-boundary.js';
+
+const plain = createUiTheme(DARK_PALETTE, 'none');
+const rich = createUiTheme(DARK_PALETTE, 'truecolor');
+
+const between = (left: string, right: string, width: number): string =>
+  `${left}${' '.repeat(width - visibleWidth(left) - visibleWidth(right))}${right}`;
 
 const WRITE_EDIT = {
   path: 'a.txt',
@@ -111,130 +123,138 @@ describe('truthful hunk header counts', () => {
   });
 });
 
-describe('diff view header + hunks', () => {
-  it('write+edit renders path header, op label, tool-call marker, hunks', () => {
-    expect(renderDiffLines(WRITE_EDIT)).toEqual([
-      'a.txt — write',
-      '--- a/a.txt',
-      '+++ b/a.txt',
-      '# toolCall=call-1',
-      '@@ -1,4 +1,4 @@',
-      ' one',
-      '-two',
-      '+TWO',
-      ' three',
-      ' ',
+describe('change rows', () => {
+  it('numbers removed rows by the old file and the rest by the new one', () => {
+    expect(changeRows(WRITE_EDIT).rows).toEqual([
+      { kind: 'context', number: '1', text: 'one' },
+      { kind: 'del', number: '2', text: 'two' },
+      { kind: 'add', number: '2', text: 'TWO' },
+      { kind: 'context', number: '3', text: 'three' },
     ]);
   });
 
-  it('truncates long lines and caps max lines with a trailer', () => {
-    const long = {
+  it('marks the unchanged lines left out above and below with a gap', () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `l${i + 1}`);
+    const before = `${lines.join('\n')}\n`;
+    const after = before.replace('l10\n', 'L10\n');
+    const { rows } = changeRows({ ...WRITE_EDIT, before, after });
+    expect(rows[0]?.kind).toBe('gap');
+    expect(rows.at(-1)?.kind).toBe('gap');
+    expect(
+      rows.filter((row) => row.kind !== 'gap').map((row) => row.number),
+    ).toEqual(['7', '8', '9', '10', '10', '11', '12', '13']);
+  });
+
+  it('shows a created or deleted file as one kind of row, without a phantom empty line', () => {
+    const created = changeRows({
       ...WRITE_EDIT,
-      after: `one\n${'x'.repeat(200)}\nthree\n`,
-    };
-    // maxLines keeps the long line inside the window, so both the width
-    // clamp (ellipsis at 40) and the trailer are exercised.
-    const lines = renderDiffLines(long, { width: 40, maxLines: 8 });
-    expect(lines).toEqual([
-      'a.txt — write',
-      '--- a/a.txt',
-      '+++ b/a.txt',
-      '# toolCall=call-1',
-      '@@ -1,4 +1,4 @@',
-      ' one',
-      '-two',
-      `+${'x'.repeat(38)}…`,
-      '… (2 more lines)',
+      op: 'create',
+      before: null,
+      after: 'a\nb\n',
+    });
+    expect(created.rows).toEqual([
+      { kind: 'add', number: '1', text: 'a' },
+      { kind: 'add', number: '2', text: 'b' },
     ]);
+    const deleted = changeRows({
+      ...WRITE_EDIT,
+      op: 'delete',
+      before: 'gone\n',
+      after: null,
+    });
+    expect(deleted.rows).toEqual([{ kind: 'del', number: '1', text: 'gone' }]);
+  });
+
+  it('says why there are no rows, and never throws on binary or missing content', () => {
+    const note = (
+      over: Partial<typeof WRITE_EDIT> | object,
+    ): string | undefined => changeRows({ ...WRITE_EDIT, ...over }).note;
+    expect(note({ after: 'a\0b' })).toBe('binary content not shown');
+    expect(note({ before: 'a\0b' })).toBe('binary content not shown');
+    expect(note({ before: null })).toBe(
+      'content unavailable (missing before-blob)',
+    );
+    expect(note({ after: null })).toBe(
+      'content unavailable (missing after-blob)',
+    );
+    expect(note({ op: 'rename', after: WRITE_EDIT.before })).toBe(
+      'content unchanged',
+    );
+    expect(note({ before: 'x', after: 'x\n' })).toBe(
+      'only the final newline changed',
+    );
+  });
+
+  it('counts the added and removed rows', () => {
+    expect(countRows(changeRows(WRITE_EDIT).rows)).toEqual({
+      added: 1,
+      removed: 1,
+    });
   });
 });
 
-describe('diff placeholders', () => {
+describe('isBinaryText', () => {
   it('detects binary content by NUL byte', () => {
     expect(isBinaryText('ab\0cd')).toBe(true);
     expect(isBinaryText('plain text\n')).toBe(false);
   });
 
-  it('isBinaryText never throws on runtime undefined (returns false)', () => {
+  it('never throws on runtime undefined (returns false)', () => {
     expect(isBinaryText(undefined as unknown as string)).toBe(false);
-  });
-
-  it('binary either-side renders a placeholder and never throws', () => {
-    for (const side of [{ after: 'a\0b' }, { before: 'a\0b' }]) {
-      const lines = renderDiffLines({ ...WRITE_EDIT, ...side });
-      expect(lines.slice(4)).toEqual(['~ binary content not shown: a.txt']);
-    }
-  });
-
-  it('missing blob (unexpected null side) renders a placeholder', () => {
-    const lines = renderDiffLines({ ...WRITE_EDIT, before: null });
-    expect(lines.slice(4)).toEqual([
-      '~ content unavailable: a.txt (missing before-blob)',
-    ]);
-  });
-
-  it('create/delete null sides render hunks, not placeholders', () => {
-    const created = renderDiffLines({
-      ...WRITE_EDIT,
-      op: 'create',
-      before: null,
-      after: 'new\n',
-      reversible: false,
-    });
-    expect(created).toContain('+new');
-    const deleted = renderDiffLines({
-      ...WRITE_EDIT,
-      op: 'delete',
-      after: null,
-      before: 'gone\n',
-      reversible: true,
-    });
-    expect(deleted).toContain('-gone');
   });
 });
 
-describe('diff view exact rendering', () => {
-  it('badges the header for unattributed reconciliation entries', () => {
-    expect(renderDiffHeader({ ...WRITE_EDIT, unattributed: true })).toBe(
-      'a.txt — write [unattributed]',
+describe('a change section', () => {
+  it('heads the rows with the path, the op and the counts', () => {
+    expect(renderChange(plain, WRITE_EDIT, 40)).toEqual([
+      between(' a.txt  write', '+1 −1 ', 40),
+      '1   one',
+      '2 − two',
+      '2 + TWO',
+      '3   three',
+    ]);
+  });
+
+  it('flags a reconciled or irreversible change, and numbers a file of several', () => {
+    const [header] = renderChange(
+      plain,
+      { ...WRITE_EDIT, unattributed: true, reversible: false },
+      80,
+      { ordinal: { index: 2, total: 3 } },
     );
-    expect(renderDiffHeader(WRITE_EDIT)).toBe('a.txt — write');
-  });
-
-  it('missing after-blob on a non-delete renders an after placeholder', () => {
-    const lines = renderDiffLines({ ...WRITE_EDIT, after: null });
-    expect(lines.join('\n')).toContain(
-      '~ content unavailable: a.txt (missing after-blob)',
+    expect(header).toBe(
+      between(' a.txt  write unattributed · not reversible', '+1 −1  2/3 ', 80),
     );
-    expect(lines.some((l) => l.startsWith('-') && l !== '--- a/a.txt')).toBe(
-      false,
+    // A single file needs no ordinal.
+    expect(
+      renderChange(plain, WRITE_EDIT, 40, {
+        ordinal: { index: 1, total: 1 },
+      })[0],
+    ).not.toContain('1/1');
+  });
+
+  it('says why a section has no rows under its header', () => {
+    expect(
+      renderChange(plain, { ...WRITE_EDIT, after: 'a\0b' }, 40).slice(1),
+    ).toEqual(['  ~ binary content not shown']);
+  });
+
+  it('paints the header band and quiets a zero count', () => {
+    const [header] = renderChange(
+      rich,
+      { ...WRITE_EDIT, before: 'one\n', after: 'one\ntwo\n' },
+      40,
+    );
+    expect(header?.startsWith(rich.open({ bg: 'bg2' }))).toBe(true);
+    expect(renderCounts(rich, { added: 2, removed: 0 })).toBe(
+      `${rich.fg('add')('+2')} ${rich.fg('fg3')('−0')}`,
     );
   });
 
-  it('maxLines equal to the line count keeps every line with no trailer', () => {
-    const full = renderDiffLines(WRITE_EDIT);
-    expect(full.length).toBeGreaterThan(0);
-    const capped = renderDiffLines(WRITE_EDIT, { maxLines: full.length });
-    expect(capped).toEqual(full);
-    expect(capped[capped.length - 1]).not.toMatch(/more lines/);
-  });
-
-  it('rename renders hunks with the op label in the header', () => {
-    const lines = renderDiffLines({ ...WRITE_EDIT, op: 'rename' });
-    expect(lines[0]).toContain('rename');
-    expect(lines).toContain('-two');
-    expect(lines).toContain('+TWO');
-  });
-
-  it('clamps every line to width with no maxLines cap', () => {
-    const long = {
-      ...WRITE_EDIT,
-      after: `one\n${'x'.repeat(200)}\nthree\n`,
-    };
-    const lines = renderDiffLines(long, { width: 40 });
-    expect(lines.length).toBeGreaterThan(5);
-    for (const line of lines) {
-      expect(line.length).toBeLessThanOrEqual(40);
+  it('fits every line to the width', () => {
+    const long = { ...WRITE_EDIT, after: `one\n${'x'.repeat(200)}\nthree\n` };
+    for (const line of renderChange(plain, long, 40)) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(40);
     }
   });
 });

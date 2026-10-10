@@ -59,7 +59,7 @@ export function createTuiApp(seed: TuiAppSeed): TuiApp {
   const core = new AppCore(seed);
   core.session = new SessionView(core);
   core.turn = new TurnView(core);
-  core.panel = new PanelController();
+  core.panel = new PanelController(() => core.overlayHost?.terminal?.rows);
   core.quit = new QuitArming(core);
   core.overlays = new OverlayController(core);
   core.palette = new PaletteController(core);

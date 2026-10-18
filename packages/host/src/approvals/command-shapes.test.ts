@@ -76,6 +76,15 @@ describe('command shapes -> capabilities', () => {
     ['git restore .', ['destructive-shell']],
     ['git restore src/a.ts', ['destructive-shell']],
     ['git restore --staged --worktree .', ['destructive-shell']],
+    // A newline ends a command like `;`, CRLF included, and a payload behind
+    // indirection is a script too.
+    ['echo hi\nrm -rf /', ['destructive-shell']],
+    ['set -e\necho hi\nrm -rf /etc', ['destructive-shell']],
+    ['echo hi\r\nrm -rf /\r\n', ['destructive-shell']],
+    ['echo $(echo hi\nrm -rf /)', ['destructive-shell']],
+    ['cp a /etc/x\necho done', ['outside-write']],
+    ['echo x | tee /etc/x\necho done', ['outside-write']],
+    ['mv a /etc/x\r\necho done', ['outside-write']],
   ])('%s', (command, expected) => {
     expect(raised(command)).toEqual(expected);
   });
@@ -94,6 +103,8 @@ describe('command shapes -> capabilities', () => {
     ['git reset --soft HEAD~1', []],
     ['find . -name "*.ts"', []],
     ['git log --oneline | grep push', []],
+    ['cp a b\necho /etc/x', []],
+    ['git log\necho reset --hard', []],
     // A push named only inside a quoted argument still raises: the literal
     // scan cannot see quotes, and an over-trigger is an ask, never a grant.
     ['echo "run git push later"', ['git-push']],

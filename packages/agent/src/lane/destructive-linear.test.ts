@@ -66,25 +66,27 @@ describe('defaultIsDestructive stays linear on repeated verbs', () => {
   });
 });
 
-// The patterns the matcher shipped with, verbatim. Exponential/polynomial only
-// on long repeats, so a seeded sweep of short commands is cheap and pins
-// that the segment walk recognises EXACTLY what they did — the `+\S` that
-// may eat a separator, the `(\s|$)` end anchors and the negative lookahead
-// of `git restore` included. No `rm` in the vocabulary: that half of the
-// matcher is untouched.
+// The matcher's shapes as one gapped regex each. A gap stops at `|`, `;`, `&`
+// and a line break, and the whitespace that opens a step is `[^\S\n\r]`, so
+// no step reaches past the end of its line either. Exponential/polynomial
+// only on long repeats, so a seeded sweep of short commands is cheap and pins
+// that the segment walk recognises EXACTLY what they do — the `+\S` that may
+// eat a separator, the `(\s|$)` end anchors and the negative lookahead of
+// `git restore` included. No `rm` in the vocabulary: that half of the matcher
+// is tested on its own.
 const ORIGINAL_PATTERNS = [
   /\bmkfs\b/i,
-  /\bdd\b[^|;&]*\bof=\s*\/dev\//i,
+  /\bdd\b[^|;&\n\r]*\bof=[^\S\n\r]*\/dev\//i,
   /\bshred\b/i,
-  /\bgit\s+clean\s+[^|;&]*-[a-zA-Z]*f/i,
-  /\b(chmod|chown)\b[^|;&]*\s-[a-zA-Z]*R/i,
+  /\bgit[^\S\n\r]+clean[^\S\n\r]+[^|;&\n\r]*-[a-zA-Z]*f/i,
+  /\b(chmod|chown)\b[^|;&\n\r]*[^\S\n\r]-[a-zA-Z]*R/i,
   /:\(\)\s*\{\s*:\|:&\s*\}\s*;/,
-  /\bgit\b[^|;&]*\spush\b[^|;&]*\s(--force(-with-lease|-if-includes)?\b|-[a-zA-Z]*f[a-zA-Z]*\b|\+\S)/i,
-  /\bfind\b[^|;&]*\s-delete\b/i,
-  /\bgit\b[^|;&]*\sreset\b[^|;&]*\s--hard\b/i,
-  /\bgit\b[^|;&]*\scheckout\b[^|;&]*\s(--(\s|$)|\.(\s|$)|-f\b|--force\b)/i,
-  /\bgit\b[^|;&]*\srestore\b(?![^|;&]*\s(--staged|-S)\b)/i,
-  /\bgit\b[^|;&]*\srestore\b[^|;&]*\s(--worktree|-W)\b/i,
+  /\bgit\b[^|;&\n\r]*[^\S\n\r]push\b[^|;&\n\r]*[^\S\n\r](--force(-with-lease|-if-includes)?\b|-[a-zA-Z]*f[a-zA-Z]*\b|\+\S)/i,
+  /\bfind\b[^|;&\n\r]*[^\S\n\r]-delete\b/i,
+  /\bgit\b[^|;&\n\r]*[^\S\n\r]reset\b[^|;&\n\r]*[^\S\n\r]--hard\b/i,
+  /\bgit\b[^|;&\n\r]*[^\S\n\r]checkout\b[^|;&\n\r]*[^\S\n\r](--(\s|$)|\.(\s|$)|-f\b|--force\b)/i,
+  /\bgit\b[^|;&\n\r]*[^\S\n\r]restore\b(?![^|;&\n\r]*[^\S\n\r](--staged|-S)\b)/i,
+  /\bgit\b[^|;&\n\r]*[^\S\n\r]restore\b[^|;&\n\r]*[^\S\n\r](--worktree|-W)\b/i,
 ];
 
 describe('defaultIsDestructive recognises exactly what it did', () => {
@@ -134,7 +136,7 @@ describe('defaultIsDestructive recognises exactly what it did', () => {
     ':|:&',
     '};',
   ];
-  const separators = [';', '|', '&', '&&', '||', ';;', '\n'];
+  const separators = [';', '|', '&', '&&', '||', ';;', '\n', '\r\n'];
   const joiners = [' ', ' ', ' ', '', '\t', '\n'];
 
   it('agrees with the original patterns on a seeded sweep (separators, anchors and lookahead included)', () => {
@@ -198,6 +200,9 @@ describe('defaultIsDestructive recognises exactly what it did', () => {
     ],
     ['gap cannot cross a separator', 'git push; echo --force', false],
     ['gap cannot cross a pipe', 'git push | grep -f x', false],
+    ['gap cannot cross a line break', 'git push\necho --force', false],
+    ['gap cannot cross a CRLF', 'git reset\r\necho --hard', false],
+    ['git on a later line', 'echo a\ngit push --force', true],
     ['git in a later segment', 'echo a; git push --force', true],
     ['a later git after a separator', 'git status; git reset --hard', true],
     ['uppercase', 'GIT PUSH --FORCE', true],

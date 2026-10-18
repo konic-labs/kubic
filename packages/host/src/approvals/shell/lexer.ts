@@ -84,20 +84,21 @@ export const REDIRECT = /(&>>?|>\||>>?&?)[ \t]*([^\s|;&<>]*)/g;
 export const FD_DUPLICATION = /^(\d+|-)$/;
 // tee writes its last argument verbatim — the same class as a `>` redirect,
 // so `cat x | sudo tee /etc/cron.d/y` must raise outside-write even though
-// no redirect fires. Every command segment is scanned (a `|;&` cannot be
-// crossed), so `cp a /etc/b && echo done` cannot hide the write just
-// because it is not the tail segment. Only the FINAL named target of the
-// segment is checked — `tee /etc/x a.txt` writes `/etc/x` and is a
+// no redirect fires. Every command segment is scanned (a `|;&` or a line
+// break cannot be crossed), so `cp a /etc/b && echo done` and `cp a
+// /etc/b` followed by `echo done` on the next line cannot hide the write
+// just because it is not the tail segment. Only the FINAL named target of
+// the segment is checked — `tee /etc/x a.txt` writes `/etc/x` and is a
 // documented SILENT miss: the heuristic's errors are mostly over-triggers
 // (a raise becomes an ask, never a silent grant), but NOT uniformly so —
 // the target rules above are the stated exceptions.
-export const TEE_TARGET = /\btee\b([^|;&]*)/gi;
+export const TEE_TARGET = /\btee\b([^|;&\n\r]*)/gi;
 // cp/mv/install: the FINAL positional argument is the destination — the
 // last-argument heuristic (flags and sources come first). It can point at
 // the wrong token when flags reorder arguments (`cp -t /etc a b`); that
 // limit is stated here and in docs/cli/configuration.md, not silently
 // implied to be exact.
-export const COPY_TARGET = /\b(cp|mv|install)\b([^|;&]*)/gi;
+export const COPY_TARGET = /\b(cp|mv|install)\b([^|;&\n\r]*)/gi;
 // Command indirection: a destructive/network verb inside
 // `$(…)`, backticks, or after `eval` raises the UNDERLYING capability
 // instead of staying silent. The matcher layer documents indirection as
@@ -285,7 +286,7 @@ export const ALL_REDIRECT_TARGETS = />{1,2}([|&])?\s*([^\s|;&<>()]+)/g;
 // rm/mv operands: the whole argument run of the segment (flags are dropped by
 // the caller). Sources are included because removing or moving state is a
 // write to it.
-export const REMOVE_MOVE_OPERANDS = /\b(rm|mv)\b([^|;&]*)/gi;
+export const REMOVE_MOVE_OPERANDS = /\b(rm|mv)\b([^|;&\n\r]*)/gi;
 
 // A bash token as the shell reads it: quotes come off wherever they sit
 // (`".kubic"/roles`, `.k"ub"ic`) and a backslash escapes the next character

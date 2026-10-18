@@ -3,10 +3,13 @@ import { isAbsolute, resolve } from 'node:path';
 
 const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
 
+// A command ends at `|`, `;`, `&` or a line break: a script runs each line as
+// its own command, so `echo hi\nrm -rf /` is two commands, and a CRLF line
+// ending (`\r\n`) ends one too.
 function rmBlocked(command: string, workspace: string): boolean {
-  const segments = command.split(/(?:^|[|;&])\s*(?=(?:rm|rmdir)\b)/i);
+  const segments = command.split(/(?:^|[|;&\n\r])\s*(?=(?:rm|rmdir)\b)/i);
   for (const segment of segments) {
-    const match = /^\s*(rm|rmdir)\b([^|;&]*)/i.exec(segment);
+    const match = /^\s*(rm|rmdir)\b([^|;&\n\r]*)/i.exec(segment);
     if (match === null) continue;
     const flags = match[2] ?? '';
     if (/-[a-zA-Z]*[rf]/i.test(flags)) return true;
@@ -29,7 +32,7 @@ function rmBlocked(command: string, workspace: string): boolean {
   return false;
 }
 
-// Patterns that read the whole command: none of them is a `[^|;&]*` gap.
+// Patterns that read the whole command: none of them is a gap.
 const WHOLE_COMMAND_PATTERNS = [
   /\bmkfs\b/i,
   /\bshred\b/i,
@@ -37,13 +40,13 @@ const WHOLE_COMMAND_PATTERNS = [
 ];
 
 // Every other destructive shape is a HEAD verb followed, later in the SAME
-// command segment (no `|`, `;` or `&` between), by a chain of further
-// tokens: `dd … of=/dev/`, `git clean … -f`, `chmod|chown … -R`, `find …
-// -delete`, `git … push … --force|-f|+refspec`, `git … reset …
+// command segment (no `|`, `;`, `&` or line break between), by a chain of
+// further tokens: `dd … of=/dev/`, `git clean … -f`, `chmod|chown … -R`,
+// `find … -delete`, `git … push … --force|-f|+refspec`, `git … reset …
 // --hard`, `git … checkout … (-- | . | -f | --force)` and `git … restore …
-// (--worktree | -W)`. A regex per shape with `[^|;&]*` gaps would backtrack
-// polynomially: `git push ` repeated 2000 times took 13 s and `git restore
-// --staged ` repeated 2000 times 50 s, before every bash call.
+// (--worktree | -W)`. A regex per shape with `[^|;&\n\r]*` gaps would
+// backtrack polynomially: `git push ` repeated 2000 times took 13 s and `git
+// restore --staged ` repeated 2000 times 50 s, before every bash call.
 //
 // A chain is walked leftmost-first inside one segment — each step searches
 // from the end of the previous one. That is exactly as strong as the gapped
@@ -70,7 +73,7 @@ const GIT_HEAD = /\bgit\b/gi;
 const RESTORE_VERB = /\srestore\b/gi;
 const STAGED_ONLY = /\s(--staged|-S)\b/gi;
 const SEGMENT_HEAD = /\b(git|dd|chmod|chown|find)\b/i;
-const SEGMENT_SEPARATOR = /[|;&]/g;
+const SEGMENT_SEPARATOR = /[|;&\n\r]/g;
 
 function chainMatches(segment: string, chain: readonly RegExp[]): boolean {
   let at = 0;

@@ -167,6 +167,11 @@ read-family tool paths, not
 sandbox-grade shell parsing — the posture is stated, not silent. Documented
 heuristics:
 
+- **Command segments** — a command ends at `|`, `;`, `&` or a line break
+  (a CRLF line ending included), so each line of a multi-line script is its
+  own command: `echo hi` with `rm -rf /` on the next line raises
+  destructive-shell, and `cp a /etc/b` with `echo done` on the next line
+  raises outside-write.
 - **Last-argument target** — for `tee`, `cp`, `mv`, and `install`, the
   last whitespace-separated argument of the command segment is taken as
   the write target (`cp a /etc/b` → `/etc/b`;

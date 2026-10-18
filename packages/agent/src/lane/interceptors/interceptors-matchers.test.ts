@@ -438,6 +438,51 @@ describe('destructive/confine matchers (unit)', () => {
     expect(defaultIsDestructive('echo hi', '/work')).toBe(false);
   });
 
+  // A newline separates commands the way `;` does, so every shape is
+  // recognised on any line of a script, CRLF line endings included.
+  const SHAPES = [
+    'rm -rf /',
+    'rm -r -f build',
+    'rm /etc/passwd',
+    'mkfs.ext4 /dev/sda1',
+    'shred -u secret.txt',
+    'dd if=/dev/zero of=/dev/sda',
+    'git clean -fdx',
+    'chmod -R 777 .',
+    'chown -R root .',
+    'find . -name x -delete',
+    'git push --force origin main',
+    'git reset --hard HEAD~1',
+    'git checkout -- .',
+    'git restore .',
+  ];
+  const BEFORE = [
+    'echo hi\n',
+    'set -e\necho hi\n',
+    'echo hi\r\n',
+    'a\r\nb\r\n',
+  ];
+  it.each(
+    SHAPES.flatMap((shape) =>
+      BEFORE.map((before) => [`${before}${shape}`] as const),
+    ),
+  )('recognises %j on a later line', (command) => {
+    expect(defaultIsDestructive(command, '/work')).toBe(true);
+    expect(defaultIsDestructive(`${command}\r\n`, '/work')).toBe(true);
+  });
+
+  it.each([
+    ['echo hi\nrm notes.txt', false],
+    ['echo hi\r\nrm notes.txt\r\n', false],
+    ['rm notes.txt\nrm /etc/passwd', true],
+    ['git push origin main\necho -f', false],
+    ['git log\necho reset --hard', false],
+    ['find . -name x\necho -delete', false],
+    ['chmod 644 a\necho -R', false],
+  ])('reads a newline as a separator in %j', (command, expected) => {
+    expect(defaultIsDestructive(command, '/work')).toBe(expected);
+  });
+
   // Each new DESTRUCTIVE_PATTERNS arm pinned on its own, with a
   // near-miss beside it, so weakening one regex fails exactly one row.
   it.each([

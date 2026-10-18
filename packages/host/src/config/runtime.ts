@@ -435,7 +435,10 @@ function journalFrom(
   return {
     journal: {
       ...(retentionDays === undefined ? {} : { retentionDays }),
-      ...(retentionDays === undefined
+      // 0 is retention off, the reading `kubic journal prune --keep-days 0`
+      // has: no age bound is installed. A bound of 0 ms would drop every
+      // entry on the next append.
+      ...(retentionDays === undefined || retentionDays === 0
         ? {}
         : { maxAgeMs: retentionDays * MS_PER_DAY }),
       ...(config.journal?.maxBytes === undefined

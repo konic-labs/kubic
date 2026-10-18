@@ -132,6 +132,52 @@ describe('runtime config load', () => {
     expect(keep.entries().length).toBe(1);
   });
 
+  it('reads [journal] retentionDays = 0 as retention off, as journal prune does', () => {
+    const fromFile = load(
+      { [PROJECT]: '[journal]\nretentionDays = 0\n' },
+      { projectTrusted: true },
+    );
+    expect(fromFile.journal.retentionDays).toBe(0);
+    expect(fromFile.journal.maxAgeMs).toBeUndefined();
+    const fromEnv = load(
+      {},
+      {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.journalRetentionDays]: '0' },
+      },
+    );
+    expect(fromEnv.journal.retentionDays).toBe(0);
+    expect(fromEnv.journal.maxAgeMs).toBeUndefined();
+
+    // Measurably off: a store built from it keeps every entry it appends.
+    const store = new FileJournalStore(
+      tempDir('kubic-runtime-journal-off-'),
+      fromFile.journal.maxAgeMs === undefined
+        ? {}
+        : { maxAgeMs: fromFile.journal.maxAgeMs },
+    );
+    const dayMs = 24 * 60 * 60 * 1000;
+    for (const [path, age] of [
+      ['old.txt', 30 * dayMs],
+      ['new.txt', 0],
+    ] as const) {
+      store.append({
+        path,
+        op: 'write',
+        before: null,
+        after: path,
+        bytesDelta: path.length,
+        sessionId: 's1',
+        toolCallId: null,
+        timestamp: Date.now() - age,
+      });
+    }
+    expect(store.entries().map((entry) => entry.path)).toEqual([
+      'old.txt',
+      'new.txt',
+    ]);
+  });
+
   it('projects the [model] escalation ladder with its bound', () => {
     const runtime = load(
       {

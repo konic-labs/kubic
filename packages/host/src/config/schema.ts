@@ -407,7 +407,8 @@ export const CONFIG_SECTIONS = [
         check: 'number',
         env: 'KUBIC_JOURNAL_RETENTION_DAYS',
         runtime: {
-          effect: 'journal age bound (maxAgeMs) enforced on every append',
+          effect:
+            'journal age bound (maxAgeMs) enforced on every append; 0 is retention off',
         },
         example: '30',
       },
@@ -432,7 +433,7 @@ export const CONFIG_SECTIONS = [
     docs: [
       {
         keys: ['journal.retentionDays'],
-        text: 'Journal age bound, enforced on every append. It is also the default keep window of `kubic journal prune` (`--keep-days` overrides it).',
+        text: 'Journal age bound (days), enforced on every append. `0` means retention is off: no age bound is installed, the same reading `kubic journal prune --keep-days 0` has, and `kubic config` prints `journal retention: off`. Unset installs no bound either. It is also the default keep window of `kubic journal prune` (`--keep-days` overrides it).',
       },
       {
         keys: ['journal.maxBytes'],

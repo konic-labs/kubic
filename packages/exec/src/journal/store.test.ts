@@ -107,6 +107,20 @@ describe('journal store', () => {
     expect(store.blobCount()).toBe(1);
   });
 
+  it('refuses an age bound nothing fits: unset is retention off, 0 is not', () => {
+    for (const maxAgeMs of [0, -1, Number.NaN]) {
+      expect(() => new FileJournalStore(tempDir(), { maxAgeMs })).toThrow(
+        /journal maxAgeMs must be a positive number of milliseconds/,
+      );
+    }
+    const store = new FileJournalStore(tempDir());
+    store.append(entry({ path: 'a.txt', timestamp: 1000 }));
+    expect(() => store.enforceRetention({ maxAgeMs: 0, now: 2000 })).toThrow(
+      /journal maxAgeMs must be a positive number of milliseconds/,
+    );
+    expect(store.entries().map((e) => e.path)).toEqual(['a.txt']);
+  });
+
   it('enforces retention: size evicts oldest, age evicts stale, blobs unreferenced are dropped', () => {
     const store = new FileJournalStore(tempDir());
     store.append(entry({ path: 'old.txt', after: 'old\n', timestamp: 1000 }));

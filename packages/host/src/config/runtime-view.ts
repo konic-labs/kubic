@@ -303,7 +303,9 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
   lines.push(
     view.journal.retentionDays === undefined
       ? 'journal retention: none configured (no age bound)'
-      : `journal retention: ${view.journal.retentionDays} day(s) = maxAgeMs ${view.journal.maxAgeMs} (${view.journal.source})`,
+      : view.journal.retentionDays === 0
+        ? `journal retention: off (retentionDays 0, no age bound) (${view.journal.source})`
+        : `journal retention: ${view.journal.retentionDays} day(s) = maxAgeMs ${view.journal.maxAgeMs} (${view.journal.source})`,
   );
   lines.push(
     view.journal.outOfScope === undefined

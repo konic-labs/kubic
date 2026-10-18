@@ -81,6 +81,18 @@ describe('kubic config', () => {
     expect(text).toContain('journal retention: 30 day(s)');
   });
 
+  it('names retentionDays = 0 as retention off, never as a zero age bound', () => {
+    const { lines, out } = collect();
+    const base = runtime();
+    base.journal = { retentionDays: 0, source: 'project' };
+    runConfigCommand({}, { load: () => base, out });
+    const text = lines.join('\n');
+    expect(text).toContain(
+      'journal retention: off (retentionDays 0, no age bound) (project)',
+    );
+    expect(text).not.toContain('maxAgeMs 0');
+  });
+
   it("renders a role's allowed set with its layer", () => {
     const { lines, out } = collect();
     const base = runtime();

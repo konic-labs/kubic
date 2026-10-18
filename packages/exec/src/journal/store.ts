@@ -6,7 +6,12 @@ import { BlobStore } from './blobs.js';
 import { deltaFor, reconstructAfter } from './delta.js';
 import { sha256Hex } from './hash.js';
 import { IndexFile } from './index-file.js';
-import { nothingPruned, Retention, type RetentionResult } from './retention.js';
+import {
+  checkAgeBound,
+  nothingPruned,
+  Retention,
+  type RetentionResult,
+} from './retention.js';
 import type {
   JournalEntry,
   JournalEntryInput,
@@ -65,6 +70,7 @@ export class FileJournalStore {
   private stateDirsReady = false;
 
   constructor(dir: string, retention: JournalRetention = {}) {
+    checkAgeBound(retention.maxAgeMs);
     this.indexPath = join(dir, 'index.jsonl');
     // Durable appends default on: the journal's whole promise
     // is "this change can be undone", which is false if the record of the

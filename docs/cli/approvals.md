@@ -154,9 +154,9 @@ which can arrive late over SSH — is swallowed instead of printing as
 | `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive), including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. `rm`/`rmdir` counts wherever it is the command that runs: at a command start or after `then`, `do`, `else`, `{`, `!` or a subshell `(`; behind `sudo`, `doas`, `env`, `nice`, `ionice`, `timeout`, `time`, `nohup`, `command`, `builtin`, `exec`, `stdbuf` or a `NAME=value` assignment; spelled `\rm`, `'rm'` or `/bin/rm`. It raises when it is recursive or forced, or names a target outside the workspace or on a sensitive path; run by `xargs` or by `find -exec`/`-execdir`/`-ok`/`-okdir` it is a bulk delete and raises whatever its flags. Stated misses: a delete inside a string another interpreter runs (`bash -c 'rm …'`, `python3 -c`, `node -e`). |
 | `install` | Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv pip install`, `uv tool install`, `uvx`, `gem install`, `composer require/install`, `brew install`, `apt install`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs. |
 | `deploy` | Deploy verbs (`kubectl apply/create/delete/rollout`, `docker push`, `terraform apply`, `gh release create`). |
-| `outside-write` | A write outside the workspace: the `write`/`edit` tools, any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), a `tee` target, or a `cp`/`mv`/`install` destination. |
+| `outside-write` | A write outside the workspace: the `write`/`edit` tools, any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), and the paths the shell writers name (listed below, under the heuristics). A delete outside the workspace (`rm`, `rmdir`, `find -delete`) raises `destructive-shell` instead. |
 | `privilege-escalation` | `sudo` anywhere in the command. |
-| `kubic-state-write` | A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (the project's, from a subdirectory) or `~/.kubic/` (the global `config.toml`) — or into the workspace's own `.git/` (hooks, `config`): a planted hook runs on the host's later git commands, so it asks too: the `write`/`edit` tools, any redirect target (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), a `tee` target, a `cp`/`mv`/`install` destination, or an `rm`/`mv` operand (deleting or moving control-plane state is tampering; a `cp` source is only read). Relative targets resolve against a preceding `cd`/`pushd`, quote-split and backslash-escaped segments are read as the shell reads them (`".kubic"/roles/r.md`), and `$HOME/`/`${HOME}/` count exactly like `~/`. **Always asks**: `autoApprove` and `--full-access` never answer it (an `autoApprove` entry naming it is ignored and warned about by `kubic doctor`). Writes into `.kubic/journal/`, `.kubic/audit/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (see [journal and safety](../architecture/journal-and-safety.md)). |
+| `kubic-state-write` | A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (the project's, from a subdirectory) or `~/.kubic/` (the global `config.toml`) — or into the workspace's own `.git/` (hooks, `config`): a planted hook runs on the host's later git commands, so it asks too: the `write`/`edit` tools, any redirect target (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), the paths the shell writers name (the same table as `outside-write`), or an `rm`/`rmdir`/`mv` operand and what `find -delete` walks (deleting or moving control-plane state is tampering; a `cp` source is only read). Relative targets resolve against a preceding `cd`/`pushd`, quote-split and backslash-escaped segments are read as the shell reads them (`".kubic"/roles/r.md`), and `$HOME/`/`${HOME}/` count exactly like `~/`. **Always asks**: `autoApprove` and `--full-access` never answer it (an `autoApprove` entry naming it is ignored and warned about by `kubic doctor`). Writes into `.kubic/journal/`, `.kubic/audit/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (see [journal and safety](../architecture/journal-and-safety.md)). |
 
 `requires:<tool>` is accepted alongside them (the per-tool trigger). A name
 outside this set is reported by `kubic doctor` (`policy:approvals`), never
@@ -172,21 +172,43 @@ heuristics:
   own command: `echo hi` with `rm -rf /` on the next line raises
   destructive-shell, and `cp a /etc/b` with `echo done` on the next line
   raises outside-write.
-- **Last-argument target** — for `tee`, `cp`, `mv`, and `install`, the
-  last whitespace-separated argument of the command segment is taken as
-  the write target (`cp a /etc/b` → `/etc/b`;
-  `install -m 644 a /usr/local/b` → `/usr/local/b`). A flag that reorders
-  arguments (`cp -t /etc a b`) points the heuristic at the wrong token, and
-  only the final named target of a multi-file `tee` is checked
-  (`tee /etc/x a.txt` writes `/etc/x` and is a documented silent miss —
-  apart from stated cases the heuristic errs toward over-triggering, not
-  uniformly so: a destination that is not the segment's last token can
-  still be missed, e.g. `echo $(cp a /etc/b )`).
-  A target lifted out of `$(…)` has that span's closing `)` trimmed
+- **Shell writers** — what these commands write is read from their
+  arguments, for the command a segment runs: past reserved words,
+  `NAME=value` assignments and the wrappers listed under `destructive-shell`
+  (`xargs` included).
+
+  | Command | What it writes |
+  | --- | --- |
+  | `cp`, `install` | The destination: `-t DIR`, else the last argument; every argument of `install -d`. |
+  | `mv` | Every argument: the sources leave their place. |
+  | `ln` | Every argument: a link to an outside path is a way out of the workspace. |
+  | `tee`, `touch`, `mkdir`, `truncate` | Every file argument. |
+  | `chmod`, `chown`, `chgrp` | The files after the mode or owner. |
+  | `dd` | `of=`. |
+  | `sed`, `perl` | The files of an in-place edit (`-i`, `--in-place`). |
+  | `sort` | `-o`, `--output`. |
+  | `rsync` | The destination, `--backup-dir`, `--log-file`, `--temp-dir`, `--partial-dir`. |
+  | `tar` | The archive (`-f`) when it creates or adds to one; `-C` when it extracts. |
+  | `unzip` | `-d`. |
+  | `git` | The directory of `clone`, the path of `init` and `worktree add`, `--separate-git-dir`, and a global `-C`. |
+  | `curl` | `-o`, `--output-dir`, `-D`, `-c`, `--trace`, `--stderr`, `--etag-save`. |
+  | `wget` | `-O`, `-P`, `-o`, `-a`, `--save-cookies`. |
+  | `find` | The `-fprint`/`-fls` files, and what it walks when its `-exec`/`-execdir`/`-ok`/`-okdir` runs a writer. |
+
+  A comment and every redirection are dropped before the arguments are read
+  (`cp a /etc/x 2>/dev/null` and `cp a /etc/x # note` name `/etc/x`), words
+  are read quote-aware (`"/etc/my dir/x"` is one path), and segments split
+  the way the shell splits them. Besides the table, any `tee`, `cp`, `mv` or
+  `install` word anywhere in a command — inside `bash -c '…'` too — has its
+  last argument checked, which over-triggers on text that only mentions the
+  command. A target lifted out of `$(…)` has that span's closing `)` trimmed
   (`$(cp a /etc/b)` → `/etc/b`) — scoped to lifted tokens: a plain target
   is never trimmed, so `tee '/work)'` names the literal sibling path
   `/work)` and still raises outside-write. The outside check itself stays
-  path-boundary aware (`/work-evil` is not `/work`).
+  path-boundary aware (`/work-evil` is not `/work`). Stated misses: paths
+  that come from input (`xargs`, a file list, a variable), a writer run by an
+  interpreter (`bash -c 'touch …'`, `python3 -c`), and a write through a
+  symlink.
 - **Every redirect** — each redirect operator in the command is checked,
   within one segment and across `;`, `&&`, `||`, `|` and newlines, so
   `echo a > notes.txt && echo b > /etc/cron.d/x` raises outside-write.
@@ -250,7 +272,7 @@ heuristics:
   it is deliberately conservative (a leading `*` may match a dotfile, and a
   brace list past 32 expansions that names `.kubic` is refused). Still
   misses, by design: a path built from a variable set elsewhere (`D=.kubic; echo
-  x > $D/roles/r.md`), `sed -i`, a script file, an interpreter (`bash -c 'cd
+  x > $D/roles/r.md`), a script file, an interpreter (`bash -c 'cd
   .kubic && …'`), `time cd`, `eval cd`, a subshell `cd` that undoes an earlier
   one (`cd .kubic; (cd ..); echo x > config.toml`), a symlink, and a `cd` chain
   that started from an unknown place before reaching `.kubic` (`cd $X && cd

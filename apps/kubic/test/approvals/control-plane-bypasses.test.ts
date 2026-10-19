@@ -393,9 +393,18 @@ describe('still-documented misses stay misses (honest limits)', () => {
     expect(triggers('D=.kubic; echo x > $D/roles/r.md')).not.toContain(
       KUBIC_STATE_WRITE,
     );
-    expect(triggers('sed -i s/a/b/ .kubic/config.toml')).not.toContain(
-      KUBIC_STATE_WRITE,
-    );
+  });
+
+  it('an in-place edit is a write like any other', () => {
+    for (const command of [
+      'sed -i s/a/b/ .kubic/config.toml',
+      "perl -pi -e 's/a/b/' .kubic/roles/r.md",
+      'touch .kubic/config.toml',
+      'chmod 600 .kubic/config.toml',
+      'cp a b 2>/dev/null; cp x .kubic/config.toml 2>/dev/null',
+    ]) {
+      expect(triggers(command), command).toContain(KUBIC_STATE_WRITE);
+    }
   });
 });
 

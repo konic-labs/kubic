@@ -15,6 +15,7 @@ import {
   stripQuotes,
   TEE_TARGET,
 } from './shell/lexer.js';
+import { shellWrites } from './shell/write-commands.js';
 
 // Subtrees of `.kubic/` an agent may never write at all (a tool error, not an
 // ask): the change journal, the audit ledger and session state.
@@ -212,6 +213,11 @@ function bashWriteTargets(
         found.push({ raw: operand, index: removal.index });
       }
     }
+  }
+  // Every writer of the command table (touch, mkdir, chmod, sed -i, tar -C,
+  // ln, find -exec, …), deletes included.
+  for (const write of shellWrites(command)) {
+    found.push({ raw: write.path, index: write.at });
   }
   const trail = cdEvents(command, workspace, home);
   const ws = resolve(workspace);

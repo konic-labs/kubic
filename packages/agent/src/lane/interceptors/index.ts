@@ -39,6 +39,7 @@
 // or backslash-obfuscated verbs, and whitespace tricks around redirect
 // targets stay unenforceable, documented as such in the host approvals/triggers.ts.
 
+export { commandLead, commandWord } from './command-words.js';
 export { confinePath } from './confine.js';
 export { defaultIsDestructive, isNetworkCommand } from './detectors.js';
 export { policyInterceptorHooks } from './hooks.js';

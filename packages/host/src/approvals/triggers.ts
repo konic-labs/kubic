@@ -35,12 +35,13 @@ import {
   targetToken,
   unwrapIndirection,
 } from './shell/lexer.js';
+import { shellWrites } from './shell/write-commands.js';
 
 // Trigger detection. Predicates are injected so this module stays
 // free of shell parsing: the agent owns the classifiers and
 // the host owns the decision. The bash detectors are a literal-pattern
-// heuristic, not a sandbox: redirect/tee/cp-mv-install
-// outside-writes, `sudo` privilege escalation, and destructive/network
+// heuristic, not a sandbox: redirect outside-writes and those of the shell
+// writer table, `sudo` privilege escalation, and destructive/network
 // verbs behind command indirection. Indirection coverage, exactly:
 // `$(…)` spans (a literal `$(…)`/`)` pairing scan — a bare `(` is ordinary
 // text, so closers of other constructs can shift the pairing; the
@@ -53,10 +54,9 @@ import {
 // (`bash -c`, `python3 -c`, `node -e`), substitutions nested past
 // ~2x MAX_UNWRAP_DEPTH, python/node/npm exfiltration under network:none,
 // quoted or backslash-obfuscated verbs the literal patterns cannot see (the
-// rm command word excepted: it is read as the shell reads it),
-// whitespace tricks around redirection targets, and flag-reordered copy
-// targets (`cp -t /etc a b`) the last-argument heuristic misses. Detector
-// ownership for the rest:
+// rm command word excepted: it is read as the shell reads it), whitespace
+// tricks around redirection targets, and write paths that come from input
+// (xargs, a file list, a variable). Detector ownership for the rest:
 //   credentials overreach — the credential-path detector
 //   (approvals-credentials.ts): well-known home credential locations in a
 //     bash command, and the read-family tool paths onto in-workspace
@@ -194,23 +194,25 @@ export function detectTriggers(
     if (gitConfigMutation(command)) found.push(KUBIC_STATE_WRITE);
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
-    // Every write target (redirect, tee, cp/mv/install) goes through one
-    // check: resolved against the cwd a preceding `cd`/`pushd` left behind,
-    // failing closed on shell-expanded prefixes.
+    // Every write target (redirect, tee, cp/mv/install, the writer table)
+    // goes through one check: resolved against the cwd a preceding
+    // `cd`/`pushd` left behind, failing closed on shell-expanded prefixes.
     const cdTrail = cdEvents(command, ctx.workspace);
     const typedCwd = resolve(ctx.workspace);
-    const outside = (raw: string, end: number, start: number): boolean => {
-      // Targets arrive raw: quotes always come off, and a lifted token also
-      // loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
-      // and `echo $(cp a /etc/b)` cannot dodge the outside check while a
-      // plain literal `)`/`]` stays part of the path. Outside if EITHER the
-      // token as typed OR its cd-tracked resolution is (see the cd notes above).
-      const target = targetToken(raw, end, spanClosers);
+    // Outside if EITHER the path as typed OR its cd-tracked resolution is
+    // (see the cd notes above).
+    const outsidePath = (target: string, start: number): boolean => {
       if (target === '') return false;
       if (shellTargetOutside(target, typedCwd, ctx)) return true;
       const tracked = cwdAt(cdTrail, start, ctx.workspace);
       return tracked !== typedCwd && shellTargetOutside(target, tracked, ctx);
     };
+    // Scanned targets arrive raw: quotes always come off, and a lifted token
+    // also loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
+    // and `echo $(cp a /etc/b)` cannot dodge the outside check while a plain
+    // literal `)`/`]` stays part of the path.
+    const outside = (raw: string, end: number, start: number): boolean =>
+      outsidePath(targetToken(raw, end, spanClosers), start);
     const targets: Array<[string, number, number]> = [];
     for (const redirect of command.matchAll(REDIRECT)) {
       const raw = redirect[2] ?? '';
@@ -219,17 +221,23 @@ export function detectTriggers(
       }
       targets.push([raw, redirect.index + redirect[0].length, redirect.index]);
     }
-    // Shell-side writes by another name: tee and trailing
-    // cp/mv/install targets reach files no `>` ever touches. Both use the
-    // same shared quote-stripping and last-argument target extraction,
-    // scoped so the closer trim fires only on lifted tokens.
+    // Shell-side writes by another name: a tee or cp/mv/install word anywhere
+    // has its last argument checked (see TEE_TARGET), with the closer trim
+    // scoped to lifted tokens.
     for (const tee of command.matchAll(TEE_TARGET)) {
       targets.push([tee[1] ?? '', tee.index + tee[0].length, tee.index]);
     }
     for (const copy of command.matchAll(COPY_TARGET)) {
       targets.push([copy[2] ?? '', copy.index + copy[0].length, copy.index]);
     }
-    if (targets.some(([raw, end, start]) => outside(raw, end, start))) {
+    // Every other writer, by the command table (a delete is destructive-shell's
+    // to raise, not outside-write's).
+    if (
+      targets.some(([raw, end, start]) => outside(raw, end, start)) ||
+      shellWrites(command).some(
+        (write) => !write.removal && outsidePath(write.path, write.at),
+      )
+    ) {
       found.push('outside-write');
     }
     // Privilege escalation and command indirection: sudo is a

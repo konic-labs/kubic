@@ -1,5 +1,6 @@
 // Literal-pattern detectors for destructive and network shell commands.
 import { isAbsolute, resolve } from 'node:path';
+import { commandLead, commandWord, MAX_LEAD_WORDS } from './command-words.js';
 
 const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
 
@@ -10,70 +11,8 @@ const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
 // with its own stated depth bound.
 const COMMAND_BREAK = /[|;&\n\r]|(?<!\$)\(/;
 
-// The reserved words a command may follow in the same shell (`then rm`,
-// `{ rm`, `! rm`), and the programs that run their arguments as a command
-// in place, each with the options of theirs that take a separate argument.
-// After a wrapper, a word starting with `-` or a digit (a nice or timeout
-// value) is one of its options; a `NAME=value` assignment may precede any
-// command.
-const RESERVED_WORDS = new Set([
-  'if',
-  'elif',
-  'then',
-  'do',
-  'else',
-  'while',
-  'until',
-  '{',
-  '!',
-]);
-const WRAPPER_ARGUMENT_OPTIONS: ReadonlyMap<string, readonly string[]> =
-  new Map([
-    [
-      'sudo',
-      ['-u', '-g', '-C', '-D', '-h', '-p', '-R', '-r', '-T', '-t', '-U'],
-    ],
-    ['doas', ['-u', '-C']],
-    ['env', ['-u', '-C', '-P', '--unset', '--chdir']],
-    ['nice', ['-n', '--adjustment']],
-    ['ionice', ['-c', '-n', '-p', '-P', '-u']],
-    ['timeout', ['-s', '-k', '--signal', '--kill-after']],
-    ['time', ['-f', '-o', '--format', '--output']],
-    ['nohup', []],
-    ['command', []],
-    ['builtin', []],
-    ['exec', ['-a']],
-    ['stdbuf', ['-i', '-o', '-e']],
-    [
-      'xargs',
-      [
-        '-a',
-        '-d',
-        '-E',
-        '-I',
-        '-L',
-        '-n',
-        '-P',
-        '-s',
-        '--arg-file',
-        '--delimiter',
-        '--eof',
-        '--replace',
-        '--max-lines',
-        '--max-args',
-        '--max-procs',
-        '--max-chars',
-        '--process-slot-var',
-      ],
-    ],
-  ]);
 const RM_VERBS = new Set(['rm', 'rmdir']);
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const FIND_EXEC = /(?:^|\s)-(?:exec|execdir|ok|okdir)(?=\s)/g;
-// Words read before the command a segment runs. Past the bound the verdict
-// fails closed, so a long run of wrappers can neither stall the scan nor
-// hide an rm behind it.
-const MAX_LEAD_WORDS = 64;
 
 interface Executed {
   readonly word: string;
@@ -83,55 +22,31 @@ interface Executed {
   readonly bulk: boolean;
 }
 
-// A command word as the shell reads it: quotes and backslashes come off, a
-// directory is dropped (`\rm`, `'rm'` and `/bin/rm` are `rm`), and case is
-// folded, as a case-insensitive volume resolves it.
-function commandWord(text: string): string {
-  const unquoted = text.replace(/\\(.)/g, '$1').replace(/["']/g, '');
-  return unquoted.slice(unquoted.lastIndexOf('/') + 1).toLowerCase();
-}
-
-// The command a segment runs, past its reserved words, assignments and
-// wrappers; 'unknown' when that lead is longer than MAX_LEAD_WORDS.
+// The command a segment runs from `from` on (see commandLead); 'unknown'
+// when its lead is too long to read. Only the words the lead can use are
+// read, so a scan stays linear however long the segment is.
 function executed(
   segment: string,
+  from: number,
   bulk: boolean,
 ): Executed | 'unknown' | undefined {
-  const words = /\S+/g;
-  let wrapper: readonly string[] | undefined;
-  let skipArgument = false;
-  let viaXargs = bulk;
-  for (let read = 0; read < MAX_LEAD_WORDS; read += 1) {
-    const match = words.exec(segment);
-    if (match === null) return undefined;
-    const text = match[0];
-    if (skipArgument) {
-      skipArgument = false;
-      continue;
-    }
-    if (wrapper !== undefined && /^[-\d]/.test(text)) {
-      skipArgument = wrapper.includes(text);
-      continue;
-    }
-    if (ASSIGNMENT.test(text)) continue;
-    const word = commandWord(text);
-    if (RESERVED_WORDS.has(word)) {
-      wrapper = undefined;
-      continue;
-    }
-    const options = WRAPPER_ARGUMENT_OPTIONS.get(word);
-    if (options !== undefined) {
-      wrapper = options;
-      viaXargs ||= word === 'xargs';
-      continue;
-    }
-    return {
-      word,
-      rest: segment.slice(match.index + text.length),
-      bulk: viaXargs,
-    };
+  const pattern = /\S+/g;
+  pattern.lastIndex = from;
+  const words: string[] = [];
+  const ends: number[] = [];
+  for (let match = pattern.exec(segment); match !== null; ) {
+    words.push(match[0]);
+    ends.push(match.index + match[0].length);
+    if (words.length > MAX_LEAD_WORDS) break;
+    match = pattern.exec(segment);
   }
-  return 'unknown';
+  const lead = commandLead(words);
+  if (lead === 'unknown' || lead === undefined) return lead;
+  return {
+    word: commandWord(words[lead.index] ?? ''),
+    rest: segment.slice(ends[lead.index]),
+    bulk: bulk || lead.viaXargs,
+  };
 }
 
 // A recursive or forced rm, or one with a target outside the workspace or
@@ -159,7 +74,7 @@ function rmArgumentsBlocked(args: string, workspace: string): boolean {
 // whatever the walk finds.
 function findExecRemoves(args: string): boolean {
   for (const action of args.matchAll(FIND_EXEC)) {
-    const run = executed(args.slice(action.index + action[0].length), true);
+    const run = executed(args, action.index + action[0].length, true);
     if (run === 'unknown' || (run !== undefined && RM_VERBS.has(run.word))) {
       return true;
     }
@@ -172,7 +87,7 @@ function findExecRemoves(args: string): boolean {
 // (behind any wrapper) its flags and targets decide.
 function rmBlocked(command: string, workspace: string): boolean {
   for (const segment of command.split(COMMAND_BREAK)) {
-    const run = executed(segment, false);
+    const run = executed(segment, 0, false);
     if (run === 'unknown') return true;
     if (run === undefined) continue;
     if (RM_VERBS.has(run.word)) {

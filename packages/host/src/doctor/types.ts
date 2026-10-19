@@ -13,6 +13,7 @@ export type DoctorReason =
   | 'deps-missing'
   | 'full-access'
   | 'unsupported-level'
+  | 'unsupported-platform'
   | 'detection-only'
   | 'sink-unreachable'
   | 'window-default'
@@ -124,6 +125,8 @@ export interface DoctorDeps extends CliIo {
   // A state directory that other local users can read (session
   // transcripts, journaled file content). undefined means private or absent.
   probeStatePermissions?: () => StatePermissionProbe | undefined;
+  // The platform the bash tool runs on; absent reads process.platform.
+  readonly platform?: string;
 }
 
 // The installed posture, described once in approvals/installed-policy.ts. Host owns the

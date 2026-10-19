@@ -51,6 +51,7 @@ export function doctorGroup(id: string): Group {
   if (
     id.startsWith('dep:') ||
     id.startsWith('license:') ||
+    id.startsWith('platform:') ||
     id.startsWith('state:') ||
     id === 'limit:deps-present'
   ) {
@@ -104,6 +105,10 @@ export function doctorShort(check: DoctorCheck): string {
       return 'models.json';
     case 'license:kubic':
       return `license ${firstClause(detail)}`;
+    case 'platform:shell':
+      return check.status === 'pass'
+        ? 'shell guards read POSIX shell'
+        : 'Windows: the bash tool is refused';
     case 'state:permissions':
       return 'state private';
     case 'limit:deps-present':

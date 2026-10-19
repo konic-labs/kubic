@@ -36,9 +36,9 @@ failure always in full, and the five honest-limit warnings folded into one
 `▲ honest limits: …` line:
 
 ```
-■ kubic doctor · 25 checks · 17 ok · 8 warnings · 0 failed
+■ kubic doctor · 26 checks · 18 ok · 8 warnings · 0 failed
 
-RUNTIME     ✓ node 24.13.0   ✓ config   ✓ models.json
+RUNTIME     ✓ node 24.13.0   ✓ config   ✓ models.json   ✓ shell guards read POSIX shell
 PROVIDERS   ✓ anthropic  23 models  key from ANTHROPIC_API_KEY   ✓ provider available
 PROJECT     ▲ overlap — 5 sessions recorded against /repo
 POLICY      ✓ approvals ask-user   ✓ workspace-write · network none · 18 tools   ✓ routing policy
@@ -92,7 +92,7 @@ provider (see [configuration](configuration.md)) for a fully clean matrix.
 
 Statuses: `pass` / `warn` / `fail` / `skip`. Reasons: `ok`,
 `provider-down`, `policy-mismatch`, `deps-missing`,
-`full-access`, `unsupported-level`,
+`full-access`, `unsupported-level`, `unsupported-platform`,
 `detection-only`, `skipped`. `warn` is informational only — it never flips
 the exit code.
 
@@ -113,6 +113,7 @@ the exit code.
 | `role:<name>` | One check per role — the five presets embedded in the binary plus any `.kubic/roles/<name>.md` document, which replaces its preset of the same name — judged the way `kubic run --role <name>` resolves it: the winning document merged under the config `[roles.<name>]` layers. `pass` names the layer the role came from and lists the resolved tool set (`builtin role — 15 tool(s): …`, `repo role — …`). Fails (`policy-mismatch`) with the resolver's named reason for a contradictory document and, under an enterprise `[policy]` tool gate, for a role that declares a denied tool or one outside `allowed_tools` — `role 'implementer' refused: tool 'bash' denied … enterprise denial holds`; a `[roles.<name>]` layer that narrows the denied tool away keeps it green. A document that fails to parse fails as `role:<file-stem>` naming the file and the parse error — it never blocks the other roles; two documents declaring the same name fail as `role:<name>` listing both files. An unreadable role directory still reports as `role:documents`; an absent one is not a failure — the embedded presets report instead. | Fix the document (or the layer) the detail names; a denial is the enterprise policy working — see [configuration](enterprise.md). |
 | `session:overlap` | How many sessions are recorded against this cwd in the local session store? Two or more prints `warn` with the session ids: concurrent **different**-session runs stay legal, but each run's end-of-run sweep compares against its own boot baseline, so a live sibling's in-flight changes are recorded as unattributed, non-reversible journal entries. The store lists sessions, so the note is a possible overlap, never a verified one. | Nothing to fix — the overlap is disclosed, not blocked (`warn` never flips the exit). If the journal accounting matters, run the sessions one at a time. |
 | `session:full-access:<id>` | Is a live session in this workspace running with approvals off? One `warn` per session whose `posture.json` records `fullAccess` — the detail names the grant (`enabled <time> by <operator>`, when the posture recorded it) and the way back (`end the session or switch approvals back on; new sessions start enforced`). Only live sessions are listed (a released session's grant expired with it), so a quiet matrix means no live session has approvals off — an unlistable store warns once as `session:full-access` instead of crashing. `doctor --session <id>` checks exactly one session (workspace filter bypassed) and its `policy:installed` line reads that session's `posture.json`, so a full-access session reports `FULL ACCESS recorded for this session`. The same sessions appear under `doctor --json` as `session:full-access:<id>` checks. | Nothing to fix unless the access is unintended — `warn` never flips the exit. Full access is operator intent (`--dangerously-skip-approvals` or the in-session toggle); to revoke it, end the session or switch approvals back on. |
+| `platform:shell` | Which platform the shell guards cover. Every approval detector reads POSIX shell commands, so on Linux and macOS this passes, and on Windows it warns (`unsupported-platform`): the bash tool refuses to run there rather than run `cmd` commands no detector reads. Exit-neutral. | Run Kubic on Linux or macOS. |
 | `license:kubic` | License identity (`MIT`). Always passes; reported, never skipped implicitly (explicit `--skip license:kubic` still works). | Nothing — informational. |
 | `policy:enforceability` | Can this version actually honor the policy? `[mcp]` keys and `mcp:`/`extensions:`/`third-party:` autoApprove values fail here with the refusal. Invalid shapes are **not** double-failed — they point at `policy:approvals`. | Remove the unsupported key. |
 | `limit:provider-availability` | Is at least one provider available? (`listed, not dialled` unless a probe really dialled.) | Same as `provider:<id>` — configure a provider. |

@@ -442,7 +442,7 @@ describe('kubicToolsToPiTools', () => {
       },
     });
     const out = await text('bash', { command: 'x' }, toolContext({ env }));
-    expect(out).toMatch(/^\[bash exit 2 \((bash|sh|cmd)\)\]\n/);
+    expect(out).toMatch(/^\[bash exit 2 \((bash|sh)\)\]\n/);
     expect(out).toContain('--- stdout ---\nline "one"\nline two\n');
     expect(out).toContain('--- stderr ---\nwarn\n');
     expect(out).not.toContain('\\n');

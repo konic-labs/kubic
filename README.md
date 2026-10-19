@@ -70,7 +70,9 @@ for the details.
 
 ## Install
 
-Prerequisites: Node >= 22.19 (`node --version`).
+Prerequisites: Linux or macOS, and Node >= 22.19 (`node --version`). On
+Windows the `bash` tool refuses to run: the approval detectors read POSIX
+shell commands only.
 
 From npm, once Kubic is published there, install it globally or run it
 without installing:

@@ -40,10 +40,10 @@ isolation: these tools act on the real workspace.
 | `git_log` | `max?` (default 20, cap 100), `path?` | Raw log is clipped to the last 64 KiB / 2000 lines before parsing (`truncated`, spilled in full when the lane provides a sink); a clipped log also carries a capped `--stat` summary. |
 | `git_show` | `ref` | Patch keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink); a clipped patch also carries a capped `--stat` summary. |
 | `git_stage` | `paths` (non-empty array) | Explicit paths only, never `-A`. |
-| `git_commit` | `message`, `amend?` | Killed after 120 s (a hanging hook fails the call instead of hanging it); an abort mid-flight kills the child and fails the call. |
+| `git_commit` | `message`, `amend?` | Killed after 120 s (a hanging hook fails the call instead of hanging it); an abort mid-flight kills the child and fails the call. With `amend: true` it rewrites the last commit and raises `destructive-shell`, as `git commit --amend` does in bash. |
 | `git_branch` | `create?` | Omit to list; no checkout. |
 | `git_checkpoint` | `message` | `git stash create`; the tree is untouched. |
-| `git_merge` | `branch` | Local refs only, never fetches; a conflict returns `{merged: false, conflicts}` and leaves the merge state for the resolver. No remote mutation — `git_push` stays approval-gated through bash. |
+| `git_merge` | `branch` | Local refs only, never fetches; a conflict returns `{merged: false, conflicts}` and leaves the merge state for the resolver. No remote mutation — `git_push` stays approval-gated through bash. Raises no capability: it changes files in the workspace, which the journal records and `kubic undo` restores, and rewrites no history, like `git merge` in bash. |
 | `git_conflict_status` | — | Lists paths with unresolved merge conflicts. |
 | `git_worktree_list` | — | Attached worktrees as `{path, head, branch, bare, detached}` rows. |
 

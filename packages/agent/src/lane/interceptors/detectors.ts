@@ -110,8 +110,9 @@ const WHOLE_COMMAND_PATTERNS = [
 // command segment (no `|`, `;`, `&` or line break between), by a chain of
 // further tokens: `dd … of=/dev/`, `git clean … -f`, `chmod|chown … -R`,
 // `find … -delete`, `git … push … --force|-f|+refspec`, `git … reset …
-// --hard`, `git … checkout … (-- | . | -f | --force)` and `git … restore …
-// (--worktree | -W)`. A regex per shape with `[^|;&\n\r]*` gaps would
+// --hard`, `git … commit … --amend`, `git … checkout … (-- | . | -f |
+// --force)` and `git … restore … (--worktree | -W)`. A regex per shape with
+// `[^|;&\n\r]*` gaps would
 // backtrack polynomially: `git push ` repeated 2000 times took 13 s and `git
 // restore --staged ` repeated 2000 times 50 s, before every bash call.
 //
@@ -133,6 +134,7 @@ const SEGMENT_CHAINS: ReadonlyArray<readonly RegExp[]> = [
     /\s(--force(-with-lease|-if-includes)?\b|-[a-zA-Z]*f[a-zA-Z]*\b|\+\S)/gi,
   ],
   [/\bgit\b/gi, /\sreset\b/gi, /\s--hard\b/gi],
+  [/\bgit\b/gi, /\scommit\b/gi, /\s--amend\b/gi],
   [/\bgit\b/gi, /\scheckout\b/gi, /\s(--(\s|$)|\.(\s|$)|-f\b|--force\b)/gi],
   [/\bgit\b/gi, /\srestore\b/gi, /\s(--worktree|-W)\b/gi],
 ];

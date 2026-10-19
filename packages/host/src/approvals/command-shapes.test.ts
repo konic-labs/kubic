@@ -123,3 +123,42 @@ describe('command shapes -> capabilities', () => {
     expect(raised(command)).toEqual(expected);
   });
 });
+
+// The structured git tools raise what their bash spelling raises: an amended
+// commit rewrites history whichever way it is asked for, and a merge of a
+// local branch is a workspace write the journal records, as `git merge` is.
+describe('structured git tools -> capabilities', () => {
+  const tool = (name: string, args: Record<string, unknown>) =>
+    detectTriggers(name, args, ctx).sort();
+
+  it('raises destructive-shell for an amended commit, in the tool and in bash', () => {
+    expect(tool('git_commit', { message: 'x', amend: true })).toEqual([
+      'destructive-shell',
+    ]);
+    expect(raised('git commit --amend -m x')).toEqual(['destructive-shell']);
+    expect(raised('git -C sub commit --amend --no-edit')).toEqual([
+      'destructive-shell',
+    ]);
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['git_commit', { message: 'x' }],
+    ['git_commit', { message: 'x', amend: false }],
+    ['git_merge', { branch: 'feature' }],
+    ['git_stage', { paths: ['a.ts'] }],
+    ['git_status', {}],
+    ['git_diff', { staged: true }],
+    ['git_log', { max: 5 }],
+    ['git_show', { ref: 'HEAD' }],
+    ['git_branch', { create: 'feature' }],
+    ['git_checkpoint', { message: 'x' }],
+    ['git_worktree_list', {}],
+  ])('%s %j raises nothing', (name, args) => {
+    expect(tool(name, args)).toEqual([]);
+  });
+
+  it('keeps a commit message that mentions amend quiet', () => {
+    expect(raised('git commit -m "amend the docs"')).toEqual([]);
+    expect(raised('git merge feature')).toEqual([]);
+  });
+});

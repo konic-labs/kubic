@@ -283,6 +283,13 @@ export function detectTriggers(
       }
     }
   }
+  // The structured git tools raise what their bash spelling raises: an
+  // amended commit rewrites history, as `git commit --amend` does. A
+  // `git_merge` of a local branch is a workspace write the journal records,
+  // as `git merge` is, and raises nothing.
+  if (toolName === 'git_commit' && args.amend === true) {
+    found.push('destructive-shell');
+  }
   if (
     (toolName === 'write' || toolName === 'edit') &&
     typeof args.path === 'string'

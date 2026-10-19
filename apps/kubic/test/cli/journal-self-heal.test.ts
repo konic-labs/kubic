@@ -202,7 +202,7 @@ describe('read-time journal self-heal', () => {
     expect(code).toBe(0);
     // No `err` channel given: the fallback note lands on `out`.
     expect(o.lines[0]).toBe(
-      `info: session: sess-new (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: sess-new (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     );
     const healed = indexLines(newDir);
     expect(healed).toHaveLength(1);

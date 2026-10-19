@@ -78,7 +78,9 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   class the exit is 1 and nothing is written for that step. A live session
   lock refuses the whole invocation with exit 1 and one `error:`
   line naming the holder pid — `--force` overrides it, and nothing is
-  planned, restored or journaled otherwise.
+  planned, restored or journaled otherwise. A bare `undo` (no `--session`)
+  also exits 1, naming every candidate, while another session recorded for
+  the workspace is live; `--session <id>` chooses.
 - **`kubic git`**: 0 success (including `log` on a repo with no commits
   yet); 1 an op failure or outside a git repository (one `error:` line on
   stderr); 2 usage errors (bare `kubic git`, unknown subcommand or option,

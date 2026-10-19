@@ -3,6 +3,7 @@
 import {
   appendFileSync,
   chmodSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   utimesSync,
@@ -448,14 +449,65 @@ describe('journal CLI default store fallback', () => {
       )
     ).exitCode;
     expect(code).toBe(0);
-    // The note is a diagnostic: stderr, before any report line.
+    // The note is a diagnostic: stderr, before any report line — and with
+    // more than one session here it names the others and how to pick one.
     expect(errs).toEqual([
-      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: ${newId} (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     ]);
     expect(lines[0]).toBe('--- a/new.txt');
     const text = lines.join('\n');
     expect(text).toContain('new.txt');
     expect(text).not.toContain('old.txt');
+  });
+
+  it('bare undo refuses while another session for this workspace is live', async () => {
+    const { root, sessionsRoot, newId, oldId } = seedSessions();
+    const errs: string[] = [];
+    const code = (
+      await runJournalCommand(
+        { command: 'undo' },
+        {
+          root,
+          sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
+          // The older session is still attached by a running process.
+          sessionLockHolder: (dir) =>
+            dir.endsWith(oldId) ? { pid: 4242 } : undefined,
+          out: () => undefined,
+          err: (l) => errs.push(l),
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toContain(
+      `error: session ${oldId} for this workspace is attached by pid 4242`,
+    );
+    expect(errs.join('\n')).toContain(`--session <id>: ${newId}, ${oldId}`);
+    // Nothing was restored: the journal's file never reappears.
+    expect(existsSync(join(root, 'new.txt'))).toBe(false);
+  });
+
+  it('bare undo still undoes the latest run when no other session is live', async () => {
+    const { root, sessionsRoot } = seedSessions();
+    const lines: string[] = [];
+    const code = (
+      await runJournalCommand(
+        { command: 'undo', dryRun: true, json: true },
+        {
+          root,
+          sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
+          sessionLockHolder: () => undefined,
+          out: (l) => lines.push(l),
+          err: () => undefined,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(0);
+    expect(JSON.parse(lines.join('\n'))).toMatchObject({
+      session: 'sess-new',
+      restored: ['new.txt'],
+    });
   });
 
   it('bare log and status read the fallback store too', async () => {
@@ -477,7 +529,7 @@ describe('journal CLI default store fallback', () => {
       ).exitCode,
     ).toBe(0);
     expect(errs).toEqual([
-      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: ${newId} (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     ]);
     expect(log.join('\n')).toContain('new.txt');
     const status: string[] = [];
@@ -497,7 +549,7 @@ describe('journal CLI default store fallback', () => {
       ).exitCode,
     ).toBe(0);
     expect(errs).toEqual([
-      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: ${newId} (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     ]);
     expect(status[0]).toBe('entries: 1 (reversible: 1, non-reversible: 0)');
     expect(status.join('\n')).toContain('entries: 1');
@@ -620,7 +672,7 @@ describe('journal CLI default store fallback', () => {
     ).exitCode;
     expect(code).toBe(0);
     expect(errs).toEqual([
-      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: ${newId} (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     ]);
     expect(lines.join('\n')).toContain('would restore 1 step(s)');
     expect(readFileSync(join(root, 'new.txt'), 'utf8')).toBe('n2\n');

@@ -71,12 +71,18 @@ one store, resolved in this order:
    among the sessions whose recorded cwd is the current directory or
    contains it (compared after resolving symlinks), the most recently
    written run journal. Another project's session is never picked, however
-   recent.
+   recent. When more than one session is recorded here, the note on stderr
+   names the others (`also here: <id>, … — pass --session <id> to pick
+   another`), and a bare `undo` refuses — exit 1, nothing restored — while
+   any of the others is attached by a live process, because "the latest
+   run" is then a moving target: it names every candidate and asks for
+   `--session <id>`. `diff`, `log` and `status` keep reading the latest.
 
 A session store is named on stderr before any output, together with the
 workspace its paths resolve against: `info: session: <id> (latest session
 journal for this workspace) — workspace <root>` for the fallback, `info:
-session: <id> — workspace <root>` for `--session`. `--json` prints nothing
+session: <id> — workspace <root>` for `--session` (the fallback's note also
+names the other sessions recorded for this workspace). `--json` prints nothing
 extra on stderr; every `--json` document carries the resolved store as
 `session` (the id, or `null` for the workspace store) and `root` (the
 workspace the paths resolve against): `diff --json` is `{session, root,

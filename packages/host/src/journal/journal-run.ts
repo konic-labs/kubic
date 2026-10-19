@@ -3,7 +3,7 @@
 // session's (`--session`), whose paths resolve against the workspace the
 // session recorded.
 
-import { basename, dirname, join, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import {
   listSessions,
   openSessionStore,
@@ -169,20 +169,19 @@ function workspaceContains(recorded: string, root: string): boolean {
   return c === r || c.startsWith(r.endsWith(sep) ? r : `${r}${sep}`);
 }
 
-// The most recent run journal under the sessions root: one
-// level of session ids (the shared SESSION_ID_PATTERN, checked before any
-// path join — contained by construction, same rule as --session), newest
-// `journal/index.jsonl` mtime wins among the sessions `accept` admits
-// (only those recorded for the current workspace). A session
-// whose journal index cannot be statted is skipped (no journal there); a
-// missing sessions root is simply "nothing here" (fresh machine), never a
-// throw.
-function latestSessionJournal(
+// The run journals under the sessions root, newest first: one level of
+// session ids (the shared SESSION_ID_PATTERN, checked before any path join —
+// contained by construction, same rule as --session), ordered by
+// `journal/index.jsonl` mtime among the sessions `accept` admits (only those
+// recorded for the current workspace). A session whose journal index cannot
+// be statted is skipped (no journal there); a missing sessions root is simply
+// "nothing here" (fresh machine), never a throw.
+function sessionJournals(
   sessionsRoot: string,
   accept: (id: string) => boolean,
-): string | undefined {
+): Array<{ id: string; dir: string; mtime: number }> {
   const bridge = createNodeFileBridge(sessionsRoot);
-  let best: { dir: string; mtime: number } | undefined;
+  const found: Array<{ id: string; dir: string; mtime: number }> = [];
   try {
     for (const info of bridge.listDir('.')) {
       if (!info.isDirectory || !SESSION_ID_PATTERN.test(info.name)) continue;
@@ -190,9 +189,11 @@ function latestSessionJournal(
       const idx = join(info.name, 'journal', 'index.jsonl');
       try {
         const mtime = bridge.fileInfo(idx).mtimeMs;
-        if (best === undefined || mtime > best.mtime) {
-          best = { dir: join(sessionsRoot, info.name, 'journal'), mtime };
-        }
+        found.push({
+          id: info.name,
+          dir: join(sessionsRoot, info.name, 'journal'),
+          mtime,
+        });
       } catch {
         // Session without a journal — skip it.
       }
@@ -200,7 +201,7 @@ function latestSessionJournal(
   } catch {
     // No sessions root yet — nothing to fall back to.
   }
-  return best?.dir;
+  return found.sort((a, b) => b.mtime - a.mtime);
 }
 
 interface ResolvedStore {
@@ -211,6 +212,9 @@ interface ResolvedStore {
   // `session.retentionDays`.
   sessionId?: string;
   latestSessionId?: string;
+  // The other session journals recorded for this workspace when the
+  // latest-session fallback chose among several, newest first.
+  otherSessionIds?: readonly string[];
   // The workspace the store's relative paths resolve against.
   // A session store takes the session's recorded cwd; undefined means the
   // session recorded none (undo/status then refuse by name).
@@ -239,17 +243,19 @@ export async function resolveJournalDir(
     if (deps.journalDir === undefined && !hasJournalIndex(dir)) {
       const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
       const workspaces = await workspacesOf(sessionsRoot);
-      const fallback = latestSessionJournal(sessionsRoot, (id) => {
+      const [latest, ...others] = sessionJournals(sessionsRoot, (id) => {
         const recorded = workspaces.get(id);
         return recorded !== undefined && workspaceContains(recorded, root);
       });
-      if (fallback !== undefined) {
-        const id = basename(dirname(fallback));
+      if (latest !== undefined) {
         return {
-          dir: fallback,
-          sessionId: id,
-          latestSessionId: id,
-          workspace: workspaces.get(id) as string,
+          dir: latest.dir,
+          sessionId: latest.id,
+          latestSessionId: latest.id,
+          workspace: workspaces.get(latest.id) as string,
+          ...(others.length === 0
+            ? {}
+            : { otherSessionIds: others.map((other) => other.id) }),
         };
       }
     }
@@ -308,6 +314,15 @@ export function lockHolderOf(
   if (resolved.sessionId === undefined) return undefined;
   const probe = deps.sessionLockHolder ?? sessionLockIsLive;
   return probe(dirname(resolved.dir));
+}
+
+// The live holder of another session's lock, by session id.
+export function sessionHolderOf(
+  deps: JournalCommandDeps,
+  sessionId: string,
+): { pid: number } | undefined {
+  const probe = deps.sessionLockHolder ?? sessionLockIsLive;
+  return probe(join(deps.sessionsRoot ?? defaultSessionsRoot(), sessionId));
 }
 
 export function workspaceRefusal(

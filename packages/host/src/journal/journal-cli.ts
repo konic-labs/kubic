@@ -79,6 +79,12 @@ function isRecordedSession(deps: JournalCommandDeps, id: string): boolean {
   );
 }
 
+// Session ids for a note: the first three, then a count.
+function listedIds(ids: readonly string[]): string {
+  const shown = ids.slice(0, 3).join(', ');
+  return ids.length > 3 ? `${shown} (+${ids.length - 3} more)` : shown;
+}
+
 export async function runJournalCommand(
   request: JournalRequest,
   deps: JournalCommandDeps,
@@ -137,9 +143,14 @@ export async function runJournalCommand(
       resolved.workspace === undefined
         ? 'no recorded workspace'
         : `workspace ${resolved.workspace}`;
+    const others = resolved.otherSessionIds ?? [];
+    const also =
+      others.length === 0
+        ? ''
+        : `; also here: ${listedIds(others)} — pass --session <id> to pick another`;
     log.info(
       resolved.latestSessionId !== undefined
-        ? `session: ${resolved.sessionId} (latest session journal for this workspace) — ${where}`
+        ? `session: ${resolved.sessionId} (latest session journal for this workspace${also}) — ${where}`
         : `session: ${resolved.sessionId} — ${where}`,
     );
   }

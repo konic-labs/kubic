@@ -13,6 +13,7 @@ import {
   effectiveCredentialLevel,
   effectiveNetworkLevel,
 } from '@kubic/agent/permissions';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { ControlPlaneRoots } from './control-plane.js';
 import { controlPlaneClass, writeTargets } from './control-plane.js';
 import {
@@ -319,6 +320,47 @@ export function detectTriggers(
     found.push(KUBIC_STATE_WRITE);
   }
   return [...new Set(found)];
+}
+
+// The workspace as the OS resolved it (macOS spells /tmp as /private/tmp),
+// cached: the exec seam accepts a path under either spelling.
+const physicalWorkspaces = new Map<string, string | undefined>();
+
+function physicalWorkspace(workspace: string): string | undefined {
+  if (!physicalWorkspaces.has(workspace)) {
+    let real: string | undefined;
+    try {
+      real = createNodeFileBridge('/').realPath?.(workspace);
+    } catch {
+      real = undefined;
+    }
+    physicalWorkspaces.set(workspace, real);
+  }
+  return physicalWorkspaces.get(workspace);
+}
+
+/**
+ * The file tools write only inside the workspace: the exec seam refuses any
+ * other path, whatever an approval says. An outside `write`/`edit` is
+ * refused by name before any ask, so no card offers an allow the call could
+ * not honour; a change outside the workspace goes through bash, which asks
+ * for outside-write.
+ */
+export function outsideFileWriteRefusal(
+  toolName: string,
+  args: Record<string, unknown>,
+  workspace: string,
+): string | undefined {
+  if (toolName !== 'write' && toolName !== 'edit') return undefined;
+  const path = args.path;
+  if (typeof path !== 'string' || !confinePath(workspace, path).rewritten) {
+    return undefined;
+  }
+  const physical = physicalWorkspace(workspace);
+  if (physical !== undefined && !confinePath(physical, path).rewritten) {
+    return undefined;
+  }
+  return `refused: ${toolName} cannot change ${path}: it is outside the workspace, and the file tools write only inside it — a change outside the workspace goes through bash, which asks for outside-write`;
 }
 
 // The trigger context the shipped default evaluates capabilities with: the

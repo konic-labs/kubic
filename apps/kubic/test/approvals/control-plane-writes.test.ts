@@ -255,7 +255,7 @@ describe('control plane beyond the workspace', () => {
     expect(JSON.stringify(verdict)).toMatch(/Kubic control-plane state/);
   });
 
-  it('full access in a subdirectory run refuses the project ledger and asks for the project config', async () => {
+  it('full access in a subdirectory run refuses the project ledger and the project config', async () => {
     const root = tempDir();
     enableFullAccess(new FileApprovalStore(root), 'test');
     const policy = installPolicy({
@@ -274,8 +274,10 @@ describe('control plane beyond the workspace', () => {
       args: { path: '../../.kubic/config.toml', content: 'x' },
       toolCallId: 't2',
     });
+    // Above the workspace: the file tools cannot write there whatever the
+    // answer, so it is refused by name rather than asked.
     expect(config).toMatchObject({ approved: false });
-    expect(JSON.stringify(config)).toContain('kubic-state-write');
+    expect(JSON.stringify(config)).toContain('outside the workspace');
     const own = await policy.ask({
       toolName: 'write',
       args: { path: 'src/app.ts', content: 'x' },

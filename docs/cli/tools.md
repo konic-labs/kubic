@@ -25,6 +25,11 @@ isolation: these tools act on the real workspace.
   they also check what a schema cannot express (a compilable regex, a ref or
   range that does not start with `-`, a path that stays in the workspace).
 - **Units:** `bash.timeout` is in **seconds**; `read.offset` is **1-indexed**.
+- **The file tools write only inside the workspace.** A `write` or `edit`
+  path outside it is refused by name before any ask, full access included
+  (`not approved: refused: write cannot change <path>: it is outside the
+  workspace …`), and nothing is written or journaled. A change outside the
+  workspace goes through `bash`, which asks for `outside-write`.
 
 | Tool | Arguments (`?` = optional) | Notes |
 | --- | --- | --- |

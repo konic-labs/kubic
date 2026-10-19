@@ -9,7 +9,7 @@
 
 ## Precedence: first layer wins
 
-Seven layers, highest first, then the documented environment overrides, then
+Six layers, highest first, then the documented environment overrides, then
 an explicit CLI flag. Merge is per leaf path: the first (highest) layer to
 set a key owns it — a lower layer attempting to override a set key is
 reported in `overriddenAttempts`, never applied. Enterprise keys are frozen
@@ -20,10 +20,9 @@ against every override attempt, the environment and the CLI included.
 | 1 | `enterprise` | `/etc/kubic/config.toml` (or an explicit `enterprisePath` override) | Highest. Never overridden — by a file, the environment, or a flag. |
 | 2 | `product` | `/etc/kubic/product.toml` (or an explicit `productPath` override) | The distribution/vertical profile, below enterprise and above the user's own files. |
 | 3 | `global` | `~/.kubic/config.toml` | Your machine-wide defaults. |
-| 4 | `project` | `<projectRoot>/.kubic/config.toml` | Resolved as the nearest ancestor holding `.kubic/` (or the git top level), the cwd itself outside a repository — so `kubic config` and `kubic run --role` from a subdirectory read the same committed project as from the root. **Trust-gated**: refused by path before it is read (`ProjectUntrustedError`) until the project is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1` for one invocation) — the grant is recorded at, and checked against, that same root, so trusting the root covers runs from its subdirectories; absent file counts as an empty layer. |
-| 5 | `workspace` | `<workspaceRoot>/.kubic/config.toml` | Only when a workspace root is set — otherwise the layer does not exist. **Unused**: no shipped caller sets a workspace root, so this layer never exists. |
-| 6 | `session` | Supplied programmatically | Never a file. **Unused**: no shipped caller supplies a session layer (attaching a session does not feed its recorded settings back), so this layer is always empty. |
-| 7 | `agent` | Supplied programmatically | Never a file. Lowest. **Unused**: no shipped caller supplies an agent layer, so this layer is always empty. |
+| 4 | `project` | `<projectRoot>/.kubic/config.toml` | Resolved as the nearest directory, from the cwd up, that holds `.kubic/` or `.git` (the home directory's `.kubic/` is the global layer, never a project), the cwd itself when none does — so `kubic config` and `kubic run --role` from a subdirectory read the same committed project as from the root, and a subdirectory with its own `.kubic/` is a project of its own. **Trust-gated**: refused by path before it is read (`ProjectUntrustedError`) until the project is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1` for one invocation) — the grant is recorded at, and checked against, that same root, so trusting the root covers runs from its subdirectories; absent file counts as an empty layer. |
+| 5 | `session` | Supplied programmatically | Never a file. **Unused**: no shipped caller supplies a session layer (attaching a session does not feed its recorded settings back), so this layer is always empty. |
+| 6 | `agent` | Supplied programmatically | Never a file. Lowest. **Unused**: no shipped caller supplies an agent layer, so this layer is always empty. |
 | — | `env` | The `KUBIC_*` overrides below | Above every file layer, below `enterprise`, below the CLI. |
 | — | `cli` | e.g. `--model`, `--thinking` | Highest, except against a frozen `enterprise` key. |
 

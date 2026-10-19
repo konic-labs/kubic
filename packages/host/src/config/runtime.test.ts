@@ -340,7 +340,7 @@ describe('runtime config load', () => {
     ).toThrow(/provider and 'id' must be set together/);
   });
 
-  it('honours precedence: cli > enterprise > env > global > project > workspace > session > agent', () => {
+  it('honours precedence: cli > enterprise > env > global > project > session > agent', () => {
     const files = {
       [GLOBAL]: '[model]\nprovider = "g"\nid = "m"\n',
       [PROJECT]: '[model]\nprovider = "p"\nid = "m"\n',
@@ -388,7 +388,7 @@ describe('runtime config load', () => {
     expect(loadRuntimeConfig(noEnterpriseCli).sources['model.provider']).toBe(
       'cli',
     );
-    // The lower tail: project > workspace > session > agent.
+    // The lower tail: project > session > agent.
     const tail = (
       files: Record<string, string>,
       extra: Partial<RuntimeConfigInputs>,
@@ -399,27 +399,11 @@ describe('runtime config load', () => {
         cwd: CWD,
         enterprisePath: '/nonexistent/config.toml',
         projectTrusted: true,
-        workspaceRoot: '/ws',
         ...extra,
       }).model?.provider;
-    const workspaceFile = '/ws/.kubic/config.toml';
     const session = { model: { provider: 's', id: 'm' } };
     const agent = { model: { provider: 'a', id: 'm' } };
-    expect(
-      tail(
-        {
-          [PROJECT]: files[PROJECT],
-          [workspaceFile]: '[model]\nprovider = "w"\nid = "m"\n',
-        },
-        { session, agent },
-      ),
-    ).toBe('p');
-    expect(
-      tail(
-        { [workspaceFile]: '[model]\nprovider = "w"\nid = "m"\n' },
-        { session, agent },
-      ),
-    ).toBe('w');
+    expect(tail({ [PROJECT]: files[PROJECT] }, { session, agent })).toBe('p');
     expect(tail({}, { session, agent })).toBe('s');
     expect(tail({}, { agent })).toBe('a');
   });

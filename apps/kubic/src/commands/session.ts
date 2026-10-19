@@ -299,7 +299,9 @@ function registerTui(program: Command, ctx: CommandContext): void {
 function registerSessions(program: Command, ctx: CommandContext): void {
   const sessions = program
     .command('sessions')
-    .description('create, list, attach to, fork or prune sessions')
+    .description(
+      'list sessions (with no subcommand), or create, attach to, fork or prune one',
+    )
     .option(
       '--json',
       'with no subcommand: list the sessions as one JSON array (same as `sessions list --json`)',
@@ -313,18 +315,15 @@ function registerSessions(program: Command, ctx: CommandContext): void {
   ): Promise<void> => {
     ctx.finish(await ctx.runners.sessions(invocation, ctx.config));
   };
-  // `kubic sessions --json` is the documented list form. The
-  // group action also keeps the two usage errors named: no
-  // subcommand, or an unknown one.
+  // A bare `kubic sessions` lists, as `sessions list` does, `--json`
+  // included. An unknown subcommand stays a named usage error.
   sessions.action(async (opts, command) => {
     const name = command.args[0];
     if (name === undefined) {
-      if (opts.json !== true) {
-        throw new CliUsageError(
-          'sessions needs a subcommand (create | list | attach | fork | prune)',
-        );
-      }
-      await run({ command: 'list', json: true });
+      await run({
+        command: 'list',
+        ...(opts.json === true ? { json: true } : {}),
+      });
       return;
     }
     throw new CliUsageError(

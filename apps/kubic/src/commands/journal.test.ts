@@ -134,6 +134,20 @@ describe('journal commands: generated help (exit 0, no runner)', () => {
     expect(r.code).toBe(0);
     expect(r.out.join('\n').match(/^ +prune\b/gm)).toHaveLength(1);
   });
+
+  // Usage on no arguments, the posture of a bare `kubic`: the group's own
+  // help on stdout, exit 1, nothing run.
+  for (const group of ['journal', 'git']) {
+    it(`bare kubic ${group} prints its --help text and exits 1`, async () => {
+      const help = await kubic([group, '--help']);
+      const bare = await kubic([group]);
+      expect(bare.code).toBe(1);
+      expect(bare.err).toEqual([]);
+      expect(bare.out).toEqual(help.out);
+      expect(bare.journal).toEqual([]);
+      expect(bare.git).toEqual([]);
+    });
+  }
 });
 
 describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
@@ -155,7 +169,6 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
     ],
     [['undo', 'a.txt', 'b.txt'], /too many arguments/],
     [['log', 'stray'], /too many arguments/],
-    [['journal'], /^error: journal needs a subcommand \(prune\)/],
     [['journal', 'nope'], /^error: unknown journal subcommand 'nope'/],
     [['journal', 'prune', 'stray'], /too many arguments/],
     [['journal', 'prune', '--keep-days', 'x'], /needs a non-negative integer/],
@@ -164,7 +177,6 @@ describe('journal commands: usage errors exit 2 on stderr, no runner', () => {
       ['journal', 'prune', '--yes', '--nope'],
       /^error: unknown option '--nope'/,
     ],
-    [['git'], /^error: git needs a subcommand/],
     [['git', 'push'], /^error: unknown git subcommand 'push'/],
     [['git', 'status', '--nope'], /^error: unknown option '--nope'/],
     [['git', 'log', '--max', '0'], /positive integer/],

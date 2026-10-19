@@ -19,8 +19,9 @@ kubic git commit -m <message> [--json]
 ```
 
 `kubic git --help` and `kubic git <subcommand> --help` print generated help
-(exit 0). Usage errors exit **2** with one `error:` line on stderr: a bare
-`kubic git`, an unknown subcommand, an unknown option, a missing option
+(exit 0). A bare `kubic git` prints the same help and exits 1, as a bare
+`kubic` does. Usage errors exit **2** with one `error:` line on stderr: an
+unknown subcommand, an unknown option, a missing option
 value, `--max` that is not a positive integer, `stage` with no path,
 `commit` without `-m` or with an empty message.
 
@@ -335,7 +336,9 @@ composition paths therefore capture a **baseline** when the lane boots and
 
 Deletes journal entries older than the keep window from the journal `kubic
 log` reads: `--session <id>`, else this workspace's journal (the same store
-resolution as `kubic diff`, `undo`, `log` and `status`). **A dry run unless
+resolution as `kubic diff`, `undo`, `log` and `status`). `prune` is the
+group's only subcommand: a bare `kubic journal` prints the group's help and
+exits 1, as a bare `kubic` does. **A dry run unless
 `--yes`**: without it the command lists each entry it would prune (`would
 prune <time> <op> <path>`) and deletes nothing.
 

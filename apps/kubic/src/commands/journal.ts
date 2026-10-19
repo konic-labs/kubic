@@ -9,7 +9,7 @@
 // returns the command's exit code.
 
 import { InvalidArgumentError, Option } from '@commander-js/extra-typings';
-import { CliUsageError } from '@kubic/core/cli/exit-codes';
+import { CliUsageError, EXIT_FAILED } from '@kubic/core/cli/exit-codes';
 import type { GitRequest } from '@kubic/host/git';
 import type { JournalRequest } from '@kubic/host/journal';
 import type {
@@ -200,16 +200,18 @@ function registerJournalGroup(
     .description('prune the change journal (explicit; a dry run unless --yes)')
     .addHelpText('after', JOURNAL_HELP)
     // The group declares no operand, so `prune` is listed once, under
-    // Commands. A bare `kubic journal` or an unknown subcommand is still a
-    // usage error (exit 2), never commander's help-on-error or unknown-command
-    // exit 1 — the same shape `kubic sessions` uses.
+    // Commands. An unknown subcommand is a usage error (exit 2), never
+    // commander's help-on-error or unknown-command exit 1 — the same shape
+    // `kubic sessions` uses.
     .allowExcessArguments()
     .action((_options, command) => {
       const name = command.args[0];
+      if (name === undefined) {
+        usageOnNoArguments(command, ctx);
+        return;
+      }
       throw new CliUsageError(
-        name === undefined
-          ? `journal needs a subcommand (${JOURNAL_SUBCOMMANDS})`
-          : `unknown journal subcommand '${name}' (${JOURNAL_SUBCOMMANDS})`,
+        `unknown journal subcommand '${name}' (${JOURNAL_SUBCOMMANDS})`,
       );
     });
 
@@ -236,6 +238,16 @@ function registerJournalGroup(
     .action(async (opts) => journal({ command: 'prune', ...opts }));
 }
 
+// A command group with no subcommand to default to answers a bare call as a
+// bare `kubic` does: its own `--help` text on stdout, exit 1.
+function usageOnNoArguments(
+  command: { outputHelp(): void },
+  ctx: CommandContext,
+): void {
+  command.outputHelp();
+  ctx.finish({ exitCode: EXIT_FAILED });
+}
+
 function registerGit(program: KubicProgram, ctx: CommandContext): void {
   const git = async (request: GitRequest): Promise<void> => {
     ctx.finish(await ctx.runners.git(request, ctx.config));
@@ -246,14 +258,16 @@ function registerGit(program: KubicProgram, ctx: CommandContext): void {
     .description('git helpers over the workspace repository')
     .usage('<subcommand> [options]')
     .addHelpText('after', GIT_HELP)
-    // A bare `kubic git` or an unknown subcommand is a usage error (exit
-    // 2), never commander's help-on-error or unknown-command exit 1.
+    // An unknown subcommand is a usage error (exit 2), never commander's
+    // help-on-error or unknown-command exit 1.
     .argument('[subcommand]', GIT_SUBCOMMANDS)
-    .action((name) => {
+    .action((name, _options, command) => {
+      if (name === undefined) {
+        usageOnNoArguments(command, ctx);
+        return;
+      }
       throw new CliUsageError(
-        name === undefined
-          ? `git needs a subcommand (${GIT_SUBCOMMANDS})`
-          : `unknown git subcommand '${name}' (${GIT_SUBCOMMANDS})`,
+        `unknown git subcommand '${name}' (${GIT_SUBCOMMANDS})`,
       );
     });
 

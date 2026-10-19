@@ -83,12 +83,12 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   the workspace is live; `--session <id>` chooses.
 - **`kubic git`**: 0 success (including `log` on a repo with no commits
   yet); 1 an op failure or outside a git repository (one `error:` line on
-  stderr); 2 usage errors (bare `kubic git`, unknown subcommand or option,
-  missing value, `--max` not a positive integer, `stage` without a path,
-  `commit` without a non-empty `-m`).
+  stderr), and for a bare `kubic git`, which prints the group's help; 2 usage
+  errors (unknown subcommand or option, missing value, `--max` not a positive
+  integer, `stage` without a path, `commit` without a non-empty `-m`).
 - **`kubic sessions` / `kubic models` / `kubic config`**: 0 success; 2
   usage errors (unknown option, missing or invalid value, stray operand,
-  a missing `sessions` subcommand, `prune --yes --dry-run`); 1 op
+  an unknown `sessions` subcommand, `prune --yes --dry-run`); 1 op
   failure (`models --resolve` failure, a refused config, attaching or
   forking a missing or live-locked session, a `sessions fork --at` entry the
   source does not have). An unknown `sessions` subcommand exits
@@ -104,8 +104,8 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   refusal (the session is attached by a live pid), or a pass that removed
   nothing while entries were listed; 2 for usage errors (a `--keep-days` that
   is not a non-negative integer of days, a file value that is not a
-  non-negative integer, an unknown option,
-  `kubic journal` without a subcommand).
+  non-negative integer, an unknown option). A bare `kubic journal` prints the
+  group's help and exits 1.
 - **`kubic trust`**: 0 recorded, revoked or listed; 2 usage errors
   (unknown option, a path that is not a directory, `--list` combined with
   `--revoke` or a path, stray operands); 1 an unreadable or corrupt store

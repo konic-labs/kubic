@@ -38,8 +38,9 @@ runs setup on first launch and then opens the interactive TUI.
   action instead of running it.
 - **A change journal.** `kubic diff` shows what changed, `kubic undo` restores it,
   and `kubic log` and `kubic status` show the record. The journal works without git.
-- **Sessions.** Each run belongs to a session. List, attach, fork and resume them
-  with `kubic sessions`, `kubic run --session` and `kubic tui --session`.
+- **Sessions.** Each run belongs to a session. `kubic sessions` lists them;
+  attach, fork and resume them with `kubic sessions attach`, `kubic sessions fork`,
+  `kubic run --session` and `kubic tui --session`.
 - **Models.** `kubic models` reads the built-in model catalogue, and `kubic setup`
   picks a default. Provider keys come from your environment.
 - **Analysis.** `kubic eval`, `kubic benchmark`, `kubic replay` and `kubic export`

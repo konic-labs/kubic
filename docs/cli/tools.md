@@ -38,7 +38,7 @@ isolation: these tools act on the real workspace.
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |
-| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped, and the file keeps its own line ending and BOM (see [Line endings and BOM](#line-endings-and-bom)). |
+| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped; every line the edit does not touch keeps its own line ending, and the file keeps its BOM (see [Line endings and BOM](#line-endings-and-bom)). |
 | `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh, on Linux and macOS; on Windows the tool refuses to run, because the approval detectors read POSIX shell only; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
 | `git_status` | — | Branch (or detached HEAD), ahead/behind, staged/unstaged/untracked/conflicts, renames, the repo root, and one record per submodule. |
 | `git_diff` | `staged?`, `range?`, `path?` | Diff keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink); a clipped diff also carries a capped `--stat` summary (at most 40 lines, summary kept) saying what was cut. |
@@ -170,15 +170,18 @@ link itself.
 
 ## Line endings and BOM
 
-`edit` normalizes what it matches against, then restores what the file had:
+`edit` normalizes what it matches against, then changes only what it matched:
 
-- **Line endings:** the file's dominant ending is detected, the file body,
-  `oldText` and `newText` are normalized to LF for matching and replacement,
-  and the dominant ending is restored on write. A CRLF file with an LF
-  multi-line `oldText` still edits (no `no_match`), the result never
-  mixes endings, and an LF file is byte-for-byte unchanged apart from the
-  replacement. A tie between CRLF and bare LF goes to LF, and a mixed file
-  comes out uniform.
+- **Line endings:** the file body, `oldText` and `newText` are normalized to
+  LF for matching, and the replacement is made in the file's own text at the
+  matched spans, so every line the edit does not touch keeps its own ending,
+  byte for byte. The replacement takes the ending of the lines it replaces
+  (their majority; a tie goes to the file's dominant ending); a match within
+  one line takes the ending of that line, or of the line before on a last
+  line with no newline. A CRLF file with an LF multi-line `oldText` still
+  edits (no `no_match`) and stays CRLF, an LF file stays LF, and a file with
+  mixed endings changes only where it was edited, so `kubic diff` shows only
+  the edited lines.
 - **BOM:** a leading UTF-8 BOM is stripped from the file body and from both
   model texts before matching, and re-added on write only when the file had
   one — so a first-line edit in a BOM file succeeds, the BOM survives, and a

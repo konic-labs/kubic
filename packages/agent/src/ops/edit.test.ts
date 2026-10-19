@@ -1,8 +1,8 @@
 // Edit line-ending and BOM handling (Pi's edit-diff.ts).
 // A Windows-authored file (CRLF, or CRLF + UTF-8 BOM) must edit where Pi
 // succeeds: matching happens on LF-normalized text with the BOM stripped,
-// and the file's own ending and BOM are restored on write. LF files must be
-// byte-for-byte unaffected.
+// and every line the edit does not touch keeps its own ending, so a uniform
+// file stays uniform and a mixed one changes only where it was edited.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -191,5 +191,70 @@ describe('edit line endings and BOM', () => {
     expect(readFileSync(join(root, 'win.txt'), 'utf8')).toBe(
       'alpha\r\nbeta\r\ngamma\r\n',
     );
+  });
+});
+
+describe('edit in a file with mixed line endings', () => {
+  async function edited(
+    content: string,
+    args: { oldText: string; newText: string; expectCount?: number },
+  ): Promise<string> {
+    const { root, c } = setup();
+    writeFileSync(join(root, 'mixed.txt'), content);
+    const out = await callOperation(
+      'edit',
+      { path: 'mixed.txt', ...args },
+      inv(),
+      c,
+    );
+    expect(out.ok).toBe(true);
+    return readFileSync(join(root, 'mixed.txt'), 'utf8');
+  }
+
+  it('keeps every untouched line ending when an LF line is edited', async () => {
+    expect(await edited('a\r\nb\nc\r\n', { oldText: 'b', newText: 'B' })).toBe(
+      'a\r\nB\nc\r\n',
+    );
+  });
+
+  it('keeps every untouched line ending when a CRLF line is edited', async () => {
+    expect(await edited('a\nb\r\nc\n', { oldText: 'b', newText: 'B' })).toBe(
+      'a\nB\r\nc\n',
+    );
+  });
+
+  it('gives an added line the ending of the line it was added to', async () => {
+    expect(
+      await edited('a\r\nb\nc\r\n', { oldText: 'b', newText: 'b\nb2' }),
+    ).toBe('a\r\nb\nb2\nc\r\n');
+    // On a last line with no newline, the line before decides.
+    expect(await edited('a\r\nb', { oldText: 'b', newText: 'b\nc' })).toBe(
+      'a\r\nb\r\nc',
+    );
+  });
+
+  it('gives a multi-line replacement the ending of the lines it replaces', async () => {
+    expect(
+      await edited('a\r\nb\nc\r\nd\n', { oldText: 'b\nc', newText: 'B\nC' }),
+    ).toBe('a\r\nB\nC\r\nd\n');
+    expect(
+      await edited('a\nb\r\nc\r\nd\n', { oldText: 'b\nc\n', newText: 'B\n' }),
+    ).toBe('a\nB\r\nd\n');
+  });
+
+  it('replaces every counted match in place', async () => {
+    expect(
+      await edited('x\r\ny\nx\n', {
+        oldText: 'x',
+        newText: 'z',
+        expectCount: 2,
+      }),
+    ).toBe('z\r\ny\nz\n');
+  });
+
+  it('keeps the BOM and the untouched endings of a BOM file', async () => {
+    expect(
+      await edited('\uFEFFa\r\nb\nc\r\n', { oldText: 'a', newText: 'A' }),
+    ).toBe('\uFEFFA\r\nb\nc\r\n');
   });
 });

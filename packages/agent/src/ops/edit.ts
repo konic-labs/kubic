@@ -93,35 +93,129 @@ const BOM = '\uFEFF';
 
 // Line-ending and BOM normalization (Pi's edit-diff.ts).
 // A Windows-authored file must edit where Pi succeeds: matching happens on
-// LF-normalized text with any leading BOM stripped, and the file's own
-// ending and BOM are restored on write. Without this a CRLF file with an LF
-// multi-line oldText is `no_match`, a first-line edit can mix endings, and a
-// model whose reader stripped the BOM cannot match the first line at all.
+// LF-normalized text with any leading BOM stripped. Without this a CRLF file
+// with an LF multi-line oldText is `no_match`, and a model whose reader
+// stripped the BOM cannot match the first line at all. The replacement is
+// then made in the file's own text at the matched spans, so every line the
+// edit does not touch keeps its own ending, and the BOM is restored.
+
+type LineEnding = '\r\n' | '\n';
 
 /**
- * The dominant ending of `content`; a tie goes to LF. One `indexOf` pass
- * with O(1) extra memory — `match(/\n/g)` allocates an array element per
- * newline, ~8x a newline-dense 8 MiB file at the bound this op accepts.
+ * The dominant ending of the line breaks in `content[from, to)`; a tie goes
+ * to `tie`. One `indexOf` pass with O(1) extra memory — `match(/\n/g)`
+ * allocates an array element per newline, ~8x a newline-dense 8 MiB file at
+ * the bound this op accepts. Undefined when the range holds no line break.
  */
-function detectLineEnding(content: string): '\r\n' | '\n' {
+function dominantEnding(
+  content: string,
+  from: number,
+  to: number,
+  tie: LineEnding,
+): LineEnding | undefined {
   let lf = 0;
   let crlf = 0;
   for (
-    let at = content.indexOf('\n');
-    at !== -1;
+    let at = content.indexOf('\n', from);
+    at !== -1 && at < to;
     at = content.indexOf('\n', at + 1)
   ) {
     lf += 1;
-    if (at > 0 && content.charCodeAt(at - 1) === 13) crlf += 1;
+    if (at > from && content.charCodeAt(at - 1) === 13) crlf += 1;
   }
+  if (lf === 0) return undefined;
+  if (crlf === lf - crlf) return tie;
   return crlf > lf - crlf ? '\r\n' : '\n';
+}
+
+function endingAt(content: string, newline: number): LineEnding {
+  return newline > 0 && content.charCodeAt(newline - 1) === 13 ? '\r\n' : '\n';
+}
+
+/**
+ * The ending a replacement of `content[start, end)` takes: the one the
+ * replaced lines used, else the one that ends the line the match sits on
+ * (the line before, on a last line with no newline), else the file's own.
+ */
+function replacementEnding(
+  content: string,
+  start: number,
+  end: number,
+  file: LineEnding,
+): LineEnding {
+  const replaced = dominantEnding(content, start, end, file);
+  if (replaced !== undefined) return replaced;
+  const next = content.indexOf('\n', end);
+  if (next !== -1) return endingAt(content, next);
+  const previous = start === 0 ? -1 : content.lastIndexOf('\n', start - 1);
+  return previous === -1 ? file : endingAt(content, previous);
+}
+
+/**
+ * The offset in `content` of offset `target` in its LF-normalized form,
+ * walking forward from a known pair of offsets: the two map one to one
+ * between `\r\n` pairs, and each pair is a single `\n` once normalized, so
+ * an offset never falls inside a pair.
+ */
+function originalOffset(
+  content: string,
+  from: { normalized: number; original: number },
+  target: number,
+): number {
+  let { normalized, original } = from;
+  for (;;) {
+    const pair = content.indexOf('\r\n', original);
+    if (pair === -1 || normalized + (pair - original) >= target) {
+      return original + (target - normalized);
+    }
+    normalized += pair - original + 1;
+    original = pair + 2;
+  }
+}
+
+/**
+ * `content` with every match of `oldText` in its LF-normalized form
+ * (`normalized`) replaced by `newText`, in place: the text between matches
+ * is copied as it is, and each replacement takes `replacementEnding`.
+ */
+function replaceInPlace(
+  content: string,
+  normalized: string,
+  oldText: string,
+  newText: string,
+): string {
+  const file = dominantEnding(content, 0, content.length, '\n') ?? '\n';
+  const parts: string[] = [];
+  let copied = 0;
+  let cursor = { normalized: 0, original: 0 };
+  for (
+    let at = normalized.indexOf(oldText);
+    at !== -1;
+    at = normalized.indexOf(oldText, at + oldText.length)
+  ) {
+    const start = originalOffset(content, cursor, at);
+    const end = originalOffset(
+      content,
+      { normalized: at, original: start },
+      at + oldText.length,
+    );
+    const ending = replacementEnding(content, start, end, file);
+    parts.push(
+      content.slice(copied, start),
+      restoreLineEndings(newText, ending),
+    );
+    copied = end;
+    cursor = { normalized: at + oldText.length, original: end };
+  }
+  parts.push(content.slice(copied));
+  return parts.join('');
 }
 
 function normalizeToLF(content: string): string {
   return content.replace(/\r\n/g, '\n');
 }
 
-function restoreLineEndings(content: string, ending: '\r\n' | '\n'): string {
+function restoreLineEndings(content: string, ending: LineEnding): string {
   return ending === '\r\n' ? content.replace(/\n/g, '\r\n') : content;
 }
 
@@ -132,7 +226,7 @@ function stripBom(content: string): string {
 export const editOperation: Operation<EditArgs, EditResult> = {
   name: 'edit',
   description:
-    'Replace exact text in a file atomically (tmp + rename). oldText must match exactly (after line-ending/BOM normalization), whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Matching is done on LF-normalized text with any leading BOM stripped, and the file keeps its own line ending and BOM on write (a CRLF file stays CRLF). Files over 8 MiB are refused.',
+    'Replace exact text in a file atomically (tmp + rename). oldText must match exactly (after line-ending/BOM normalization), whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Matching is done on LF-normalized text with any leading BOM stripped; every line the edit does not touch keeps its own line ending, the replacement takes the ending of the lines it replaces (a CRLF file stays CRLF), and the BOM is kept. Files over 8 MiB are refused.',
   replay: 'never',
   validateArgs: validateEditArgs,
   execute: async (_inv: ToolInvocation, args: EditArgs, ctx: OpContext) => {
@@ -165,14 +259,15 @@ export const editOperation: Operation<EditArgs, EditResult> = {
         `edit: ${args.path} is not valid utf-8 text (binary content) — refusing to rewrite it`,
       );
     }
-    // Normalize the file, the needle and the replacement into
-    // the same LF/BOM-free space, then restore the file's own ending and BOM
-    // on write. Both sides are stripped, so an oldText that carries the BOM
-    // still matches and a replacement can never introduce a second one.
+    // Normalize the file, the needle and the replacement into the same
+    // LF/BOM-free space to match, then replace in the file's own text and
+    // restore the BOM on write. Both sides are stripped, so an oldText that
+    // carries the BOM still matches and a replacement can never introduce a
+    // second one.
     const raw = pre.text;
     const bom = raw.startsWith(BOM);
-    const ending = detectLineEnding(stripBom(raw));
-    const current = normalizeToLF(stripBom(raw));
+    const body = stripBom(raw);
+    const current = normalizeToLF(body);
     const oldText = normalizeToLF(stripBom(args.oldText));
     const newText = normalizeToLF(stripBom(args.newText));
     if (oldText.length === 0) {
@@ -195,8 +290,8 @@ export const editOperation: Operation<EditArgs, EditResult> = {
         `edit: found ${found} matches in ${args.path}, expected ${expected}`,
       );
     }
-    const replaced = current.split(oldText).join(newText);
-    const updated = (bom ? BOM : '') + restoreLineEndings(replaced, ending);
+    const updated =
+      (bom ? BOM : '') + replaceInPlace(body, current, oldText, newText);
     const beforeHash = sha256Hex(raw);
     const result = {
       path: args.path,
@@ -217,7 +312,7 @@ export const editOperation: Operation<EditArgs, EditResult> = {
     });
     // The inline diff, in the LF space the edit matched in.
     if (ctx.display !== undefined) {
-      const diff = displayDiff(current, replaced);
+      const diff = displayDiff(current, current.split(oldText).join(newText));
       if (diff !== undefined) ctx.display(diff);
     }
     return result;

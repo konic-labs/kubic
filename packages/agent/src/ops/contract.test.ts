@@ -41,7 +41,7 @@ const EXPECTED: Record<string, { description: string; replay: string }> = {
   },
   edit: {
     description:
-      'Replace exact text in a file atomically (tmp + rename). oldText must match exactly (after line-ending/BOM normalization), whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Matching is done on LF-normalized text with any leading BOM stripped, and the file keeps its own line ending and BOM on write (a CRLF file stays CRLF). Files over 8 MiB are refused.',
+      'Replace exact text in a file atomically (tmp + rename). oldText must match exactly (after line-ending/BOM normalization), whitespace included, and occur exactly expectCount times (default 1) or the edit is refused (no_match / ambiguous_match). Matching is done on LF-normalized text with any leading BOM stripped; every line the edit does not touch keeps its own line ending, the replacement takes the ending of the lines it replaces (a CRLF file stays CRLF), and the BOM is kept. Files over 8 MiB are refused.',
     replay: 'never',
   },
   bash: {

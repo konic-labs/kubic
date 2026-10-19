@@ -20,8 +20,9 @@ import {
   Type,
 } from '../../pi-boundary.js';
 import { confinePath } from './confine.js';
-import { defaultIsDestructive, isNetworkCommand } from './detectors.js';
+import { defaultIsDestructive } from './detectors.js';
 import { policyInterceptorHooks } from './hooks.js';
+import { isNetworkCommand } from './network.js';
 import { readOnlyViolation } from './read-only.js';
 import { redactReason } from './redact.js';
 import type { PolicyInterceptorOptions } from './types.js';
@@ -573,5 +574,74 @@ describe('destructive/confine matchers (unit)', () => {
     ['git status; git log', false],
   ])('classifies %s as destructive=%s', (command, expected) => {
     expect(defaultIsDestructive(command, '/work')).toBe(expected);
+  });
+});
+
+// `network: none` covers the clients a coding agent reaches the network
+// with: the transfer tools wherever their name appears, and the tools whose
+// subcommand decides, read at command position — so a commit message that
+// says "fetch" asks nothing.
+describe('network command matcher', () => {
+  it.each([
+    'curl https://example.com',
+    'wget https://example.com',
+    'socat - TCP:example.com:80',
+    'ncat example.com 80',
+    'git clone https://example.com/r.git',
+    'git fetch origin',
+    'git pull',
+    'git ls-remote origin',
+    'git -C sub fetch',
+    'git -c http.proxy=x pull',
+    'git remote update',
+    'git submodule update --init',
+    'git lfs pull',
+    'gh api /user',
+    'gh pr list',
+    'docker pull alpine',
+    'docker --context c push img',
+    'docker image pull alpine',
+    'podman login quay.io',
+    'cargo fetch',
+    'go get example.com/x',
+    'go mod download',
+    'npm view left-pad',
+    'npm audit',
+    'pnpm audit',
+    'yarn npm info x',
+    'pip download x',
+    'pip3 download x',
+    'rsync -a src/ host:/srv/',
+    'rsync -a rsync://host/m/ dst/',
+    'openssl s_client -connect example.com:443',
+    'cd x && git fetch',
+    'sudo docker pull alpine',
+    'set -e\ngit pull',
+  ])('%j reaches the network', (command) => {
+    expect(isNetworkCommand(command)).toBe(true);
+  });
+
+  it.each([
+    'git status',
+    'git log --oneline',
+    'git diff HEAD',
+    'git push origin main',
+    'git commit -m "fetch data and pull it"',
+    'git log --grep clone',
+    'docker ps',
+    'docker images',
+    'cargo build',
+    'go build ./...',
+    'npm test',
+    'npm run build',
+    'pip list',
+    'rsync -a a/ b/',
+    'gh help',
+    'gh --version',
+    'openssl rand -hex 8',
+    'echo gh pr list later',
+    'ls -la',
+  ])('%j stays quiet', (command) => {
+    expect(isNetworkCommand(command)).toBe(false);
   });
 });

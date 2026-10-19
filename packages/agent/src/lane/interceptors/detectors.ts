@@ -1,4 +1,4 @@
-// Literal-pattern detectors for destructive and network shell commands.
+// Literal-pattern detector for destructive shell commands.
 import { isAbsolute, resolve } from 'node:path';
 import { commandLead, commandWord, MAX_LEAD_WORDS } from './command-words.js';
 
@@ -204,24 +204,4 @@ export function defaultIsDestructive(
     WHOLE_COMMAND_PATTERNS.some((pattern) => pattern.test(command)) ||
     anySegmentDestructive(command)
   );
-}
-
-const NETWORK_PATTERNS = [
-  /\bcurl\b/i,
-  /\bwget\b/i,
-  /\bssh\b/i,
-  /\bscp\b/i,
-  /\bsftp\b/i,
-  /\bftp\b/i,
-  /\btelnet\b/i,
-  /\bnc\b/i,
-];
-
-// Literal-pattern heuristic with the same stated scope as the destructive
-// matcher: python/node/npm/pip/git/openssl exfiltration bypasses
-// network:none. The verbs above cover the interactive-transfer
-// layer; everything else is approvals' problem.
-
-export function isNetworkCommand(command: string): boolean {
-  return NETWORK_PATTERNS.some((pattern) => pattern.test(command));
 }

@@ -85,6 +85,14 @@ describe('command shapes -> capabilities', () => {
     ['cp a /etc/x\necho done', ['outside-write']],
     ['echo x | tee /etc/x\necho done', ['outside-write']],
     ['mv a /etc/x\r\necho done', ['outside-write']],
+    // The network clients a coding agent uses, under network = "none".
+    ['git fetch origin', ['network']],
+    ['git clone https://example.com/r.git', ['network']],
+    ['git -C sub pull', ['network']],
+    ['gh api /user', ['network']],
+    ['docker pull alpine', ['network']],
+    ['docker push img', ['deploy', 'network']],
+    ['cargo fetch', ['network']],
   ])('%s', (command, expected) => {
     expect(raised(command)).toEqual(expected);
   });
@@ -105,6 +113,9 @@ describe('command shapes -> capabilities', () => {
     ['git log --oneline | grep push', []],
     ['cp a b\necho /etc/x', []],
     ['git log\necho reset --hard', []],
+    ['git diff HEAD', []],
+    ['git commit -m "fetch data and pull it"', []],
+    ['docker ps', []],
     // A push named only inside a quoted argument still raises: the literal
     // scan cannot see quotes, and an over-trigger is an ask, never a grant.
     ['echo "run git push later"', ['git-push']],

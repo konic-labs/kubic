@@ -126,7 +126,7 @@ export function detectionOnlyCheck(
   const lexical: string[] = [];
   if (effectiveNetworkLevel(posture.classes.network) === 'none') {
     lexical.push(
-      'network=none is a lexical bash command detector — a script the agent writes and runs can reach the network',
+      'network=none is a lexical bash command detector for the listed network clients (curl, wget, ssh, git clone/fetch/pull, gh, docker pull, …) — an interpreter, a script the agent writes and runs, or an unlisted tool can still reach the network',
     );
   }
   if (posture.classes.filesystem !== 'none') {

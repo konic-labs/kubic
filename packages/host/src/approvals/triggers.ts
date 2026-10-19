@@ -52,11 +52,12 @@ import { shellWrites } from './shell/write-commands.js';
 // too, not only the single-level `$(rm -rf /)`. What still bypasses them —
 // stated, not silent: interpreter-based verbs handed over as data
 // (`bash -c`, `python3 -c`, `node -e`), substitutions nested past
-// ~2x MAX_UNWRAP_DEPTH, python/node/npm exfiltration under network:none,
-// quoted or backslash-obfuscated verbs the literal patterns cannot see (the
-// rm command word excepted: it is read as the shell reads it), whitespace
-// tricks around redirection targets, and write paths that come from input
-// (xargs, a file list, a variable). Detector ownership for the rest:
+// ~2x MAX_UNWRAP_DEPTH, network use through an interpreter or an unlisted
+// tool under network:none, quoted or backslash-obfuscated verbs the literal
+// patterns cannot see (the rm command word excepted: it is read as the shell
+// reads it), whitespace tricks around redirection targets, and write paths
+// that come from input (xargs, a file list, a variable). Detector ownership
+// for the rest:
 //   credentials overreach — the credential-path detector
 //   (approvals-credentials.ts): well-known home credential locations in a
 //     bash command, and the read-family tool paths onto in-workspace

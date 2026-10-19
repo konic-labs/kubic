@@ -35,14 +35,16 @@
 // layer raises on the cheap shapes this guard misses — a
 // destructive/network verb inside $(…)/backticks/eval and `sudo` anywhere
 // become approval asks instead of slipping through silently — but the
-// detection is still literal-pattern: python/node/npm exfiltration, quoted
-// or backslash-obfuscated verbs, and whitespace tricks around redirect
-// targets stay unenforceable, documented as such in the host approvals/triggers.ts.
+// detection is still literal-pattern: network use through an interpreter or
+// an unlisted tool, quoted or backslash-obfuscated verbs, and whitespace
+// tricks around redirect targets stay unenforceable, documented as such in
+// the host approvals/triggers.ts.
 
 export { commandLead, commandWord } from './command-words.js';
 export { confinePath } from './confine.js';
-export { defaultIsDestructive, isNetworkCommand } from './detectors.js';
+export { defaultIsDestructive } from './detectors.js';
 export { policyInterceptorHooks } from './hooks.js';
+export { isNetworkCommand } from './network.js';
 
 export { redactReason, redactSecrets } from './redact.js';
 export type {

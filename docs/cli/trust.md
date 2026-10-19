@@ -88,6 +88,9 @@ Decisions live in one user-owned file, `~/.kubic/trust.json`:
 }
 ```
 
+- **It is private.** The file is written `0600` and a new `~/.kubic` is
+  created `0700`, whichever command creates it first; a loose `~/.kubic` is
+  tightened to `0700` on the next `kubic trust` write.
 - **Keys are canonical paths**: the realpath when the directory exists, so
   a symlinked path and its target share one decision.
 - **Values are `true` (trusted) or `false` (declined)**; an absent key is

@@ -176,6 +176,12 @@ function sanitizePrefix(prefix: string): string {
   return prefix.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 32) || 'tmp-';
 }
 
+// The mode for a directory created to hold a file of `mode`: the search bit
+// wherever the file can be read, so a 0600 file's new parent is 0700.
+function directoryModeFor(mode: number): number {
+  return mode | ((mode & 0o444) >> 2);
+}
+
 // biome-ignore lint/complexity/noExcessiveLinesPerFunction: the whole FileBridge, one short closure per method over `cwd`; it stays a plain object, not a class, because callers spread it (redactBridgeWrites wraps its writes).
 export function createNodeFileBridge(cwd: string): FileBridge {
   const absolutePath = (path: string): string => resolve(cwd, path);
@@ -189,10 +195,7 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       mkdirSync(dirname(abs), { recursive: true });
       return;
     }
-    mkdirSync(dirname(abs), {
-      recursive: true,
-      mode: mode | ((mode & 0o444) >> 2),
-    });
+    mkdirSync(dirname(abs), { recursive: true, mode: directoryModeFor(mode) });
   };
   return {
     cwd,
@@ -457,9 +460,18 @@ export function withFileLocked<T>(
 export function updateFileLocked(
   absPath: string,
   update: (current: string | undefined) => string,
-  options: { staleMs?: number; waitMs?: number } = {},
+  options: { staleMs?: number; waitMs?: number; mode?: number } = {},
 ): void {
-  mkdirSync(dirname(absPath), { recursive: true });
+  // `mode` is the file's mode: the tmp is created with it (the rename carries
+  // it onto the file), and a parent directory this call creates takes it
+  // with the search bit added.
+  const mode = options.mode;
+  mkdirSync(
+    dirname(absPath),
+    mode === undefined
+      ? { recursive: true }
+      : { recursive: true, mode: directoryModeFor(mode) },
+  );
   withFileLocked(
     `${absPath}.lock`,
     () => {
@@ -472,7 +484,7 @@ export function updateFileLocked(
       const next = update(current);
       const tmp = `${absPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
       try {
-        writeFileSync(tmp, next);
+        writeFileSync(tmp, next, mode === undefined ? undefined : { mode });
         renameSync(tmp, absPath);
       } catch (error) {
         rmSync(tmp, { force: true });

@@ -130,7 +130,7 @@ const PERMISSION_EFFECT = {
 } as const;
 
 const VERIFY_COMMAND_EFFECT = (gate: string): KeyEffect => ({
-  effect: `${gate} gate command run in the worktree after each run settles; exit status → signal:${gate}`,
+  effect: `${gate} gate: a shell command (sh -c) run in the worktree after each run settles, outside approvals and recorded in the audit ledger; exit status → signal:${gate}`,
 });
 
 export const CONFIG_SECTIONS = [
@@ -669,7 +669,7 @@ export const CONFIG_SECTIONS = [
           'verify.lint',
           'verify.typecheck',
         ],
-        text: "The gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load.",
+        text: "The gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. The command runs outside the approval interceptors, so each run of one is announced on stderr (`verify: running the <gate> gate: <command>`) and recorded as a `verify:<gate>` row in the audit ledger, and `kubic config` lists the commands that will run. A trusted project's config can set them: the trust question says so.",
       },
       {
         keys: ['verify.timeoutMs'],

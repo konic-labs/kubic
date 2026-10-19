@@ -81,6 +81,23 @@ describe('kubic config', () => {
     expect(text).toContain('journal retention: 30 day(s)');
   });
 
+  it('reports the [verify] commands as shell that runs, with their layer', () => {
+    const none = collect();
+    runConfigCommand({}, { load: runtime, out: none.out });
+    expect(none.lines.join('\n')).toContain(
+      'verify: no gate commands — nothing runs after a run settles',
+    );
+    const { lines, out } = collect();
+    const base = runtime();
+    base.verify = { commands: { tests: 'npm test', lint: 'npm run lint' } };
+    base.sources['verify.tests'] = 'project';
+    base.sources['verify.lint'] = 'global';
+    runConfigCommand({}, { load: () => base, out });
+    expect(lines.join('\n')).toContain(
+      'verify: 2 gate command(s) run as shell (sh -c) after each run settles, outside approvals, each recorded in the audit ledger: tests "npm test" (project), lint "npm run lint" (global)',
+    );
+  });
+
   it('names retentionDays = 0 as retention off, never as a zero age bound', () => {
     const { lines, out } = collect();
     const base = runtime();

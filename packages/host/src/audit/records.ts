@@ -121,7 +121,10 @@ export function isPrivilegedAuditWhat(what: string): boolean {
     // posture change reaches privileged sinks too — the disable half of
     // a grant must never vanish while the grant is kept.
     what === 'posture:approvals' ||
-    what === 'undo-restore'
+    what === 'undo-restore' ||
+    // A gate command is arbitrary shell from the config, run outside the
+    // approval interceptors: an action, not a decision.
+    what.startsWith('verify:')
   );
 }
 
@@ -156,6 +159,38 @@ export function undoRestoreAudit(input: UndoRestoreInput): AuditInput {
     reason:
       `restored ${files}: ${input.restored.join(', ')}` +
       (skipped > 0 ? `; ${skipped} skipped` : ''),
+  };
+}
+
+// Audit record for one `[verify]` gate command a run executed: the command
+// is shell from the config — a trusted project's included — and runs outside
+// the approval interceptors, so each run of one is on record with its
+// verdict. `baseline` marks the run at the base revision's throwaway
+// checkout.
+export interface VerifyCommandInput {
+  sessionId: string;
+  workspace: string;
+  base: string;
+  gate: string;
+  command: string;
+  verdict: 'pass' | 'fail';
+  baseline: boolean;
+}
+
+export function verifyCommandAudit(input: VerifyCommandInput): AuditInput {
+  return {
+    who: 'config:verify',
+    what: `verify:${input.gate}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'verify' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    process: { pid: process.pid },
+    workspace: { path: input.workspace, base: input.base || UNKNOWN },
+    permission: { permission: 'verify:command', approval: 'config [verify]' },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    posture: 'approvals',
+    result: input.verdict === 'pass' ? 'ok' : 'error',
+    reason: `${input.baseline ? 'baseline ' : ''}${input.gate} gate ran sh -c ${JSON.stringify(input.command)}: ${input.verdict}`,
   };
 }
 

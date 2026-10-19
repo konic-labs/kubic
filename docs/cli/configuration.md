@@ -288,7 +288,7 @@ quietly stop configuring anything.
 | `session.autoCompact` | Threshold compaction on the lane (`run`, `tui`): `false` disables it, `true` (and unset) keeps the automatic default. A non-boolean is refused by name. |
 | `session.reserveTokens` | Reserved-room tokens before the lane compacts: unset ⇒ 16384. A value that is not a positive integer is refused by name. The effective reserve is clamped per model to at most a quarter of its context window (an 8192-token model reserves 2048), so a small-window model compacts sooner than the configured figure; `kubic config` and `kubic doctor` print the effective reserve. |
 | `session.keepRecentTokens` | Verbatim recent-context window the lane keeps across a compaction: unset ⇒ 20000. A value that is not a positive integer is refused by name. The effective window is capped per model to a quarter of the room below its reserve (window − reserve), so it scales with the model: an 8192-token model keeps 1536, a 16384-token model 3072, a 32768-token model 6144, and the configured 20000 applies from a 96384-token window up. A `/compact` keeps at most 2000 tokens verbatim, whatever the window. |
-| `verify.tests`, `verify.build`, `verify.lint`, `verify.typecheck` | The gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. |
+| `verify.tests`, `verify.build`, `verify.lint`, `verify.typecheck` | The gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. The command runs outside the approval interceptors, so each run of one is announced on stderr (`verify: running the <gate> gate: <command>`) and recorded as a `verify:<gate>` row in the audit ledger, and `kubic config` lists the commands that will run. A trusted project's config can set them: the trust question says so. |
 | `verify.timeoutMs` | Per-command bound for the `[verify]` gates, a positive integer of milliseconds up to 2147483647 (default 600000). A command still running at the bound is killed and its gate is `fail`. |
 | `policy.allowed_models` | The model gate: `provider/id`, `provider/*` (or `*` glob) patterns and bare model ids. A selection outside the list — `--model`, `[model]`, `KUBIC_MODEL`, a role pin, or the implicit first-available pick — exits 6 with a named policy refusal before any provider call; the implicit pick skips disallowed providers. It gates `kubic run`, `kubic tui` (boot and `/model` switches — a refused switch leaves the live model untouched) and the re-executing tiers of `kubic replay`. |
 | `policy.allowed_providers` | The provider gate, applied with `allowed_models`: both lists intersect, so a provider the list omits is refused even when a pattern would name the model. |
@@ -367,9 +367,16 @@ these labels; see the signal and quality rules in
 `[verify]` section nothing runs and every gate stays `unknown`. `kubic tui`
 turns are not verified.
 
-The commands are ordinary shell commands run with your permissions, so
-they come only from layers you trust: a project `.kubic/config.toml` is
-refused until the project is trusted (see the trust gate above).
+The commands are ordinary shell commands run with your permissions,
+outside the approval interceptors, so they come only from layers you trust:
+a project `.kubic/config.toml` is refused until the project is trusted, and
+the trust question names its `[verify]` commands among what a grant lets
+the project do (see the trust gate above). Each command a run executes is
+announced on stderr when it starts — `verify: running the tests gate: npm
+test`, and `… at the base revision: …` for the baseline checkout — and
+recorded as a `verify:<gate>` row in the workspace's audit ledger
+(`.kubic/audit/audit.jsonl`, a privileged action) with its verdict.
+`kubic config` lists the commands that will run, with their layer.
 Verification adds the commands' run time to every `kubic run`.
 
 Each trigger, what it detects and the detection heuristics are on

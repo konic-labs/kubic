@@ -27,6 +27,7 @@ export {
   postureChangedAudit,
   runStartAudit,
   undoRestoreAudit,
+  verifyCommandAudit,
 } from './records.js';
 export {
   auditSinksDoctorChecks,

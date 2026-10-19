@@ -238,12 +238,13 @@ export async function resolveInteractiveProjectTrust(
   // remedies are named by the refusal itself.
   if (report.decision === false) return false;
   // The grant is one decision for the whole project tree, so the question
-  // names all of it: the config.toml, the project
+  // names all of it: the config.toml — whose `[verify]` commands run as
+  // shell after every run —, the project
   // models.json — whose provider URL receives the key of ANY `*_API_KEY` or
   // `KUBIC_*` variable it names (`KUBIC_API_KEY` when it names none), so a
   // "yes" lets the repository choose where a key you have set is sent — and
   // the project skills the model is told to follow.
-  const message = `Trust project ${report.key}? This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions and journal retention), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills and its project role documents (instructions the model follows).`;
+  const message = `Trust project ${report.key}? This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions and journal retention; its [verify] commands run as shell commands after each run), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills, its project role documents and its [agent] systemPromptFile (instructions the model follows).`;
   if (deps.ask !== undefined) {
     for (;;) {
       const answer = await deps.ask({

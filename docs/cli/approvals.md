@@ -315,8 +315,11 @@ heuristics:
   (`*.pub`, `authorized_keys*`, `known_hosts*`) stay quiet. Stated misses: a
   path the list does not name, an obfuscated or split spelling
   (`~/.a''ws/credentials`, `p=~/.ssh; cat $p/id_rsa`), a Windows-style
-  backslash spelling, and a credential reached indirectly (`bash -c`, a
-  script, a symlink). The `~/.ssh/*`
+  backslash spelling, and a credential reached indirectly in bash (`bash -c`,
+  a script, a symlink). A read-family tool path that a symlink leads to a
+  credential file inside the workspace raises `credentials` like the file
+  itself; one a link leads outside the workspace is refused by the tool
+  (`symlink_escape`). The `~/.ssh/*`
   directory name also matches the network verb scan, so those commands raise
   `network` as well.
 

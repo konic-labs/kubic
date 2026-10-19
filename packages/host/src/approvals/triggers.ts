@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import {
   confinePath,
   defaultIsDestructive,
@@ -275,9 +275,13 @@ export function detectTriggers(
     for (const arg of readArgs) {
       const value = args[arg];
       if (typeof value !== 'string') continue;
+      const linked = READ_FILTER_ARGS.has(arg)
+        ? undefined
+        : linkedWorkspacePath(ctx.workspace, value);
       const hit = READ_FILTER_ARGS.has(arg)
         ? (credentialAccessInPath(value) ?? credentialAccessInNameFilter(value))
-        : credentialAccessInPath(value);
+        : (credentialAccessInPath(value) ??
+          (linked === undefined ? undefined : credentialAccessInPath(linked)));
       if (hit !== undefined) {
         found.push('credentials');
         break;
@@ -337,6 +341,28 @@ function physicalWorkspace(workspace: string): string | undefined {
     physicalWorkspaces.set(workspace, real);
   }
   return physicalWorkspaces.get(workspace);
+}
+
+// Where a read-family path leads through its links, as a workspace-relative
+// path, when a link takes it somewhere else inside the workspace: a
+// credential file reached through an innocently named link asks like the
+// file itself. undefined for a path that resolves to itself, cannot be
+// resolved, or leads outside (the tool refuses that as a symlink escape).
+function linkedWorkspacePath(
+  workspace: string,
+  path: string,
+): string | undefined {
+  const lexical = resolve(workspace, path);
+  let real: string | undefined;
+  try {
+    real = createNodeFileBridge('/').realPath?.(lexical);
+  } catch {
+    return undefined;
+  }
+  const root = physicalWorkspace(workspace) ?? resolve(workspace);
+  if (real === undefined || real === lexical || real === root) return undefined;
+  if (!real.startsWith(`${root}/`)) return undefined;
+  return relative(root, real);
 }
 
 /**

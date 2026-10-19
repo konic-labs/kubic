@@ -33,7 +33,7 @@ isolation: these tools act on the real workspace.
 
 | Tool | Arguments (`?` = optional) | Notes |
 | --- | --- | --- |
-| `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. |
+| `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. A path a link leads outside the workspace is refused (see [Symlinks](#symlinks)). |
 | `ls` | `path?` (default `.`) | One directory, not recursive. Entries sorted by name, at most 500 (`truncated` + a `notice` naming the total when the cap stopped the listing). |
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
@@ -121,7 +121,18 @@ src/b.ts:3: // TODO remove
   `not_a_repo`, `symlink_escape`, `tool_failed` (and `unknown_tool` /
   `internal`).
 
-## Symlinked writes
+## Symlinks
+
+Reads follow a link only while it stays in the workspace: `read`, `ls`, and
+the `root` of `grep` and `find` resolve the path through its links first,
+and a path inside the workspace that a link leads outside it is refused with
+`error symlink_escape: read refused: '<path>' resolves to '<target>', outside
+the workspace` before anything is opened. A link that stays inside reads as
+its target, a dangling link fails as `not_found`, and a link loop fails
+without hanging. The walk of `grep` and `find` never follows a link below
+its root.
+
+### Symlinked writes
 
 `write` and `edit` follow symlinks instead of replacing them: the atomic tmp is
 written beside the **resolved** file and renamed onto it, so writing to a

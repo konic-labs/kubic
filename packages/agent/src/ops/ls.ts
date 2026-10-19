@@ -1,6 +1,7 @@
 // Ls operation.
 // Thin over ExecutionEnv.fs. replay:"safe" — listing has no side effects.
 
+import { refuseLinkEscape } from './links.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
 
@@ -62,6 +63,7 @@ export const lsOperation: Operation<LsArgs, LsResult> = {
   validateArgs: validateLsArgs,
   execute: async (_inv: ToolInvocation, args: LsArgs, ctx: OpContext) => {
     const path = args.path ?? '.';
+    refuseLinkEscape(ctx, 'ls', path);
     let names: string[];
     try {
       names = ctx.env.fs.listDir(path);

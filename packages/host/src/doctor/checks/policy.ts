@@ -131,7 +131,7 @@ export function detectionOnlyCheck(
   }
   if (posture.classes.filesystem !== 'none') {
     lexical.push(
-      `filesystem=${posture.classes.filesystem} is lexical path confinement — symlinks are not resolved and the shell can still read anything the command does not name`,
+      `filesystem=${posture.classes.filesystem} is lexical path confinement — the file tools refuse a path a symlink leads outside the workspace, but the shell can still read anything the command does not name`,
     );
   }
   if (effectiveCredentialLevel(posture.classes.credentials) === 'none') {

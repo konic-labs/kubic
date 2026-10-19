@@ -52,8 +52,9 @@ export interface FileSystem {
    * location the OS would actually open, so a tmp+rename lands beside the
    * real file instead of replacing the link with a regular file. The
    * lexical path is confined first; the RESULT is not (a link inside the
-   * workspace may point out — the caller decides, see `symlink_escape`
-   * in the agent's write path). Throws when the path does not exist.
+   * workspace may point out — the caller decides: the agent's file tools
+   * refuse such a path as `symlink_escape`, writes and reads alike). Throws
+   * when the path does not exist.
    * Optional so existing seams stay valid; absent = links resolve to
    * themselves (test doubles).
    */

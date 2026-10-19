@@ -7,6 +7,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { FileSystem } from '@kubic/exec/env';
 import type { JournalEntryInput } from '@kubic/exec/journal';
 import { HASH_CHUNK_BYTES } from '@kubic/exec/journal';
+import { inside, resolveThroughLinks } from './links.js';
 import type { OpContext } from './types.js';
 import { OpError } from './types.js';
 
@@ -196,10 +197,6 @@ interface WriteTarget {
   journalPath: string;
 }
 
-function inside(base: string, path: string): boolean {
-  return path === base || path.startsWith(base + sep);
-}
-
 // Root-relative, '/'-separated (the walk's key spelling), so a journaled
 // path keys exactly like the baseline entry for the same file.
 function rootKey(base: string, path: string): string {
@@ -248,33 +245,6 @@ function writeTarget(
       ? resolvedKey
       : path;
   return { target, journalPath };
-}
-
-// The physical spelling of `path`: every existing prefix resolved, the
-// components that do not exist yet appended verbatim (a write may create
-// them). undefined when the seam cannot resolve links at all, or when a
-// component fails for a reason other than "does not exist" — EACCES, ELOOP
-// — because guessing the verbatim path there could hide a link the OS would
-// follow. The caller then falls back to the named path, whose confinement
-// the seam enforces as before.
-function resolveThroughLinks(fs: FileSystem, path: string): string | undefined {
-  const realpath = fs.realpath;
-  if (realpath === undefined) return undefined;
-  let head = path;
-  const missing: string[] = [];
-  for (;;) {
-    try {
-      const real = realpath.call(fs, head);
-      return missing.length === 0 ? real : join(real, ...missing);
-    } catch (error) {
-      const code = (error as { code?: string } | null)?.code;
-      if (code !== 'ENOENT' && code !== 'ENOTDIR') return undefined;
-      const parent = dirname(head);
-      if (parent === head) return undefined;
-      missing.unshift(basename(head));
-      head = parent;
-    }
-  }
 }
 
 // A tmp name no other writer can collide with: beside the target (same

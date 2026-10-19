@@ -13,15 +13,18 @@
 // sandbox parsing): the last-argument target heuristic for tee/cp/mv/install,
 // and word-boundary `sudo` matching that deliberately over-triggers — a raised
 // capability becomes an ask, never a silent grant.
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   confinePath,
   defaultIsDestructive,
   isNetworkCommand,
 } from '@kubic/agent/lane/interceptors';
+import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import type { TriggerContext } from './triggers.js';
-import { detectTriggers } from './triggers.js';
+import { detectTriggers, triggerContextFor } from './triggers.js';
 
 const made: string[] = [];
 
@@ -466,5 +469,24 @@ describe('git argv bypass spellings', () => {
     'git --git-dir=/tmp/repo/.git push',
   ])('raises git-push for %s', (command) => {
     expect(detectTriggers('bash', { command }, ctx)).toEqual(['git-push']);
+  });
+});
+
+// A read through a link opens the link's target, so a credential file
+// reached through an innocently named link asks like the file itself. A
+// target outside the workspace is the tool's to refuse (symlink_escape).
+describe('credentials through a symlink', () => {
+  it('asks for a link inside the workspace to a credential file', () => {
+    const workspace = tempDir('creds-link-ws-');
+    writeFileSync(join(workspace, '.env'), 'TOKEN=x\n');
+    mkdirSync(join(workspace, 'docs'));
+    symlinkSync(join(workspace, '.env'), join(workspace, 'docs', 'notes'));
+    writeFileSync(join(workspace, 'plain.txt'), 'x\n');
+    symlinkSync(join(workspace, 'plain.txt'), join(workspace, 'alias'));
+    const linked = triggerContextFor(DEFAULT_PERMISSIONS, workspace, '/home/u');
+    expect(detectTriggers('read', { path: 'docs/notes' }, linked)).toEqual([
+      'credentials',
+    ]);
+    expect(detectTriggers('read', { path: 'alias' }, linked)).toEqual([]);
   });
 });

@@ -21,8 +21,9 @@ import type { FileSystem, StatInfo } from './contracts.js';
 function confine(cwd: string, path: string): string {
   // Lexical guardrail only: resolve() defeats `..` and absolute escapes but
   // does NOT resolve symlinks — a symlink inside the cwd can still point
-  // out. Acceptable: Kubic has no isolation, this is an accidental-
-  // escape guard, not a sandbox boundary.
+  // out, which the agent's file tools check for themselves through realpath
+  // (symlink_escape). Kubic has no isolation: this is an accidental-escape
+  // guard, not a sandbox boundary.
   const abs = resolve(cwd, path);
   if (abs === cwd || abs.startsWith(cwd + sep)) return abs;
   // The cwd itself may be reached through a symlink (macOS

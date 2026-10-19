@@ -57,7 +57,7 @@ export function doctorGroup(id: string): Group {
   ) {
     return 'runtime';
   }
-  if (id.startsWith('session:')) return 'project';
+  if (id.startsWith('session:') || id.startsWith('journal:')) return 'project';
   if (id.startsWith('policy:') || id.startsWith('audit:')) return 'policy';
   if (id.startsWith('limit:')) return 'limits';
   if (id === 'skills' || id.startsWith('skill:')) return 'skills';

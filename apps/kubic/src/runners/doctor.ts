@@ -101,6 +101,17 @@ export function doctorRunner(io: ProdRunnerIo): ProdRunners['doctor'] {
           : join(sessionsRoot, doctorSession),
       ),
       ...projectChecks(cliConfig),
+      // The paths the journal leaves out, with the layer that set them.
+      probeJournalCoverage: () => {
+        const outOfScope = cliConfig.runtime?.journal.outOfScope;
+        return outOfScope === undefined
+          ? undefined
+          : {
+              outOfScope,
+              source:
+                cliConfig.runtime?.sources['journal.outOfScope'] ?? 'defaults',
+            };
+      },
       ...(await sessionChecks(
         sessionsRoot,
         doctorSession,

@@ -93,3 +93,19 @@ export function statePermissionCheck(
       '600 a file to close it',
   };
 }
+
+// The paths `journal.outOfScope` leaves out of the journal: the baseline and
+// the end-of-run sweep skip them, so a change there is never journaled and
+// `kubic undo` cannot restore it.
+export function journalCoverageCheck(coverage: {
+  readonly outOfScope: readonly string[];
+  readonly source: string;
+}): DoctorCheck {
+  return {
+    id: 'journal:out-of-scope',
+    label: 'journal out of scope',
+    status: 'warn',
+    reason: 'ok',
+    detail: `journal.outOfScope (${coverage.source}) leaves ${coverage.outOfScope.length} path(s) out of the journal: ${coverage.outOfScope.join(', ')} — changes there are not journaled, and kubic undo cannot restore them`,
+  };
+}

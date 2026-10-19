@@ -121,13 +121,13 @@ key:
 ```
   ◆ trust        ~/src/app/.kubic/config.toml found — load project config?
                  This lets the project's own files take effect for runs here:
-                 its config.toml sets the model, approvals, permissions and
-                 journal retention, and its [verify] commands run as shell
-                 commands after each run; its models.json names provider URLs
-                 that are sent the key of any *_API_KEY or KUBIC_* variable it
-                 names (KUBIC_API_KEY by default); its project skills, role
-                 documents and [agent] systemPromptFile are instructions the
-                 model follows.
+                 its config.toml sets the model, approvals, permissions, journal
+                 retention and which paths the journal records, and its [verify]
+                 commands run as shell commands after each run; its models.json
+                 names provider URLs that are sent the key of any *_API_KEY or
+                 KUBIC_* variable it names (KUBIC_API_KEY by default); its
+                 project skills, role documents and [agent] systemPromptFile are
+                 instructions the model follows.
                  y  yes   n  not now   v  view file
 ```
 

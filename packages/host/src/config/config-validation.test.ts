@@ -224,6 +224,28 @@ describe('config validation hardening', () => {
     ).toThrow(/'journal': 'outOfScope' entry 2 is empty/);
   });
 
+  // An entry is a workspace-relative path the walk compares literally, so
+  // `./dist` and `dist/` read as `dist`; one that names the whole workspace
+  // would leave the journal recording nothing, and one outside it names
+  // nothing the journal walks — both are refused by name.
+  it('reads [journal] outOfScope entries as plain paths, refusing the whole workspace', () => {
+    expect(
+      parseTomlConfig(
+        '[journal]\noutOfScope = ["./dist", "build/", "a/./b//c"]\n',
+      ).journal?.outOfScope,
+    ).toEqual(['dist', 'build', 'a/b/c']);
+    for (const entry of ['.', './', 'a/..']) {
+      expect(() =>
+        parseTomlConfig(`[journal]\noutOfScope = ["${entry}"]\n`),
+      ).toThrow(/'journal': 'outOfScope' entry 1 names the whole workspace/);
+    }
+    for (const entry of ['..', '../x', '/etc']) {
+      expect(() =>
+        parseTomlConfig(`[journal]\noutOfScope = ["${entry}"]\n`),
+      ).toThrow(/'journal': 'outOfScope' entry 1 is outside the workspace/);
+    }
+  });
+
   it('rejects empty-string required values', () => {
     expect(() => parseTomlConfig('[agent]\nname = ""\n')).toThrow(
       /non-empty string/,

@@ -128,6 +128,11 @@ export interface DoctorDeps extends CliIo {
   probeStatePermissions?: () => StatePermissionProbe | undefined;
   // The platform the bash tool runs on; absent reads process.platform.
   readonly platform?: string;
+  // The paths `journal.outOfScope` leaves out of the journal, with the
+  // layer that set them. Absent or empty: no check.
+  probeJournalCoverage?: () =>
+    | { readonly outOfScope: readonly string[]; readonly source: string }
+    | undefined;
 }
 
 // The installed posture, described once in approvals/installed-policy.ts. Host owns the

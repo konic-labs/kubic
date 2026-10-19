@@ -19,6 +19,7 @@ import {
 } from './checks/policy.js';
 import {
   fullAccessSessionCheck,
+  journalCoverageCheck,
   sessionOverlapCheck,
   statePermissionCheck,
 } from './checks/sessions.js';
@@ -233,6 +234,13 @@ function sessionProbeChecks(deps: DoctorDeps): DoctorCheck[] {
         ),
     ),
   );
+  // Journal coverage: a non-empty `journal.outOfScope` takes the undo
+  // guarantee away from those paths, so it is named; nothing excluded adds
+  // no check.
+  const coverage = deps.probeJournalCoverage?.();
+  if (coverage !== undefined && coverage.outOfScope.length > 0) {
+    checks.push(journalCoverageCheck(coverage));
+  }
   // Repo-level session overlap: opt-in via the injected probe.
   if (deps.probeSessionOverlap !== undefined) {
     const probeSessionOverlap = deps.probeSessionOverlap;

@@ -441,7 +441,7 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['journal.outOfScope'],
-        text: 'Paths excluded from the baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`), plain paths only, empty entries refused by name.',
+        text: 'Paths excluded from the baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`). An entry is read as the plain path it names (`./dist` and `dist/` are `dist`); an empty entry, one that names the whole workspace (`.`) and one outside it (`../x`, `/abs`) are refused by name. A change under an excluded path is never journaled, so `kubic undo` cannot restore it: `kubic doctor` warns about every excluded path (`journal:out-of-scope`), and the trust question names journal coverage among what a project config sets.',
       },
     ],
   },

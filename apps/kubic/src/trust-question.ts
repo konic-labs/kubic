@@ -17,7 +17,7 @@ const HANGING = ' '.repeat(2 + 2 + LABEL + 1);
 // What a grant lets the project's files do — the same facts as the
 // one-line `confirm` question, the key risk included.
 const DISCLOSURE =
-  "This lets the project's own files take effect for runs here: its config.toml sets the model, approvals, permissions and journal retention, and its [verify] commands run as shell commands after each run; its models.json names provider URLs that are sent the key of any *_API_KEY or KUBIC_* variable it names (KUBIC_API_KEY by default); its project skills, role documents and [agent] systemPromptFile are instructions the model follows.";
+  "This lets the project's own files take effect for runs here: its config.toml sets the model, approvals, permissions, journal retention and which paths the journal records, and its [verify] commands run as shell commands after each run; its models.json names provider URLs that are sent the key of any *_API_KEY or KUBIC_* variable it names (KUBIC_API_KEY by default); its project skills, role documents and [agent] systemPromptFile are instructions the model follows.";
 
 /** The keys the question takes. */
 export const TRUST_KEYS = [

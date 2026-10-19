@@ -92,6 +92,42 @@ describe('state permissions', () => {
   });
 });
 
+// A non-empty journal.outOfScope removes the undo guarantee for those
+// paths, so doctor names them where the other honest limits are.
+describe('journal coverage', () => {
+  it('warns with the excluded paths, and adds no check when nothing is excluded', async () => {
+    const run = async (paths: string[]) => {
+      const lines: string[] = [];
+      const code = (
+        await runDoctorCommand(
+          { json: true },
+          {
+            ...cleanDeps((line: string) => lines.push(line)),
+            probeJournalCoverage: () => ({
+              outOfScope: paths,
+              source: 'project',
+            }),
+          },
+        )
+      ).exitCode;
+      const report = JSON.parse(lines.join('\n')) as {
+        checks: Array<{ id: string; status: string; detail: string }>;
+      };
+      return {
+        code,
+        check: report.checks.find((c) => c.id === 'journal:out-of-scope'),
+      };
+    };
+    const { code, check } = await run(['dist', 'src']);
+    expect(code).toBe(0);
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toBe(
+      'journal.outOfScope (project) leaves 2 path(s) out of the journal: dist, src — changes there are not journaled, and kubic undo cannot restore them',
+    );
+    expect((await run([])).check).toBeUndefined();
+  });
+});
+
 describe('doctor probes run once and --skip clears aggregates', () => {
   function refusedConfigDeps(out: (line: string) => void): DoctorDeps {
     return {

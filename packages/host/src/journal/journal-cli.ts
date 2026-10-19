@@ -10,19 +10,27 @@
 //
 // Exit codes (docs/cli/exit-codes.md): 0 success (including empty diff and
 // clean dry-run), 2 a usage error (thrown as CliUsageError: bad --session
-// id, conflicting store selectors, bad --max-content-bytes), 1 an `undo`
-// that completed with skipped steps (the partial outcome has
-// its own code and never reuses the usage one) or any IO failure
-// (propagated to the root catch-all).
+// id, conflicting store selectors, bad --max-content-bytes), 1 an unknown
+// --session, an `undo` that completed with skipped steps (the partial
+// outcome has its own code and never reuses the usage one) or any IO
+// failure (propagated to the root catch-all).
 
+import { join } from 'node:path';
 import type { CommandResult, ExitCode } from '@kubic/core/cli/exit-codes';
-import { CliUsageError, EXIT_OK, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
+import {
+  CliUsageError,
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '@kubic/core/cli/exit-codes';
 import type { CliLogger } from '@kubic/core/cli/logger';
 import { createLineLogger } from '@kubic/core/cli/logger';
 import { formatJson } from '@kubic/core/cli/output';
 import { renderTable } from '@kubic/core/cli/table';
 import type { CliTheme } from '@kubic/core/cli/theme';
 import { createCliTheme } from '@kubic/core/cli/theme';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   clipChangeContent,
   DEFAULT_MAX_CONTENT_BYTES,
@@ -59,6 +67,18 @@ function loggerFor(deps: JournalCommandDeps): CliLogger {
   });
 }
 
+// Whether `<sessionsRoot>/<id>` holds what a journal command reads: the
+// session's storage (the rule attaching a session uses) or its journal.
+function isRecordedSession(deps: JournalCommandDeps, id: string): boolean {
+  const bridge = createNodeFileBridge(
+    deps.sessionsRoot ?? defaultSessionsRoot(),
+  );
+  return (
+    bridge.exists(join(id, 'main.jsonl')) ||
+    bridge.exists(join(id, 'journal', 'index.jsonl'))
+  );
+}
+
 export async function runJournalCommand(
   request: JournalRequest,
   deps: JournalCommandDeps,
@@ -84,6 +104,30 @@ export async function runJournalCommand(
   const resolved = await resolveJournalDir(deps, root, request.session);
   const json = request.json === true;
   const log = loggerFor(deps);
+  // An explicit --session must name a session or its journal, as `kubic cost
+  // --session` requires a session: a misspelt id is a refusal for every
+  // journal command, never an empty diff or log that reads as success.
+  if (
+    request.session !== undefined &&
+    resolved.sessionId !== undefined &&
+    !isRecordedSession(deps, resolved.sessionId)
+  ) {
+    const id = redactSecretShapes(resolved.sessionId);
+    const message = `unknown session: ${id}`;
+    log.error(message);
+    if (json) {
+      deps.out(
+        formatJson({
+          ok: false,
+          exitCode: EXIT_FAILED,
+          session: id,
+          root: null,
+          error: { code: 'unknown_session', message },
+        }),
+      );
+    }
+    return { exitCode: EXIT_FAILED };
+  }
   // A session store is named — with the workspace its
   // paths resolve against — before any subcommand output, so the
   // resolution is never silent. It is a diagnostic (stderr), and `--json`

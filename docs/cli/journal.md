@@ -56,7 +56,14 @@ one store, resolved in this order:
    from any cwd, and it always operates on **the session's own recorded
    workspace** (the cwd the session was created in): `kubic undo --session
    <id>` run from another project restores files under the session's
-   workspace, never under the current directory.
+   workspace, never under the current directory. An id that names no
+   session — no session storage and no journal at
+   `<sessions-root>/<id>/` — is refused by every journal command alike:
+   `error: unknown session: <id>` on stderr, exit 1, nothing read or
+   written, and under `--json` one failure document on stdout,
+   `{"ok": false, "exitCode": 1, "session": "<id>", "root": null, "error":
+   {"code": "unknown_session", "message": "unknown session: <id>"}}`,
+   never an empty `diff` or `log` that reads as success.
 2. Without `--session`, the workspace store `<root>/.kubic/journal` (the
    legacy per-directory store, which no run writes to) when it is
    non-empty.
@@ -350,8 +357,8 @@ prune <time> <op> <path>`) and deletes nothing.
     naming the env var.
 - **The checks run in this order, and the first failing one decides the exit.**
   (1) A window that is not a non-negative integer of days: exit 2. (2) An
-  explicit `--session` that does not exist: exit 1 (`unknown session: <id>`), as
-  `kubic cost --session` does, and nothing is created. (3) A session attached by
+  explicit `--session` that names no session: exit 1 (`unknown session: <id>`),
+  the rule every journal command applies, and nothing is created. (3) A session attached by
   a live pid (its session lock): exit 1 with one `error:` line, on a dry run too
   and for every window, `--keep-days 0` included. This is the rule `kubic undo`
   applies; the workspace journal has no session lock and is pruned directly.

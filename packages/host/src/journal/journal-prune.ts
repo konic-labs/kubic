@@ -5,10 +5,8 @@ import type { ExitCode } from '@kubic/core/cli/exit-codes';
 import { EXIT_FAILED, EXIT_OK } from '@kubic/core/cli/exit-codes';
 import { formatJson } from '@kubic/core/cli/output';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
-import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { JournalEntry } from '@kubic/exec/journal';
 import { MS_PER_DAY } from '../config/index.js';
-import { defaultSessionsRoot } from '../sessions/index.js';
 import type { JournalPruneOptions, JournalRun } from './journal-run.js';
 import { lockHolderOf } from './journal-run.js';
 
@@ -45,20 +43,8 @@ export function journalPrune(
   const { deps, store, resolved } = run;
   const json = request.json === true;
   const yes = request.yes === true;
-  // An explicit session must exist, as `kubic cost --session` requires: a
-  // misspelt id is a refusal, never an empty prune that reads as success.
-  if (
-    request.session !== undefined &&
-    resolved.sessionId !== undefined &&
-    !createNodeFileBridge(deps.sessionsRoot ?? defaultSessionsRoot()).exists(
-      resolved.sessionId,
-    )
-  ) {
-    run.log.error(`unknown session: ${redactSecretShapes(resolved.sessionId)}`);
-    return EXIT_FAILED;
-  }
-  // Then a live run: refused before the window is read, for every window and
-  // on a dry run too.
+  // A live run is refused before the window is read, for every window and on
+  // a dry run too (an unknown --session was refused before this command).
   if (resolved.sessionId !== undefined) {
     const holder = lockHolderOf(deps, resolved);
     if (holder !== undefined) {

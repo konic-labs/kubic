@@ -58,8 +58,11 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   clean dry-run); 2 usage errors — unknown option, missing option value,
   a `--max-content-bytes` that is not a non-negative integer, an extra
   operand, an invalid or conflicting `--session` — with one `error:` line
-  on stderr and nothing touched; 1 an unexpected IO failure (root
-  catch-all). `undo` also exits **1** when it restored but skipped steps. Three skip classes reach that code:
+  on stderr and nothing touched; 1 an unknown `--session` (`error: unknown
+  session: <id>`, and under `--json` one failure document with `ok: false`,
+  `exitCode: 1` and `error: {code: "unknown_session", message}`) or an
+  unexpected IO failure (root catch-all). `undo` also exits **1** when it
+  restored but skipped steps. Three skip classes reach that code:
   `non-reversible (skipped)` — entries an end-of-run reconciliation sweep
   appended (`unattributed`) with no retrievable pre-image (the exceptions
   are a path clean against the git index at boot — the sweep restores its

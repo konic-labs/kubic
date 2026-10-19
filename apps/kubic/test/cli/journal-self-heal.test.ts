@@ -322,7 +322,7 @@ describe('read-time journal self-heal', () => {
     expect(indexLines(journalDir)).toHaveLength(2);
   });
 
-  it('a missing session journal stays a pure read and invalid ids stay refused', async () => {
+  it('an unknown session is refused without a write, and invalid ids stay refused', async () => {
     const sessionsRoot = tempDir('sess-root-');
     const root = tempDir('ws-');
     const loaded = loadedWithRetention('7');
@@ -339,9 +339,9 @@ describe('read-time journal self-heal', () => {
         },
       )
     ).exitCode;
-    expect(code).toBe(0);
-    expect(o.lines).toContain('journal is empty');
-    // Enforcement on a store with no index writes nothing — not even the dir.
+    expect(code).toBe(1);
+    expect(o.lines.join('\n')).toContain('unknown session: ghost');
+    // Refused before any store is opened: nothing is written, not the dir.
     expect(existsSync(join(sessionsRoot, 'ghost'))).toBe(false);
 
     const bad = out();

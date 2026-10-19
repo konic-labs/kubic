@@ -180,14 +180,19 @@ function sanitizePrefix(prefix: string): string {
 export function createNodeFileBridge(cwd: string): FileBridge {
   const absolutePath = (path: string): string => resolve(cwd, path);
   const ensureParent = (abs: string, mode?: number): void => {
-    // `mode` is for state directories (0700) and applies only to
-    // directories this call creates; a workspace write keeps the umask
-    // default, because a user's new directory is not Kubic's to make private.
+    // `mode` is the file's creation mode; the directories this call creates
+    // take it with the search bit wherever it can be read (0600 → 0700), so
+    // a private file's new parent is private and still traversable. A
+    // workspace write keeps the umask default, because a user's new
+    // directory is not Kubic's to make private.
     if (mode === undefined) {
       mkdirSync(dirname(abs), { recursive: true });
       return;
     }
-    mkdirSync(dirname(abs), { recursive: true, mode });
+    mkdirSync(dirname(abs), {
+      recursive: true,
+      mode: mode | ((mode & 0o444) >> 2),
+    });
   };
   return {
     cwd,

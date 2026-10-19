@@ -62,8 +62,13 @@ accepts, returns and bounds is on the [tools page](../cli/tools.md).
   (`[A-Za-z0-9_-]`), refused before any path join.
 - **Session bytes cross the I/O seam.** The storage is opened over the
   exec file bridge, so file modes (`0700` directories, `0600` files) and
-  secret scrubbing apply to the session JSONL. Session JSONL is not
-  fsynced; the change journal is the store that is.
+  secret scrubbing apply to the session JSONL. Every write path keeps the
+  mode — creation, append, and the tmp + rename of a rewrite, which sets
+  the destination `0600` once it is in place — and the run's span artifact,
+  trajectory and journal baseline are written `0600` too
+  (`apps/kubic/test/run/session-file-modes.test.ts` walks a real run's
+  session). Session JSONL is not fsynced; the change journal is the store
+  that is.
 - **Every transcript reader goes through one adapter**
   (`lane/transcript.ts`). `readSessionEntries` reads a session without a
   harness, a model layer or a write.

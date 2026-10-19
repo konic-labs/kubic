@@ -3,7 +3,7 @@
 // 1.0 `FileSystem` adds `id`, `truncateFile` and `flushFile`; the adapter must
 // implement the whole interface over the exec bridge, and the portable JSONL
 // storage core must be able to run its whole contract through it.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeFileBridge, type FileBridge } from '@kubic/exec/file-bridge';
@@ -47,6 +47,23 @@ describe('bridgeToPiFileSystem 1.0 surface', () => {
       'node:local',
     );
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'leaves a renamed file private even when its tmp was loose',
+    async () => {
+      const root = scratch('session-fs-');
+      const bridge = createNodeFileBridge(root);
+      bridge.writeFile('doc.jsonl.tmp', 'x\n', { mode: 0o644 });
+      const fs = bridgeToPiFileSystem(bridge);
+      const renamed = await fs.renameFile(
+        'doc.jsonl.tmp',
+        'doc.jsonl',
+        BACKGROUND_CONTEXT,
+      );
+      if (!renamed.ok) throw renamed.error;
+      expect(statSync(join(root, 'doc.jsonl')).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it('truncates a file to exactly the requested size', async () => {
     const { fs } = setup({ 'a.txt': 'keep\ndrop\n' });

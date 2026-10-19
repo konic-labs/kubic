@@ -346,12 +346,18 @@ export function redactBridgeWrites(
     ...bridge,
     writeFile: (path, content, options) =>
       bridge.writeFile(path, scrub(content), options),
-    appendFile: (path, content) => bridge.appendFile(path, scrub(content)),
+    // The options carry the creation mode: dropping them made every file
+    // the session store creates by appending world-readable.
+    appendFile: (path, content, options) =>
+      bridge.appendFile(path, scrub(content), options),
     ...(durable === undefined
       ? {}
       : {
-          appendDurably: (path: string, content: string | Uint8Array) =>
-            durable(path, scrub(content)),
+          appendDurably: (
+            path: string,
+            content: string | Uint8Array,
+            options?: { mode?: number },
+          ) => durable(path, scrub(content), options),
         }),
   };
 }

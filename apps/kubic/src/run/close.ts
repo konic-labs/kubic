@@ -103,6 +103,7 @@ function flushSpans(state: RunState, boot: SessionBoot): void {
     boot.bridge.appendFile(
       join(boot.id, 'spans.jsonl'),
       serializeSpanArtifact(state.spans.trace(), state.runSpan, boot.id),
+      { mode: 0o600 },
     );
   } catch {
     // Telemetry must never mask the run's own result: a failed artifact

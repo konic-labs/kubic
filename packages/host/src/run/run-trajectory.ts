@@ -422,6 +422,9 @@ export function writeRunTrajectory(
   exported: TrajectoryExport,
 ): string {
   const path = join(sessionId, TRAJECTORY_FILE);
-  bridge.writeFile(path, `${JSON.stringify(exported, null, 2)}\n`);
+  // Private like the rest of the session: it holds the whole run.
+  bridge.writeFile(path, `${JSON.stringify(exported, null, 2)}\n`, {
+    mode: 0o600,
+  });
   return bridge.absolutePath(path);
 }

@@ -45,7 +45,9 @@ a cwd guardrail against accidental escapes, not a sandbox boundary.
   [journal README](../../packages/exec/src/journal/README.md).
 - **State is private.** Journal and session-state directories are created
   `0700` and their files `0600`; a mode applies only where a path is
-  created, and a restore keeps the target's own mode.
+  created, and a restore keeps the target's own mode. A directory the
+  bridge creates for a file takes the file's mode with the search bit
+  added wherever it can be read, so a `0600` file's new parent is `0700`.
 - **The fake shell is strict.** `FakeExecutionEnv` throws on an argv with
   no scripted answer unless a test opts out with
   `{ allowUnscripted: true }`, and scripts can match the exact argv array

@@ -1,10 +1,10 @@
 // Runtime config load at the composition root.
 //
-// One call turns the seven config layers into the values the product
+// One call turns the six config layers into the values the product
 // actually runs on: provider/model selection, approval policy + routes,
 // permission classes and journal retention.
 // Precedence: enterprise > product > global > project (trust-gated) >
-// workspace > session > agent, then the documented env overrides, then an
+// session > agent, then the documented env overrides, then an
 // explicit CLI flag. The first layer to set a leaf owns it; every attempt to override a
 // set leaf is reported in `overriddenAttempts`, never applied.
 //
@@ -435,7 +435,10 @@ function journalFrom(
   return {
     journal: {
       ...(retentionDays === undefined ? {} : { retentionDays }),
-      ...(retentionDays === undefined
+      // 0 is retention off, the reading `kubic journal prune --keep-days 0`
+      // has: no age bound is installed. A bound of 0 ms would drop every
+      // entry on the next append.
+      ...(retentionDays === undefined || retentionDays === 0
         ? {}
         : { maxAgeMs: retentionDays * MS_PER_DAY }),
       ...(config.journal?.maxBytes === undefined

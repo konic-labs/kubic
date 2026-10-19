@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import type { BridgeFileInfo, FileBridge } from '../file-bridge.js';
 import { flushDurably } from './flush.js';
 import type { JournalEntry, JournalIndexRead, JournalSource } from './types.js';
+import { JOURNAL_RECORD_VERSION } from './types.js';
 
 // An index line written before entries carried `source` names its writer by
 // the agent id it was recorded under, and the sweep flags its entries
@@ -22,6 +23,11 @@ function withSource(parsed: unknown): JournalEntry {
         ? 'sweep'
         : 'tool';
   return { ...entry, source } as unknown as JournalEntry;
+}
+
+/** One index line: the entry, stamped with the record version. */
+export function serializeEntry(entry: JournalEntry): string {
+  return JSON.stringify({ v: JOURNAL_RECORD_VERSION, ...entry });
 }
 
 // The index's tail, as `readTail` reports it: `size` is the
@@ -52,6 +58,9 @@ export class IndexFile {
   // slow pass — the bound covers the whole store, so an unaccounted index
   // cannot be proven under it.
   bytes: number | null = null;
+  // The lines of the last read whose record version this build cannot
+  // interpret, verbatim: a rewrite of the same file keeps them.
+  private unknownLines: string[] = [];
 
   constructor(path: string, durable: boolean) {
     this.path = path;
@@ -62,8 +71,9 @@ export class IndexFile {
   // lines dropped on the way.
   read(bridge: FileBridge): JournalIndexRead {
     const out: JournalEntry[] = [];
+    this.unknownLines = [];
     if (!bridge.exists(this.path)) {
-      return { entries: out, corruptLines: 0 };
+      return { entries: out, corruptLines: 0, unknownVersionLines: 0 };
     }
     let corruptLines = 0;
     for (const line of bridge.readTextFile(this.path).split('\n')) {
@@ -78,9 +88,21 @@ export class IndexFile {
         corruptLines++;
         continue;
       }
+      if (typeof parsed === 'object' && parsed !== null) {
+        const { v, ...entry } = parsed as Record<string, unknown>;
+        if (v !== undefined && v !== JOURNAL_RECORD_VERSION) {
+          this.unknownLines.push(line);
+          continue;
+        }
+        parsed = entry;
+      }
       out.push(withSource(parsed));
     }
-    return { entries: out, corruptLines };
+    return {
+      entries: out,
+      corruptLines,
+      unknownVersionLines: this.unknownLines.length,
+    };
   }
 
   // Append one index line. The line is written as ONE append
@@ -151,9 +173,11 @@ export class IndexFile {
     const tmp = `${this.path}.${process.pid}.tmp`;
     // The same serialization is measured and written, so the
     // tracked index size after the rewrite is exact.
-    const serialized =
-      kept.map((e) => JSON.stringify(e)).join('\n') +
-      (kept.length > 0 ? '\n' : '');
+    // A line of another record version is kept as it was: this build
+    // cannot judge its age or size, and must not destroy it. The rewrite only
+    // runs while the file is still the one read, so these are its lines.
+    const lines = [...kept.map(serializeEntry), ...this.unknownLines];
+    const serialized = lines.join('\n') + (lines.length > 0 ? '\n' : '');
     bridge.writeFile(tmp, serialized, { mode: 0o600 });
     try {
       const sizeNow = this.fileSize(bridge);

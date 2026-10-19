@@ -94,7 +94,7 @@ describe('policy:detection-only and enterprise checks', () => {
         },
       )
     ).exitCode;
-    // The unenforceable allowlist (no domains) is a fail, so the exit flips.
+    // An unenforced network_policy is a fail, so the exit flips.
     expect(code).toBe(1);
     const report = JSON.parse(lines.join('\n')) as {
       checks: Array<{
@@ -109,7 +109,7 @@ describe('policy:detection-only and enterprise checks', () => {
     );
     expect(network?.status).toBe('fail');
     expect(network?.reason).toBe('policy-mismatch');
-    expect(network?.detail).toContain('no domains');
+    expect(network?.detail).toContain('network_policy is not enforced');
     expect(report.checks.map((entry) => entry.id)).toContain(
       'policy:enterprise-enforceability',
     );
@@ -189,6 +189,8 @@ describe('runDoctorCommand', () => {
       'policy:approvals',
       // Private-state posture is part of the matrix.
       'state:permissions',
+      // Which platform the shell guards cover.
+      'platform:shell',
       // License identity rides the same command.
       'license:kubic',
       // Honest-limits registration rides the same command.
@@ -206,6 +208,34 @@ describe('runDoctorCommand', () => {
       expect(text).toContain(check.id);
       expect(text).toContain(check.status.toUpperCase());
     }
+  });
+
+  it('says which platform the shell guards cover, and that Windows is refused', async () => {
+    const reportFor = async (platform: string) => {
+      const lines: string[] = [];
+      const code = (
+        await runDoctorCommand(
+          { json: true },
+          { ...cleanDeps((line: string) => lines.push(line)), platform },
+        )
+      ).exitCode;
+      const report = JSON.parse(lines.join('\n')) as {
+        checks: Array<{ id: string; status: string; reason: string }>;
+      };
+      return {
+        code,
+        check: report.checks.find((check) => check.id === 'platform:shell'),
+      };
+    };
+    expect(await reportFor('linux')).toMatchObject({
+      code: 0,
+      check: { status: 'pass', reason: 'ok' },
+    });
+    // A warn: the platform is reported, never a failed exit.
+    expect(await reportFor('win32')).toMatchObject({
+      code: 0,
+      check: { status: 'warn', reason: 'unsupported-platform' },
+    });
   });
 
   it('provider-down fails distinct with exit 6 in text and --json', async () => {

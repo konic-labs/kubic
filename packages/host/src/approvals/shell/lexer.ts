@@ -82,22 +82,17 @@ export function nextPlainToken(
 // whitespace or a `|;&<>` operator character.
 export const REDIRECT = /(&>>?|>\||>>?&?)[ \t]*([^\s|;&<>]*)/g;
 export const FD_DUPLICATION = /^(\d+|-)$/;
-// tee writes its last argument verbatim — the same class as a `>` redirect,
-// so `cat x | sudo tee /etc/cron.d/y` must raise outside-write even though
-// no redirect fires. Every command segment is scanned (a `|;&` cannot be
-// crossed), so `cp a /etc/b && echo done` cannot hide the write just
-// because it is not the tail segment. Only the FINAL named target of the
-// segment is checked — `tee /etc/x a.txt` writes `/etc/x` and is a
-// documented SILENT miss: the heuristic's errors are mostly over-triggers
-// (a raise becomes an ask, never a silent grant), but NOT uniformly so —
-// the target rules above are the stated exceptions.
-export const TEE_TARGET = /\btee\b([^|;&]*)/gi;
-// cp/mv/install: the FINAL positional argument is the destination — the
-// last-argument heuristic (flags and sources come first). It can point at
-// the wrong token when flags reorder arguments (`cp -t /etc a b`); that
-// limit is stated here and in docs/cli/configuration.md, not silently
-// implied to be exact.
-export const COPY_TARGET = /\b(cp|mv|install)\b([^|;&]*)/gi;
+// A `tee`, `cp`, `mv` or `install` word ANYWHERE in a command — quoted
+// context included, so `bash -c 'cp a /etc/x'` is seen — has the last word of
+// its segment checked as a write target (the last-argument heuristic: flags
+// and sources come first). Every command segment is scanned (a `|;&` or a
+// line break cannot be crossed), so `cp a /etc/b && echo done` cannot hide
+// the write just because it is not the tail segment. The writer table
+// (write-commands.ts) reads the same commands by their options for the
+// command a segment runs — `cp -t /etc a b`, every target of `tee /etc/x
+// a.txt` — so this scan only ever adds what the table cannot see.
+export const TEE_TARGET = /\btee\b([^|;&\n\r]*)/gi;
+export const COPY_TARGET = /\b(cp|mv|install)\b([^|;&\n\r]*)/gi;
 // Command indirection: a destructive/network verb inside
 // `$(…)`, backticks, or after `eval` raises the UNDERLYING capability
 // instead of staying silent. The matcher layer documents indirection as
@@ -210,33 +205,49 @@ export function stripQuotes(target: string): string {
   return target.replace(/^['"]+/, '').replace(/['"]+$/, '');
 }
 
-// The write target of a detector segment: the last whitespace-separated
-// token (last-argument heuristic; segmentEnd is the segment's absolute end
-// index in the raw command, so token characters tie back to command
-// positions). Quotes and backslash escapes always come off, wherever they sit
-// in the token (`".."/x`, `.."/x"`, `\../x` all name `../x`; — the
-// same shell reading the control-plane targets get). A trailing delimiter
-// comes off ONLY when it is the closing `)` of a `$(…)` span the token was
-// lifted from — `$(cp a /work)` names `/work`, because that `)` is
-// substitution syntax, not path text — and then exactly the recorded
-// closer comes off, never a character that merely looks like one. Plain
-// tokens are never trimmed: `tee /work]` names `/work]` and still raises.
-// The outside check itself stays path-boundary aware (`/work-evil` is not
-// `/work`): quote stripping narrows a token to the path it names, and the
-// closer trim removes substitution glue only.
+// The write target of a detector segment: its last word (last-argument
+// heuristic; segmentEnd is the segment's absolute end index in the raw
+// command, so token characters tie back to command positions). Words are read
+// quote-aware (`"/etc/my dir/x"` is one word), a word starting with `#` opens
+// a comment that ends the reading, and a redirection is not an argument —
+// `cp a /etc/x 2>/dev/null` names `/etc/x`, and an operator standing alone
+// takes its target word with it. Quotes and backslash escapes always come
+// off, wherever they sit in the word (`".."/x`, `.."/x"`, `\../x` all name
+// `../x`; — the same shell reading the control-plane targets get). A trailing
+// delimiter comes off ONLY when it is the closing `)` of a `$(…)` span the
+// word was lifted from — `$(cp a /work)` names `/work`, because that `)` is
+// substitution syntax, not path text — and then exactly the recorded closer
+// comes off, never a character that merely looks like one. Plain words are
+// never trimmed: `tee /work]` names `/work]` and still raises. The outside
+// check itself stays path-boundary aware (`/work-evil` is not `/work`): quote
+// stripping narrows a word to the path it names, and the closer trim removes
+// substitution glue only.
 export function targetToken(
   segment: string,
   segmentEnd: number,
   spanClosers: ReadonlySet<number>,
 ): string {
-  const trimmed = segment.replace(/\s+$/, '');
-  const raw = trimmed.split(/\s+/).pop() ?? '';
-  const end = segmentEnd - (segment.length - trimmed.length);
+  let last: ShellToken | undefined;
+  for (
+    let token = nextShellToken(segment, 0);
+    token !== undefined;
+    token = nextShellToken(segment, token.end)
+  ) {
+    if (token.text.startsWith('#')) break;
+    const redirect = REDIRECT_WORD.exec(token.text);
+    if (redirect === null) {
+      last = token;
+    } else if (redirect[0].length === token.text.length) {
+      token = nextShellToken(segment, token.end) ?? token;
+    }
+  }
+  if (last === undefined) return '';
+  const end = segmentEnd - segment.length + last.end;
   let cut = 0;
-  while (cut < raw.length && spanClosers.has(end - 1 - cut)) {
+  while (cut < last.text.length && spanClosers.has(end - 1 - cut)) {
     cut += 1;
   }
-  return shellUnquote(raw.slice(0, raw.length - cut));
+  return shellUnquote(last.text.slice(0, last.text.length - cut));
 }
 
 // A path the shell would expand from the home directory — `~`, `$HOME`,
@@ -285,7 +296,7 @@ export const ALL_REDIRECT_TARGETS = />{1,2}([|&])?\s*([^\s|;&<>()]+)/g;
 // rm/mv operands: the whole argument run of the segment (flags are dropped by
 // the caller). Sources are included because removing or moving state is a
 // write to it.
-export const REMOVE_MOVE_OPERANDS = /\b(rm|mv)\b([^|;&]*)/gi;
+export const REMOVE_MOVE_OPERANDS = /\b(rm|mv)\b([^|;&\n\r]*)/gi;
 
 // A bash token as the shell reads it: quotes come off wherever they sit
 // (`".kubic"/roles`, `.k"ub"ic`) and a backslash escapes the next character

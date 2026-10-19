@@ -229,7 +229,7 @@ describe('journal CLI workspace binding', () => {
     expect(code).toBe(0);
     expect(lines).toEqual(['no changes']);
     expect(errs).toEqual([
-      `info: no journal under ${join(elsewhere, '.kubic', 'journal')} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
+      `info: no session journal recorded for this workspace under the sessions root (${sessionsRoot}) — start a run or pass --session`,
     ]);
   });
 
@@ -275,7 +275,7 @@ describe('journal CLI workspace binding', () => {
       dryRun: true,
     });
 
-    // A workspace store (no session) reports session null and the cwd.
+    // No journal recorded here: session null and the cwd.
     const plain = tempDir('journal-cli-ws-plain-');
     const none = await run(
       { command: 'status', json: true },

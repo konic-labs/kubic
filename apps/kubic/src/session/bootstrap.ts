@@ -331,7 +331,8 @@ export class SessionBoot {
   // selection, the policy (before the lane boots), the journal baseline,
   // the skills, and the lane.
   async boot(): Promise<BootRefusal | undefined> {
-    this.bridge.createDir(join(this.id, 'journal'));
+    // Private like the session around it: the journal holds file content.
+    this.bridge.createDir(join(this.id, 'journal'), true, 0o700);
     if (this.request.cancelled?.() === true) return { kind: 'cancelled' };
     const role = resolveBootRole(this);
     if (role !== undefined && 'kind' in role) return role;

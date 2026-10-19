@@ -27,7 +27,11 @@ import {
   summarizeRequest,
 } from './request.js';
 import type { ApprovalService } from './service.js';
-import { detectTriggers, triggerContextFor } from './triggers.js';
+import {
+  detectTriggers,
+  outsideFileWriteRefusal,
+  triggerContextFor,
+} from './triggers.js';
 
 export interface DecisionRecorder {
   ledgerDir: string;
@@ -92,6 +96,16 @@ export async function judge(
   );
   if (refusal !== undefined) {
     return d.recorder.deny(KUBIC_STATE_WRITE, call.toolName, refusal);
+  }
+  // A file-tool write outside the workspace cannot run whatever the answer,
+  // so it is refused the same way, before any posture or ask.
+  const outside = outsideFileWriteRefusal(
+    call.toolName,
+    call.args,
+    d.input.workspace,
+  );
+  if (outside !== undefined) {
+    return d.recorder.deny('outside-write', call.toolName, outside);
   }
   const detected = detectTriggers(
     call.toolName,

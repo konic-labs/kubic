@@ -242,8 +242,14 @@ describe('allow all edits this turn', () => {
     });
     try {
       const ends = await r.turn('go');
-      expect(r.asks.map((ask) => ask.capability)).toContain('outside-write');
-      expect(JSON.stringify(ends[1])).toContain('not approved');
+      // Refused by name before any ask: the file tools cannot write outside
+      // the workspace, so no answer could cover it.
+      expect(r.asks.map((ask) => ask.capability)).not.toContain(
+        'outside-write',
+      );
+      const outside = JSON.stringify(ends[1]);
+      expect(outside).toContain('not approved');
+      expect(outside).toContain('outside the workspace');
     } finally {
       await r.lane.cleanup();
     }

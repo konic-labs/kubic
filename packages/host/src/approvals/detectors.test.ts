@@ -323,10 +323,19 @@ describe('privilege escalation + indirection', () => {
     expect(
       detectTriggers(
         'bash',
-        { command: 'python3 -c "import os; os.system(\'rm -rf /\')"' },
+        { command: 'python3 -c "import shutil; shutil.rmtree(\'/\')"' },
         ctx,
       ),
     ).toEqual([]);
+    // An rm word after a `(` reads as a command, quoted or not, so this one
+    // raises: the scan is lexical, and an over-trigger is an ask.
+    expect(
+      detectTriggers(
+        'bash',
+        { command: 'python3 -c "import os; os.system(\'rm -rf /\')"' },
+        ctx,
+      ),
+    ).toEqual(['destructive-shell']);
     expect(
       detectTriggers(
         'bash',

@@ -358,7 +358,9 @@ function turnSpans(boot: SessionBoot, id: string): TuiLaneBoot['turnSpans'] {
     turns: new TurnSpans(id),
     write: (artifact: string): void => {
       try {
-        boot.bridge.appendFile(join(id, 'spans.jsonl'), artifact);
+        boot.bridge.appendFile(join(id, 'spans.jsonl'), artifact, {
+          mode: 0o600,
+        });
       } catch {
         // A failed artifact write is not a turn failure.
       }

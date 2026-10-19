@@ -48,7 +48,7 @@ level = "privileged"
 // The live loader, given the composition root's inputs for this home and project.
 function loadRuntime(
   bridge: BridgePick,
-  options: { projectTrusted?: boolean; workspaceRoot?: string } = {},
+  options: { projectTrusted?: boolean } = {},
 ) {
   return loadRuntimeConfig({
     bridge,
@@ -59,20 +59,16 @@ function loadRuntime(
     ...(options.projectTrusted === undefined
       ? {}
       : { projectTrusted: options.projectTrusted }),
-    ...(options.workspaceRoot === undefined
-      ? {}
-      : { workspaceRoot: options.workspaceRoot }),
   });
 }
 
 describe('config layers', () => {
-  it('orders precedence Enterprise > Product > Global > Project > Workspace > Session > Agent', () => {
+  it('orders precedence Enterprise > Product > Global > Project > Session > Agent', () => {
     expect(CONFIG_LAYERS).toEqual([
       'enterprise',
       'product',
       'global',
       'project',
-      'workspace',
       'session',
       'agent',
     ]);
@@ -89,8 +85,7 @@ describe('config layers', () => {
       ['enterprise', 'product'],
       ['product', 'global'],
       ['global', 'project'],
-      ['project', 'workspace'],
-      ['workspace', 'session'],
+      ['project', 'session'],
       ['session', 'agent'],
     ];
     for (const [higher, lower] of pairs) {

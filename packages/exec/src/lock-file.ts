@@ -9,7 +9,9 @@
 import {
   chmodSync,
   linkSync,
+  lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -44,6 +46,7 @@ export function createLockFile(path: string, payload: string): boolean {
  * group- or world-accessible — what `kubic doctor` warns about and what the
  * next open tightens. undefined when the path is missing, unreadable, or
  * already private, so a probe never invents a finding.
+ * @internal
  */
 export function looseStateDirMode(path: string): number | undefined {
   // Windows cannot change the mode it reports, so a warn there would name a
@@ -73,6 +76,91 @@ export function tightenStateDir(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+interface LooseStateEntry {
+  readonly path: string;
+  readonly mode: number;
+  /** 0o700 for a directory, 0o600 for a file. */
+  readonly expected: number;
+}
+
+export interface StateModeScan {
+  /** The first loose entries found, in walk order. */
+  readonly loose: readonly LooseStateEntry[];
+  /** Every loose entry found. */
+  readonly count: number;
+  /** Entries examined. */
+  readonly checked: number;
+  /** The walk stopped at its bound before it saw everything. */
+  readonly truncated: boolean;
+}
+
+/**
+ * The state other local users can reach: every directory should be 0700 and
+ * every file 0600. `paths` are checked alone (a missing one is skipped),
+ * `trees` are walked — newest name first, so the newest sessions are seen
+ * before the bound — and a symlink is never followed. The walk stops after
+ * `limit` entries and keeps the first `keep` findings. undefined on Windows,
+ * whose modes mean nothing (the same POSIX-only rule as looseStateDirMode).
+ */
+export function scanStateModes(
+  paths: readonly string[],
+  trees: readonly string[],
+  { limit = 4096, keep = 3 }: { limit?: number; keep?: number } = {},
+): StateModeScan | undefined {
+  if (process.platform === 'win32') return undefined;
+  const loose: LooseStateEntry[] = [];
+  let count = 0;
+  let checked = 0;
+  // One entry: false when the bound is reached; a directory of a tree is
+  // queued for its children.
+  const queue: string[] = [];
+  const seen = new Set<string>();
+  const visit = (path: string, walk: boolean): boolean => {
+    if (seen.has(path)) return true;
+    if (checked >= limit) return false;
+    seen.add(path);
+    let info: ReturnType<typeof lstatSync>;
+    try {
+      info = lstatSync(path);
+    } catch {
+      return true;
+    }
+    checked += 1;
+    if (info.isSymbolicLink()) return true;
+    const expected = info.isDirectory() ? 0o700 : 0o600;
+    const mode = info.mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      count += 1;
+      if (loose.length < keep) loose.push({ path, mode, expected });
+    }
+    if (walk && info.isDirectory()) queue.push(path);
+    return true;
+  };
+  let truncated = false;
+  for (const path of paths) {
+    if (!visit(path, false)) truncated = true;
+  }
+  for (const tree of trees) {
+    if (!visit(tree, true)) truncated = true;
+  }
+  while (!truncated && queue.length > 0) {
+    const dir = queue.shift() as string;
+    let names: string[];
+    try {
+      names = readdirSync(dir).sort().reverse();
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!visit(join(dir, name), true)) {
+        truncated = true;
+        break;
+      }
+    }
+  }
+  return { loose, count, checked, truncated };
 }
 
 /**
@@ -198,9 +286,13 @@ export function claimLockLink(lockPath: string, payload: string): boolean {
       // Our own temp name is taken: retry under a fresh one, three names
       // at most (the attempt index is part of the name, so a collision
       // needs a leftover with this pid, millisecond and random stamp).
-      // Anything else is a real I/O failure and still throws.
-      if ((error as { code?: string } | null)?.code === 'EEXIST' && attempt < 2)
-        continue;
+      // Anything else is a real I/O failure (ENOSPC, EIO): the half-written
+      // temp is dropped, and the error still throws.
+      if ((error as { code?: string } | null)?.code === 'EEXIST') {
+        if (attempt < 2) continue;
+        throw error;
+      }
+      rmSync(tmp, { force: true });
       throw error;
     }
     const dropTemp = (): void => {
@@ -224,4 +316,123 @@ export function claimLockLink(lockPath: string, payload: string): boolean {
   }
   // Unreachable: the loop either lands, loses, throws, or retries.
   throw new Error('claimLockLink: temp-name retries exhausted');
+}
+
+// A lock's holder, as a waiter reads it: whether its claim names a holder
+// that is gone. A claim names its process (pid and, where the platform tells
+// it, the process start time, which unmasks a reused pid). Residue that names
+// no holder this way — an older build's bare pid, which still names a pid,
+// or unreadable bytes — counts as gone only past `staleMs`, or when its pid
+// is dead.
+function holderGone(
+  lockPath: string,
+  observed: string,
+  staleMs: number,
+): boolean {
+  let holder: { pid?: unknown; startedAt?: unknown } | undefined;
+  if (/^\d+$/.test(observed.trim())) {
+    holder = { pid: Number(observed.trim()) };
+  } else {
+    try {
+      const parsed: unknown = JSON.parse(observed);
+      holder =
+        typeof parsed === 'object' && parsed !== null
+          ? (parsed as { pid?: unknown; startedAt?: unknown })
+          : undefined;
+    } catch {
+      holder = undefined;
+    }
+  }
+  const pid = typeof holder?.pid === 'number' ? holder.pid : undefined;
+  if (pid === undefined) {
+    try {
+      return Date.now() - statSync(lockPath).mtimeMs > staleMs;
+    } catch {
+      return false;
+    }
+  }
+  if (!processAlive(pid)) return true;
+  const startedAt = holder?.startedAt;
+  if (typeof startedAt !== 'number') return false;
+  const now = processStartTimeOf(pid);
+  return now !== undefined && now !== startedAt;
+}
+
+function processAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the pid exists, owned by another user.
+    return (error as { code?: string } | null)?.code === 'EPERM';
+  }
+}
+
+function lockPayload(): string {
+  return JSON.stringify({
+    pid: process.pid,
+    startedAt: processStartTimeOf(process.pid) ?? null,
+    nonce: `${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`,
+  });
+}
+
+// Take a gone holder's lock away, under the steal guard: while the guard is
+// held, the lock can change only by its own holder's release, which a gone
+// holder never makes, so the occupant judged gone is the one removed. Returns
+// true when the lock was cleared (or vanished) and a claim should be tried
+// again. A guard whose own holder is gone is cleared too, so a waiter that
+// died mid-steal cannot wedge the lock.
+function stealGoneHolder(lockPath: string, staleMs: number): boolean {
+  const guard = `${lockPath}.steal`;
+  const guardPayload = lockPayload();
+  if (!claimLockLink(guard, guardPayload)) {
+    const occupant = readLockFile(guard);
+    if (occupant !== undefined && holderGone(guard, occupant, staleMs)) {
+      removeLockFile(guard);
+    }
+    return false;
+  }
+  try {
+    const observed = readLockFile(lockPath);
+    if (observed === undefined) return true;
+    if (!holderGone(lockPath, observed, staleMs)) return false;
+    removeLockFile(lockPath);
+    return true;
+  } finally {
+    if (readLockFile(guard) === guardPayload) removeLockFile(guard);
+  }
+}
+
+/**
+ * Run `run` while holding the lock at `lockPath`: the seam for a mutation
+ * that must not interleave with another process's — the journal's append,
+ * retention rewrite and blob sweep, and the trust store's update. A claim
+ * lands atomically with its holder's identity (pid, process start time, a
+ * nonce). A waiter takes the lock away only when its holder is gone; a live
+ * holder is waited for up to `waitMs`, however long it runs, before the
+ * caller gets a named timeout. The release removes only this claim's own
+ * lock, never one that has since changed hands. LOCAL FILESYSTEM ONLY, like
+ * every lock here.
+ */
+export function withFileLocked<T>(
+  lockPath: string,
+  run: () => T,
+  options: { staleMs?: number; waitMs?: number } = {},
+): T {
+  const staleMs = options.staleMs ?? 10_000;
+  const deadline = Date.now() + (options.waitMs ?? 5_000);
+  const payload = lockPayload();
+  while (!claimLockLink(lockPath, payload)) {
+    if (stealGoneHolder(lockPath, staleMs)) continue;
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for lock ${lockPath}`);
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+  try {
+    return run();
+  } finally {
+    if (readLockFile(lockPath) === payload) removeLockFile(lockPath);
+  }
 }

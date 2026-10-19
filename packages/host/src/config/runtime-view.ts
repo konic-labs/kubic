@@ -103,6 +103,15 @@ export interface EffectiveConfigView {
     keepRecentTokens: number;
     source: ConfigValueSource;
   };
+  // The `[verify]` gate commands: shell the run executes after it settles,
+  // outside the approval interceptors — reported as an effect, not a value.
+  verify: {
+    commands: Array<{
+      gate: string;
+      command: string;
+      source: ConfigValueSource;
+    }>;
+  };
   model: RuntimeModelSelection | undefined;
   modelSource: ConfigValueSource;
   // The effective thinking level with its source, so
@@ -202,6 +211,20 @@ export function effectiveConfigView(
       keepRecentTokens:
         runtime.compaction.keepRecentTokens ?? KEEP_RECENT_TOKENS,
       source: runtime.compaction.source,
+    },
+    verify: {
+      commands: Object.entries(runtime.verify.commands).flatMap(
+        ([gate, command]) =>
+          command === undefined || command.trim() === ''
+            ? []
+            : [
+                {
+                  gate,
+                  command,
+                  source: runtime.sources[`verify.${gate}`] ?? 'defaults',
+                },
+              ],
+      ),
     },
     model: runtime.model === undefined ? undefined : { ...runtime.model },
     modelSource: runtime.modelSource,
@@ -303,12 +326,24 @@ export function renderEffectiveConfig(view: EffectiveConfigView): string[] {
   lines.push(
     view.journal.retentionDays === undefined
       ? 'journal retention: none configured (no age bound)'
-      : `journal retention: ${view.journal.retentionDays} day(s) = maxAgeMs ${view.journal.maxAgeMs} (${view.journal.source})`,
+      : view.journal.retentionDays === 0
+        ? `journal retention: off (retentionDays 0, no age bound) (${view.journal.source})`
+        : `journal retention: ${view.journal.retentionDays} day(s) = maxAgeMs ${view.journal.maxAgeMs} (${view.journal.source})`,
   );
   lines.push(
     view.journal.outOfScope === undefined
       ? 'journal out-of-scope: none declared — the walk still skips .git/, .kubic/ and .gitignore hits on its own'
       : `journal out-of-scope: ${view.journal.outOfScope.length} path(s) excluded from the baseline and the sweep (self + children): ${view.journal.outOfScope.join(', ')}`,
+  );
+  lines.push(
+    view.verify.commands.length === 0
+      ? 'verify: no gate commands — nothing runs after a run settles'
+      : `verify: ${view.verify.commands.length} gate command(s) run as shell (sh -c) after each run settles, outside approvals, each recorded in the audit ledger: ${view.verify.commands
+          .map(
+            ({ gate, command, source }) =>
+              `${gate} ${formatValue(command)} (${source})`,
+          )
+          .join(', ')}`,
   );
   lines.push(compactionSummaryLine(view.compaction));
   lines.push(

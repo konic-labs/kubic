@@ -58,8 +58,11 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   clean dry-run); 2 usage errors — unknown option, missing option value,
   a `--max-content-bytes` that is not a non-negative integer, an extra
   operand, an invalid or conflicting `--session` — with one `error:` line
-  on stderr and nothing touched; 1 an unexpected IO failure (root
-  catch-all). `undo` also exits **1** when it restored but skipped steps. Three skip classes reach that code:
+  on stderr and nothing touched; 1 an unknown `--session` (`error: unknown
+  session: <id>`, and under `--json` one failure document with `ok: false`,
+  `exitCode: 1` and `error: {code: "unknown_session", message}`) or an
+  unexpected IO failure (root catch-all). `undo` also exits **1** when it
+  restored but skipped steps. Three skip classes reach that code:
   `non-reversible (skipped)` — entries an end-of-run reconciliation sweep
   appended (`unattributed`) with no retrievable pre-image (the exceptions
   are a path clean against the git index at boot — the sweep restores its
@@ -75,15 +78,17 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   class the exit is 1 and nothing is written for that step. A live session
   lock refuses the whole invocation with exit 1 and one `error:`
   line naming the holder pid — `--force` overrides it, and nothing is
-  planned, restored or journaled otherwise.
+  planned, restored or journaled otherwise. A bare `undo` (no `--session`)
+  also exits 1, naming every candidate, while another session recorded for
+  the workspace is live; `--session <id>` chooses.
 - **`kubic git`**: 0 success (including `log` on a repo with no commits
   yet); 1 an op failure or outside a git repository (one `error:` line on
-  stderr); 2 usage errors (bare `kubic git`, unknown subcommand or option,
-  missing value, `--max` not a positive integer, `stage` without a path,
-  `commit` without a non-empty `-m`).
+  stderr), and for a bare `kubic git`, which prints the group's help; 2 usage
+  errors (unknown subcommand or option, missing value, `--max` not a positive
+  integer, `stage` without a path, `commit` without a non-empty `-m`).
 - **`kubic sessions` / `kubic models` / `kubic config`**: 0 success; 2
   usage errors (unknown option, missing or invalid value, stray operand,
-  a missing `sessions` subcommand, `prune --yes --dry-run`); 1 op
+  an unknown `sessions` subcommand, `prune --yes --dry-run`); 1 op
   failure (`models --resolve` failure, a refused config, attaching or
   forking a missing or live-locked session, a `sessions fork --at` entry the
   source does not have). An unknown `sessions` subcommand exits
@@ -99,8 +104,8 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   refusal (the session is attached by a live pid), or a pass that removed
   nothing while entries were listed; 2 for usage errors (a `--keep-days` that
   is not a non-negative integer of days, a file value that is not a
-  non-negative integer, an unknown option,
-  `kubic journal` without a subcommand).
+  non-negative integer, an unknown option). A bare `kubic journal` prints the
+  group's help and exits 1.
 - **`kubic trust`**: 0 recorded, revoked or listed; 2 usage errors
   (unknown option, a path that is not a directory, `--list` combined with
   `--revoke` or a path, stray operands); 1 an unreadable or corrupt store

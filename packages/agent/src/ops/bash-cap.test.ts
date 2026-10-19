@@ -102,7 +102,7 @@ describe('bash result caps', () => {
       stdout: 'tiny',
       stderr: '',
       truncated: false,
-      shell: expect.stringMatching(/^(bash|sh|cmd)$/),
+      shell: expect.stringMatching(/^(bash|sh)$/),
       aborted: false,
       timedOut: false,
       provenance: out.result.provenance,

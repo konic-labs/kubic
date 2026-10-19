@@ -61,14 +61,14 @@ describe('commands: generated help', () => {
     expect(help).toContain('KUBIC_PROVIDER=faux');
   });
 
-  it('bare `kubic sessions` shows the subcommands as a usage error', async () => {
+  it('bare `kubic sessions` lists the sessions, as `sessions list` does', async () => {
     const result = await kubic(['sessions']);
-    expect(result.code).toBe(2);
-    expect(result.calls).toEqual([]);
-    const text = [...result.out, ...result.err].join('\n');
-    for (const sub of ['create', 'list', 'attach', 'prune']) {
-      expect(text).toContain(sub);
-    }
+    expect(result.code).toBe(0);
+    expect(result.err).toEqual([]);
+    expect(result.calls).toEqual([
+      { key: 'sessions', input: { command: 'list' } },
+    ]);
+    expect((await kubic(['sessions', 'list'])).calls).toEqual(result.calls);
   });
 });
 

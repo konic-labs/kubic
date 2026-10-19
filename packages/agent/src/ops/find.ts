@@ -2,6 +2,7 @@
 // Recursive walk over the seam with substring/type filters and a result
 // cap. replay:"safe" — searching has no side effects.
 
+import { refuseLinkEscape } from './links.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
 import {
@@ -87,6 +88,7 @@ export const findOperation: Operation<FindArgs, FindResult> = {
   validateArgs: validateFindArgs,
   execute: async (_inv: ToolInvocation, args: FindArgs, ctx: OpContext) => {
     const root = args.root ?? '.';
+    refuseLinkEscape(ctx, 'find', root);
     const max = args.maxResults ?? FIND_DEFAULT_MAX;
     const walk = walkFiles(ctx.env.fs, root);
     const paths: string[] = [];

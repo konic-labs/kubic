@@ -2,6 +2,7 @@
 // Regex search over walked files with line numbers and a match cap.
 // replay:"safe" — searching has no side effects.
 
+import { refuseLinkEscape } from './links.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
 import {
@@ -135,6 +136,7 @@ export const grepOperation: Operation<GrepArgs, GrepResult> = {
   execute: async (_inv: ToolInvocation, args: GrepArgs, ctx: OpContext) => {
     const re = new RegExp(args.pattern);
     const root = args.root ?? '.';
+    refuseLinkEscape(ctx, 'grep', root);
     const max = args.maxMatches ?? GREP_DEFAULT_MAX;
     const matches: GrepMatch[] = [];
     const walk = walkFiles(ctx.env.fs, root);

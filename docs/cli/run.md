@@ -95,7 +95,10 @@ absolute path. The file holds the session's latest settled run; a resumed
 - a result with a `failureCategory` on every non-completed status
 - with `[verify]` configured, the gate labels (`signal:tests|build|
   lint|typecheck`, plus `signal:regression` against the base revision):
-  see [gate verification](configuration.md#gate-verification-verify)
+  see [gate verification](configuration.md#gate-verification-verify). The
+  gate commands are shell from the config, run outside approvals: each one
+  is announced on stderr as it starts and recorded as a `verify:<gate>`
+  row in the audit ledger
 
 The file is readable by `kubic replay <file>` (or `--session <id>`),
 `kubic export --trajectory <file>` (or `--session <id>`) and

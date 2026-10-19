@@ -4,7 +4,6 @@ import { type BridgePick, fakeBridge } from '../test-support/config-bridge.js';
 import { checkRoleModelRef } from './checks.js';
 import {
   checkGitignoreSplit,
-  defaultLayerPaths,
   GITIGNORE_REQUIRED_ENTRIES,
   mergeLayered,
   parseTomlConfig,
@@ -15,7 +14,7 @@ import { McpUnsupportedError } from './stances.js';
 // The live loader, given the composition root's inputs for this home and project.
 function loadRuntime(
   bridge: BridgePick,
-  options: { projectTrusted?: boolean; workspaceRoot?: string } = {},
+  options: { projectTrusted?: boolean } = {},
 ) {
   return loadRuntimeConfig({
     bridge,
@@ -26,9 +25,6 @@ function loadRuntime(
     ...(options.projectTrusted === undefined
       ? {}
       : { projectTrusted: options.projectTrusted }),
-    ...(options.workspaceRoot === undefined
-      ? {}
-      : { workspaceRoot: options.workspaceRoot }),
   });
 }
 
@@ -224,6 +220,28 @@ describe('config validation hardening', () => {
     ).toThrow(/'journal': 'outOfScope' entry 2 is empty/);
   });
 
+  // An entry is a workspace-relative path the walk compares literally, so
+  // `./dist` and `dist/` read as `dist`; one that names the whole workspace
+  // would leave the journal recording nothing, and one outside it names
+  // nothing the journal walks — both are refused by name.
+  it('reads [journal] outOfScope entries as plain paths, refusing the whole workspace', () => {
+    expect(
+      parseTomlConfig(
+        '[journal]\noutOfScope = ["./dist", "build/", "a/./b//c"]\n',
+      ).journal?.outOfScope,
+    ).toEqual(['dist', 'build', 'a/b/c']);
+    for (const entry of ['.', './', 'a/..']) {
+      expect(() =>
+        parseTomlConfig(`[journal]\noutOfScope = ["${entry}"]\n`),
+      ).toThrow(/'journal': 'outOfScope' entry 1 names the whole workspace/);
+    }
+    for (const entry of ['..', '../x', '/etc']) {
+      expect(() =>
+        parseTomlConfig(`[journal]\noutOfScope = ["${entry}"]\n`),
+      ).toThrow(/'journal': 'outOfScope' entry 1 is outside the workspace/);
+    }
+  });
+
   it('rejects empty-string required values', () => {
     expect(() => parseTomlConfig('[agent]\nname = ""\n')).toThrow(
       /non-empty string/,
@@ -254,13 +272,12 @@ describe('layer merge hardening', () => {
     expect(merged.overriddenAttempts).toEqual(['model.provider']);
   });
 
-  it('lets workspace beat session and session beat agent', () => {
+  it('lets session beat agent', () => {
     const merged = mergeLayered([
       { layer: 'agent', config: { model: { provider: 'a', id: 'm' } } },
       { layer: 'session', config: { model: { provider: 's', id: 'm' } } },
-      { layer: 'workspace', config: { model: { provider: 'w', id: 'm' } } },
     ]);
-    expect(merged.config.model?.provider).toBe('w');
+    expect(merged.config.model?.provider).toBe('s');
     expect(merged.overriddenAttempts).toEqual(
       expect.arrayContaining(['model.provider']),
     );
@@ -327,32 +344,51 @@ describe('layered load hardening', () => {
     expect(merged.config.model?.provider).toBe('g');
   });
 
-  it('honors workspace roots and the default enterprise path', () => {
-    const paths = defaultLayerPaths({
-      home: '/home/u',
-      projectRoot: '/repo',
-      workspaceRoot: '/ws',
+  it('reads a .kubic/config.toml in the invocation directory as the project layer', () => {
+    // The nearest directory holding `.kubic/` or `.git` is the project root,
+    // so a subdirectory with its own `.kubic/` is a project of its own.
+    const load = (files: Record<string, string>) =>
+      loadRuntimeConfig({
+        bridge: fakeBridge(files),
+        home: '/home/u',
+        cwd: '/repo/pkg',
+        env: {},
+        projectTrusted: true,
+      });
+    const own = load({
+      '/repo/.git': '',
+      '/repo/.kubic': '',
+      '/repo/.kubic/config.toml': '[ui]\ntheme = "dark"\n',
+      '/repo/pkg/.kubic': '',
+      '/repo/pkg/.kubic/config.toml': '[ui]\ntheme = "light"\n',
     });
-    expect(paths.workspace).toBe('/ws/.kubic/config.toml');
-    expect(paths.enterprise).toBe('/etc/kubic/config.toml');
-    const bridge = fakeBridge({
-      '/ws/.kubic/config.toml': '[ui]\ntheme = "light"\n',
+    expect(own.config.ui?.theme).toBe('light');
+    expect(own.layers.find((layer) => layer.layer === 'project')).toMatchObject(
+      { path: '/repo/pkg/.kubic/config.toml', present: true },
+    );
+    // Without one, the repository's own config is the project layer.
+    const repo = load({
+      '/repo/.git': '',
+      '/repo/.kubic': '',
+      '/repo/.kubic/config.toml': '[ui]\ntheme = "dark"\n',
     });
-    const merged = loadRuntime(bridge, {
-      projectTrusted: true,
-      workspaceRoot: '/ws',
-    });
-    expect(merged.config.ui?.theme).toBe('light');
+    expect(repo.config.ui?.theme).toBe('dark');
+    expect(repo.layers.map((layer) => layer.layer)).toEqual([
+      'enterprise',
+      'product',
+      'global',
+      'project',
+      'session',
+      'agent',
+    ]);
   });
 });
 
 describe('config serialization hardening', () => {
   it('reports only the missing gitignore entries', () => {
+    // Rules an older build wrote do not stand in for the current one.
     const partial = `.kubic/sessions/\n.kubic/journal/\n`;
-    expect(checkGitignoreSplit(partial).missing).toEqual([
-      '.kubic/artifacts/',
-      '.kubic/audit/',
-    ]);
+    expect(checkGitignoreSplit(partial).missing).toEqual(['.kubic/audit/']);
   });
 
   // The required-entry list is not a second copy of the rule

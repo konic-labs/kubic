@@ -36,7 +36,7 @@ export interface BashResult {
    * Which shell actually executed the command — bash is preferred, sh is
    * the recorded fallback.
    */
-  shell: 'bash' | 'sh' | 'cmd';
+  shell: 'bash' | 'sh';
   aborted: boolean;
   timedOut: boolean;
   /**
@@ -261,10 +261,15 @@ const SPAWN_ENOENT_MISSING = /^spawn \S+ ENOENT$/m;
 let resolvedShell: BashResult['shell'] | undefined;
 
 function shellFor(): BashResult['shell'] {
-  if (process.platform === 'win32') return 'cmd';
   if (resolvedShell === undefined) resolvedShell = 'bash';
   return resolvedShell;
 }
+
+// Every approval detector reads POSIX shell: cmd's `del`, `move` and
+// `rmdir` would run with no capability raised, so the tool refuses to run
+// on Windows rather than run commands nothing can see.
+const WINDOWS_REFUSAL =
+  'bash is not supported on Windows: the approval detectors read POSIX shell commands only, so a cmd command would run with no approval coverage';
 
 export const bashOperation: Operation<BashArgs, BashResult> = {
   name: 'bash',
@@ -277,6 +282,9 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
   replay: 'never',
   validateArgs: validateBashArgs,
   execute: async (inv: ToolInvocation, args: BashArgs, ctx: OpContext) => {
+    if (process.platform === 'win32') {
+      throw new OpError('tool_failed', WINDOWS_REFUSAL);
+    }
     const provenance: Provenance = {
       sessionId: ctx.sessionId,
       agentId: ctx.agentId,
@@ -292,11 +300,7 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
     // The unregister fn of whichever handle is currently live.
     let untrack: (() => void) | undefined;
     const spawnShell = (shellName: string): ProcessHandle => {
-      const shellArgs =
-        process.platform === 'win32'
-          ? ['/d', '/s', '/c', args.command]
-          : ['-c', args.command];
-      const handle = ctx.env.shell.spawn(shellName, shellArgs, {
+      const handle = ctx.env.shell.spawn(shellName, ['-c', args.command], {
         provenance,
         onUpdate: ctx.onUpdate,
         checkpointKey: inv.invocationId,

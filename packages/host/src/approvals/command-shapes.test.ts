@@ -76,6 +76,23 @@ describe('command shapes -> capabilities', () => {
     ['git restore .', ['destructive-shell']],
     ['git restore src/a.ts', ['destructive-shell']],
     ['git restore --staged --worktree .', ['destructive-shell']],
+    // A newline ends a command like `;`, CRLF included, and a payload behind
+    // indirection is a script too.
+    ['echo hi\nrm -rf /', ['destructive-shell']],
+    ['set -e\necho hi\nrm -rf /etc', ['destructive-shell']],
+    ['echo hi\r\nrm -rf /\r\n', ['destructive-shell']],
+    ['echo $(echo hi\nrm -rf /)', ['destructive-shell']],
+    ['cp a /etc/x\necho done', ['outside-write']],
+    ['echo x | tee /etc/x\necho done', ['outside-write']],
+    ['mv a /etc/x\r\necho done', ['outside-write']],
+    // The network clients a coding agent uses, under network = "none".
+    ['git fetch origin', ['network']],
+    ['git clone https://example.com/r.git', ['network']],
+    ['git -C sub pull', ['network']],
+    ['gh api /user', ['network']],
+    ['docker pull alpine', ['network']],
+    ['docker push img', ['deploy', 'network']],
+    ['cargo fetch', ['network']],
   ])('%s', (command, expected) => {
     expect(raised(command)).toEqual(expected);
   });
@@ -94,10 +111,54 @@ describe('command shapes -> capabilities', () => {
     ['git reset --soft HEAD~1', []],
     ['find . -name "*.ts"', []],
     ['git log --oneline | grep push', []],
+    ['cp a b\necho /etc/x', []],
+    ['git log\necho reset --hard', []],
+    ['git diff HEAD', []],
+    ['git commit -m "fetch data and pull it"', []],
+    ['docker ps', []],
     // A push named only inside a quoted argument still raises: the literal
     // scan cannot see quotes, and an over-trigger is an ask, never a grant.
     ['echo "run git push later"', ['git-push']],
   ])('%s', (command, expected) => {
     expect(raised(command)).toEqual(expected);
+  });
+});
+
+// The structured git tools raise what their bash spelling raises: an amended
+// commit rewrites history whichever way it is asked for, and a merge of a
+// local branch is a workspace write the journal records, as `git merge` is.
+describe('structured git tools -> capabilities', () => {
+  const tool = (name: string, args: Record<string, unknown>) =>
+    detectTriggers(name, args, ctx).sort();
+
+  it('raises destructive-shell for an amended commit, in the tool and in bash', () => {
+    expect(tool('git_commit', { message: 'x', amend: true })).toEqual([
+      'destructive-shell',
+    ]);
+    expect(raised('git commit --amend -m x')).toEqual(['destructive-shell']);
+    expect(raised('git -C sub commit --amend --no-edit')).toEqual([
+      'destructive-shell',
+    ]);
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['git_commit', { message: 'x' }],
+    ['git_commit', { message: 'x', amend: false }],
+    ['git_merge', { branch: 'feature' }],
+    ['git_stage', { paths: ['a.ts'] }],
+    ['git_status', {}],
+    ['git_diff', { staged: true }],
+    ['git_log', { max: 5 }],
+    ['git_show', { ref: 'HEAD' }],
+    ['git_branch', { create: 'feature' }],
+    ['git_checkpoint', { message: 'x' }],
+    ['git_worktree_list', {}],
+  ])('%s %j raises nothing', (name, args) => {
+    expect(tool(name, args)).toEqual([]);
+  });
+
+  it('keeps a commit message that mentions amend quiet', () => {
+    expect(raised('git commit -m "amend the docs"')).toEqual([]);
+    expect(raised('git merge feature')).toEqual([]);
   });
 });

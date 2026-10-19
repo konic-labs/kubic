@@ -202,7 +202,7 @@ describe('read-time journal self-heal', () => {
     expect(code).toBe(0);
     // No `err` channel given: the fallback note lands on `out`.
     expect(o.lines[0]).toBe(
-      `info: session: sess-new (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: sess-new (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     );
     const healed = indexLines(newDir);
     expect(healed).toHaveLength(1);
@@ -297,7 +297,7 @@ describe('read-time journal self-heal', () => {
     expect(o.lines.join('\n')).toContain('aged.txt');
   });
 
-  it('session retention never prunes a pinned workspace store (session-scoped only)', async () => {
+  it('session retention never prunes a pinned store (session-scoped only)', async () => {
     const journalDir = tempDir('j-');
     const root = tempDir('ws-');
     seedAgedAndFresh(journalDir, 'ws');
@@ -322,7 +322,7 @@ describe('read-time journal self-heal', () => {
     expect(indexLines(journalDir)).toHaveLength(2);
   });
 
-  it('a missing session journal stays a pure read and invalid ids stay refused', async () => {
+  it('an unknown session is refused without a write, and invalid ids stay refused', async () => {
     const sessionsRoot = tempDir('sess-root-');
     const root = tempDir('ws-');
     const loaded = loadedWithRetention('7');
@@ -339,9 +339,9 @@ describe('read-time journal self-heal', () => {
         },
       )
     ).exitCode;
-    expect(code).toBe(0);
-    expect(o.lines).toContain('journal is empty');
-    // Enforcement on a store with no index writes nothing — not even the dir.
+    expect(code).toBe(1);
+    expect(o.lines.join('\n')).toContain('unknown session: ghost');
+    // Refused before any store is opened: nothing is written, not the dir.
     expect(existsSync(join(sessionsRoot, 'ghost'))).toBe(false);
 
     const bad = out();

@@ -138,8 +138,12 @@ export function trustRunner(io: ProdRunnerIo): ProdRunners['trust'] {
             target,
             cliConfig.trust.home,
           );
+    // `--list` names no directory — it reports every decision — so only a
+    // grant or a revoke is re-pointed at the project root.
     return runTrustCommand(
-      root === target ? options : { ...options, path: root },
+      options.list === true || root === target
+        ? options
+        : { ...options, path: root },
       {
         ...presentation(out, debug, false),
         store: new ProjectTrustStore(

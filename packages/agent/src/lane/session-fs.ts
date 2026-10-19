@@ -143,12 +143,18 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
       if (flush === undefined) return err(notSupported(path, 'flushFile'));
       return attempt(path, () => flush(path));
     },
+    // A rewrite lands through a rename, which carries the tmp's mode: a tmp
+    // left loose by a crashed older run would make the session file loose
+    // too, so the destination is made private once it is in place.
     renameFile: async (
       sourcePath: string,
       destinationPath: string,
       _context: Context,
     ) =>
-      attempt(sourcePath, () => bridge.renameFile(sourcePath, destinationPath)),
+      attempt(sourcePath, () => {
+        bridge.renameFile(sourcePath, destinationPath);
+        bridge.chmod?.(destinationPath, 0o600);
+      }),
     fileInfo: async (path: string, _context: Context) =>
       attempt(path, () => {
         const info = bridge.fileInfo(path);

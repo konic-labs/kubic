@@ -241,6 +241,7 @@ export function saveGitBaseline(
   createNodeFileBridge('/').writeFile(
     gitBaselinePath(dir, runId),
     JSON.stringify(git),
+    { mode: 0o600 },
   );
 }
 
@@ -271,5 +272,6 @@ export function saveHeadState(
   createNodeFileBridge('/').writeFile(
     headStatePath(dir, runId),
     JSON.stringify(head),
+    { mode: 0o600 },
   );
 }

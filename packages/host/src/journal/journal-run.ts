@@ -1,9 +1,9 @@
 // What every journal command shares: its requests and dependencies, and the
-// store one invocation reads. That is the workspace's own journal, or a
-// session's (`--session`), whose paths resolve against the workspace the
-// session recorded.
+// store one invocation reads: a session's journal (named by `--session`, or
+// the latest one recorded for this workspace), whose paths resolve against
+// the workspace the session recorded.
 
-import { basename, dirname, join, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import {
   listSessions,
   openSessionStore,
@@ -19,13 +19,14 @@ import type { FileJournalStore } from '@kubic/exec/journal';
 import { defaultSessionsRoot } from '../sessions/index.js';
 
 export interface JournalCommandDeps {
+  // A journal directory that pins the store, in place of the session lookup.
   journalDir?: string;
   sessionsRoot?: string;
   root?: string;
   // `session.retentionDays`: the read-time self-heal window for
   // SESSION journals. Undefined — or 0 — means retention is off, and the
-  // read path writes nothing. The workspace journal is never governed by
-  // this key: `journal.retentionDays` bounds it on append.
+  // read path writes nothing. A pinned journal directory is never governed
+  // by this key: `journal.retentionDays` bounds it on append.
   retentionDays?: number;
   // stdout: the report or the one `--json` document.
   out: (line: string) => void;
@@ -100,10 +101,6 @@ export type JournalRequest =
   | ({ command: 'status' } & JournalSelection)
   | ({ command: 'prune' } & JournalPruneOptions);
 
-function defaultJournalDir(root: string): string {
-  return join(root, '.kubic', 'journal');
-}
-
 // Session ids are path segments under the sessions root: the shared run-cli
 // SESSION_ID_PATTERN ([A-Za-z0-9_-]) is checked before any path join, so the
 // join below is contained by construction. Imported (not copied) so the rule
@@ -112,13 +109,6 @@ function defaultJournalDir(root: string): string {
 // The `journal:<id>` ref `kubic run` prints; accepted verbatim as the
 // --session value so the printed token needs no extra lookup.
 const JOURNAL_REF_PREFIX = 'journal:';
-
-// A store "has a journal" once its index exists — an absent index means
-// nothing has ever been appended there (the dead default this fallback
-// exists for).
-function hasJournalIndex(dir: string): boolean {
-  return createNodeFileBridge(dir).exists('index.jsonl');
-}
 
 // The session store's recorded cwd per session id. An
 // unlistable store (no sessions root yet, a torn transcript) is "nothing
@@ -169,20 +159,19 @@ function workspaceContains(recorded: string, root: string): boolean {
   return c === r || c.startsWith(r.endsWith(sep) ? r : `${r}${sep}`);
 }
 
-// The most recent run journal under the sessions root: one
-// level of session ids (the shared SESSION_ID_PATTERN, checked before any
-// path join — contained by construction, same rule as --session), newest
-// `journal/index.jsonl` mtime wins among the sessions `accept` admits
-// (only those recorded for the current workspace). A session
-// whose journal index cannot be statted is skipped (no journal there); a
-// missing sessions root is simply "nothing here" (fresh machine), never a
-// throw.
-function latestSessionJournal(
+// The run journals under the sessions root, newest first: one level of
+// session ids (the shared SESSION_ID_PATTERN, checked before any path join —
+// contained by construction, same rule as --session), ordered by
+// `journal/index.jsonl` mtime among the sessions `accept` admits (only those
+// recorded for the current workspace). A session whose journal index cannot
+// be statted is skipped (no journal there); a missing sessions root is simply
+// "nothing here" (fresh machine), never a throw.
+function sessionJournals(
   sessionsRoot: string,
   accept: (id: string) => boolean,
-): string | undefined {
+): Array<{ id: string; dir: string; mtime: number }> {
   const bridge = createNodeFileBridge(sessionsRoot);
-  let best: { dir: string; mtime: number } | undefined;
+  const found: Array<{ id: string; dir: string; mtime: number }> = [];
   try {
     for (const info of bridge.listDir('.')) {
       if (!info.isDirectory || !SESSION_ID_PATTERN.test(info.name)) continue;
@@ -190,9 +179,11 @@ function latestSessionJournal(
       const idx = join(info.name, 'journal', 'index.jsonl');
       try {
         const mtime = bridge.fileInfo(idx).mtimeMs;
-        if (best === undefined || mtime > best.mtime) {
-          best = { dir: join(sessionsRoot, info.name, 'journal'), mtime };
-        }
+        found.push({
+          id: info.name,
+          dir: join(sessionsRoot, info.name, 'journal'),
+          mtime,
+        });
       } catch {
         // Session without a journal — skip it.
       }
@@ -200,17 +191,22 @@ function latestSessionJournal(
   } catch {
     // No sessions root yet — nothing to fall back to.
   }
-  return best?.dir;
+  return found.sort((a, b) => b.mtime - a.mtime);
 }
 
 interface ResolvedStore {
-  dir: string;
+  // The journal directory. Undefined when no journal is recorded for this
+  // workspace: the commands then read an empty journal and touch no store.
+  dir?: string;
   // Set exactly when the resolved store is a session journal (explicit
   // --session or the latest-session fallback) — the read-time self-heal
-  // keys off it, so a pinned/workspace store can never be pruned by
+  // keys off it, so a pinned store can never be pruned by
   // `session.retentionDays`.
   sessionId?: string;
   latestSessionId?: string;
+  // The other session journals recorded for this workspace when the
+  // latest-session fallback chose among several, newest first.
+  otherSessionIds?: readonly string[];
   // The workspace the store's relative paths resolve against.
   // A session store takes the session's recorded cwd; undefined means the
   // session recorded none (undo/status then refuse by name).
@@ -225,35 +221,32 @@ export async function resolveJournalDir(
 ): Promise<ResolvedStore> {
   const workspacesOf = deps.sessionWorkspaces ?? defaultSessionWorkspaces;
   if (session === undefined) {
-    const dir = deps.journalDir ?? defaultJournalDir(root);
-    // The bare default is a store nothing writes (runs journal
-    // under `<sessionsRoot>/<id>/journal`), so with no index here fall back
-    // to the latest session journal. Only the CLI's bare default falls
-    // back: a configured journal dir pins the store (one store per
-    // invocation, fail-closed — the same rule as the --session conflict
-    // below), and keeping the scan off that path keeps pinned-store tests
-    // hermetic (no walk of the real sessions root).
-    // Only sessions recorded for THIS workspace are
-    // candidates — another project's newer journal is never picked, and
-    // its relative paths never resolve against this cwd.
-    if (deps.journalDir === undefined && !hasJournalIndex(dir)) {
-      const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
-      const workspaces = await workspacesOf(sessionsRoot);
-      const fallback = latestSessionJournal(sessionsRoot, (id) => {
-        const recorded = workspaces.get(id);
-        return recorded !== undefined && workspaceContains(recorded, root);
-      });
-      if (fallback !== undefined) {
-        const id = basename(dirname(fallback));
-        return {
-          dir: fallback,
-          sessionId: id,
-          latestSessionId: id,
-          workspace: workspaces.get(id) as string,
-        };
-      }
+    // A pinned journal dir is the store (one store per invocation,
+    // fail-closed — the same rule as the --session conflict below), and
+    // keeps the lookup off the real sessions root.
+    if (deps.journalDir !== undefined) {
+      return { dir: deps.journalDir, workspace: root };
     }
-    return { dir, workspace: root };
+    // Runs journal under `<sessionsRoot>/<id>/journal`, so the bare default
+    // is the latest session journal. Only sessions recorded for THIS
+    // workspace are candidates — another project's newer journal is never
+    // picked, and its relative paths never resolve against this cwd.
+    const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
+    const workspaces = await workspacesOf(sessionsRoot);
+    const [latest, ...others] = sessionJournals(sessionsRoot, (id) => {
+      const recorded = workspaces.get(id);
+      return recorded !== undefined && workspaceContains(recorded, root);
+    });
+    if (latest === undefined) return { workspace: root };
+    return {
+      dir: latest.dir,
+      sessionId: latest.id,
+      latestSessionId: latest.id,
+      workspace: workspaces.get(latest.id) as string,
+      ...(others.length === 0
+        ? {}
+        : { otherSessionIds: others.map((other) => other.id) }),
+    };
   }
   const id = session.startsWith(JOURNAL_REF_PREFIX)
     ? session.slice(JOURNAL_REF_PREFIX.length)
@@ -287,12 +280,13 @@ export async function resolveJournalDir(
 export interface JournalRun {
   readonly deps: JournalCommandDeps;
   // The workspace root the store's paths resolve against —
-  // the invocation cwd only for a workspace store.
+  // the invocation cwd only for a pinned store or no journal.
   readonly root: string;
   // The resolved session id and root, as `--json` reports them.
   readonly ref: { session: string | null; root: string | null };
   readonly resolved: ResolvedStore;
-  readonly store: FileJournalStore;
+  // Undefined when no journal is recorded for this workspace.
+  readonly store: FileJournalStore | undefined;
   readonly theme: CliTheme;
   readonly log: CliLogger;
 }
@@ -300,14 +294,25 @@ export interface JournalRun {
 // The live holder of the store's session lock, when the resolved
 // store is a session journal. `resolved.dir` is `<sessionsRoot>/<id>/journal`,
 // so the session directory — and the `lock.json` the store's own runs hold —
-// is one level up. The workspace journal has no session to check.
+// is one level up. A pinned store has no session to check.
 export function lockHolderOf(
   deps: JournalCommandDeps,
   resolved: ResolvedStore,
 ): { pid: number } | undefined {
-  if (resolved.sessionId === undefined) return undefined;
+  if (resolved.sessionId === undefined || resolved.dir === undefined) {
+    return undefined;
+  }
   const probe = deps.sessionLockHolder ?? sessionLockIsLive;
   return probe(dirname(resolved.dir));
+}
+
+// The live holder of another session's lock, by session id.
+export function sessionHolderOf(
+  deps: JournalCommandDeps,
+  sessionId: string,
+): { pid: number } | undefined {
+  const probe = deps.sessionLockHolder ?? sessionLockIsLive;
+  return probe(join(deps.sessionsRoot ?? defaultSessionsRoot(), sessionId));
 }
 
 export function workspaceRefusal(

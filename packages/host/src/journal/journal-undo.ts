@@ -12,7 +12,7 @@ import {
   undoRestoreAudit,
 } from '../audit/index.js';
 import type { JournalRun, JournalUndoOptions } from './journal-run.js';
-import { lockHolderOf } from './journal-run.js';
+import { lockHolderOf, sessionHolderOf } from './journal-run.js';
 
 type SkipKind = 'stale' | 'already-undone' | 'non-reversible' | 'head-moved';
 
@@ -21,6 +21,18 @@ function skipKindOf(reason: string): SkipKind {
   if (reason.startsWith('already undone:')) return 'already-undone';
   if (reason.startsWith('head-moved:')) return 'head-moved';
   return 'non-reversible';
+}
+
+function liveOtherSession(run: JournalRun): string | undefined {
+  const { latestSessionId, otherSessionIds = [] } = run.resolved;
+  if (latestSessionId === undefined) return undefined;
+  for (const id of otherSessionIds) {
+    const holder = sessionHolderOf(run.deps, id);
+    if (holder !== undefined) {
+      return `session ${id} for this workspace is attached by pid ${holder.pid} — the latest run is ambiguous while it writes; name the one to undo with --session <id>: ${[latestSessionId, ...otherSessionIds].join(', ')}`;
+    }
+  }
+  return undefined;
 }
 
 export function journalUndo(
@@ -43,15 +55,26 @@ export function journalUndo(
       return EXIT_FAILED;
     }
   }
-  const plan = planUndo(
-    store,
-    {
-      ...(request.path === undefined ? {} : { path: request.path }),
-      ...(request.step === true ? { step: true } : {}),
-    },
-    root,
-  );
-  if (plan.steps.length === 0) {
+  // A bare undo undoes the latest run. While another session for this
+  // workspace is live, "the latest run" is a moving target, so the user names
+  // the one they mean.
+  const ambiguity = liveOtherSession(run);
+  if (ambiguity !== undefined) {
+    run.log.error(ambiguity);
+    return EXIT_FAILED;
+  }
+  const plan =
+    store === undefined
+      ? undefined
+      : planUndo(
+          store,
+          {
+            ...(request.path === undefined ? {} : { path: request.path }),
+            ...(request.step === true ? { step: true } : {}),
+          },
+          root,
+        );
+  if (store === undefined || plan === undefined || plan.steps.length === 0) {
     deps.out(
       request.json === true
         ? formatJson({ ...run.ref, dryRun, restored: [], skipped: [] })

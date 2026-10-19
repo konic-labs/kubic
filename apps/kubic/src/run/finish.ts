@@ -4,8 +4,14 @@
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { withDetachedCheckout } from '@kubic/exec/git-clean';
+import {
+  appendToLedger,
+  auditLedgerDirFor,
+  verifyCommandAudit,
+} from '@kubic/host/audit';
 import { readSessionRunUsage } from '@kubic/host/cost';
 import {
+  type GateObserver,
   type HeadlessRunResult,
   hasVerifyCommands,
   runVerifier,
@@ -13,7 +19,6 @@ import {
 } from '@kubic/host/run';
 import { matchableSecrets, redactSecretValues } from '@kubic/host/secret-refs';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
-import type { HeadlessRunDeps } from './options.js';
 import type { RunReport, RunState } from './state.js';
 import { persistRunTrajectory } from './trajectory.js';
 
@@ -133,7 +138,7 @@ async function verifyGates(
   if (cwd === undefined) return {};
   try {
     if (hasVerifyCommands(state.deps.verify?.commands)) {
-      return await verifyRun(cwd, state.base, state.deps);
+      return await verifyRun(cwd, state, sessionId);
     }
   } catch (error) {
     state.sinks.warn(
@@ -148,27 +153,53 @@ async function verifyGates(
 // a throwaway detached checkout of that revision, so a gate that passed
 // before the run and fails after it is recorded as a regression. The
 // checkout is removed whatever happens; outside git no regression is
-// claimed.
+// claimed. Each command is shell from the config, run outside the approval
+// interceptors, so each run of one is announced on stderr when it starts
+// and lands a `verify:<gate>` row in the workspace's audit ledger.
 async function verifyRun(
   cwd: string,
-  base: { revision: string; branch: string | null } | null,
-  deps: HeadlessRunDeps,
+  state: RunState,
+  sessionId: string,
 ): Promise<Record<string, string>> {
+  const { deps, base } = state;
   const commands = deps.verify?.commands ?? {};
-  const timeout =
-    deps.verify?.timeoutMs === undefined
+  const observer = (baseline: boolean): GateObserver => ({
+    started: (gate, command) =>
+      state.sinks.notice(
+        `verify: running the ${gate} gate${baseline ? ' at the base revision' : ''}: ${command}`,
+      ),
+    settled: (gate, command, verdict) =>
+      appendToLedger(
+        auditLedgerDirFor(cwd),
+        verifyCommandAudit({
+          sessionId,
+          workspace: cwd,
+          base: base?.revision ?? 'none',
+          gate,
+          command,
+          verdict,
+          baseline,
+        }),
+        (message) =>
+          state.sinks.warn(`audit: verify:${gate} not recorded: ${message}`),
+      ),
+  });
+  const options = (baseline: boolean) => ({
+    ...(deps.verify?.timeoutMs === undefined
       ? {}
-      : { timeoutMs: deps.verify.timeoutMs };
+      : { timeoutMs: deps.verify.timeoutMs }),
+    observer: observer(baseline),
+  });
   const current = await runVerifier(
     deps.env ?? new NodeExecutionEnv(cwd),
     commands,
-    timeout,
+    options(false),
   );
   const baseline =
     base === null
       ? null
       : await withDetachedCheckout(cwd, base.revision, (checkout) =>
-          runVerifier(new NodeExecutionEnv(checkout), commands, timeout),
+          runVerifier(new NodeExecutionEnv(checkout), commands, options(true)),
         );
   return verifierLabels(current, baseline ?? undefined);
 }

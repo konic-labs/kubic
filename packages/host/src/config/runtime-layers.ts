@@ -24,7 +24,6 @@ export const LAYER_ORDER: readonly ConfigLayer[] = [
   'product',
   'global',
   'project',
-  'workspace',
   'session',
   'agent',
 ];
@@ -53,9 +52,6 @@ export function loadLayers(
     projectRoot:
       inputs.projectRoot ??
       findProjectRoot(inputs.bridge, inputs.cwd, inputs.home),
-    ...(inputs.workspaceRoot === undefined
-      ? {}
-      : { workspaceRoot: inputs.workspaceRoot }),
     ...(inputs.enterprisePath === undefined
       ? {}
       : { enterprisePath: inputs.enterprisePath }),

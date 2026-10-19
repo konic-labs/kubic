@@ -41,4 +41,5 @@ export {
 } from './run-trajectory.js';
 export type { DebugSink } from './spans.js';
 export { hookErrorLine, modelLine } from './spans.js';
+export type { GateObserver } from './verifier.js';
 export { hasVerifyCommands, runVerifier, verifierLabels } from './verifier.js';

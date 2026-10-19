@@ -344,6 +344,23 @@ describe('enterprise doctor checks', () => {
     const { policy } = mod.resolveEffectivePolicy([
       {
         layer: 'enterprise',
+        policy: { audit: { sinks: [{ kind: 'syslog', target: 'local0' }] } },
+      },
+    ]);
+    const checks = mod.enterpriseDoctorChecks(policy, {
+      syslogAvailable: true,
+    });
+    expect(checks.length).toBeGreaterThan(0);
+    expect(checks.every((c) => c.status === 'pass')).toBe(true);
+  });
+
+  // Nothing enforces network_policy, so a configured one — an allowlist
+  // with domains included — fails, and enforceability with it.
+  it('reports a configured network_policy as not enforced', async () => {
+    const mod = await import('./index.js');
+    const { policy } = mod.resolveEffectivePolicy([
+      {
+        layer: 'enterprise',
         policy: {
           network: { mode: 'allowlist', domains: ['example.com'] },
           audit: { sinks: [{ kind: 'syslog', target: 'local0' }] },
@@ -353,8 +370,21 @@ describe('enterprise doctor checks', () => {
     const checks = mod.enterpriseDoctorChecks(policy, {
       syslogAvailable: true,
     });
-    expect(checks.length).toBeGreaterThan(0);
-    expect(checks.every((c) => c.status === 'pass')).toBe(true);
+    const network = checks.find((c) => c.id === 'policy:enterprise-network');
+    expect(network).toMatchObject({
+      status: 'fail',
+      reason: 'policy-mismatch',
+    });
+    expect(network?.detail).toContain(
+      'network_policy is not enforced: mode allowlist with 1 allowed domain(s)',
+    );
+    expect(
+      checks.find((c) => c.id === 'policy:enterprise-enforceability')?.status,
+    ).toBe('fail');
+    // The sink check is unchanged by it.
+    expect(checks.find((c) => c.id === 'policy:enterprise-sinks')?.status).toBe(
+      'pass',
+    );
   });
 
   it('empty sinks and non-syslog-first sinks fail loudly', async () => {

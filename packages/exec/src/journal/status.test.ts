@@ -129,21 +129,24 @@ describe('unattributed count', () => {
     expect(status.unattributed).toBe(1);
   });
 
-  it('summarizes an empty journal without inventing entries', () => {
+  it('summarizes an empty journal, or none, without inventing entries', () => {
     const empty = new FileJournalStore(tempDir('j-'));
-    expect(journalStatus(empty, tempDir('ws-'))).toEqual({
+    const zero = {
       entries: 0,
       reversible: 0,
       nonReversible: 0,
       unattributed: 0,
       corrupt: 0,
       corruptLines: 0,
+      unknownVersionLines: 0,
       // No moves in an empty journal — the field is always
       // present so `--json` keeps a stable shape.
       headMoves: [],
       repo: null,
-    });
-    expect(reconciliationSummary(empty)).toBe(
+    };
+    expect(journalStatus(empty, tempDir('ws-'))).toEqual(zero);
+    expect(journalStatus(undefined, tempDir('ws-'))).toEqual(zero);
+    expect(reconciliationSummary(empty.entries())).toBe(
       'unattributed: 0 of 0 entr(ies) reconciled at run end',
     );
   });

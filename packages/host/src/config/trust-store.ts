@@ -24,11 +24,12 @@
 // imports node:fs) and its locked tmp+rename update, so a concurrent
 // grant/revoke can never leave a half-written store.
 
-import { isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   createNodeFileBridge,
   updateFileLocked,
 } from '@kubic/exec/file-bridge';
+import { tightenStateDir } from '@kubic/exec/lock-file';
 import { RUNTIME_ENV_OVERRIDES } from './runtime-env.js';
 
 // A recorded decision: true (trusted), false (declined), or null (no
@@ -202,13 +203,23 @@ export class ProjectTrustStore {
   // different paths never lose an update.
   set(cwd: string, decision: ProjectTrustDecision): void {
     const key = canonicalTrustPath(cwd);
-    updateFileLocked(this.file, (current) => {
-      const entries =
-        current === undefined ? {} : parseTrustFile(current, this.file);
-      if (decision === null) delete entries[key];
-      else entries[key] = decision;
-      return serializeTrustFile(entries);
-    });
+    // Kubic state, private whichever command creates it first: the store is
+    // written 0600, a new `~/.kubic` is created 0700, and a loose one is
+    // tightened here — only a `.kubic` directory, never a path's parent the
+    // caller merely named.
+    const dir = dirname(this.file);
+    if (basename(dir) === '.kubic') tightenStateDir(dir);
+    updateFileLocked(
+      this.file,
+      (current) => {
+        const entries =
+          current === undefined ? {} : parseTrustFile(current, this.file);
+        if (decision === null) delete entries[key];
+        else entries[key] = decision;
+        return serializeTrustFile(entries);
+      },
+      { mode: 0o600 },
+    );
   }
 
   // Every recorded boolean decision, sorted by path. Throws on a corrupt

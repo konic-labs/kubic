@@ -1,8 +1,8 @@
 // Layered TOML config with enterprise supremacy.
 // Roots: /etc/kubic/ (enterprise, product), ~/.kubic/ (global) and .kubic/
 // (project-local, trust-gated).
-// Precedence: Enterprise > Product > Global > Project > Workspace > Session >
-// Agent — a lower layer can never override a key set by a higher layer
+// Precedence: Enterprise > Product > Global > Project > Session > Agent — a
+// lower layer can never override a key set by a higher layer
 // (enterprise keys are frozen against every override attempt).
 // Canonical shape: agent/model/thinking, approvals (ask-user +
 // deny-on-timeout), journal retention, per-role model/tools, ui, session
@@ -27,7 +27,6 @@ export const CONFIG_LAYERS = [
   'product',
   'global',
   'project',
-  'workspace',
   'session',
   'agent',
 ] as const;
@@ -511,7 +510,6 @@ export function mergeLayered(inputs: LayerInput[]): MergeResult {
 export function defaultLayerPaths(args: {
   home: string;
   projectRoot: string;
-  workspaceRoot?: string;
   enterprisePath?: string;
   productPath?: string;
 }): Record<ConfigLayer, string | undefined> {
@@ -520,10 +518,6 @@ export function defaultLayerPaths(args: {
     product: args.productPath ?? join('/etc', 'kubic', 'product.toml'),
     global: join(args.home, '.kubic', 'config.toml'),
     project: join(args.projectRoot, '.kubic', 'config.toml'),
-    workspace:
-      args.workspaceRoot === undefined
-        ? undefined
-        : join(args.workspaceRoot, '.kubic', 'config.toml'),
     // Session + agent layers are supplied programmatically (never files).
     session: undefined,
     agent: undefined,

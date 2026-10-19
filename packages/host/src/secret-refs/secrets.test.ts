@@ -1,5 +1,5 @@
 // Request-time secrets, redaction and the secret-use audit.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
@@ -295,6 +295,19 @@ describe('redactBridgeWrites (session persistence)', () => {
       rmSync(dir, { recursive: true, force: true });
   });
   const KEY = 'sk-live-abcdef123456';
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps the creation mode a write, an append and a durable append ask for',
+    () => {
+      const { dir, bridge } = fixture(() => [KEY]);
+      bridge.writeFile('w.jsonl', 'x', { mode: 0o600 });
+      bridge.appendFile('a.jsonl', 'x', { mode: 0o600 });
+      bridge.appendDurably?.('d.jsonl', 'x', { mode: 0o600 });
+      for (const name of ['w.jsonl', 'a.jsonl', 'd.jsonl']) {
+        expect(statSync(join(dir, name)).mode & 0o777, name).toBe(0o600);
+      }
+    },
+  );
 
   function fixture(secrets: () => string[]) {
     const dir = mkdtempSync(join(tmpdir(), 'kubic-secrets-bridge-'));

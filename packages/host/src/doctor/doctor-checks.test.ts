@@ -10,7 +10,7 @@ import {
   installedPolicyPosture,
 } from '../approvals/index.js';
 import { runDoctorCommand } from './command.js';
-import type { DoctorDeps } from './types.js';
+import type { DoctorDeps, StatePermissionProbe } from './types.js';
 
 function cleanDeps(out: (line: string) => void): DoctorDeps {
   return {
@@ -27,43 +27,104 @@ function cleanDeps(out: (line: string) => void): DoctorDeps {
 // state; a group- or world-accessible state directory is named, warned
 // about (never exit-flipping), and tightened by the next open.
 describe('state permissions', () => {
-  it('warns on a world-readable sessions root, and passes when private', async () => {
-    const loose: string[] = [];
-    const looseCode = (
-      await runDoctorCommand(
-        {},
-        {
-          ...cleanDeps((line: string) => loose.push(line)),
-          probeStatePermissions: () => ({
-            path: '/home/u/.kubic/sessions',
-            mode: 0o755,
-          }),
-        },
-      )
-    ).exitCode;
-    expect(looseCode).toBe(0);
-    const text = loose.join('\n');
-    expect(text).toContain('state:permissions');
-    expect(text).toContain('WARN');
-    expect(text).toMatch(/\/home\/u\/\.kubic\/sessions is 755 .*chmod 700/);
-
-    const clean: string[] = [];
-    const cleanCode = (
+  const run = async (probe: StatePermissionProbe | undefined) => {
+    const lines: string[] = [];
+    const code = (
       await runDoctorCommand(
         { json: true },
         {
-          ...cleanDeps((line: string) => clean.push(line)),
-          probeStatePermissions: () => undefined,
+          ...cleanDeps((line: string) => lines.push(line)),
+          probeStatePermissions: () => probe,
         },
       )
     ).exitCode;
-    expect(cleanCode).toBe(0);
-    const report = JSON.parse(clean.join('\n')) as {
+    const report = JSON.parse(lines.join('\n')) as {
       checks: Array<{ id: string; status: string; detail: string }>;
     };
-    const check = report.checks.find((c) => c.id === 'state:permissions');
-    expect(check?.status).toBe('pass');
-    expect(check?.detail).toMatch(/private \(0700\) or absent/);
+    return {
+      code,
+      check: report.checks.find((c) => c.id === 'state:permissions'),
+    };
+  };
+
+  it('names every loose entry it shows with the mode it should have', async () => {
+    const { code, check } = await run({
+      loose: [
+        {
+          path: '/home/u/.kubic/sessions/s1/journal',
+          mode: 0o755,
+          expected: 0o700,
+        },
+        {
+          path: '/home/u/.kubic/sessions/s1/main.jsonl',
+          mode: 0o644,
+          expected: 0o600,
+        },
+      ],
+      count: 5,
+      checked: 40,
+      truncated: false,
+    });
+    // A warn: informational, never exit-flipping.
+    expect(code).toBe(0);
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain(
+      '/home/u/.kubic/sessions/s1/journal is 755, expected 700',
+    );
+    expect(check?.detail).toContain(
+      '/home/u/.kubic/sessions/s1/main.jsonl is 644, expected 600',
+    );
+    expect(check?.detail).toContain('(+3 more)');
+    expect(check?.detail).toMatch(/chmod 700 a directory and 600 a file/);
+  });
+
+  it('passes a private state, and says when the walk stopped early', async () => {
+    expect((await run(undefined)).check).toMatchObject({
+      status: 'pass',
+      detail: expect.stringMatching(
+        /private \(0700 directories, 0600 files\) or absent$/,
+      ),
+    });
+    expect(
+      (await run({ loose: [], count: 0, checked: 4096, truncated: true })).check
+        ?.detail,
+    ).toMatch(/\(checked the first 4096 entries\)$/);
+  });
+});
+
+// A non-empty journal.outOfScope removes the undo guarantee for those
+// paths, so doctor names them where the other honest limits are.
+describe('journal coverage', () => {
+  it('warns with the excluded paths, and adds no check when nothing is excluded', async () => {
+    const run = async (paths: string[]) => {
+      const lines: string[] = [];
+      const code = (
+        await runDoctorCommand(
+          { json: true },
+          {
+            ...cleanDeps((line: string) => lines.push(line)),
+            probeJournalCoverage: () => ({
+              outOfScope: paths,
+              source: 'project',
+            }),
+          },
+        )
+      ).exitCode;
+      const report = JSON.parse(lines.join('\n')) as {
+        checks: Array<{ id: string; status: string; detail: string }>;
+      };
+      return {
+        code,
+        check: report.checks.find((c) => c.id === 'journal:out-of-scope'),
+      };
+    };
+    const { code, check } = await run(['dist', 'src']);
+    expect(code).toBe(0);
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toBe(
+      'journal.outOfScope (project) leaves 2 path(s) out of the journal: dist, src — changes there are not journaled, and kubic undo cannot restore them',
+    );
+    expect((await run([])).check).toBeUndefined();
   });
 });
 

@@ -204,6 +204,7 @@ export function saveBaseline(
   createNodeFileBridge('/').writeFile(
     join(dir, `baseline-${runId}.json`),
     JSON.stringify(baseline),
+    { mode: 0o600 },
   );
 }
 

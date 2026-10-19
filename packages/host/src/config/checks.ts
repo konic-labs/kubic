@@ -3,6 +3,7 @@
 // value the parse keeps. The runtime re-runs the same checks for the
 // programmatic session/agent layers, which never pass through the TOML
 // parser.
+import { posix } from 'node:path';
 import { ConfigError } from './errors.js';
 import type { ConfigKey, KeyCheck } from './schema.js';
 
@@ -307,7 +308,30 @@ export function checkOutOfScopeEntries(
       `'${keyPath}': 'outOfScope' entry ${empty + 1} is empty — declare a relative path, or drop the entry`,
     );
   }
-  return entries;
+  // The walk compares workspace-relative paths literally, so each entry is
+  // read as the plain path it names: `./dist` and `dist/` are `dist`. One
+  // that names the whole workspace would leave the journal recording
+  // nothing, and one outside the workspace names nothing the journal walks.
+  return entries.map((entry, index) => {
+    const at = `'${keyPath}': 'outOfScope' entry ${index + 1}`;
+    if (entry.startsWith('/')) {
+      throw new ConfigError(
+        `${at} is outside the workspace (${JSON.stringify(entry)}) — declare a path relative to the workspace`,
+      );
+    }
+    const plain = posix.normalize(entry).replace(/\/+$/, '');
+    if (plain === '.' || plain === '') {
+      throw new ConfigError(
+        `${at} names the whole workspace (${JSON.stringify(entry)}) — the journal would record nothing; list the paths to leave out instead`,
+      );
+    }
+    if (plain === '..' || plain.startsWith('../')) {
+      throw new ConfigError(
+        `${at} is outside the workspace (${JSON.stringify(entry)}) — declare a path relative to the workspace`,
+      );
+    }
+    return plain;
+  });
 }
 
 // Per-role model pin: a `provider/id` ref, never a bare

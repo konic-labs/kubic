@@ -61,19 +61,34 @@ async function runGate(
   }
 }
 
+// What the caller is told about each gate command: when it starts (the
+// command is arbitrary shell from the config, so its run is announced) and
+// how it ended (so it can be recorded).
+export interface GateObserver {
+  readonly started?: (gate: VerifyGate, command: string) => void;
+  readonly settled?: (
+    gate: VerifyGate,
+    command: string,
+    verdict: GateVerdict,
+  ) => void;
+}
+
 // Gates run one after another (a build and its tests share the tree), in
 // VERIFY_GATES order.
 export async function runVerifier(
   env: ExecutionEnv,
   commands: VerifyCommands,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; observer?: GateObserver } = {},
 ): Promise<VerifyResults> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS;
   const results: VerifyResults = {};
   for (const gate of VERIFY_GATES) {
     const command = commands[gate];
     if (command === undefined || command.trim() === '') continue;
-    results[gate] = await runGate(env, command, timeoutMs);
+    options.observer?.started?.(gate, command);
+    const verdict = await runGate(env, command, timeoutMs);
+    options.observer?.settled?.(gate, command, verdict);
+    results[gate] = verdict;
   }
   return results;
 }

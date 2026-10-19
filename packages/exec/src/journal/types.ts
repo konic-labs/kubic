@@ -103,6 +103,12 @@ export interface JournalEntryInput {
   headTo?: HeadState;
 }
 
+// The journal record format's major version, written on every index line
+// as `v`. Within a major, fields are only ever added (absent on older lines,
+// ignored by older readers); a line with another major is one this build
+// cannot interpret. A line without `v` predates the field and is version 1.
+export const JOURNAL_RECORD_VERSION = 1;
+
 export interface JournalIndexRead {
   entries: JournalEntry[];
   /**
@@ -112,6 +118,13 @@ export interface JournalIndexRead {
    * the drop is visible instead of silent.
    */
   corruptLines: number;
+  /**
+   * Index lines with a record version this build cannot interpret — written
+   * by a newer Kubic. They are never read as entries (so never restored or
+   * diffed), `kubic status` reports the count, and a retention rewrite keeps
+   * them verbatim instead of destroying records it does not understand.
+   */
+  unknownVersionLines: number;
 }
 
 // An entry whose own content cannot fit the store's bound is

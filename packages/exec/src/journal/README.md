@@ -12,6 +12,27 @@ directory holding:
 The directory and `blobs/` are created `0700`, and every file in them `0600`:
 they hold copies of workspace files, secrets included.
 
+## Record format
+
+Each `index.jsonl` line is one JSON object: the record version `v`, then the
+entry — `path`, `op` (`write`, `edit`, `create`, `delete`, `rename` or
+`marker`), `beforeHash`, `afterHash` and `deltaHash` (sha256 hex or
+`null`), `bytesDelta`, `sessionId`, `source` (`tool`, `sweep` or `undo`),
+`toolCallId` and `timestamp` (epoch milliseconds), plus the optional
+fields `JournalEntry` documents (`turn`, `toolName`, `unattributed`,
+`deltaBaseEmpty`, the omitted-content flags, `headFrom`/`headTo`).
+
+- **`v` is the format's major version, `1`.** Within a major, fields are
+  only ever added: an older line lacks them, and an older reader ignores
+  them. A change to a field's meaning, an `op`, a hash or a unit is a new
+  major.
+- **A line without `v` predates the field** and reads as version 1. A line
+  without `source` is given one on read (see Reads below).
+- **A line of another major is never interpreted.** It is not an entry, so
+  `diff`, `undo` and retention never use it; `kubic status` counts it
+  (`unknown-version index lines`), and a retention rewrite keeps it
+  verbatim, so a build never destroys records a newer one wrote.
+
 ## Durability protocol
 
 This is the order in which the store writes, flushes and renames. With
@@ -67,10 +88,17 @@ blobs, so a file toggling between two contents grows only the index.
 
 ### The mutation lock
 
-Appends and retention passes hold `index.jsonl.lock`, created with `O_EXCL`
-and recording the holder's pid. A nested call in the same store is
-re-entrant; another process waits up to five seconds, then fails by name; a
-lock older than ten seconds belongs to a crashed holder and is taken over.
+Appends and retention passes hold `index.jsonl.lock`. The claim lands
+atomically (a temp file hard-linked into place) and names its holder: pid,
+process start time where the platform reports it, and a nonce. A nested call
+in the same store is re-entrant; another process waits up to five seconds,
+then fails by name. A waiter takes the lock away only when its holder is
+gone — a dead pid, or one whose start time shows it was reused — and never
+from a live holder, however long it runs; the takeover runs under a guard
+(`index.jsonl.lock.steal`), so two waiters cannot both take a gone holder's
+lock. Residue that names no holder (an older build's bare pid is read by its
+pid; unreadable bytes) is taken over once older than ten seconds. A release
+removes the lock only while it still carries this claim's nonce.
 
 ### Reads
 

@@ -1,4 +1,5 @@
-// The environment checks: required tools on PATH and the licence line.
+// The environment checks: required tools on PATH, the platform the shell
+// guards cover, and the licence line.
 
 import { formatLicenseDetail } from '@kubic/core/license';
 import type {
@@ -30,5 +31,28 @@ export function licenseCheck(): DoctorCheck {
     status: 'pass',
     reason: 'ok',
     detail: formatLicenseDetail(),
+  };
+}
+
+// The platform posture. Every approval detector reads POSIX shell, so the bash
+// tool runs on Linux and macOS and refuses to run on Windows, where cmd would
+// run with no detector coverage.
+export function platformCheck(platform: string): DoctorCheck {
+  if (platform === 'win32') {
+    return {
+      id: 'platform:shell',
+      label: 'platform shell',
+      status: 'warn',
+      reason: 'unsupported-platform',
+      detail:
+        'Windows is not supported: the bash tool refuses to run, because the approval detectors read POSIX shell commands only',
+    };
+  }
+  return {
+    id: 'platform:shell',
+    label: 'platform shell',
+    status: 'pass',
+    reason: 'ok',
+    detail: `${platform}: the bash tool runs bash (else sh), and the approval detectors read POSIX shell commands`,
   };
 }

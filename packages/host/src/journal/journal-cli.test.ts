@@ -3,6 +3,7 @@
 import {
   appendFileSync,
   chmodSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   utimesSync,
@@ -378,13 +379,10 @@ describe('journal CLI corrupt index lines', () => {
   });
 });
 
-// The bare journal CLI resolves `<root>/.kubic/journal` — a
-// store no runtime path writes (runs journal under
-// `<sessions-root>/<id>/journal`), so `kubic diff` after `kubic run` printed
-// `no changes` from a dead store. With no workspace store, bare commands
-// fall back to the latest session journal recorded for this workspace
-// and name it first (`session: <id>`)
-// so the fallback is never silent; `--json` keeps its parseable envelope.
+// Runs journal under `<sessions-root>/<id>/journal`, so the bare commands
+// read the latest session journal recorded for this workspace and name it
+// first (`session: <id>`): the choice is never silent, and `--json` keeps
+// its parseable envelope.
 describe('journal CLI default store fallback', () => {
   function seedSessions(): {
     root: string;
@@ -448,14 +446,65 @@ describe('journal CLI default store fallback', () => {
       )
     ).exitCode;
     expect(code).toBe(0);
-    // The note is a diagnostic: stderr, before any report line.
+    // The note is a diagnostic: stderr, before any report line — and with
+    // more than one session here it names the others and how to pick one.
     expect(errs).toEqual([
-      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: ${newId} (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     ]);
     expect(lines[0]).toBe('--- a/new.txt');
     const text = lines.join('\n');
     expect(text).toContain('new.txt');
     expect(text).not.toContain('old.txt');
+  });
+
+  it('bare undo refuses while another session for this workspace is live', async () => {
+    const { root, sessionsRoot, newId, oldId } = seedSessions();
+    const errs: string[] = [];
+    const code = (
+      await runJournalCommand(
+        { command: 'undo' },
+        {
+          root,
+          sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
+          // The older session is still attached by a running process.
+          sessionLockHolder: (dir) =>
+            dir.endsWith(oldId) ? { pid: 4242 } : undefined,
+          out: () => undefined,
+          err: (l) => errs.push(l),
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(1);
+    expect(errs.join('\n')).toContain(
+      `error: session ${oldId} for this workspace is attached by pid 4242`,
+    );
+    expect(errs.join('\n')).toContain(`--session <id>: ${newId}, ${oldId}`);
+    // Nothing was restored: the journal's file never reappears.
+    expect(existsSync(join(root, 'new.txt'))).toBe(false);
+  });
+
+  it('bare undo still undoes the latest run when no other session is live', async () => {
+    const { root, sessionsRoot } = seedSessions();
+    const lines: string[] = [];
+    const code = (
+      await runJournalCommand(
+        { command: 'undo', dryRun: true, json: true },
+        {
+          root,
+          sessionsRoot,
+          sessionWorkspaces: recordedAt(root),
+          sessionLockHolder: () => undefined,
+          out: (l) => lines.push(l),
+          err: () => undefined,
+        },
+      )
+    ).exitCode;
+    expect(code).toBe(0);
+    expect(JSON.parse(lines.join('\n'))).toMatchObject({
+      session: 'sess-new',
+      restored: ['new.txt'],
+    });
   });
 
   it('bare log and status read the fallback store too', async () => {
@@ -477,7 +526,7 @@ describe('journal CLI default store fallback', () => {
       ).exitCode,
     ).toBe(0);
     expect(errs).toEqual([
-      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: ${newId} (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     ]);
     expect(log.join('\n')).toContain('new.txt');
     const status: string[] = [];
@@ -497,7 +546,7 @@ describe('journal CLI default store fallback', () => {
       ).exitCode,
     ).toBe(0);
     expect(errs).toEqual([
-      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: ${newId} (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     ]);
     expect(status[0]).toBe('entries: 1 (reversible: 1, non-reversible: 0)');
     expect(status.join('\n')).toContain('entries: 1');
@@ -528,8 +577,8 @@ describe('journal CLI default store fallback', () => {
     expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
   });
 
-  it('a non-empty workspace store wins over newer session journals, with no session line', async () => {
-    const { root, sessionsRoot } = seedSessions();
+  it('never reads a journal under <root>/.kubic: the latest session journal is the store', async () => {
+    const { root, sessionsRoot, newId } = seedSessions();
     new FileJournalStore(join(root, '.kubic', 'journal')).append({
       path: 'ws.txt',
       op: 'write',
@@ -553,25 +602,16 @@ describe('journal CLI default store fallback', () => {
       )
     ).exitCode;
     expect(code).toBe(0);
-    expect(lines.some((l) => l.startsWith('session: '))).toBe(false);
     const text = lines.join('\n');
-    expect(text).toContain('ws.txt');
-    expect(text).not.toContain('new.txt');
+    expect(text).toContain(
+      `session: ${newId} (latest session journal for this workspace`,
+    );
+    expect(text).toContain('new.txt');
+    expect(text).not.toContain('ws.txt');
   });
 
   it('explicit --session (id or journal:<id> ref) always wins over every default', async () => {
     const { root, sessionsRoot, oldId, newId } = seedSessions();
-    // A workspace store too: --session must beat it and the fallback alike.
-    new FileJournalStore(join(root, '.kubic', 'journal')).append({
-      path: 'ws.txt',
-      op: 'write',
-      before: 'w1\n',
-      after: 'w2\n',
-      bytesDelta: 0,
-      sessionId: 'ws1',
-      toolCallId: 'call-9',
-      timestamp: 1700000000000,
-    });
     for (const [ref, want, other] of [
       [oldId, 'old.txt', 'new.txt'],
       [`journal:${oldId}`, 'old.txt', 'new.txt'],
@@ -595,7 +635,6 @@ describe('journal CLI default store fallback', () => {
       const text = lines.join('\n');
       expect(text).toContain(want);
       expect(text).not.toContain(other);
-      expect(text).not.toContain('ws.txt');
     }
   });
 
@@ -620,13 +659,13 @@ describe('journal CLI default store fallback', () => {
     ).exitCode;
     expect(code).toBe(0);
     expect(errs).toEqual([
-      `info: session: ${newId} (latest session journal for this workspace) — workspace ${root}`,
+      `info: session: ${newId} (latest session journal for this workspace; also here: sess-old — pass --session <id> to pick another) — workspace ${root}`,
     ]);
     expect(lines.join('\n')).toContain('would restore 1 step(s)');
     expect(readFileSync(join(root, 'new.txt'), 'utf8')).toBe('n2\n');
   });
 
-  it('empty everywhere prints the nothing-anywhere hint and exits 0', async () => {
+  it('with no session journal, prints the no-journal hint and exits 0', async () => {
     const sessionsRoot = tempDir('sr-');
     const root = tempDir('ws-');
     const lines: string[] = [];
@@ -646,7 +685,7 @@ describe('journal CLI default store fallback', () => {
     expect(code).toBe(0);
     expect(lines).toEqual(['no changes']);
     expect(errs).toEqual([
-      `info: no journal under ${join(root, '.kubic', 'journal')} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
+      `info: no session journal recorded for this workspace under the sessions root (${sessionsRoot}) — start a run or pass --session`,
     ]);
     // --json stays one parseable envelope, hint included nowhere.
     const json: string[] = [];
@@ -689,7 +728,7 @@ describe('journal CLI default store fallback', () => {
     expect(code).toBe(0);
     expect(lines).toEqual(['no changes']);
     expect(errs).toEqual([
-      `info: no journal under ${join(root, '.kubic', 'journal')} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
+      `info: no session journal recorded for this workspace under the sessions root (${sessionsRoot}) — start a run or pass --session`,
     ]);
   });
 });

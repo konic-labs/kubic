@@ -1,6 +1,6 @@
 import type { FileBridge } from '../file-bridge.js';
 import type { BlobStore } from './blobs.js';
-import type { IndexFile } from './index-file.js';
+import { type IndexFile, serializeEntry } from './index-file.js';
 import type { JournalEntry, RetentionPolicy } from './types.js';
 
 // A pass that has to prune frees a tenth of the bound (a byte low-water
@@ -30,7 +30,7 @@ export function blobHashesOf(entry: JournalEntry): string[] {
 // addressing dedupes blobs, so a file toggling between two contents grows the
 // journal through its lines alone.
 function indexLineBytes(entry: JournalEntry): number {
-  return Buffer.byteLength(`${JSON.stringify(entry)}\n`, 'utf8');
+  return Buffer.byteLength(`${serializeEntry(entry)}\n`, 'utf8');
 }
 
 // The minimum timestamp in a kept set — what an age policy's
@@ -152,6 +152,17 @@ export function nothingPruned(): RetentionResult {
   return { entries: 0, bytes: 0, overBound: 0 };
 }
 
+// An age bound of 0 ms or less is one nothing fits: every entry is at least
+// that old, so a pass would empty the journal. Retention off is an unset
+// bound, so such a value is refused by name, never read as "drop everything".
+export function checkAgeBound(maxAgeMs: number | undefined): void {
+  if (maxAgeMs !== undefined && !(maxAgeMs > 0)) {
+    throw new RangeError(
+      `journal maxAgeMs must be a positive number of milliseconds (got ${maxAgeMs}); leave it unset for no age bound`,
+    );
+  }
+}
+
 // The retention executor of one store: a pass that applies the plan under
 // the store's mutation lock, and the caches its fast path proves the bounds
 // from.
@@ -192,6 +203,7 @@ export class Retention {
     readEntries: () => JournalEntry[],
     prepareDirs: () => void,
   ): RetentionResult {
+    checkAgeBound(policy.maxAgeMs);
     const now = policy.now ?? Date.now();
     if (this.withinBoundsFromCache(policy, now)) return nothingPruned();
     // The size of the index this pass is about to read, sampled

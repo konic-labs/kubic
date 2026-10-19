@@ -32,13 +32,17 @@ describe('the trust question', () => {
     );
     const body = lines.join('\n').replace(/\s+/gu, ' ');
     expect(body).toContain(
-      'sets the model, approvals, permissions and journal retention',
+      'sets the model, approvals, permissions, journal retention and which paths the journal records',
+    );
+    // A grant also lets the project run shell: its gate commands.
+    expect(body).toContain(
+      'its [verify] commands run as shell commands after each run',
     );
     expect(body).toContain(
       'any *_API_KEY or KUBIC_* variable it names (KUBIC_API_KEY by default)',
     );
     expect(body).toContain(
-      'project skills and role documents are instructions the model follows',
+      'project skills, role documents and [agent] systemPromptFile are instructions the model follows',
     );
     expect(lines.at(-1)?.trim()).toBe('y  yes   n  not now   v  view file');
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(100);

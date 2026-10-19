@@ -88,6 +88,9 @@ Decisions live in one user-owned file, `~/.kubic/trust.json`:
 }
 ```
 
+- **It is private.** The file is written `0600` and a new `~/.kubic` is
+  created `0700`, whichever command creates it first; a loose `~/.kubic` is
+  tightened to `0700` on the next `kubic trust` write.
 - **Keys are canonical paths**: the realpath when the directory exists, so
   a symlinked path and its target share one decision.
 - **Values are `true` (trusted) or `false` (declined)**; an absent key is
@@ -118,11 +121,13 @@ key:
 ```
   ◆ trust        ~/src/app/.kubic/config.toml found — load project config?
                  This lets the project's own files take effect for runs here:
-                 its config.toml sets the model, approvals, permissions and
-                 journal retention; its models.json names provider URLs that are
-                 sent the key of any *_API_KEY or KUBIC_* variable it names
-                 (KUBIC_API_KEY by default); its project skills and role
-                 documents are instructions the model follows.
+                 its config.toml sets the model, approvals, permissions, journal
+                 retention and which paths the journal records, and its [verify]
+                 commands run as shell commands after each run; its models.json
+                 names provider URLs that are sent the key of any *_API_KEY or
+                 KUBIC_* variable it names (KUBIC_API_KEY by default); its
+                 project skills, role documents and [agent] systemPromptFile are
+                 instructions the model follows.
                  y  yes   n  not now   v  view file
 ```
 

@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import {
   confinePath,
   defaultIsDestructive,
@@ -13,6 +13,7 @@ import {
   effectiveCredentialLevel,
   effectiveNetworkLevel,
 } from '@kubic/agent/permissions';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { ControlPlaneRoots } from './control-plane.js';
 import { controlPlaneClass, writeTargets } from './control-plane.js';
 import {
@@ -35,12 +36,13 @@ import {
   targetToken,
   unwrapIndirection,
 } from './shell/lexer.js';
+import { shellWrites } from './shell/write-commands.js';
 
 // Trigger detection. Predicates are injected so this module stays
 // free of shell parsing: the agent owns the classifiers and
 // the host owns the decision. The bash detectors are a literal-pattern
-// heuristic, not a sandbox: redirect/tee/cp-mv-install
-// outside-writes, `sudo` privilege escalation, and destructive/network
+// heuristic, not a sandbox: redirect outside-writes and those of the shell
+// writer table, `sudo` privilege escalation, and destructive/network
 // verbs behind command indirection. Indirection coverage, exactly:
 // `$(…)` spans (a literal `$(…)`/`)` pairing scan — a bare `(` is ordinary
 // text, so closers of other constructs can shift the pairing; the
@@ -51,11 +53,12 @@ import {
 // too, not only the single-level `$(rm -rf /)`. What still bypasses them —
 // stated, not silent: interpreter-based verbs handed over as data
 // (`bash -c`, `python3 -c`, `node -e`), substitutions nested past
-// ~2x MAX_UNWRAP_DEPTH, python/node/npm exfiltration under network:none,
-// quoted or backslash-obfuscated verbs the literal patterns cannot see,
-// whitespace tricks around redirection targets, and flag-reordered copy
-// targets (`cp -t /etc a b`) the last-argument heuristic misses. Detector
-// ownership for the rest:
+// ~2x MAX_UNWRAP_DEPTH, network use through an interpreter or an unlisted
+// tool under network:none, quoted or backslash-obfuscated verbs the literal
+// patterns cannot see (the rm command word excepted: it is read as the shell
+// reads it), whitespace tricks around redirection targets, and write paths
+// that come from input (xargs, a file list, a variable). Detector ownership
+// for the rest:
 //   credentials overreach — the credential-path detector
 //   (approvals-credentials.ts): well-known home credential locations in a
 //     bash command, and the read-family tool paths onto in-workspace
@@ -193,23 +196,25 @@ export function detectTriggers(
     if (gitConfigMutation(command)) found.push(KUBIC_STATE_WRITE);
     if (INSTALL.test(command)) found.push('install');
     if (DEPLOY.test(command)) found.push('deploy');
-    // Every write target (redirect, tee, cp/mv/install) goes through one
-    // check: resolved against the cwd a preceding `cd`/`pushd` left behind,
-    // failing closed on shell-expanded prefixes.
+    // Every write target (redirect, tee, cp/mv/install, the writer table)
+    // goes through one check: resolved against the cwd a preceding
+    // `cd`/`pushd` left behind, failing closed on shell-expanded prefixes.
     const cdTrail = cdEvents(command, ctx.workspace);
     const typedCwd = resolve(ctx.workspace);
-    const outside = (raw: string, end: number, start: number): boolean => {
-      // Targets arrive raw: quotes always come off, and a lifted token also
-      // loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
-      // and `echo $(cp a /etc/b)` cannot dodge the outside check while a
-      // plain literal `)`/`]` stays part of the path. Outside if EITHER the
-      // token as typed OR its cd-tracked resolution is (see the cd notes above).
-      const target = targetToken(raw, end, spanClosers);
+    // Outside if EITHER the path as typed OR its cd-tracked resolution is
+    // (see the cd notes above).
+    const outsidePath = (target: string, start: number): boolean => {
       if (target === '') return false;
       if (shellTargetOutside(target, typedCwd, ctx)) return true;
       const tracked = cwdAt(cdTrail, start, ctx.workspace);
       return tracked !== typedCwd && shellTargetOutside(target, tracked, ctx);
     };
+    // Scanned targets arrive raw: quotes always come off, and a lifted token
+    // also loses its substitution closer (targetToken) — so `> "/etc/cron.d/x"`
+    // and `echo $(cp a /etc/b)` cannot dodge the outside check while a plain
+    // literal `)`/`]` stays part of the path.
+    const outside = (raw: string, end: number, start: number): boolean =>
+      outsidePath(targetToken(raw, end, spanClosers), start);
     const targets: Array<[string, number, number]> = [];
     for (const redirect of command.matchAll(REDIRECT)) {
       const raw = redirect[2] ?? '';
@@ -218,17 +223,23 @@ export function detectTriggers(
       }
       targets.push([raw, redirect.index + redirect[0].length, redirect.index]);
     }
-    // Shell-side writes by another name: tee and trailing
-    // cp/mv/install targets reach files no `>` ever touches. Both use the
-    // same shared quote-stripping and last-argument target extraction,
-    // scoped so the closer trim fires only on lifted tokens.
+    // Shell-side writes by another name: a tee or cp/mv/install word anywhere
+    // has its last argument checked (see TEE_TARGET), with the closer trim
+    // scoped to lifted tokens.
     for (const tee of command.matchAll(TEE_TARGET)) {
       targets.push([tee[1] ?? '', tee.index + tee[0].length, tee.index]);
     }
     for (const copy of command.matchAll(COPY_TARGET)) {
       targets.push([copy[2] ?? '', copy.index + copy[0].length, copy.index]);
     }
-    if (targets.some(([raw, end, start]) => outside(raw, end, start))) {
+    // Every other writer, by the command table (a delete is destructive-shell's
+    // to raise, not outside-write's).
+    if (
+      targets.some(([raw, end, start]) => outside(raw, end, start)) ||
+      shellWrites(command).some(
+        (write) => !write.removal && outsidePath(write.path, write.at),
+      )
+    ) {
       found.push('outside-write');
     }
     // Privilege escalation and command indirection: sudo is a
@@ -264,14 +275,25 @@ export function detectTriggers(
     for (const arg of readArgs) {
       const value = args[arg];
       if (typeof value !== 'string') continue;
+      const linked = READ_FILTER_ARGS.has(arg)
+        ? undefined
+        : linkedWorkspacePath(ctx.workspace, value);
       const hit = READ_FILTER_ARGS.has(arg)
         ? (credentialAccessInPath(value) ?? credentialAccessInNameFilter(value))
-        : credentialAccessInPath(value);
+        : (credentialAccessInPath(value) ??
+          (linked === undefined ? undefined : credentialAccessInPath(linked)));
       if (hit !== undefined) {
         found.push('credentials');
         break;
       }
     }
+  }
+  // The structured git tools raise what their bash spelling raises: an
+  // amended commit rewrites history, as `git commit --amend` does. A
+  // `git_merge` of a local branch is a workspace write the journal records,
+  // as `git merge` is, and raises nothing.
+  if (toolName === 'git_commit' && args.amend === true) {
+    found.push('destructive-shell');
   }
   if (
     (toolName === 'write' || toolName === 'edit') &&
@@ -302,6 +324,69 @@ export function detectTriggers(
     found.push(KUBIC_STATE_WRITE);
   }
   return [...new Set(found)];
+}
+
+// The workspace as the OS resolved it (macOS spells /tmp as /private/tmp),
+// cached: the exec seam accepts a path under either spelling.
+const physicalWorkspaces = new Map<string, string | undefined>();
+
+function physicalWorkspace(workspace: string): string | undefined {
+  if (!physicalWorkspaces.has(workspace)) {
+    let real: string | undefined;
+    try {
+      real = createNodeFileBridge('/').realPath?.(workspace);
+    } catch {
+      real = undefined;
+    }
+    physicalWorkspaces.set(workspace, real);
+  }
+  return physicalWorkspaces.get(workspace);
+}
+
+// Where a read-family path leads through its links, as a workspace-relative
+// path, when a link takes it somewhere else inside the workspace: a
+// credential file reached through an innocently named link asks like the
+// file itself. undefined for a path that resolves to itself, cannot be
+// resolved, or leads outside (the tool refuses that as a symlink escape).
+function linkedWorkspacePath(
+  workspace: string,
+  path: string,
+): string | undefined {
+  const lexical = resolve(workspace, path);
+  let real: string | undefined;
+  try {
+    real = createNodeFileBridge('/').realPath?.(lexical);
+  } catch {
+    return undefined;
+  }
+  const root = physicalWorkspace(workspace) ?? resolve(workspace);
+  if (real === undefined || real === lexical || real === root) return undefined;
+  if (!real.startsWith(`${root}/`)) return undefined;
+  return relative(root, real);
+}
+
+/**
+ * The file tools write only inside the workspace: the exec seam refuses any
+ * other path, whatever an approval says. An outside `write`/`edit` is
+ * refused by name before any ask, so no card offers an allow the call could
+ * not honour; a change outside the workspace goes through bash, which asks
+ * for outside-write.
+ */
+export function outsideFileWriteRefusal(
+  toolName: string,
+  args: Record<string, unknown>,
+  workspace: string,
+): string | undefined {
+  if (toolName !== 'write' && toolName !== 'edit') return undefined;
+  const path = args.path;
+  if (typeof path !== 'string' || !confinePath(workspace, path).rewritten) {
+    return undefined;
+  }
+  const physical = physicalWorkspace(workspace);
+  if (physical !== undefined && !confinePath(physical, path).rewritten) {
+    return undefined;
+  }
+  return `refused: ${toolName} cannot change ${path}: it is outside the workspace, and the file tools write only inside it — a change outside the workspace goes through bash, which asks for outside-write`;
 }
 
 // The trigger context the shipped default evaluates capabilities with: the

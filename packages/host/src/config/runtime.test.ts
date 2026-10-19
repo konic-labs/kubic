@@ -132,6 +132,52 @@ describe('runtime config load', () => {
     expect(keep.entries().length).toBe(1);
   });
 
+  it('reads [journal] retentionDays = 0 as retention off, as journal prune does', () => {
+    const fromFile = load(
+      { [PROJECT]: '[journal]\nretentionDays = 0\n' },
+      { projectTrusted: true },
+    );
+    expect(fromFile.journal.retentionDays).toBe(0);
+    expect(fromFile.journal.maxAgeMs).toBeUndefined();
+    const fromEnv = load(
+      {},
+      {
+        projectTrusted: true,
+        env: { [RUNTIME_ENV_OVERRIDES.journalRetentionDays]: '0' },
+      },
+    );
+    expect(fromEnv.journal.retentionDays).toBe(0);
+    expect(fromEnv.journal.maxAgeMs).toBeUndefined();
+
+    // Measurably off: a store built from it keeps every entry it appends.
+    const store = new FileJournalStore(
+      tempDir('kubic-runtime-journal-off-'),
+      fromFile.journal.maxAgeMs === undefined
+        ? {}
+        : { maxAgeMs: fromFile.journal.maxAgeMs },
+    );
+    const dayMs = 24 * 60 * 60 * 1000;
+    for (const [path, age] of [
+      ['old.txt', 30 * dayMs],
+      ['new.txt', 0],
+    ] as const) {
+      store.append({
+        path,
+        op: 'write',
+        before: null,
+        after: path,
+        bytesDelta: path.length,
+        sessionId: 's1',
+        toolCallId: null,
+        timestamp: Date.now() - age,
+      });
+    }
+    expect(store.entries().map((entry) => entry.path)).toEqual([
+      'old.txt',
+      'new.txt',
+    ]);
+  });
+
   it('projects the [model] escalation ladder with its bound', () => {
     const runtime = load(
       {
@@ -294,7 +340,7 @@ describe('runtime config load', () => {
     ).toThrow(/provider and 'id' must be set together/);
   });
 
-  it('honours precedence: cli > enterprise > env > global > project > workspace > session > agent', () => {
+  it('honours precedence: cli > enterprise > env > global > project > session > agent', () => {
     const files = {
       [GLOBAL]: '[model]\nprovider = "g"\nid = "m"\n',
       [PROJECT]: '[model]\nprovider = "p"\nid = "m"\n',
@@ -342,7 +388,7 @@ describe('runtime config load', () => {
     expect(loadRuntimeConfig(noEnterpriseCli).sources['model.provider']).toBe(
       'cli',
     );
-    // The lower tail: project > workspace > session > agent.
+    // The lower tail: project > session > agent.
     const tail = (
       files: Record<string, string>,
       extra: Partial<RuntimeConfigInputs>,
@@ -353,27 +399,11 @@ describe('runtime config load', () => {
         cwd: CWD,
         enterprisePath: '/nonexistent/config.toml',
         projectTrusted: true,
-        workspaceRoot: '/ws',
         ...extra,
       }).model?.provider;
-    const workspaceFile = '/ws/.kubic/config.toml';
     const session = { model: { provider: 's', id: 'm' } };
     const agent = { model: { provider: 'a', id: 'm' } };
-    expect(
-      tail(
-        {
-          [PROJECT]: files[PROJECT],
-          [workspaceFile]: '[model]\nprovider = "w"\nid = "m"\n',
-        },
-        { session, agent },
-      ),
-    ).toBe('p');
-    expect(
-      tail(
-        { [workspaceFile]: '[model]\nprovider = "w"\nid = "m"\n' },
-        { session, agent },
-      ),
-    ).toBe('w');
+    expect(tail({ [PROJECT]: files[PROJECT] }, { session, agent })).toBe('p');
     expect(tail({}, { session, agent })).toBe('s');
     expect(tail({}, { agent })).toBe('a');
   });

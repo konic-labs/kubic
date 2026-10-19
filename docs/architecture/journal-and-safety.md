@@ -28,14 +28,19 @@ takes the fast path and rewrites nothing, so the count can stand for a while. Pr
 including 0600 sources like `.env`, and the index names every path of the run.
 An existing group- or world-accessible state directory (the sessions root, a
 journal directory) is tightened to 0700 when the next lock is taken, and
-`kubic doctor`'s `state:permissions` check names it while it stays loose. The
+`kubic doctor`'s `state:permissions` check walks the state — the sessions
+root, every session directory, journal and file below it, and the trust
+store — and names whatever stays loose. The
 undo restore keeps the target file's own mode — Kubic never widens a file it
 writes back.
 
 Cross-process coordination: every
-journal mutation — append, retention rewrite, blob sweep — runs under an
-O_EXCL lock beside the index (stale after ten seconds, so a crashed holder
-never wedges the journal), the rewrite abandons itself when the index changed
+journal mutation — append, retention rewrite, blob sweep — runs under a
+lock beside the index whose claim names its holder (pid, process start time,
+a nonce): a waiter takes it away only when that holder is gone, so a crashed
+holder never wedges the journal and a live one is never robbed of it, a
+takeover runs under a guard so two waiters cannot both take it, and a
+release removes only its own claim. The rewrite abandons itself when the index changed
 under it, and the sweep only removes blobs that are unambiguously dead (never
 a `${hash}.${pid}.tmp` another process is renaming into place, never one newer
 than the pass). Commands that only read step aside for a live run instead of

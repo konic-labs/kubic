@@ -17,7 +17,15 @@ import type {
 import { NodeExecutionEnv, ROOT_PROVENANCE } from '@kubic/exec/env';
 import type { FakeScript } from '@kubic/exec/test-support/fake-env';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { createInvocation, MemoryMemoStore } from './memos.js';
 import type {
   JsonValue,
@@ -493,5 +501,30 @@ describe('bash shell resolution', () => {
     expect(out.ok).toBe(true);
     expect(getNames).toEqual(['op-result-bash']);
     expect(setNames).toEqual(['op-result-bash']);
+  });
+});
+
+// No approval detector reads cmd's `del`, `move` or `rmdir`, so on Windows
+// the tool refuses to run instead of running commands nothing can see.
+describe('bash on Windows', () => {
+  const platform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: platform });
+  });
+
+  it('refuses by name and spawns nothing', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const { env, calls } = recordingEnv({});
+    const out = await (await import('./registry.js')).callOperation(
+      'bash',
+      { command: 'del /s /q C:\\Users' },
+      inv('inv-win32'),
+      ctxFor(env),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error.code).toBe('tool_failed');
+    expect(out.error.message).toMatch(/^bash is not supported on Windows/);
+    expect(calls).toEqual([]);
   });
 });

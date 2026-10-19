@@ -1,35 +1,105 @@
-// Literal-pattern detectors for destructive and network shell commands.
+// Literal-pattern detector for destructive shell commands.
 import { isAbsolute, resolve } from 'node:path';
+import { commandLead, commandWord, MAX_LEAD_WORDS } from './command-words.js';
 
 const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
 
-function rmBlocked(command: string, workspace: string): boolean {
-  const segments = command.split(/(?:^|[|;&])\s*(?=(?:rm|rmdir)\b)/i);
-  for (const segment of segments) {
-    const match = /^\s*(rm|rmdir)\b([^|;&]*)/i.exec(segment);
-    if (match === null) continue;
-    const flags = match[2] ?? '';
-    if (/-[a-zA-Z]*[rf]/i.test(flags)) return true;
-    // Every target token is inspected — checking only the first lets
-    // `rm notes.txt /etc/passwd` through.
-    const tokens = flags
-      .replace(/-[a-zA-Z]+\s*/g, ' ')
-      .replace(/--\S+\s*/g, ' ')
-      .split(/\s+/)
-      .filter((token) => token !== '');
-    for (const target of tokens) {
-      const resolved = isAbsolute(target)
-        ? resolve(target)
-        : resolve(workspace, target);
-      const root = resolve(workspace);
-      if (resolved !== root && !resolved.startsWith(`${root}/`)) return true;
-      if (SENSITIVE_PATH.test(target)) return true;
+// A command ends at `|`, `;`, `&` or a line break, and one starts after a
+// subshell's `(`: a script runs each line as its own command, so `echo
+// hi\nrm -rf /` is two commands, and a CRLF line ending (`\r\n`) ends one
+// too. A `$(` is not split here: the approval layer unwraps substitutions,
+// with its own stated depth bound.
+const COMMAND_BREAK = /[|;&\n\r]|(?<!\$)\(/;
+
+const RM_VERBS = new Set(['rm', 'rmdir']);
+const FIND_EXEC = /(?:^|\s)-(?:exec|execdir|ok|okdir)(?=\s)/g;
+
+interface Executed {
+  readonly word: string;
+  readonly rest: string;
+  // Run by xargs or find's -exec: the paths come from input the command
+  // text does not show.
+  readonly bulk: boolean;
+}
+
+// The command a segment runs from `from` on (see commandLead); 'unknown'
+// when its lead is too long to read. Only the words the lead can use are
+// read, so a scan stays linear however long the segment is.
+function executed(
+  segment: string,
+  from: number,
+  bulk: boolean,
+): Executed | 'unknown' | undefined {
+  const pattern = /\S+/g;
+  pattern.lastIndex = from;
+  const words: string[] = [];
+  const ends: number[] = [];
+  for (let match = pattern.exec(segment); match !== null; ) {
+    words.push(match[0]);
+    ends.push(match.index + match[0].length);
+    if (words.length > MAX_LEAD_WORDS) break;
+    match = pattern.exec(segment);
+  }
+  const lead = commandLead(words);
+  if (lead === 'unknown' || lead === undefined) return lead;
+  return {
+    word: commandWord(words[lead.index] ?? ''),
+    rest: segment.slice(ends[lead.index]),
+    bulk: bulk || lead.viaXargs,
+  };
+}
+
+// A recursive or forced rm, or one with a target outside the workspace or
+// on a sensitive path. Every target token is inspected — checking only the
+// first lets `rm notes.txt /etc/passwd` through.
+function rmArgumentsBlocked(args: string, workspace: string): boolean {
+  if (/-[a-zA-Z]*[rf]/i.test(args)) return true;
+  const tokens = args
+    .replace(/-[a-zA-Z]+\s*/g, ' ')
+    .replace(/--\S+\s*/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token !== '');
+  const root = resolve(workspace);
+  for (const target of tokens) {
+    const resolved = isAbsolute(target)
+      ? resolve(target)
+      : resolve(workspace, target);
+    if (resolved !== root && !resolved.startsWith(`${root}/`)) return true;
+    if (SENSITIVE_PATH.test(target)) return true;
+  }
+  return false;
+}
+
+// find's -exec family runs a command once per match: an rm there deletes
+// whatever the walk finds.
+function findExecRemoves(args: string): boolean {
+  for (const action of args.matchAll(FIND_EXEC)) {
+    const run = executed(args, action.index + action[0].length, true);
+    if (run === 'unknown' || (run !== undefined && RM_VERBS.has(run.word))) {
+      return true;
     }
   }
   return false;
 }
 
-// Patterns that read the whole command: none of them is a `[^|;&]*` gap.
+// `rm`/`rmdir` wherever it is the command that runs. Run by xargs or by
+// find's -exec family it is a bulk delete whatever its flags; run directly
+// (behind any wrapper) its flags and targets decide.
+function rmBlocked(command: string, workspace: string): boolean {
+  for (const segment of command.split(COMMAND_BREAK)) {
+    const run = executed(segment, 0, false);
+    if (run === 'unknown') return true;
+    if (run === undefined) continue;
+    if (RM_VERBS.has(run.word)) {
+      if (run.bulk || rmArgumentsBlocked(run.rest, workspace)) return true;
+    } else if (run.word === 'find' && findExecRemoves(run.rest)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Patterns that read the whole command: none of them is a gap.
 const WHOLE_COMMAND_PATTERNS = [
   /\bmkfs\b/i,
   /\bshred\b/i,
@@ -37,13 +107,14 @@ const WHOLE_COMMAND_PATTERNS = [
 ];
 
 // Every other destructive shape is a HEAD verb followed, later in the SAME
-// command segment (no `|`, `;` or `&` between), by a chain of further
-// tokens: `dd … of=/dev/`, `git clean … -f`, `chmod|chown … -R`, `find …
-// -delete`, `git … push … --force|-f|+refspec`, `git … reset …
-// --hard`, `git … checkout … (-- | . | -f | --force)` and `git … restore …
-// (--worktree | -W)`. A regex per shape with `[^|;&]*` gaps would backtrack
-// polynomially: `git push ` repeated 2000 times took 13 s and `git restore
-// --staged ` repeated 2000 times 50 s, before every bash call.
+// command segment (no `|`, `;`, `&` or line break between), by a chain of
+// further tokens: `dd … of=/dev/`, `git clean … -f`, `chmod|chown … -R`,
+// `find … -delete`, `git … push … --force|-f|+refspec`, `git … reset …
+// --hard`, `git … commit … --amend`, `git … checkout … (-- | . | -f |
+// --force)` and `git … restore … (--worktree | -W)`. A regex per shape with
+// `[^|;&\n\r]*` gaps would
+// backtrack polynomially: `git push ` repeated 2000 times took 13 s and `git
+// restore --staged ` repeated 2000 times 50 s, before every bash call.
 //
 // A chain is walked leftmost-first inside one segment — each step searches
 // from the end of the previous one. That is exactly as strong as the gapped
@@ -63,6 +134,7 @@ const SEGMENT_CHAINS: ReadonlyArray<readonly RegExp[]> = [
     /\s(--force(-with-lease|-if-includes)?\b|-[a-zA-Z]*f[a-zA-Z]*\b|\+\S)/gi,
   ],
   [/\bgit\b/gi, /\sreset\b/gi, /\s--hard\b/gi],
+  [/\bgit\b/gi, /\scommit\b/gi, /\s--amend\b/gi],
   [/\bgit\b/gi, /\scheckout\b/gi, /\s(--(\s|$)|\.(\s|$)|-f\b|--force\b)/gi],
   [/\bgit\b/gi, /\srestore\b/gi, /\s(--worktree|-W)\b/gi],
 ];
@@ -70,7 +142,7 @@ const GIT_HEAD = /\bgit\b/gi;
 const RESTORE_VERB = /\srestore\b/gi;
 const STAGED_ONLY = /\s(--staged|-S)\b/gi;
 const SEGMENT_HEAD = /\b(git|dd|chmod|chown|find)\b/i;
-const SEGMENT_SEPARATOR = /[|;&]/g;
+const SEGMENT_SEPARATOR = /[|;&\n\r]/g;
 
 function chainMatches(segment: string, chain: readonly RegExp[]): boolean {
   let at = 0;
@@ -134,24 +206,4 @@ export function defaultIsDestructive(
     WHOLE_COMMAND_PATTERNS.some((pattern) => pattern.test(command)) ||
     anySegmentDestructive(command)
   );
-}
-
-const NETWORK_PATTERNS = [
-  /\bcurl\b/i,
-  /\bwget\b/i,
-  /\bssh\b/i,
-  /\bscp\b/i,
-  /\bsftp\b/i,
-  /\bftp\b/i,
-  /\btelnet\b/i,
-  /\bnc\b/i,
-];
-
-// Literal-pattern heuristic with the same stated scope as the destructive
-// matcher: python/node/npm/pip/git/openssl exfiltration bypasses
-// network:none. The verbs above cover the interactive-transfer
-// layer; everything else is approvals' problem.
-
-export function isNetworkCommand(command: string): boolean {
-  return NETWORK_PATTERNS.some((pattern) => pattern.test(command));
 }

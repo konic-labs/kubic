@@ -130,7 +130,7 @@ const PERMISSION_EFFECT = {
 } as const;
 
 const VERIFY_COMMAND_EFFECT = (gate: string): KeyEffect => ({
-  effect: `${gate} gate command run in the worktree after each run settles; exit status → signal:${gate}`,
+  effect: `${gate} gate: a shell command (sh -c) run in the worktree after each run settles, outside approvals and recorded in the audit ledger; exit status → signal:${gate}`,
 });
 
 export const CONFIG_SECTIONS = [
@@ -407,7 +407,8 @@ export const CONFIG_SECTIONS = [
         check: 'number',
         env: 'KUBIC_JOURNAL_RETENTION_DAYS',
         runtime: {
-          effect: 'journal age bound (maxAgeMs) enforced on every append',
+          effect:
+            'journal age bound (maxAgeMs) enforced on every append; 0 is retention off',
         },
         example: '30',
       },
@@ -432,7 +433,7 @@ export const CONFIG_SECTIONS = [
     docs: [
       {
         keys: ['journal.retentionDays'],
-        text: 'Journal age bound, enforced on every append. It is also the default keep window of `kubic journal prune` (`--keep-days` overrides it).',
+        text: 'Journal age bound (days), enforced on every append. `0` means retention is off: no age bound is installed, the same reading `kubic journal prune --keep-days 0` has, and `kubic config` prints `journal retention: off`. Unset installs no bound either. It is also the default keep window of `kubic journal prune` (`--keep-days` overrides it).',
       },
       {
         keys: ['journal.maxBytes'],
@@ -440,7 +441,7 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['journal.outOfScope'],
-        text: 'Paths excluded from the baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`), plain paths only, empty entries refused by name.',
+        text: 'Paths excluded from the baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`). An entry is read as the plain path it names (`./dist` and `dist/` are `dist`); an empty entry, one that names the whole workspace (`.`) and one outside it (`../x`, `/abs`) are refused by name. A change under an excluded path is never journaled, so `kubic undo` cannot restore it: `kubic doctor` warns about every excluded path (`journal:out-of-scope`), and the trust question names journal coverage among what a project config sets.',
       },
     ],
   },
@@ -668,7 +669,7 @@ export const CONFIG_SECTIONS = [
           'verify.lint',
           'verify.typecheck',
         ],
-        text: "The gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load.",
+        text: "The gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. The command runs outside the approval interceptors, so each run of one is announced on stderr (`verify: running the <gate> gate: <command>`) and recorded as a `verify:<gate>` row in the audit ledger, and `kubic config` lists the commands that will run. A trusted project's config can set them: the trust question says so.",
       },
       {
         keys: ['verify.timeoutMs'],
@@ -785,7 +786,7 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['policy.network_policy', 'policy.allowed_domains'],
-        text: 'Parsed and resolved into the effective policy: `"proxy"` is carried as the engine\'s allowlist mode. **Not enforced:** Kubic has no proxy-mediated enforcement, so these keys protect nothing; `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` reports the one shape it can judge: an `allowlist` with no domains is unenforceable and fails `policy:enterprise-network`; proxy-mediated enforcement itself stays unreported. The engine mode names (`none`, `allowlist`, `full`) are accepted too.',
+        text: 'Parsed and resolved into the effective policy: `"proxy"` is carried as the engine\'s allowlist mode. **Not enforced:** Kubic has no proxy-mediated enforcement, so these keys protect nothing; `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` says so: any configured `network_policy` fails `policy:enterprise-network` as not enforced, and `policy:enterprise-enforceability` with it. The engine mode names (`none`, `allowlist`, `full`) are accepted too.',
       },
       {
         keys: ['policy.filesystem_policy'],
@@ -854,7 +855,7 @@ export const CONFIG_SECTIONS = [
 export const EXAMPLE_HEADER = [
   'Kubic canonical config example.',
   'Committed to the repo: .kubic/config.toml + .kubic/roles/*.md',
-  'Never committed: sessions/ journal/ artifacts/ audit/',
+  'Never committed: audit/',
 ] as const;
 
 // One key's declaration, by its section and name.

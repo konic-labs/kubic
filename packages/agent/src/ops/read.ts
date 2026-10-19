@@ -4,6 +4,7 @@
 
 import { StringDecoder } from 'node:string_decoder';
 import type { FileSystem } from '@kubic/exec/env';
+import { refuseLinkEscape } from './links.js';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
 
@@ -371,6 +372,7 @@ export const readOperation: Operation<ReadArgs, ReadResult> = {
   replay: 'safe',
   validateArgs: validateReadArgs,
   execute: async (_inv: ToolInvocation, args: ReadArgs, ctx: OpContext) => {
+    refuseLinkEscape(ctx, 'read', args.path);
     const offset = args.offset ?? 1;
     const span = args.limit ?? READ_MAX_LINES;
     let view: ReadWindow;

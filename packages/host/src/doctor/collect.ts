@@ -1,5 +1,9 @@
 // Collecting every check a doctor run reports, in report order.
-import { depChecks, licenseCheck } from './checks/environment.js';
+import {
+  depChecks,
+  licenseCheck,
+  platformCheck,
+} from './checks/environment.js';
 import {
   modelWindowChecks,
   probeMessage,
@@ -15,6 +19,7 @@ import {
 } from './checks/policy.js';
 import {
   fullAccessSessionCheck,
+  journalCoverageCheck,
   sessionOverlapCheck,
   statePermissionCheck,
 } from './checks/sessions.js';
@@ -49,6 +54,7 @@ export function collectDoctorChecks(
   const probed = captureCoreProbes(deps, checks);
   checks.push(...policyProbeChecks(deps, probed.configured));
   checks.push(...sessionProbeChecks(deps));
+  checks.push(platformCheck(deps.platform ?? process.platform));
   // License identity: reported on every run, never skipped
   // implicitly — --skip license:kubic remains available like any check.
   checks.push(licenseCheck());
@@ -228,6 +234,13 @@ function sessionProbeChecks(deps: DoctorDeps): DoctorCheck[] {
         ),
     ),
   );
+  // Journal coverage: a non-empty `journal.outOfScope` takes the undo
+  // guarantee away from those paths, so it is named; nothing excluded adds
+  // no check.
+  const coverage = deps.probeJournalCoverage?.();
+  if (coverage !== undefined && coverage.outOfScope.length > 0) {
+    checks.push(journalCoverageCheck(coverage));
+  }
   // Repo-level session overlap: opt-in via the injected probe.
   if (deps.probeSessionOverlap !== undefined) {
     const probeSessionOverlap = deps.probeSessionOverlap;

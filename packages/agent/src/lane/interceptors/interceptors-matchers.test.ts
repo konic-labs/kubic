@@ -20,8 +20,9 @@ import {
   Type,
 } from '../../pi-boundary.js';
 import { confinePath } from './confine.js';
-import { defaultIsDestructive, isNetworkCommand } from './detectors.js';
+import { defaultIsDestructive } from './detectors.js';
 import { policyInterceptorHooks } from './hooks.js';
+import { isNetworkCommand } from './network.js';
 import { readOnlyViolation } from './read-only.js';
 import { redactReason } from './redact.js';
 import type { PolicyInterceptorOptions } from './types.js';
@@ -438,6 +439,107 @@ describe('destructive/confine matchers (unit)', () => {
     expect(defaultIsDestructive('echo hi', '/work')).toBe(false);
   });
 
+  // A newline separates commands the way `;` does, so every shape is
+  // recognised on any line of a script, CRLF line endings included.
+  const SHAPES = [
+    'rm -rf /',
+    'rm -r -f build',
+    'rm /etc/passwd',
+    'mkfs.ext4 /dev/sda1',
+    'shred -u secret.txt',
+    'dd if=/dev/zero of=/dev/sda',
+    'git clean -fdx',
+    'chmod -R 777 .',
+    'chown -R root .',
+    'find . -name x -delete',
+    'git push --force origin main',
+    'git reset --hard HEAD~1',
+    'git checkout -- .',
+    'git restore .',
+  ];
+  const BEFORE = [
+    'echo hi\n',
+    'set -e\necho hi\n',
+    'echo hi\r\n',
+    'a\r\nb\r\n',
+  ];
+  it.each(
+    SHAPES.flatMap((shape) =>
+      BEFORE.map((before) => [`${before}${shape}`] as const),
+    ),
+  )('recognises %j on a later line', (command) => {
+    expect(defaultIsDestructive(command, '/work')).toBe(true);
+    expect(defaultIsDestructive(`${command}\r\n`, '/work')).toBe(true);
+  });
+
+  it.each([
+    ['echo hi\nrm notes.txt', false],
+    ['echo hi\r\nrm notes.txt\r\n', false],
+    ['rm notes.txt\nrm /etc/passwd', true],
+    ['git push origin main\necho -f', false],
+    ['git log\necho reset --hard', false],
+    ['find . -name x\necho -delete', false],
+    ['chmod 644 a\necho -R', false],
+  ])('reads a newline as a separator in %j', (command, expected) => {
+    expect(defaultIsDestructive(command, '/work')).toBe(expected);
+  });
+
+  // `rm` is classified wherever it is the command that runs: after the
+  // reserved words a command may follow, behind the wrappers that run their
+  // arguments in place, as a path or an escaped word, and — a bulk delete,
+  // whatever its flags — as the command of find's -exec family or of xargs.
+  it.each([
+    ['find . -exec rm -rf {} +', true],
+    ['find . -name "*.ts" -exec rm {} +', true],
+    ['find . -execdir rm {} \\;', true],
+    ['find . -ok rmdir {} \\;', true],
+    ['find . -exec /bin/rm {} +', true],
+    ['find . -exec sudo rm {} +', true],
+    ['xargs rm -rf < list', true],
+    ['ls | xargs rm', true],
+    ['xargs -0 -n1 rm', true],
+    ['xargs -I {} rm {}', true],
+    ['xargs -L 1 -P 4 rmdir', true],
+    ['sudo rm -rf /var/www', true],
+    ['sudo -u www rm /etc/passwd', true],
+    ['env FOO=1 rm -rf build', true],
+    ['env -u HOME rm -rf build', true],
+    ['FOO=1 rm -rf build', true],
+    ['nice -n 10 rm -rf build', true],
+    ['timeout -s KILL 10 rm -rf build', true],
+    ['time rm -rf build', true],
+    ['nohup rm -rf build', true],
+    ['command rm -rf build', true],
+    ['exec rm -rf build', true],
+    ['if true; then rm -rf build; fi', true],
+    ['for f in a b; do rm -rf "$f"; done', true],
+    ['{ rm -rf build; }', true],
+    ['! rm -rf build', true],
+    ['(rm -rf build)', true],
+    ['\\rm -rf build', true],
+    ['/bin/rm -rf build', true],
+    ['RM -rf build', true],
+    ['find . -delete', true],
+    ['find . -name x -print', false],
+    ['find . -name rm -print', false],
+    ['xargs echo', false],
+    ['xargs grep -l rm', false],
+    ['sudo rm notes.txt', false],
+    ['env FOO=1 rm notes.txt', false],
+    ['echo rm -rf build', false],
+    ['git rm -r --cached build', false],
+    ['grep -rn rm .', false],
+  ])('classifies the executed command in %j', (command, expected) => {
+    expect(defaultIsDestructive(command, '/work')).toBe(expected);
+  });
+
+  it('fails closed when a run of wrappers is too long to read', () => {
+    expect(defaultIsDestructive(`${'env '.repeat(200)}rm notes.txt`)).toBe(
+      true,
+    );
+    expect(defaultIsDestructive(`${'nice -n 1 '.repeat(5000)}echo`)).toBe(true);
+  });
+
   // Each new DESTRUCTIVE_PATTERNS arm pinned on its own, with a
   // near-miss beside it, so weakening one regex fails exactly one row.
   it.each([
@@ -472,5 +574,74 @@ describe('destructive/confine matchers (unit)', () => {
     ['git status; git log', false],
   ])('classifies %s as destructive=%s', (command, expected) => {
     expect(defaultIsDestructive(command, '/work')).toBe(expected);
+  });
+});
+
+// `network: none` covers the clients a coding agent reaches the network
+// with: the transfer tools wherever their name appears, and the tools whose
+// subcommand decides, read at command position — so a commit message that
+// says "fetch" asks nothing.
+describe('network command matcher', () => {
+  it.each([
+    'curl https://example.com',
+    'wget https://example.com',
+    'socat - TCP:example.com:80',
+    'ncat example.com 80',
+    'git clone https://example.com/r.git',
+    'git fetch origin',
+    'git pull',
+    'git ls-remote origin',
+    'git -C sub fetch',
+    'git -c http.proxy=x pull',
+    'git remote update',
+    'git submodule update --init',
+    'git lfs pull',
+    'gh api /user',
+    'gh pr list',
+    'docker pull alpine',
+    'docker --context c push img',
+    'docker image pull alpine',
+    'podman login quay.io',
+    'cargo fetch',
+    'go get example.com/x',
+    'go mod download',
+    'npm view left-pad',
+    'npm audit',
+    'pnpm audit',
+    'yarn npm info x',
+    'pip download x',
+    'pip3 download x',
+    'rsync -a src/ host:/srv/',
+    'rsync -a rsync://host/m/ dst/',
+    'openssl s_client -connect example.com:443',
+    'cd x && git fetch',
+    'sudo docker pull alpine',
+    'set -e\ngit pull',
+  ])('%j reaches the network', (command) => {
+    expect(isNetworkCommand(command)).toBe(true);
+  });
+
+  it.each([
+    'git status',
+    'git log --oneline',
+    'git diff HEAD',
+    'git push origin main',
+    'git commit -m "fetch data and pull it"',
+    'git log --grep clone',
+    'docker ps',
+    'docker images',
+    'cargo build',
+    'go build ./...',
+    'npm test',
+    'npm run build',
+    'pip list',
+    'rsync -a a/ b/',
+    'gh help',
+    'gh --version',
+    'openssl rand -hex 8',
+    'echo gh pr list later',
+    'ls -la',
+  ])('%j stays quiet', (command) => {
+    expect(isNetworkCommand(command)).toBe(false);
   });
 });

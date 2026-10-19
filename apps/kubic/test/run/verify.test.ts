@@ -138,6 +138,36 @@ describe('the run verifier writes gate signals', () => {
     expect(signals.quality).toBe(1);
   });
 
+  // A gate command is shell from the config, run outside the approval
+  // interceptors: each run of one is announced and lands an audit row.
+  it('announces each gate command and records it in the audit ledger', {
+    timeout: 30_000,
+  }, async () => {
+    const repo = fixtureRepo();
+    const notices: string[] = [];
+    await run(repo, false, VERIFY, { notice: (line) => notices.push(line) });
+    expect(notices).toContain(
+      `verify: running the tests gate: ${VERIFY.commands.tests}`,
+    );
+    expect(notices).toContain(
+      `verify: running the tests gate at the base revision: ${VERIFY.commands.tests}`,
+    );
+    const rows = readFileSync(
+      join(repo, '.kubic', 'audit', 'audit.jsonl'),
+      'utf8',
+    )
+      .split('\n')
+      .filter((line) => line !== '')
+      .map(
+        (line) =>
+          JSON.parse(line) as { what: string; result: string; reason: string },
+      );
+    const gates = rows.filter((row) => row.what === 'verify:tests');
+    expect(gates.map((row) => row.result)).toEqual(['ok', 'ok']);
+    expect(gates[0]?.reason).toContain(JSON.stringify(VERIFY.commands.tests));
+    expect(gates[1]?.reason).toMatch(/^baseline tests gate ran/);
+  });
+
   it('a failing test command yields signal:tests=fail; passing at base makes it a regression', {
     timeout: 30_000,
   }, async () => {

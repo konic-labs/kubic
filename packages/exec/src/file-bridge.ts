@@ -17,14 +17,13 @@ import {
   realpathSync,
   renameSync,
   rmSync,
-  statSync,
   truncateSync,
-  unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { withFileLocked } from './lock-file.js';
 
 export interface BridgeFileInfo {
   name: string;
@@ -176,18 +175,26 @@ function sanitizePrefix(prefix: string): string {
   return prefix.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 32) || 'tmp-';
 }
 
+// The mode for a directory created to hold a file of `mode`: the search bit
+// wherever the file can be read, so a 0600 file's new parent is 0700.
+function directoryModeFor(mode: number): number {
+  return mode | ((mode & 0o444) >> 2);
+}
+
 // biome-ignore lint/complexity/noExcessiveLinesPerFunction: the whole FileBridge, one short closure per method over `cwd`; it stays a plain object, not a class, because callers spread it (redactBridgeWrites wraps its writes).
 export function createNodeFileBridge(cwd: string): FileBridge {
   const absolutePath = (path: string): string => resolve(cwd, path);
   const ensureParent = (abs: string, mode?: number): void => {
-    // `mode` is for state directories (0700) and applies only to
-    // directories this call creates; a workspace write keeps the umask
-    // default, because a user's new directory is not Kubic's to make private.
+    // `mode` is the file's creation mode; the directories this call creates
+    // take it with the search bit wherever it can be read (0600 → 0700), so
+    // a private file's new parent is private and still traversable. A
+    // workspace write keeps the umask default, because a user's new
+    // directory is not Kubic's to make private.
     if (mode === undefined) {
       mkdirSync(dirname(abs), { recursive: true });
       return;
     }
-    mkdirSync(dirname(abs), { recursive: true, mode });
+    mkdirSync(dirname(abs), { recursive: true, mode: directoryModeFor(mode) });
   };
   return {
     cwd,
@@ -386,64 +393,6 @@ export function createNodeFileBridge(cwd: string): FileBridge {
   };
 }
 
-// Run `run` while holding an O_EXCL lockfile: the seam for a
-// mutation that must not interleave with another process's — the journal's
-// append, retention rewrite and blob sweep all run under it. The lock file
-// carries this process's pid, so a read-only observer can tell a live holder
-// from stale residue (`liveLockHolder`). Same stale/wait rules as
-// `updateFileLocked`: a crashed holder is stolen after `staleMs`, and a live
-// one is waited for up to `waitMs` before the caller gets a named timeout.
-// LOCAL FILESYSTEM ONLY, like every lock here.
-export function withFileLocked<T>(
-  lockPath: string,
-  run: () => T,
-  options: { staleMs?: number; waitMs?: number } = {},
-): T {
-  const staleMs = options.staleMs ?? 10_000;
-  const deadline = Date.now() + (options.waitMs ?? 5_000);
-  mkdirSync(dirname(lockPath), { recursive: true });
-  let fd: number | undefined;
-  while (fd === undefined) {
-    try {
-      fd = openSync(lockPath, 'wx');
-      // The pid is for observers, not for the lock itself: the O_EXCL create
-      // is the mutex. Written after the create so a torn payload can only
-      // ever read as stale, never as held.
-      try {
-        writeSync(fd, Buffer.from(String(process.pid), 'utf8'));
-      } catch (error) {
-        // A failed pid write (ENOSPC/EIO) must not leak the descriptor or
-        // leave the lock behind: the caller is about to rethrow, and this
-        // process would otherwise hold a lock nobody can steal for staleMs.
-        closeSync(fd);
-        fd = undefined;
-        rmSync(lockPath, { force: true });
-        throw error;
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > staleMs) {
-          unlinkSync(lockPath);
-          continue;
-        }
-      } catch {
-        continue; // the holder released between open and stat
-      }
-      if (Date.now() > deadline) {
-        throw new Error(`timed out waiting for lock ${lockPath}`);
-      }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-    }
-  }
-  try {
-    return run();
-  } finally {
-    closeSync(fd);
-    rmSync(lockPath, { force: true });
-  }
-}
-
 // Atomic, serialized update of one small state file (the trust store): an
 // O_EXCL lockfile (stale after `staleMs`, so a crashed
 // holder never wedges the next run) guards a read → update → tmp+rename
@@ -452,9 +401,18 @@ export function withFileLocked<T>(
 export function updateFileLocked(
   absPath: string,
   update: (current: string | undefined) => string,
-  options: { staleMs?: number; waitMs?: number } = {},
+  options: { staleMs?: number; waitMs?: number; mode?: number } = {},
 ): void {
-  mkdirSync(dirname(absPath), { recursive: true });
+  // `mode` is the file's mode: the tmp is created with it (the rename carries
+  // it onto the file), and a parent directory this call creates takes it
+  // with the search bit added.
+  const mode = options.mode;
+  mkdirSync(
+    dirname(absPath),
+    mode === undefined
+      ? { recursive: true }
+      : { recursive: true, mode: directoryModeFor(mode) },
+  );
   withFileLocked(
     `${absPath}.lock`,
     () => {
@@ -467,7 +425,7 @@ export function updateFileLocked(
       const next = update(current);
       const tmp = `${absPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
       try {
-        writeFileSync(tmp, next);
+        writeFileSync(tmp, next, mode === undefined ? undefined : { mode });
         renameSync(tmp, absPath);
       } catch (error) {
         rmSync(tmp, { force: true });

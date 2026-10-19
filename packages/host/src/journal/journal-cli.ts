@@ -10,19 +10,27 @@
 //
 // Exit codes (docs/cli/exit-codes.md): 0 success (including empty diff and
 // clean dry-run), 2 a usage error (thrown as CliUsageError: bad --session
-// id, conflicting store selectors, bad --max-content-bytes), 1 an `undo`
-// that completed with skipped steps (the partial outcome has
-// its own code and never reuses the usage one) or any IO failure
-// (propagated to the root catch-all).
+// id, conflicting store selectors, bad --max-content-bytes), 1 an unknown
+// --session, an `undo` that completed with skipped steps (the partial
+// outcome has its own code and never reuses the usage one) or any IO
+// failure (propagated to the root catch-all).
 
+import { join } from 'node:path';
 import type { CommandResult, ExitCode } from '@kubic/core/cli/exit-codes';
-import { CliUsageError, EXIT_OK, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
+import {
+  CliUsageError,
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+} from '@kubic/core/cli/exit-codes';
 import type { CliLogger } from '@kubic/core/cli/logger';
 import { createLineLogger } from '@kubic/core/cli/logger';
 import { formatJson } from '@kubic/core/cli/output';
 import { renderTable } from '@kubic/core/cli/table';
 import type { CliTheme } from '@kubic/core/cli/theme';
 import { createCliTheme } from '@kubic/core/cli/theme';
+import { redactSecretShapes } from '@kubic/core/secret-shapes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   clipChangeContent,
   DEFAULT_MAX_CONTENT_BYTES,
@@ -59,6 +67,24 @@ function loggerFor(deps: JournalCommandDeps): CliLogger {
   });
 }
 
+// Whether `<sessionsRoot>/<id>` holds what a journal command reads: the
+// session's storage (the rule attaching a session uses) or its journal.
+function isRecordedSession(deps: JournalCommandDeps, id: string): boolean {
+  const bridge = createNodeFileBridge(
+    deps.sessionsRoot ?? defaultSessionsRoot(),
+  );
+  return (
+    bridge.exists(join(id, 'main.jsonl')) ||
+    bridge.exists(join(id, 'journal', 'index.jsonl'))
+  );
+}
+
+// Session ids for a note: the first three, then a count.
+function listedIds(ids: readonly string[]): string {
+  const shown = ids.slice(0, 3).join(', ');
+  return ids.length > 3 ? `${shown} (+${ids.length - 3} more)` : shown;
+}
+
 export async function runJournalCommand(
   request: JournalRequest,
   deps: JournalCommandDeps,
@@ -84,6 +110,30 @@ export async function runJournalCommand(
   const resolved = await resolveJournalDir(deps, root, request.session);
   const json = request.json === true;
   const log = loggerFor(deps);
+  // An explicit --session must name a session or its journal, as `kubic cost
+  // --session` requires a session: a misspelt id is a refusal for every
+  // journal command, never an empty diff or log that reads as success.
+  if (
+    request.session !== undefined &&
+    resolved.sessionId !== undefined &&
+    !isRecordedSession(deps, resolved.sessionId)
+  ) {
+    const id = redactSecretShapes(resolved.sessionId);
+    const message = `unknown session: ${id}`;
+    log.error(message);
+    if (json) {
+      deps.out(
+        formatJson({
+          ok: false,
+          exitCode: EXIT_FAILED,
+          session: id,
+          root: null,
+          error: { code: 'unknown_session', message },
+        }),
+      );
+    }
+    return { exitCode: EXIT_FAILED };
+  }
   // A session store is named — with the workspace its
   // paths resolve against — before any subcommand output, so the
   // resolution is never silent. It is a diagnostic (stderr), and `--json`
@@ -93,9 +143,14 @@ export async function runJournalCommand(
       resolved.workspace === undefined
         ? 'no recorded workspace'
         : `workspace ${resolved.workspace}`;
+    const others = resolved.otherSessionIds ?? [];
+    const also =
+      others.length === 0
+        ? ''
+        : `; also here: ${listedIds(others)} — pass --session <id> to pick another`;
     log.info(
       resolved.latestSessionId !== undefined
-        ? `session: ${resolved.sessionId} (latest session journal for this workspace) — ${where}`
+        ? `session: ${resolved.sessionId} (latest session journal for this workspace${also}) — ${where}`
         : `session: ${resolved.sessionId} — ${where}`,
     );
   }
@@ -120,7 +175,10 @@ export async function runJournalCommand(
       root: resolved.workspace ?? null,
     },
     resolved,
-    store: new FileJournalStore(resolved.dir),
+    store:
+      resolved.dir === undefined
+        ? undefined
+        : new FileJournalStore(resolved.dir),
     theme: json ? PLAIN : (deps.theme ?? PLAIN),
     log,
   };
@@ -157,7 +215,7 @@ function journalDiff(run: JournalRun, request: JournalDiffOptions): ExitCode {
   const filter = {
     ...(request.path === undefined ? {} : { path: request.path }),
   };
-  const changes = diffEntries(store, filter);
+  const changes = store === undefined ? [] : diffEntries(store, filter);
   if (request.json === true) {
     // One change's before/after can be a whole file: the envelope clips
     // each side at 64 KiB by default (marker line + `contentTruncated`),
@@ -175,21 +233,12 @@ function journalDiff(run: JournalRun, request: JournalDiffOptions): ExitCode {
   }
   if (changes.length === 0) {
     deps.out('no changes');
-    // With no journal anywhere, name both places that were
-    // looked at — the empty result is otherwise indistinguishable from
-    // "ran and nothing changed". Only the bare default path hints (a
-    // configured store or --session is a deliberate choice). "Nothing
-    // anywhere" means the resolved store has no entries AND no session
-    // journal exists to fall back to.
-    const sessionsRoot = deps.sessionsRoot ?? defaultSessionsRoot();
-    if (
-      request.session === undefined &&
-      deps.journalDir === undefined &&
-      run.resolved.sessionId === undefined &&
-      store.entries().length === 0
-    ) {
+    // With no journal recorded for this workspace, name where the lookup
+    // went — the empty result is otherwise indistinguishable from "ran and
+    // nothing changed".
+    if (store === undefined) {
       run.log.info(
-        `no journal under ${run.resolved.dir} and none under the sessions root (${sessionsRoot}) — start a run or pass --session`,
+        `no session journal recorded for this workspace under the sessions root (${deps.sessionsRoot ?? defaultSessionsRoot()}) — start a run or pass --session`,
       );
     }
     return EXIT_OK;
@@ -224,12 +273,16 @@ function journalLog(run: JournalRun, request: JournalSelection): ExitCode {
   // dirs, enforced entry-wise through the store's retention pass (which
   // `append` already runs; the read path triggers it explicitly here).
   // Session-scoped by construction (`sessionId` is set only for a session
-  // journal): the workspace journal keeps its own `journal.retentionDays`
+  // journal): a pinned store keeps its own `journal.retentionDays`
   // append-time bound, and prune remains the only deleter of session
   // dirs. With retention unset — or 0 — no pass runs: the read path
   // writes nothing.
   const retentionDays = deps.retentionDays ?? 0;
-  if (resolved.sessionId !== undefined && retentionDays > 0) {
+  if (
+    store !== undefined &&
+    resolved.sessionId !== undefined &&
+    retentionDays > 0
+  ) {
     // Pruning under a live run is a race the reader cannot win —
     // the run appends between this pass's read and its rename, and the
     // rewrite drops the line (and sweeps blobs the run just wrote). The
@@ -246,7 +299,7 @@ function journalLog(run: JournalRun, request: JournalSelection): ExitCode {
   }
   // Ordered by timestamp (session id, then path, break ties
   // deterministically).
-  const entries = [...store.entries()].sort((a, b) =>
+  const entries = [...(store?.entries() ?? [])].sort((a, b) =>
     a.timestamp !== b.timestamp
       ? a.timestamp - b.timestamp
       : a.sessionId !== b.sessionId
@@ -290,7 +343,7 @@ function journalLog(run: JournalRun, request: JournalSelection): ExitCode {
   // is the only surface that answers "did anything bypass the tools?"
   // without the operator grepping for the `reconciled` marker. Printed
   // for an empty journal too, so scripts see a stable shape.
-  deps.out(reconciliationSummary(store));
+  deps.out(reconciliationSummary(entries));
   return EXIT_OK;
 }
 
@@ -323,6 +376,15 @@ function journalStatusCommand(
   // cannot infer one from the other.
   const corruptLines = `corrupt index lines: ${status.corruptLines}`;
   deps.out(status.corruptLines > 0 ? theme.error(corruptLines) : corruptLines);
+  // Lines a newer Kubic wrote: named so a downgrade is visible, never read
+  // as entries and never removed.
+  if (status.unknownVersionLines > 0) {
+    deps.out(
+      theme.warning(
+        `unknown-version index lines: ${status.unknownVersionLines} (written by a newer Kubic; left out of diff and undo, kept in place)`,
+      ),
+    );
+  }
   // A HEAD move mid-run changes what every earlier entry
   // means — one warning line per move, never folded into the counts above.
   for (const move of status.headMoves) {

@@ -126,12 +126,12 @@ export function detectionOnlyCheck(
   const lexical: string[] = [];
   if (effectiveNetworkLevel(posture.classes.network) === 'none') {
     lexical.push(
-      'network=none is a lexical bash command detector — a script the agent writes and runs can reach the network',
+      'network=none is a lexical bash command detector for the listed network clients (curl, wget, ssh, git clone/fetch/pull, gh, docker pull, …) — an interpreter, a script the agent writes and runs, or an unlisted tool can still reach the network',
     );
   }
   if (posture.classes.filesystem !== 'none') {
     lexical.push(
-      `filesystem=${posture.classes.filesystem} is lexical path confinement — symlinks are not resolved and the shell can still read anything the command does not name`,
+      `filesystem=${posture.classes.filesystem} is lexical path confinement — the file tools refuse a path a symlink leads outside the workspace, but the shell can still read anything the command does not name`,
     );
   }
   if (effectiveCredentialLevel(posture.classes.credentials) === 'none') {

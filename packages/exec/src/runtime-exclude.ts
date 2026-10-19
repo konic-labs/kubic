@@ -1,10 +1,11 @@
 // Runtime-state exclude rules.
 //
 // The split: `.kubic/config.toml` and `.kubic/roles/*.md` are committed —
-// `.kubic/{sessions,journal,artifacts,audit}/` is runtime state
-// and must never reach the commit path. This module ships the runtime
-// half into the repository's LOCAL, uncommitted exclude file
-// (`.git/info/exclude`), so:
+// `.kubic/audit/` (the approval audit ledger) is runtime state and must
+// never reach the commit path. Sessions and their journals live under the
+// sessions root (`~/.kubic/sessions`), outside the workspace. This module
+// ships the runtime half into the repository's LOCAL, uncommitted exclude
+// file (`.git/info/exclude`), so:
 //
 //   * the first `kubic run` in a user repo leaves no
 //     untracked `.kubic/` state behind (`git status --porcelain` stays
@@ -24,15 +25,10 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-// The runtime subpaths under `.kubic/`, in the shipped order. Single
+// The runtime subpaths a run writes under the workspace's `.kubic/`. Single
 // source of truth: `@kubic/host` `config/config.ts` derives
 // `GITIGNORE_REQUIRED_ENTRIES` from this list, and the docs quote it.
-export const RUNTIME_EXCLUDE_ENTRIES = [
-  '.kubic/sessions/',
-  '.kubic/journal/',
-  '.kubic/artifacts/',
-  '.kubic/audit/',
-] as const;
+export const RUNTIME_EXCLUDE_ENTRIES = ['.kubic/audit/'] as const;
 
 // Managed-block markers. A later run replaces the block in place instead
 // of appending a duplicate, so repeated runs are idempotent and a rule

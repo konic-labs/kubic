@@ -11,7 +11,10 @@ exit 0 — one convention, applied before any argv validation, and the root
 dispatcher follows it too:
 `kubic --help` prints the top-level command listing (exit 0) while a bare
 `kubic` prints the identical listing and exits 1 — usage-on-no-args is the
-deliberate POSIX posture. Usage errors keep their own exit codes.
+deliberate POSIX posture. A command group with no default answers a bare call
+the same way: `kubic journal` and `kubic git` print their own help and exit 1,
+while a bare `kubic sessions` lists the sessions. Usage errors keep their own
+exit codes.
 
 **Unexpected command failures are one named line.** An error Kubic did not
 shape while a command runs (inside the dispatcher's `main()`) prints

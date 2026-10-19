@@ -123,7 +123,6 @@ export interface RuntimeConfigInputs {
   // a run from a subdirectory reads the same committed config as one from
   // the root instead of silently dropping to defaults.
   projectRoot?: string;
-  workspaceRoot?: string;
   enterprisePath?: string;
   productPath?: string;
   env?: Record<string, string | undefined>;

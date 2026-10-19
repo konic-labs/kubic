@@ -4,15 +4,15 @@
 // (declined) — an absent key is "no decision yet". Trust is exact-path:
 // a decision for one directory is never inherited by its children or
 // leaked to a sibling (`/a` never trusts `/a-sibling`).
-//
-// The module does not exist yet.
 
 import {
+  chmodSync,
   closeSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -278,4 +278,35 @@ describe('project trust report', () => {
     expect(report.trusted).toBe(false);
     expect(report.storeError).toContain('not valid JSON');
   });
+});
+
+// The trust store is Kubic state like the sessions: private whichever command
+// creates it first, and a loose state directory is tightened on the next
+// write.
+describe('trust store permissions', () => {
+  it.skipIf(process.platform === 'win32')(
+    'creates ~/.kubic 0700 and trust.json 0600 on a fresh home',
+    () => {
+      const home = tempDir('trust-modes-home-');
+      const store = new ProjectTrustStore(projectTrustStorePath(home));
+      store.set('/repo', true);
+      expect(statSync(join(home, '.kubic')).mode & 0o777).toBe(0o700);
+      expect(statSync(store.file).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'tightens a loose ~/.kubic on the next write, and only a .kubic directory',
+    () => {
+      const home = tempDir('trust-modes-loose-');
+      mkdirSync(join(home, '.kubic'), { mode: 0o755 });
+      chmodSync(join(home, '.kubic'), 0o755);
+      new ProjectTrustStore(projectTrustStorePath(home)).set('/repo', false);
+      expect(statSync(join(home, '.kubic')).mode & 0o777).toBe(0o700);
+      const elsewhere = tempDir('trust-modes-elsewhere-');
+      chmodSync(elsewhere, 0o755);
+      new ProjectTrustStore(join(elsewhere, 'trust.json')).set('/repo', true);
+      expect(statSync(elsewhere).mode & 0o777).toBe(0o755);
+    },
+  );
 });

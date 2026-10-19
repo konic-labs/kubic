@@ -68,6 +68,9 @@ export interface JournalStatus {
   // (that counts missing content); a dropped line has no entry at all, so
   // nothing else in this object would show it.
   corruptLines: number;
+  // Index lines a newer Kubic wrote, in a record version this build cannot
+  // read: never counted as entries, left in place.
+  unknownVersionLines: number;
   // Every HEAD move the sweeps observed, oldest first. `undo`
   // refuses to restore entries from before a move without `--force`.
   headMoves: { from: HeadState; to: HeadState }[];
@@ -202,11 +205,26 @@ function readRepo(root: string): RepoState | null {
   return { branch, dirty, repoRoot, ahead, behind, conflicts };
 }
 
+// `store` is undefined when no journal is recorded: every count is 0, and
+// only the repository is read.
 export function journalStatus(
-  store: FileJournalStore,
+  store: FileJournalStore | undefined,
   root: string,
 ): JournalStatus {
-  const { entries, corruptLines } = store.readIndex();
+  if (store === undefined) {
+    return {
+      entries: 0,
+      reversible: 0,
+      nonReversible: 0,
+      unattributed: 0,
+      corrupt: 0,
+      corruptLines: 0,
+      unknownVersionLines: 0,
+      headMoves: [],
+      repo: readRepo(root),
+    };
+  }
+  const { entries, corruptLines, unknownVersionLines } = store.readIndex();
   let reversible = 0;
   let unattributed = 0;
   let corrupt = 0;
@@ -250,6 +268,7 @@ export function journalStatus(
     unattributed,
     corrupt,
     corruptLines,
+    unknownVersionLines,
     headMoves,
     repo: readRepo(root),
   };
@@ -261,12 +280,7 @@ export function journalStatus(
 // `reconciled` marker. `log` prints it even when the journal is empty —
 // "0 of 0" is the honest answer, and it keeps the surface's shape stable
 // for scripts.
-export function reconciliationSummary(store: FileJournalStore): string {
-  return reconciliationSummaryFor(store.entries());
-}
-
-// The same line over an entry list.
-function reconciliationSummaryFor(
+export function reconciliationSummary(
   entries: readonly { unattributed?: boolean }[],
 ): string {
   const unattributed = entries.filter((e) => e.unattributed === true).length;

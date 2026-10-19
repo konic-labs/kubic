@@ -25,25 +25,30 @@ isolation: these tools act on the real workspace.
   they also check what a schema cannot express (a compilable regex, a ref or
   range that does not start with `-`, a path that stays in the workspace).
 - **Units:** `bash.timeout` is in **seconds**; `read.offset` is **1-indexed**.
+- **The file tools write only inside the workspace.** A `write` or `edit`
+  path outside it is refused by name before any ask, full access included
+  (`not approved: refused: write cannot change <path>: it is outside the
+  workspace …`), and nothing is written or journaled. A change outside the
+  workspace goes through `bash`, which asks for `outside-write`.
 
 | Tool | Arguments (`?` = optional) | Notes |
 | --- | --- | --- |
-| `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. |
+| `read` | `path`, `offset?` (≥ 1, default 1), `limit?` (≥ 1, default and cap 2000) | At most 8 MiB scanned; at most 51200 bytes returned. A path a link leads outside the workspace is refused (see [Symlinks](#symlinks)). |
 | `ls` | `path?` (default `.`) | One directory, not recursive. Entries sorted by name, at most 500 (`truncated` + a `notice` naming the total when the cap stopped the listing). |
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |
-| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped, and the file keeps its own line ending and BOM (see [Line endings and BOM](#line-endings-and-bom)). |
-| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
+| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped; every line the edit does not touch keeps its own line ending, and the file keeps its BOM (see [Line endings and BOM](#line-endings-and-bom)). |
+| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh, on Linux and macOS; on Windows the tool refuses to run, because the approval detectors read POSIX shell only; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
 | `git_status` | — | Branch (or detached HEAD), ahead/behind, staged/unstaged/untracked/conflicts, renames, the repo root, and one record per submodule. |
 | `git_diff` | `staged?`, `range?`, `path?` | Diff keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink); a clipped diff also carries a capped `--stat` summary (at most 40 lines, summary kept) saying what was cut. |
 | `git_log` | `max?` (default 20, cap 100), `path?` | Raw log is clipped to the last 64 KiB / 2000 lines before parsing (`truncated`, spilled in full when the lane provides a sink); a clipped log also carries a capped `--stat` summary. |
 | `git_show` | `ref` | Patch keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink); a clipped patch also carries a capped `--stat` summary. |
 | `git_stage` | `paths` (non-empty array) | Explicit paths only, never `-A`. |
-| `git_commit` | `message`, `amend?` | Killed after 120 s (a hanging hook fails the call instead of hanging it); an abort mid-flight kills the child and fails the call. |
+| `git_commit` | `message`, `amend?` | Killed after 120 s (a hanging hook fails the call instead of hanging it); an abort mid-flight kills the child and fails the call. With `amend: true` it rewrites the last commit and raises `destructive-shell`, as `git commit --amend` does in bash. |
 | `git_branch` | `create?` | Omit to list; no checkout. |
 | `git_checkpoint` | `message` | `git stash create`; the tree is untouched. |
-| `git_merge` | `branch` | Local refs only, never fetches; a conflict returns `{merged: false, conflicts}` and leaves the merge state for the resolver. No remote mutation — `git_push` stays approval-gated through bash. |
+| `git_merge` | `branch` | Local refs only, never fetches; a conflict returns `{merged: false, conflicts}` and leaves the merge state for the resolver. No remote mutation — `git_push` stays approval-gated through bash. Raises no capability: it changes files in the workspace, which the journal records and `kubic undo` restores, and rewrites no history, like `git merge` in bash. |
 | `git_conflict_status` | — | Lists paths with unresolved merge conflicts. |
 | `git_worktree_list` | — | Attached worktrees as `{path, head, branch, bare, detached}` rows. |
 
@@ -116,7 +121,18 @@ src/b.ts:3: // TODO remove
   `not_a_repo`, `symlink_escape`, `tool_failed` (and `unknown_tool` /
   `internal`).
 
-## Symlinked writes
+## Symlinks
+
+Reads follow a link only while it stays in the workspace: `read`, `ls`, and
+the `root` of `grep` and `find` resolve the path through its links first,
+and a path inside the workspace that a link leads outside it is refused with
+`error symlink_escape: read refused: '<path>' resolves to '<target>', outside
+the workspace` before anything is opened. A link that stays inside reads as
+its target, a dangling link fails as `not_found`, and a link loop fails
+without hanging. The walk of `grep` and `find` never follows a link below
+its root.
+
+### Symlinked writes
 
 `write` and `edit` follow symlinks instead of replacing them: the atomic tmp is
 written beside the **resolved** file and renamed onto it, so writing to a
@@ -154,15 +170,18 @@ link itself.
 
 ## Line endings and BOM
 
-`edit` normalizes what it matches against, then restores what the file had:
+`edit` normalizes what it matches against, then changes only what it matched:
 
-- **Line endings:** the file's dominant ending is detected, the file body,
-  `oldText` and `newText` are normalized to LF for matching and replacement,
-  and the dominant ending is restored on write. A CRLF file with an LF
-  multi-line `oldText` still edits (no `no_match`), the result never
-  mixes endings, and an LF file is byte-for-byte unchanged apart from the
-  replacement. A tie between CRLF and bare LF goes to LF, and a mixed file
-  comes out uniform.
+- **Line endings:** the file body, `oldText` and `newText` are normalized to
+  LF for matching, and the replacement is made in the file's own text at the
+  matched spans, so every line the edit does not touch keeps its own ending,
+  byte for byte. The replacement takes the ending of the lines it replaces
+  (their majority; a tie goes to the file's dominant ending); a match within
+  one line takes the ending of that line, or of the line before on a last
+  line with no newline. A CRLF file with an LF multi-line `oldText` still
+  edits (no `no_match`) and stays CRLF, an LF file stays LF, and a file with
+  mixed endings changes only where it was edited, so `kubic diff` shows only
+  the edited lines.
 - **BOM:** a leading UTF-8 BOM is stripped from the file body and from both
   model texts before matching, and re-added on write only when the file had
   one — so a first-line edit in a BOM file succeeds, the BOM survives, and a

@@ -11,7 +11,7 @@ import {
 import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import { EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
-import { looseStateDirMode } from '@kubic/exec/lock-file';
+import { scanStateModes } from '@kubic/exec/lock-file';
 import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
   auditSinkSnapshot,
@@ -19,6 +19,7 @@ import {
   buildConfiguredSinks,
   isSyslogTargetAvailable,
 } from '@kubic/host/audit';
+import { projectTrustStorePath } from '@kubic/host/config';
 import type {
   DoctorDeps,
   FullAccessSession,
@@ -100,7 +101,11 @@ export function doctorRunner(io: ProdRunnerIo): ProdRunners['doctor'] {
           : join(sessionsRoot, doctorSession),
       ),
       ...projectChecks(cliConfig),
-      ...(await sessionChecks(sessionsRoot, doctorSession)),
+      ...(await sessionChecks(
+        sessionsRoot,
+        doctorSession,
+        cliConfig.trust.home,
+      )),
     });
   };
 }
@@ -307,6 +312,7 @@ function projectChecks(
 async function sessionChecks(
   sessionsRoot: string,
   doctorSession: string | undefined,
+  home: string,
 ): Promise<
   Pick<
     DoctorDeps,
@@ -361,9 +367,12 @@ async function sessionChecks(
     // Always injected: the check itself passes when the sessions root is
     // private. Best-effort like the overlap probe: an unreadable root makes
     // no claim.
-    probeStatePermissions: () => {
-      const mode = looseStateDirMode(sessionsRoot);
-      return mode === undefined ? undefined : { path: sessionsRoot, mode };
-    },
+    // The trust store and its directory, then every session below the
+    // root: the walk is bounded and names what it skipped.
+    probeStatePermissions: () =>
+      scanStateModes(
+        home === '' ? [] : [join(home, '.kubic'), projectTrustStorePath(home)],
+        [sessionsRoot],
+      ),
   };
 }

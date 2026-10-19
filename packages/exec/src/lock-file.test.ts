@@ -5,9 +5,11 @@
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,6 +23,7 @@ import {
   procStartTimeFromStat,
   readLockFile,
   removeLockFile,
+  scanStateModes,
 } from './lock-file.js';
 
 const roots: string[] = [];
@@ -167,4 +170,83 @@ describe('looseStateDirMode platform gate', () => {
       spy.mockRestore();
     }
   });
+});
+
+// What `kubic doctor` reads for its private-state check: every directory of
+// the walked state 0700, every file 0600, symlinks not followed, bounded.
+describe('scanStateModes', () => {
+  function stateTree(): string {
+    const root = mkdtempSync(join(tmpdir(), 'state-modes-'));
+    roots.push(root);
+    chmodSync(root, 0o700);
+    const session = join(root, 'session-a');
+    mkdirSync(join(session, 'journal', 'blobs'), {
+      recursive: true,
+      mode: 0o700,
+    });
+    writeFileSync(join(session, 'main.jsonl'), '{}\n', { mode: 0o600 });
+    writeFileSync(join(session, 'journal', 'index.jsonl'), '', { mode: 0o600 });
+    return root;
+  }
+
+  it.skipIf(process.platform === 'win32')('passes a private tree', () => {
+    const scan = scanStateModes([], [stateTree()]);
+    expect(scan).toMatchObject({ loose: [], count: 0, truncated: false });
+    expect(scan?.checked).toBeGreaterThan(4);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'names a loose root, session dir, journal dir and file with the expected mode',
+    () => {
+      const root = stateTree();
+      chmodSync(join(root, 'session-a', 'journal'), 0o755);
+      chmodSync(join(root, 'session-a', 'main.jsonl'), 0o644);
+      const scan = scanStateModes([], [root]);
+      expect(scan?.count).toBe(2);
+      expect(scan?.loose).toEqual(
+        expect.arrayContaining([
+          {
+            path: join(root, 'session-a', 'journal'),
+            mode: 0o755,
+            expected: 0o700,
+          },
+          {
+            path: join(root, 'session-a', 'main.jsonl'),
+            mode: 0o644,
+            expected: 0o600,
+          },
+        ]),
+      );
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'checks single paths alone, skips absent ones, and never follows a link',
+    () => {
+      const root = stateTree();
+      const outside = mkdtempSync(join(tmpdir(), 'state-modes-out-'));
+      roots.push(outside);
+      chmodSync(outside, 0o755);
+      symlinkSync(outside, join(root, 'session-a', 'link'));
+      const trust = join(root, 'trust.json');
+      writeFileSync(trust, '{}', { mode: 0o644 });
+      const scan = scanStateModes([trust, join(root, 'absent')], [root]);
+      expect(scan?.loose.map((entry) => entry.path)).toEqual([trust]);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'stops at its bound and says so',
+    () => {
+      const root = stateTree();
+      for (let index = 0; index < 20; index += 1) {
+        writeFileSync(join(root, `f${index}`), '', { mode: 0o644 });
+      }
+      const scan = scanStateModes([], [root], { limit: 8, keep: 3 });
+      expect(scan?.truncated).toBe(true);
+      expect(scan?.checked).toBe(8);
+      expect(scan?.loose).toHaveLength(3);
+      expect(scan?.count).toBeGreaterThanOrEqual(3);
+    },
+  );
 });

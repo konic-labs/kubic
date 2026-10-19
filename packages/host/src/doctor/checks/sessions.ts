@@ -60,22 +60,36 @@ export function statePermissionCheck(
   probe: StatePermissionProbe | undefined,
 ): DoctorCheck {
   const base = { id: 'state:permissions', label: 'state permissions' };
-  if (probe === undefined) {
+  const octal = (mode: number) => mode.toString(8).padStart(3, '0');
+  const scope =
+    probe?.truncated === true
+      ? ` (checked the first ${probe.checked} entries)`
+      : '';
+  if (probe === undefined || probe.count === 0) {
     return {
       ...base,
       status: 'pass',
       reason: 'ok',
-      detail:
-        'session and journal state directories are private (0700) or absent',
+      detail: `session, journal and trust state is private (0700 directories, 0600 files) or absent${scope}`,
     };
   }
+  const named = probe.loose
+    .map(
+      (entry) =>
+        `${entry.path} is ${octal(entry.mode)}, expected ${octal(entry.expected)}`,
+    )
+    .join('; ');
+  const more =
+    probe.count > probe.loose.length
+      ? ` (+${probe.count - probe.loose.length} more)`
+      : '';
   return {
     ...base,
     status: 'warn',
     reason: 'ok',
     detail:
-      `${probe.path} is ${probe.mode.toString(8).padStart(3, '0')} — every local user can read ` +
-      'session transcripts and journaled file content; the next open tightens it to 0700 ' +
-      '(or run chmod 700 on it)',
+      `${named}${more}${scope} — every local user can read session ` +
+      'transcripts and journaled file content; chmod 700 a directory and ' +
+      '600 a file to close it',
   };
 }

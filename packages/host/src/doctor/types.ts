@@ -122,8 +122,9 @@ export interface DoctorDeps extends CliIo {
   // checks (matrices without it are unchanged). A throwing probe becomes one
   // warn check, never a crash: an unlistable store must not flip the exit.
   probeFullAccessSessions?: () => FullAccessSession[];
-  // A state directory that other local users can read (session
-  // transcripts, journaled file content). undefined means private or absent.
+  // The state other local users can read: session transcripts, journaled
+  // file content and the trust store, walked with a bound. undefined means
+  // the walk could not run here (Windows).
   probeStatePermissions?: () => StatePermissionProbe | undefined;
   // The platform the bash tool runs on; absent reads process.platform.
   readonly platform?: string;
@@ -171,7 +172,16 @@ export interface SessionOverlapProbe {
 // A group- or world-accessible state directory. The probe
 // reports it (and the next open tightens it); doctor warns, never fails —
 // a loose directory is a real exposure but not a broken installation.
+// The private-state walk: the first loose entries (each with the mode it
+// should have — 0700 for a directory, 0600 for a file), how many there are,
+// how many entries were examined, and whether the walk hit its bound.
 export interface StatePermissionProbe {
-  path: string;
-  mode: number;
+  readonly loose: readonly {
+    readonly path: string;
+    readonly mode: number;
+    readonly expected: number;
+  }[];
+  readonly count: number;
+  readonly checked: number;
+  readonly truncated: boolean;
 }

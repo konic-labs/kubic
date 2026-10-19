@@ -2,6 +2,7 @@
 // and the blob sizes alone. The executor and its I/O are covered by
 // retention.test.ts.
 import { describe, expect, it } from 'vitest';
+import { serializeEntry } from './index-file.js';
 import { blobHashesOf, oldestTimestampOf, planRetention } from './retention.js';
 import type { JournalEntry } from './types.js';
 
@@ -25,7 +26,7 @@ function entry(
 }
 
 const lineBytes = (e: JournalEntry): number =>
-  Buffer.byteLength(`${JSON.stringify(e)}\n`, 'utf8');
+  Buffer.byteLength(`${serializeEntry(e)}\n`, 'utf8');
 
 function sizes(table: Record<string, number>): (hash: string) => number {
   return (hash) => table[hash] ?? 0;

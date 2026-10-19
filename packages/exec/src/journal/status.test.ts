@@ -138,6 +138,7 @@ describe('unattributed count', () => {
       unattributed: 0,
       corrupt: 0,
       corruptLines: 0,
+      unknownVersionLines: 0,
       // No moves in an empty journal — the field is always
       // present so `--json` keeps a stable shape.
       headMoves: [],

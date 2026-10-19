@@ -378,6 +378,15 @@ function journalStatusCommand(
   // cannot infer one from the other.
   const corruptLines = `corrupt index lines: ${status.corruptLines}`;
   deps.out(status.corruptLines > 0 ? theme.error(corruptLines) : corruptLines);
+  // Lines a newer Kubic wrote: named so a downgrade is visible, never read
+  // as entries and never removed.
+  if (status.unknownVersionLines > 0) {
+    deps.out(
+      theme.warning(
+        `unknown-version index lines: ${status.unknownVersionLines} (written by a newer Kubic; left out of diff and undo, kept in place)`,
+      ),
+    );
+  }
   // A HEAD move mid-run changes what every earlier entry
   // means — one warning line per move, never folded into the counts above.
   for (const move of status.headMoves) {

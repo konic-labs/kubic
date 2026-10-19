@@ -5,7 +5,7 @@ import { tightenStateDir, withFileLocked } from '../lock-file.js';
 import { BlobStore } from './blobs.js';
 import { deltaFor, reconstructAfter } from './delta.js';
 import { sha256Hex } from './hash.js';
-import { IndexFile } from './index-file.js';
+import { IndexFile, serializeEntry } from './index-file.js';
 import {
   checkAgeBound,
   nothingPruned,
@@ -155,7 +155,7 @@ export class FileJournalStore {
       input,
       this.storeContent(bridge, input, delta),
     );
-    this.index.append(bridge, `${JSON.stringify(entry)}\n`);
+    this.index.append(bridge, `${serializeEntry(entry)}\n`);
     this.retention.noteAppended(entry.timestamp);
     // Bounded by construction: every append enforces the store's limits,
     // so there is no path that grows the journal without checking.

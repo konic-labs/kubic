@@ -68,6 +68,9 @@ export interface JournalStatus {
   // (that counts missing content); a dropped line has no entry at all, so
   // nothing else in this object would show it.
   corruptLines: number;
+  // Index lines a newer Kubic wrote, in a record version this build cannot
+  // read: never counted as entries, left in place.
+  unknownVersionLines: number;
   // Every HEAD move the sweeps observed, oldest first. `undo`
   // refuses to restore entries from before a move without `--force`.
   headMoves: { from: HeadState; to: HeadState }[];
@@ -206,7 +209,7 @@ export function journalStatus(
   store: FileJournalStore,
   root: string,
 ): JournalStatus {
-  const { entries, corruptLines } = store.readIndex();
+  const { entries, corruptLines, unknownVersionLines } = store.readIndex();
   let reversible = 0;
   let unattributed = 0;
   let corrupt = 0;
@@ -250,6 +253,7 @@ export function journalStatus(
     unattributed,
     corrupt,
     corruptLines,
+    unknownVersionLines,
     headMoves,
     repo: readRepo(root),
   };

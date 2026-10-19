@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { entry } from '../test-support/journal-entry.js';
 import { encodeDelta } from './delta.js';
+import { serializeEntry } from './index-file.js';
 import { FileJournalStore } from './store.js';
 import type { JournalEntry } from './types.js';
 import { JournalEntryTooLargeError } from './types.js';
@@ -96,7 +97,7 @@ describe('journal entry bound', () => {
     // bytes, against a 10-byte bound.
     const keptEntry = kept[0] as JournalEntry;
     const keptBytes =
-      Buffer.byteLength(`${JSON.stringify(keptEntry)}\n`, 'utf8') +
+      Buffer.byteLength(`${serializeEntry(keptEntry)}\n`, 'utf8') +
       Buffer.byteLength(`${'b'.repeat(50)}\n`, 'utf8');
     expect(pruned.overBound).toBe(keptBytes - 10);
   });

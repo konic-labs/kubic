@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge } from '../file-bridge.js';
-import { IndexFile } from './index-file.js';
+import { IndexFile, serializeEntry } from './index-file.js';
 import type { JournalEntry } from './types.js';
 
 const made: string[] = [];
@@ -43,7 +43,7 @@ function entry(n: number): JournalEntry {
   };
 }
 
-const line = (e: JournalEntry): string => `${JSON.stringify(e)}\n`;
+const line = (e: JournalEntry): string => `${serializeEntry(e)}\n`;
 
 describe('IndexFile', () => {
   it('appends lines and reads them back', () => {
@@ -54,6 +54,7 @@ describe('IndexFile', () => {
     expect(index.read(bridge)).toEqual({
       entries: [entry(1), entry(2)],
       corruptLines: 0,
+      unknownVersionLines: 0,
     });
   });
 
@@ -65,6 +66,7 @@ describe('IndexFile', () => {
     expect(index.read(bridge)).toEqual({
       entries: [entry(1), entry(2)],
       corruptLines: 1,
+      unknownVersionLines: 0,
     });
   });
 
@@ -100,6 +102,45 @@ describe('IndexFile', () => {
     expect(outcome).toEqual({ outcome: 'written' });
     expect(readFileSync(path, 'utf8')).toBe(line(entry(2)));
     expect(index.bytes).toBe(Buffer.byteLength(line(entry(2))));
+  });
+
+  // Each line carries the record version: a line without one predates the
+  // field and reads as version 1; a line of another version is never read
+  // as an entry, is counted, and survives a rewrite verbatim.
+  it('reads version-1 and unversioned lines, and sets aside an unknown version', () => {
+    const path = indexPath();
+    const future = JSON.stringify({
+      v: 2,
+      path: 'f.txt',
+      op: 'write',
+      shape: 'new',
+    });
+    writeFileSync(
+      path,
+      [
+        serializeEntry(entry(1)),
+        JSON.stringify(entry(2)),
+        future,
+        JSON.stringify({ v: 1, ...entry(3), addedLater: true }),
+        '',
+      ].join('\n'),
+    );
+    const index = new IndexFile(path, false);
+    const read = index.read(bridge);
+    expect(read.entries.map((e) => e.path)).toEqual([
+      'f1.txt',
+      'f2.txt',
+      'f3.txt',
+    ]);
+    expect(read.entries.every((e) => !('v' in e))).toBe(true);
+    expect(read.unknownVersionLines).toBe(1);
+    expect(read.corruptLines).toBe(0);
+    expect(index.rewrite(bridge, [entry(3)], index.fileSize(bridge))).toEqual({
+      outcome: 'written',
+    });
+    expect(readFileSync(path, 'utf8')).toBe(
+      `${serializeEntry(entry(3))}\n${future}\n`,
+    );
   });
 
   it('abandons a rewrite when the index changed under the pass', () => {

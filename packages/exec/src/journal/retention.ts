@@ -1,6 +1,6 @@
 import type { FileBridge } from '../file-bridge.js';
 import type { BlobStore } from './blobs.js';
-import type { IndexFile } from './index-file.js';
+import { type IndexFile, serializeEntry } from './index-file.js';
 import type { JournalEntry, RetentionPolicy } from './types.js';
 
 // A pass that has to prune frees a tenth of the bound (a byte low-water
@@ -30,7 +30,7 @@ export function blobHashesOf(entry: JournalEntry): string[] {
 // addressing dedupes blobs, so a file toggling between two contents grows the
 // journal through its lines alone.
 function indexLineBytes(entry: JournalEntry): number {
-  return Buffer.byteLength(`${JSON.stringify(entry)}\n`, 'utf8');
+  return Buffer.byteLength(`${serializeEntry(entry)}\n`, 'utf8');
 }
 
 // The minimum timestamp in a kept set — what an age policy's

@@ -19,6 +19,7 @@ import { tempDir } from '../../../../test/temp-dir.js';
 import type { FileBridge } from '../file-bridge.js';
 import { entry } from '../test-support/journal-entry.js';
 import { sha256Hex } from './hash.js';
+import { serializeEntry } from './index-file.js';
 import { FileJournalStore } from './store.js';
 
 const counts = vi.hoisted(() => ({ fileInfo: 0, blobInfo: 0, indexReads: 0 }));
@@ -499,7 +500,7 @@ describe('slow passes re-stat referenced blobs', () => {
       .entries()
       .reduce(
         (total, e) =>
-          total + Buffer.byteLength(`${JSON.stringify(e)}\n`, 'utf8'),
+          total + Buffer.byteLength(`${serializeEntry(e)}\n`, 'utf8'),
         0,
       );
     const pruned = store.enforceRetention({ maxBytes: indexBytes + 106 });

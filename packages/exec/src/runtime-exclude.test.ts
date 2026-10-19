@@ -1,8 +1,7 @@
 // Runtime-state exclude rules.
 //
 // The split: `.kubic/config.toml` + `.kubic/roles/*.md` are committed;
-// `.kubic/{sessions,journal,artifacts,audit}/` is runtime state
-// and must never reach the commit path. The mechanism writes the runtime
+// `.kubic/audit/` is runtime state and must never reach the commit path. The mechanism writes the runtime
 // half into the repository's LOCAL, uncommitted exclude file
 // (`.git/info/exclude`) so a user's committed `.gitignore` is never
 // dirtied, and `.kubic/` itself stays unignored so roles stay committable.
@@ -70,17 +69,12 @@ function roleScratchRepo(): GitSandbox {
   return repo;
 }
 
-// What the first `kubic run` leaves behind: journal entries, the audit
-// ledger, session scratch, artifacts — at the exact paths the runtime uses.
+// What the first `kubic run` leaves in the workspace: the audit ledger, at
+// the exact path the runtime uses (sessions and journals live under the
+// sessions root, outside it).
 function createRuntimeState(repo: GitSandbox): void {
-  const dir = repo.path;
-  for (const sub of ['journal', 'audit', 'sessions', 'artifacts']) {
-    mkdirSync(join(dir, '.kubic', sub), { recursive: true });
-  }
-  writeFileSync(join(dir, '.kubic', 'journal', 'index.jsonl'), '{}\n');
-  writeFileSync(join(dir, '.kubic', 'audit', 'audit.jsonl'), '{}\n');
-  writeFileSync(join(dir, '.kubic', 'sessions', 's1'), 'x\n');
-  writeFileSync(join(dir, '.kubic', 'artifacts', 'out.txt'), 'x\n');
+  mkdirSync(join(repo.path, '.kubic', 'audit'), { recursive: true });
+  writeFileSync(join(repo.path, '.kubic', 'audit', 'audit.jsonl'), '{}\n');
 }
 
 function status(repo: GitSandbox): string[] {
@@ -187,13 +181,20 @@ describe('ensureRuntimeExcludeRules', () => {
   it('re-syncs a stale managed block in place (no duplication)', () => {
     const repo = roleScratchRepo();
     const file = join(repo.path, '.git', 'info', 'exclude');
+    // A block an older build wrote, with entries no run writes any more.
+    const stale = [
+      '.kubic/sessions/',
+      '.kubic/journal/',
+      '.kubic/artifacts/',
+      '.kubic/audit/',
+    ];
     writeFileSync(
       file,
       [
         '# other tool',
         'scratch-notes/',
         RUNTIME_EXCLUDE_BEGIN,
-        '.kubic/journal/',
+        ...stale,
         RUNTIME_EXCLUDE_END,
         'tail-entry/',
         '',
@@ -207,9 +208,18 @@ describe('ensureRuntimeExcludeRules', () => {
     expect(text).toContain('# other tool');
     expect(text).toContain('scratch-notes/');
     expect(text).toContain('tail-entry/');
-    for (const entry of RUNTIME_EXCLUDE_ENTRIES) expect(text).toContain(entry);
+    const block = text
+      .slice(
+        text.indexOf(RUNTIME_EXCLUDE_BEGIN),
+        text.indexOf(RUNTIME_EXCLUDE_END),
+      )
+      .split('\n')
+      .slice(1)
+      .filter((line) => line !== '');
+    expect(block).toEqual([...RUNTIME_EXCLUDE_ENTRIES]);
     expect(text.split(RUNTIME_EXCLUDE_BEGIN)).toHaveLength(2);
     expect(text.split(RUNTIME_EXCLUDE_END)).toHaveLength(2);
+    expect(ensureRuntimeExcludeRules({ cwd: repo.path }).changed).toBe(false);
   });
 
   it('skips (never throws) outside a git repository', () => {

@@ -64,10 +64,7 @@ one store, resolved in this order:
    `{"ok": false, "exitCode": 1, "session": "<id>", "root": null, "error":
    {"code": "unknown_session", "message": "unknown session: <id>"}}`,
    never an empty `diff` or `log` that reads as success.
-2. Without `--session`, the workspace store `<root>/.kubic/journal` (the
-   legacy per-directory store, which no run writes to) when it is
-   non-empty.
-3. Otherwise the **latest session journal recorded for this workspace**:
+2. Without `--session`, the **latest session journal recorded for this workspace**:
    among the sessions whose recorded cwd is the current directory or
    contains it (compared after resolving symlinks), the most recently
    written run journal. Another project's session is never picked, however
@@ -84,7 +81,7 @@ journal for this workspace) — workspace <root>` for the fallback, `info:
 session: <id> — workspace <root>` for `--session` (the fallback's note also
 names the other sessions recorded for this workspace). `--json` prints nothing
 extra on stderr; every `--json` document carries the resolved store as
-`session` (the id, or `null` for the workspace store) and `root` (the
+`session` (the id, or `null` when no journal is recorded for this workspace) and `root` (the
 workspace the paths resolve against): `diff --json` is `{session, root,
 changes}`, `log --json` is `{session, root, entries}`, and `undo`/`status`
 add both fields to their objects.
@@ -106,17 +103,19 @@ is gone, and `session <id>: no recorded workspace — …` for a session
 journal the session store has no cwd for. `diff` and `log` read only the
 journal, so they still work for such a session.
 
-When no journal exists for the current directory, `diff` prints `no
-changes` on stdout plus a note on stderr naming both places that were
-looked at — `info: no journal under <dir> and none under the sessions root
-(<root>) — start a run or pass --session` — and exits 0. `undo --dry-run`
-plans against the same store `diff` reads. Session ids accept only
+When no session journal is recorded for the current directory, every
+command reads an empty journal and exits 0: `diff` prints `no changes` on
+stdout plus a note on stderr naming where it looked — `info: no session
+journal recorded for this workspace under the sessions root (<root>) — start
+a run or pass --session`; `log` prints `journal is empty`, `undo` `nothing to
+undo`, `journal prune` `nothing to prune`, and `status` counts zero entries
+and still reports the repository. `undo --dry-run` plans against the same
+store `diff` reads. Session ids accept only
 `[A-Za-z0-9_-]` — anything else (including `../` or absolute paths) is a
 usage error (`error: invalid --session id …` on stderr, exit 2) before any
-path is touched. With the workspace store, file restores and the `status`
-repo line resolve against the current directory. `--session` combined with
-a programmatically configured journal dir is refused (one store per
-invocation, exit 2).
+path is touched. With no journal recorded, the `status` repo line resolves
+against the current directory. `--session` combined with a programmatically
+configured journal dir is refused (one store per invocation, exit 2).
 
 **Output channels.** The report — the diff, undo verdicts, the log table,
 the status lines, or the one `--json` document — goes to stdout.
@@ -140,8 +139,7 @@ answers `--help`/`-h` with generated help (exit 0); `diff --help` and
 config, `kubic log` drops entries older than that window from a **session**
 journal as it reads it — via `--session <id>` or the latest-session
 fallback — the same age bound `kubic sessions prune` applies to whole
-session dirs, one entry at a time. The workspace journal is not affected
-(its own `[journal] retentionDays` bounds it on append). With retention
+session dirs, one entry at a time. With retention
 unset — or `0` — the log path writes nothing: reads never mutate the store.
 Entries are removed on request by [`kubic journal prune`](#kubic-journal-prune---session-id---keep-days-n---yes---json),
 which lists them by default.
@@ -367,7 +365,7 @@ prune <time> <op> <path>`) and deletes nothing.
   the rule every journal command applies, and nothing is created. (3) A session attached by
   a live pid (its session lock): exit 1 with one `error:` line, on a dry run too
   and for every window, `--keep-days 0` included. This is the rule `kubic undo`
-  applies; the workspace journal has no session lock and is pruned directly.
+  applies.
   (4) No window at all: exit 1, naming both ways to set one. A zero window
   exits 0 and deletes nothing, after checks 2 and 3.
 - **Deletion goes through the store's own retention pass**, which rewrites the

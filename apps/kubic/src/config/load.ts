@@ -50,7 +50,7 @@ export interface CliConfigResult {
   // distrusted project layer, a secret ref in config).
   error: string | undefined;
   // The repo's committed-vs-ignored split, reported by
-  // `kubic config` and by doctor: the four runtime prefixes must be ignored
+  // `kubic config` and by doctor: the runtime prefixes must be ignored
   // and config.toml + roles/*.md must stay committable.
   ignoreSplit: { missing: string[]; checked: string[]; applicable: boolean };
   // The project root every consumer resolves from —

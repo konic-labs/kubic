@@ -1,6 +1,6 @@
 # Kubic canonical config example.
 # Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
-# Never committed: sessions/ journal/ artifacts/ audit/
+# Never committed: audit/
 
 # Settings skills: files or directories, resolved
 # against this file's directory — `./skills` names `<root>/.kubic/skills`

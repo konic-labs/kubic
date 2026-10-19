@@ -246,9 +246,9 @@ describe('journal prune', () => {
     expect(indexLines(journalDir)).toEqual(before);
   });
 
-  it('prunes a workspace store named by journalDir, with no session lock to check', async () => {
+  it('prunes a store pinned by journalDir, with no session lock to check', async () => {
     const root = tempDir('ws-');
-    const journalDir = join(root, '.kubic', 'journal');
+    const journalDir = join(root, 'journal');
     seed(journalDir, 'ws-session');
     const c = channel();
     const code = (

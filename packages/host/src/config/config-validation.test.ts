@@ -370,11 +370,9 @@ describe('layered load hardening', () => {
 
 describe('config serialization hardening', () => {
   it('reports only the missing gitignore entries', () => {
+    // Rules an older build wrote do not stand in for the current one.
     const partial = `.kubic/sessions/\n.kubic/journal/\n`;
-    expect(checkGitignoreSplit(partial).missing).toEqual([
-      '.kubic/artifacts/',
-      '.kubic/audit/',
-    ]);
+    expect(checkGitignoreSplit(partial).missing).toEqual(['.kubic/audit/']);
   });
 
   // The required-entry list is not a second copy of the rule

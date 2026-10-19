@@ -154,7 +154,7 @@ describe('session journal reachability', () => {
         {
           root,
           sessionsRoot,
-          journalDir: join(root, '.kubic', 'journal'),
+          journalDir: join(root, 'journal'),
           out: o.write,
         },
       ),

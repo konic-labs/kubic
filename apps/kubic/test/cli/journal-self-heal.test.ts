@@ -297,7 +297,7 @@ describe('read-time journal self-heal', () => {
     expect(o.lines.join('\n')).toContain('aged.txt');
   });
 
-  it('session retention never prunes a pinned workspace store (session-scoped only)', async () => {
+  it('session retention never prunes a pinned store (session-scoped only)', async () => {
     const journalDir = tempDir('j-');
     const root = tempDir('ws-');
     seedAgedAndFresh(journalDir, 'ws');

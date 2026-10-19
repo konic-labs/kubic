@@ -56,12 +56,11 @@ describe('doctor config section', () => {
       buildConfigDoctorInput({
         values: [],
         projectTrusted: false,
-        ignoreSplitMissing: ['.kubic/journal/', '.kubic/audit/'],
+        ignoreSplitMissing: ['.kubic/audit/'],
         ignoreSplitApplicable: true,
       }),
     );
     expect(probe.ok).toBe(false);
-    expect(probe.detail).toMatch(/\.kubic\/journal\//);
     expect(probe.detail).toMatch(/\.kubic\/audit\//);
   });
 

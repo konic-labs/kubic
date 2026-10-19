@@ -77,13 +77,13 @@ export function journalPrune(
   }
   const now = deps.now?.() ?? Date.now();
   const maxAgeMs = keepDays * MS_PER_DAY;
-  const candidates = [...store.entries()]
+  const candidates = [...(store?.entries() ?? [])]
     .filter((entry) => now - entry.timestamp > maxAgeMs)
     .sort((a, b) => a.timestamp - b.timestamp);
   let pruned = 0;
   let reclaimed = 0;
   let exit: ExitCode = EXIT_OK;
-  if (yes && candidates.length > 0) {
+  if (yes && store !== undefined && candidates.length > 0) {
     // The store's own pass applies the same age bound, so it drops what the
     // dry run listed, unless the journal changed under it (a concurrent writer
     // or pruner). Its actual count is what gets reported. The pass also sweeps

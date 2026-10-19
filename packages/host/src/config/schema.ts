@@ -855,7 +855,7 @@ export const CONFIG_SECTIONS = [
 export const EXAMPLE_HEADER = [
   'Kubic canonical config example.',
   'Committed to the repo: .kubic/config.toml + .kubic/roles/*.md',
-  'Never committed: sessions/ journal/ artifacts/ audit/',
+  'Never committed: audit/',
 ] as const;
 
 // One key's declaration, by its section and name.

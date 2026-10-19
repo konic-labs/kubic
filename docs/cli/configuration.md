@@ -388,11 +388,12 @@ Each trigger, what it detects and the detection heuristics are on
 not. The split, exactly as shipped:
 
 - **Committed**: `.kubic/config.toml`, `.kubic/roles/*.md`.
-- **Runtime state (never committed)**: `.kubic/sessions/`,
-  `.kubic/journal/`, `.kubic/artifacts/`, `.kubic/audit/`.
+- **Runtime state (never committed)**: `.kubic/audit/`, the approval audit
+  ledger. Sessions and their journals live outside the workspace, under the
+  sessions root (`~/.kubic/sessions`).
 - **How a user repo gets the rules**: every `kubic run` and `kubic tui`
-  invocation (before it creates any state) writes those four runtime
-  prefixes into the repository's **local, uncommitted**
+  invocation (before it creates any state) writes that runtime
+  prefix into the repository's **local, uncommitted**
   exclude file (`.git/info/exclude`), in a marked block it rewrites in
   place on later runs — so nothing of Kubic's own appears in `git status`,
   and your committed `.gitignore` is never touched by the tool. `kubic doctor`
@@ -405,8 +406,8 @@ not. The split, exactly as shipped:
   stay committable. Outside a git repository the write is a no-op (runtime
   state is local wherever it is written), and the write never fails a run.
   This repository's own `.gitignore` ignores its whole `.kubic/` directory
-  (`/.kubic/`) and also lists the same four rules, because `kubic doctor` checks
-  for those literal lines.
+  (`/.kubic/`) and also lists the same rule, because `kubic doctor` checks
+  for that literal line.
 - **Models**: Pi's built-in providers (`anthropic`, `openai`, `google`,
   `amazon-bedrock`, …) are always registered; each is usable once its
   documented env key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
@@ -442,7 +443,8 @@ not. The split, exactly as shipped:
   and manual: `kubic sessions prune` lists candidates by default and
   deletes only with `--yes`, and `[session] retentionDays` (above) supplies
   the default keep-window — a live-locked session is never pruned.
-- **Journal**: `<root>/.kubic/journal` by default. With the store's default
+- **Journal**: each run journals into its session, at
+  `<sessions-root>/<id>/journal`. With the store's default
   `durable` on, the content an entry references is flushed before the entry
   is: a blob's bytes are fsynced before its rename and its directory after
   it, and the index line is fsynced before the append returns — a few

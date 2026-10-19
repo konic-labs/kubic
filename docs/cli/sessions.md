@@ -129,7 +129,6 @@ journal entries at read time (see the read-time self-heal note under
   root is a fresh machine: `nothing to prune`, exit 0. A root that exists
   but cannot be listed refuses by name, exit 1.
 - **Scope.** `prune` deletes `<sessions-root>/<id>/` state dirs only —
-  never the workspace journal (`.kubic/journal`), never anything outside
-  the sessions root. A durable session's transcript lives INSIDE its state dir
+  never anything outside the sessions root. A durable session's transcript lives INSIDE its state dir
   (`main.jsonl`), so pruning a session deletes its transcript with it.
   Folders that hold no session file are not part of this command.

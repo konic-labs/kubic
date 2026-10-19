@@ -63,15 +63,18 @@ export function journalUndo(
     run.log.error(ambiguity);
     return EXIT_FAILED;
   }
-  const plan = planUndo(
-    store,
-    {
-      ...(request.path === undefined ? {} : { path: request.path }),
-      ...(request.step === true ? { step: true } : {}),
-    },
-    root,
-  );
-  if (plan.steps.length === 0) {
+  const plan =
+    store === undefined
+      ? undefined
+      : planUndo(
+          store,
+          {
+            ...(request.path === undefined ? {} : { path: request.path }),
+            ...(request.step === true ? { step: true } : {}),
+          },
+          root,
+        );
+  if (store === undefined || plan === undefined || plan.steps.length === 0) {
     deps.out(
       request.json === true
         ? formatJson({ ...run.ref, dryRun, restored: [], skipped: [] })

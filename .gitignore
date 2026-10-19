@@ -82,13 +82,10 @@ __pycache__/
 # so a contributor's config can never leak into a commit. The documented
 # example of a project config is packages/host/src/config/example.toml.
 #
-# The runtime subpaths are listed as well: `kubic doctor` checks the ignore
-# file for the same rules `kubic run` writes into a user repo's exclude file.
+# The runtime subpath is listed as well: `kubic doctor` checks the ignore
+# file for the same rule `kubic run` writes into a user repo's exclude file.
 # ---------------------------------------------------------------------------
 /.kubic/
-.kubic/sessions/
-.kubic/journal/
-.kubic/artifacts/
 .kubic/audit/
 
 # ---------------------------------------------------------------------------

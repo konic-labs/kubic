@@ -45,20 +45,28 @@ them:
   a role document or the model.
 - `network_policy` — `"proxy"` is carried as the engine's `allowlist`
   mode; the engine names (`none`, `allowlist`, `full`) are accepted too.
-  Kubic has no proxy-mediated enforcement, so the value is **not
-  enforced**; `kubic config` lists it (`kept`) instead of the section
-  being silently ignored.
+  Kubic has no proxy-mediated or socket-level enforcement, so the value is
+  **not enforced**: `kubic config` lists it (`kept`) instead of the section
+  being silently ignored, and `kubic doctor` fails
+  `policy:enterprise-network` for any configured value — `allowed_domains`
+  or not — and `policy:enterprise-enforceability` with it. The bash
+  network guard is the `[permissions] network` class, a lexical detector.
 - `filesystem_policy` — `"workspace-only"` is the engine's
   `workspace-write`; the engine level names are accepted too.
 - `data_policy`, `logging_policy` — parsed into the effective policy and
   listed by `kubic config`; each one's enforcement status is the key-effect
-  row above, never a claim. `kubic doctor` does not report these keys yet:
-  `enterpriseDoctorChecks` (audit-sink, network-allowlist and
-  enforceability checks) has no caller, so a green doctor says
-  nothing about them.
+  row above, never a claim. `kubic doctor` does not report these two, nor
+  `filesystem_policy`.
 - `[[audit]]` — repeatable sink tables (`sink`, `level`, optional `target`
   and `facility`). Unknown kinds, levels and keys are refused by name.
   See [Audit sinks](#audit-sinks-audit).
+
+`kubic doctor` reports the rest whenever a `[policy]` section is configured
+(see [doctor and debug](doctor-and-debug.md)): `policy:enterprise-sinks`
+(the `[[audit]]` sinks are present, syslog-first, and syslog is available),
+`policy:enterprise-network` (a configured `network_policy` fails as not
+enforced) and `policy:enterprise-enforceability` (passes only when both of
+the others do). With no `[policy]` section none of them is emitted.
 
 ## Audit sinks (`[[audit]]`)
 

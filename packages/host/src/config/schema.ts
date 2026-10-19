@@ -786,7 +786,7 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['policy.network_policy', 'policy.allowed_domains'],
-        text: 'Parsed and resolved into the effective policy: `"proxy"` is carried as the engine\'s allowlist mode. **Not enforced:** Kubic has no proxy-mediated enforcement, so these keys protect nothing; `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` reports the one shape it can judge: an `allowlist` with no domains is unenforceable and fails `policy:enterprise-network`; proxy-mediated enforcement itself stays unreported. The engine mode names (`none`, `allowlist`, `full`) are accepted too.',
+        text: 'Parsed and resolved into the effective policy: `"proxy"` is carried as the engine\'s allowlist mode. **Not enforced:** Kubic has no proxy-mediated enforcement, so these keys protect nothing; `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` says so: any configured `network_policy` fails `policy:enterprise-network` as not enforced, and `policy:enterprise-enforceability` with it. The engine mode names (`none`, `allowlist`, `full`) are accepted too.',
       },
       {
         keys: ['policy.filesystem_policy'],

@@ -51,25 +51,30 @@ export function enterpriseDoctorChecks(
       detail: `syslog-first, ${sinks.length} sink(s) configured`,
     };
   }
-  const allowlistEmpty =
-    policy.network.mode === 'allowlist' &&
-    (policy.network.domains === undefined ||
-      policy.network.domains.length === 0);
-  const networkCheck: import('../doctor/index.js').DoctorCheck = allowlistEmpty
-    ? {
-        id: 'policy:enterprise-network',
-        label: 'policy enterprise network',
-        status: 'fail',
-        reason: 'policy-mismatch',
-        detail: 'network allowlist mode with no domains is unenforceable',
-      }
-    : {
-        id: 'policy:enterprise-network',
-        label: 'policy enterprise network',
-        status: 'pass',
-        reason: 'ok',
-        detail: `network mode ${policy.network.mode ?? 'unset (deny-by-default)'}`,
-      };
+  // `network_policy` and `allowed_domains` are parsed and resolved, but
+  // nothing enforces them: Kubic has no proxy or socket-level network
+  // control, and the lane's network guard is the [permissions] class's
+  // lexical bash detector. A configured value is therefore a failure, never
+  // a pass, and the enforceability summary cannot pass while it is set.
+  const mode = policy.network.mode;
+  const domains = policy.network.domains?.length ?? 0;
+  const networkCheck: import('../doctor/index.js').DoctorCheck =
+    mode === undefined
+      ? {
+          id: 'policy:enterprise-network',
+          label: 'policy enterprise network',
+          status: 'pass',
+          reason: 'ok',
+          detail:
+            'network_policy unset — the [permissions] network class governs network commands (a lexical bash detector)',
+        }
+      : {
+          id: 'policy:enterprise-network',
+          label: 'policy enterprise network',
+          status: 'fail',
+          reason: 'policy-mismatch',
+          detail: `network_policy is not enforced: mode ${mode}${domains > 0 ? ` with ${domains} allowed domain(s)` : ''} is parsed, but no proxy or socket-level control applies it — the [permissions] network class is a lexical bash detector`,
+        };
   const failed = [sinksCheck, networkCheck].filter(
     (check) => check.status === 'fail',
   ).length;

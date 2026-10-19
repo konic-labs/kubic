@@ -259,7 +259,7 @@ describe('kubic doctor: enterprise policy and detection-only', () => {
     );
     expect(network?.status).toBe('fail');
     expect(network?.reason).toBe('policy-mismatch');
-    expect(network?.detail).toContain('no domains');
+    expect(network?.detail).toContain('network_policy is not enforced');
     expect(report.checks.map((entry) => entry.id)).toContain(
       'policy:enterprise-enforceability',
     );

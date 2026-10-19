@@ -94,7 +94,7 @@ describe('policy:detection-only and enterprise checks', () => {
         },
       )
     ).exitCode;
-    // The unenforceable allowlist (no domains) is a fail, so the exit flips.
+    // An unenforced network_policy is a fail, so the exit flips.
     expect(code).toBe(1);
     const report = JSON.parse(lines.join('\n')) as {
       checks: Array<{
@@ -109,7 +109,7 @@ describe('policy:detection-only and enterprise checks', () => {
     );
     expect(network?.status).toBe('fail');
     expect(network?.reason).toBe('policy-mismatch');
-    expect(network?.detail).toContain('no domains');
+    expect(network?.detail).toContain('network_policy is not enforced');
     expect(report.checks.map((entry) => entry.id)).toContain(
       'policy:enterprise-enforceability',
     );

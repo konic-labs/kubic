@@ -51,7 +51,15 @@ listing header, the lock, the journal, spans, approvals posture and
 trajectory. The session's metadata is the session-scoped `kubic.session`
 document, written in the creating commit, so anything holding the session
 open reads it from the same durable state as the transcript. Session JSONL
-is not fsynced; the change journal is the fsync'd store.
+is not fsynced; the change journal is the fsync'd store. The directory is
+`0700` and every file in it `0600`.
+
+`kubic run` creates its session before it boots the lane, so a run that
+fails before the model answers — no provider, a refused model — is still a
+recorded session: the `--json` envelope names its `session:`, `journal:`,
+`usage:` and `trajectory:` refs, `kubic sessions list` lists it, and
+`kubic sessions prune` removes it like any other once it is past the keep
+window.
 
 A folder without that storage is not a session: it is never listed, the
 overlap warning (`kubic doctor`) never counts it, and attaching it exits 1

@@ -483,6 +483,62 @@ describe('destructive/confine matchers (unit)', () => {
     expect(defaultIsDestructive(command, '/work')).toBe(expected);
   });
 
+  // `rm` is classified wherever it is the command that runs: after the
+  // reserved words a command may follow, behind the wrappers that run their
+  // arguments in place, as a path or an escaped word, and — a bulk delete,
+  // whatever its flags — as the command of find's -exec family or of xargs.
+  it.each([
+    ['find . -exec rm -rf {} +', true],
+    ['find . -name "*.ts" -exec rm {} +', true],
+    ['find . -execdir rm {} \\;', true],
+    ['find . -ok rmdir {} \\;', true],
+    ['find . -exec /bin/rm {} +', true],
+    ['find . -exec sudo rm {} +', true],
+    ['xargs rm -rf < list', true],
+    ['ls | xargs rm', true],
+    ['xargs -0 -n1 rm', true],
+    ['xargs -I {} rm {}', true],
+    ['xargs -L 1 -P 4 rmdir', true],
+    ['sudo rm -rf /var/www', true],
+    ['sudo -u www rm /etc/passwd', true],
+    ['env FOO=1 rm -rf build', true],
+    ['env -u HOME rm -rf build', true],
+    ['FOO=1 rm -rf build', true],
+    ['nice -n 10 rm -rf build', true],
+    ['timeout -s KILL 10 rm -rf build', true],
+    ['time rm -rf build', true],
+    ['nohup rm -rf build', true],
+    ['command rm -rf build', true],
+    ['exec rm -rf build', true],
+    ['if true; then rm -rf build; fi', true],
+    ['for f in a b; do rm -rf "$f"; done', true],
+    ['{ rm -rf build; }', true],
+    ['! rm -rf build', true],
+    ['(rm -rf build)', true],
+    ['\\rm -rf build', true],
+    ['/bin/rm -rf build', true],
+    ['RM -rf build', true],
+    ['find . -delete', true],
+    ['find . -name x -print', false],
+    ['find . -name rm -print', false],
+    ['xargs echo', false],
+    ['xargs grep -l rm', false],
+    ['sudo rm notes.txt', false],
+    ['env FOO=1 rm notes.txt', false],
+    ['echo rm -rf build', false],
+    ['git rm -r --cached build', false],
+    ['grep -rn rm .', false],
+  ])('classifies the executed command in %j', (command, expected) => {
+    expect(defaultIsDestructive(command, '/work')).toBe(expected);
+  });
+
+  it('fails closed when a run of wrappers is too long to read', () => {
+    expect(defaultIsDestructive(`${'env '.repeat(200)}rm notes.txt`)).toBe(
+      true,
+    );
+    expect(defaultIsDestructive(`${'nice -n 1 '.repeat(5000)}echo`)).toBe(true);
+  });
+
   // Each new DESTRUCTIVE_PATTERNS arm pinned on its own, with a
   // near-miss beside it, so weakening one regex fails exactly one row.
   it.each([

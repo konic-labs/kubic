@@ -3,30 +3,182 @@ import { isAbsolute, resolve } from 'node:path';
 
 const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
 
-// A command ends at `|`, `;`, `&` or a line break: a script runs each line as
-// its own command, so `echo hi\nrm -rf /` is two commands, and a CRLF line
-// ending (`\r\n`) ends one too.
+// A command ends at `|`, `;`, `&` or a line break, and one starts after a
+// subshell's `(`: a script runs each line as its own command, so `echo
+// hi\nrm -rf /` is two commands, and a CRLF line ending (`\r\n`) ends one
+// too. A `$(` is not split here: the approval layer unwraps substitutions,
+// with its own stated depth bound.
+const COMMAND_BREAK = /[|;&\n\r]|(?<!\$)\(/;
+
+// The reserved words a command may follow in the same shell (`then rm`,
+// `{ rm`, `! rm`), and the programs that run their arguments as a command
+// in place, each with the options of theirs that take a separate argument.
+// After a wrapper, a word starting with `-` or a digit (a nice or timeout
+// value) is one of its options; a `NAME=value` assignment may precede any
+// command.
+const RESERVED_WORDS = new Set([
+  'if',
+  'elif',
+  'then',
+  'do',
+  'else',
+  'while',
+  'until',
+  '{',
+  '!',
+]);
+const WRAPPER_ARGUMENT_OPTIONS: ReadonlyMap<string, readonly string[]> =
+  new Map([
+    [
+      'sudo',
+      ['-u', '-g', '-C', '-D', '-h', '-p', '-R', '-r', '-T', '-t', '-U'],
+    ],
+    ['doas', ['-u', '-C']],
+    ['env', ['-u', '-C', '-P', '--unset', '--chdir']],
+    ['nice', ['-n', '--adjustment']],
+    ['ionice', ['-c', '-n', '-p', '-P', '-u']],
+    ['timeout', ['-s', '-k', '--signal', '--kill-after']],
+    ['time', ['-f', '-o', '--format', '--output']],
+    ['nohup', []],
+    ['command', []],
+    ['builtin', []],
+    ['exec', ['-a']],
+    ['stdbuf', ['-i', '-o', '-e']],
+    [
+      'xargs',
+      [
+        '-a',
+        '-d',
+        '-E',
+        '-I',
+        '-L',
+        '-n',
+        '-P',
+        '-s',
+        '--arg-file',
+        '--delimiter',
+        '--eof',
+        '--replace',
+        '--max-lines',
+        '--max-args',
+        '--max-procs',
+        '--max-chars',
+        '--process-slot-var',
+      ],
+    ],
+  ]);
+const RM_VERBS = new Set(['rm', 'rmdir']);
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const FIND_EXEC = /(?:^|\s)-(?:exec|execdir|ok|okdir)(?=\s)/g;
+// Words read before the command a segment runs. Past the bound the verdict
+// fails closed, so a long run of wrappers can neither stall the scan nor
+// hide an rm behind it.
+const MAX_LEAD_WORDS = 64;
+
+interface Executed {
+  readonly word: string;
+  readonly rest: string;
+  // Run by xargs or find's -exec: the paths come from input the command
+  // text does not show.
+  readonly bulk: boolean;
+}
+
+// A command word as the shell reads it: quotes and backslashes come off, a
+// directory is dropped (`\rm`, `'rm'` and `/bin/rm` are `rm`), and case is
+// folded, as a case-insensitive volume resolves it.
+function commandWord(text: string): string {
+  const unquoted = text.replace(/\\(.)/g, '$1').replace(/["']/g, '');
+  return unquoted.slice(unquoted.lastIndexOf('/') + 1).toLowerCase();
+}
+
+// The command a segment runs, past its reserved words, assignments and
+// wrappers; 'unknown' when that lead is longer than MAX_LEAD_WORDS.
+function executed(
+  segment: string,
+  bulk: boolean,
+): Executed | 'unknown' | undefined {
+  const words = /\S+/g;
+  let wrapper: readonly string[] | undefined;
+  let skipArgument = false;
+  let viaXargs = bulk;
+  for (let read = 0; read < MAX_LEAD_WORDS; read += 1) {
+    const match = words.exec(segment);
+    if (match === null) return undefined;
+    const text = match[0];
+    if (skipArgument) {
+      skipArgument = false;
+      continue;
+    }
+    if (wrapper !== undefined && /^[-\d]/.test(text)) {
+      skipArgument = wrapper.includes(text);
+      continue;
+    }
+    if (ASSIGNMENT.test(text)) continue;
+    const word = commandWord(text);
+    if (RESERVED_WORDS.has(word)) {
+      wrapper = undefined;
+      continue;
+    }
+    const options = WRAPPER_ARGUMENT_OPTIONS.get(word);
+    if (options !== undefined) {
+      wrapper = options;
+      viaXargs ||= word === 'xargs';
+      continue;
+    }
+    return {
+      word,
+      rest: segment.slice(match.index + text.length),
+      bulk: viaXargs,
+    };
+  }
+  return 'unknown';
+}
+
+// A recursive or forced rm, or one with a target outside the workspace or
+// on a sensitive path. Every target token is inspected — checking only the
+// first lets `rm notes.txt /etc/passwd` through.
+function rmArgumentsBlocked(args: string, workspace: string): boolean {
+  if (/-[a-zA-Z]*[rf]/i.test(args)) return true;
+  const tokens = args
+    .replace(/-[a-zA-Z]+\s*/g, ' ')
+    .replace(/--\S+\s*/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token !== '');
+  const root = resolve(workspace);
+  for (const target of tokens) {
+    const resolved = isAbsolute(target)
+      ? resolve(target)
+      : resolve(workspace, target);
+    if (resolved !== root && !resolved.startsWith(`${root}/`)) return true;
+    if (SENSITIVE_PATH.test(target)) return true;
+  }
+  return false;
+}
+
+// find's -exec family runs a command once per match: an rm there deletes
+// whatever the walk finds.
+function findExecRemoves(args: string): boolean {
+  for (const action of args.matchAll(FIND_EXEC)) {
+    const run = executed(args.slice(action.index + action[0].length), true);
+    if (run === 'unknown' || (run !== undefined && RM_VERBS.has(run.word))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// `rm`/`rmdir` wherever it is the command that runs. Run by xargs or by
+// find's -exec family it is a bulk delete whatever its flags; run directly
+// (behind any wrapper) its flags and targets decide.
 function rmBlocked(command: string, workspace: string): boolean {
-  const segments = command.split(/(?:^|[|;&\n\r])\s*(?=(?:rm|rmdir)\b)/i);
-  for (const segment of segments) {
-    const match = /^\s*(rm|rmdir)\b([^|;&\n\r]*)/i.exec(segment);
-    if (match === null) continue;
-    const flags = match[2] ?? '';
-    if (/-[a-zA-Z]*[rf]/i.test(flags)) return true;
-    // Every target token is inspected — checking only the first lets
-    // `rm notes.txt /etc/passwd` through.
-    const tokens = flags
-      .replace(/-[a-zA-Z]+\s*/g, ' ')
-      .replace(/--\S+\s*/g, ' ')
-      .split(/\s+/)
-      .filter((token) => token !== '');
-    for (const target of tokens) {
-      const resolved = isAbsolute(target)
-        ? resolve(target)
-        : resolve(workspace, target);
-      const root = resolve(workspace);
-      if (resolved !== root && !resolved.startsWith(`${root}/`)) return true;
-      if (SENSITIVE_PATH.test(target)) return true;
+  for (const segment of command.split(COMMAND_BREAK)) {
+    const run = executed(segment, false);
+    if (run === 'unknown') return true;
+    if (run === undefined) continue;
+    if (RM_VERBS.has(run.word)) {
+      if (run.bulk || rmArgumentsBlocked(run.rest, workspace)) return true;
+    } else if (run.word === 'find' && findExecRemoves(run.rest)) {
+      return true;
     }
   }
   return false;

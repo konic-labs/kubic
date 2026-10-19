@@ -52,7 +52,8 @@ import {
 // stated, not silent: interpreter-based verbs handed over as data
 // (`bash -c`, `python3 -c`, `node -e`), substitutions nested past
 // ~2x MAX_UNWRAP_DEPTH, python/node/npm exfiltration under network:none,
-// quoted or backslash-obfuscated verbs the literal patterns cannot see,
+// quoted or backslash-obfuscated verbs the literal patterns cannot see (the
+// rm command word excepted: it is read as the shell reads it),
 // whitespace tricks around redirection targets, and flag-reordered copy
 // targets (`cp -t /etc a b`) the last-argument heuristic misses. Detector
 // ownership for the rest:

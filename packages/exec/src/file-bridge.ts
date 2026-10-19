@@ -17,14 +17,13 @@ import {
   realpathSync,
   renameSync,
   rmSync,
-  statSync,
   truncateSync,
-  unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { withFileLocked } from './lock-file.js';
 
 export interface BridgeFileInfo {
   name: string;
@@ -392,64 +391,6 @@ export function createNodeFileBridge(cwd: string): FileBridge {
       throw new Error('could not create a unique temp file');
     },
   };
-}
-
-// Run `run` while holding an O_EXCL lockfile: the seam for a
-// mutation that must not interleave with another process's — the journal's
-// append, retention rewrite and blob sweep all run under it. The lock file
-// carries this process's pid, so a read-only observer can tell a live holder
-// from stale residue (`liveLockHolder`). Same stale/wait rules as
-// `updateFileLocked`: a crashed holder is stolen after `staleMs`, and a live
-// one is waited for up to `waitMs` before the caller gets a named timeout.
-// LOCAL FILESYSTEM ONLY, like every lock here.
-export function withFileLocked<T>(
-  lockPath: string,
-  run: () => T,
-  options: { staleMs?: number; waitMs?: number } = {},
-): T {
-  const staleMs = options.staleMs ?? 10_000;
-  const deadline = Date.now() + (options.waitMs ?? 5_000);
-  mkdirSync(dirname(lockPath), { recursive: true });
-  let fd: number | undefined;
-  while (fd === undefined) {
-    try {
-      fd = openSync(lockPath, 'wx');
-      // The pid is for observers, not for the lock itself: the O_EXCL create
-      // is the mutex. Written after the create so a torn payload can only
-      // ever read as stale, never as held.
-      try {
-        writeSync(fd, Buffer.from(String(process.pid), 'utf8'));
-      } catch (error) {
-        // A failed pid write (ENOSPC/EIO) must not leak the descriptor or
-        // leave the lock behind: the caller is about to rethrow, and this
-        // process would otherwise hold a lock nobody can steal for staleMs.
-        closeSync(fd);
-        fd = undefined;
-        rmSync(lockPath, { force: true });
-        throw error;
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > staleMs) {
-          unlinkSync(lockPath);
-          continue;
-        }
-      } catch {
-        continue; // the holder released between open and stat
-      }
-      if (Date.now() > deadline) {
-        throw new Error(`timed out waiting for lock ${lockPath}`);
-      }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-    }
-  }
-  try {
-    return run();
-  } finally {
-    closeSync(fd);
-    rmSync(lockPath, { force: true });
-  }
 }
 
 // Atomic, serialized update of one small state file (the trust store): an

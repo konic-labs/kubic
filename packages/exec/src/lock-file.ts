@@ -286,9 +286,13 @@ export function claimLockLink(lockPath: string, payload: string): boolean {
       // Our own temp name is taken: retry under a fresh one, three names
       // at most (the attempt index is part of the name, so a collision
       // needs a leftover with this pid, millisecond and random stamp).
-      // Anything else is a real I/O failure and still throws.
-      if ((error as { code?: string } | null)?.code === 'EEXIST' && attempt < 2)
-        continue;
+      // Anything else is a real I/O failure (ENOSPC, EIO): the half-written
+      // temp is dropped, and the error still throws.
+      if ((error as { code?: string } | null)?.code === 'EEXIST') {
+        if (attempt < 2) continue;
+        throw error;
+      }
+      rmSync(tmp, { force: true });
       throw error;
     }
     const dropTemp = (): void => {
@@ -312,4 +316,123 @@ export function claimLockLink(lockPath: string, payload: string): boolean {
   }
   // Unreachable: the loop either lands, loses, throws, or retries.
   throw new Error('claimLockLink: temp-name retries exhausted');
+}
+
+// A lock's holder, as a waiter reads it: whether its claim names a holder
+// that is gone. A claim names its process (pid and, where the platform tells
+// it, the process start time, which unmasks a reused pid). Residue that names
+// no holder this way — an older build's bare pid, which still names a pid,
+// or unreadable bytes — counts as gone only past `staleMs`, or when its pid
+// is dead.
+function holderGone(
+  lockPath: string,
+  observed: string,
+  staleMs: number,
+): boolean {
+  let holder: { pid?: unknown; startedAt?: unknown } | undefined;
+  if (/^\d+$/.test(observed.trim())) {
+    holder = { pid: Number(observed.trim()) };
+  } else {
+    try {
+      const parsed: unknown = JSON.parse(observed);
+      holder =
+        typeof parsed === 'object' && parsed !== null
+          ? (parsed as { pid?: unknown; startedAt?: unknown })
+          : undefined;
+    } catch {
+      holder = undefined;
+    }
+  }
+  const pid = typeof holder?.pid === 'number' ? holder.pid : undefined;
+  if (pid === undefined) {
+    try {
+      return Date.now() - statSync(lockPath).mtimeMs > staleMs;
+    } catch {
+      return false;
+    }
+  }
+  if (!processAlive(pid)) return true;
+  const startedAt = holder?.startedAt;
+  if (typeof startedAt !== 'number') return false;
+  const now = processStartTimeOf(pid);
+  return now !== undefined && now !== startedAt;
+}
+
+function processAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the pid exists, owned by another user.
+    return (error as { code?: string } | null)?.code === 'EPERM';
+  }
+}
+
+function lockPayload(): string {
+  return JSON.stringify({
+    pid: process.pid,
+    startedAt: processStartTimeOf(process.pid) ?? null,
+    nonce: `${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`,
+  });
+}
+
+// Take a gone holder's lock away, under the steal guard: while the guard is
+// held, the lock can change only by its own holder's release, which a gone
+// holder never makes, so the occupant judged gone is the one removed. Returns
+// true when the lock was cleared (or vanished) and a claim should be tried
+// again. A guard whose own holder is gone is cleared too, so a waiter that
+// died mid-steal cannot wedge the lock.
+function stealGoneHolder(lockPath: string, staleMs: number): boolean {
+  const guard = `${lockPath}.steal`;
+  const guardPayload = lockPayload();
+  if (!claimLockLink(guard, guardPayload)) {
+    const occupant = readLockFile(guard);
+    if (occupant !== undefined && holderGone(guard, occupant, staleMs)) {
+      removeLockFile(guard);
+    }
+    return false;
+  }
+  try {
+    const observed = readLockFile(lockPath);
+    if (observed === undefined) return true;
+    if (!holderGone(lockPath, observed, staleMs)) return false;
+    removeLockFile(lockPath);
+    return true;
+  } finally {
+    if (readLockFile(guard) === guardPayload) removeLockFile(guard);
+  }
+}
+
+/**
+ * Run `run` while holding the lock at `lockPath`: the seam for a mutation
+ * that must not interleave with another process's — the journal's append,
+ * retention rewrite and blob sweep, and the trust store's update. A claim
+ * lands atomically with its holder's identity (pid, process start time, a
+ * nonce). A waiter takes the lock away only when its holder is gone; a live
+ * holder is waited for up to `waitMs`, however long it runs, before the
+ * caller gets a named timeout. The release removes only this claim's own
+ * lock, never one that has since changed hands. LOCAL FILESYSTEM ONLY, like
+ * every lock here.
+ */
+export function withFileLocked<T>(
+  lockPath: string,
+  run: () => T,
+  options: { staleMs?: number; waitMs?: number } = {},
+): T {
+  const staleMs = options.staleMs ?? 10_000;
+  const deadline = Date.now() + (options.waitMs ?? 5_000);
+  const payload = lockPayload();
+  while (!claimLockLink(lockPath, payload)) {
+    if (stealGoneHolder(lockPath, staleMs)) continue;
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for lock ${lockPath}`);
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+  try {
+    return run();
+  } finally {
+    if (readLockFile(lockPath) === payload) removeLockFile(lockPath);
+  }
 }

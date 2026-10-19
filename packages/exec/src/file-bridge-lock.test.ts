@@ -17,13 +17,31 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildSync } from 'esbuild';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createNodeFileBridge, updateFileLocked } from './file-bridge.js';
 
-const BRIDGE_SOURCE = join(
-  dirname(fileURLToPath(import.meta.url)),
-  'file-bridge.ts',
-);
+// The bridge as one plain module a child process can import: bundled, so
+// its own relative imports resolve.
+let bundledBridge: string | undefined;
+function bridgeModule(): string {
+  if (bundledBridge !== undefined) return bundledBridge;
+  const dir = mkdtempSync(join(tmpdir(), 'kubic-lock-bundle-'));
+  dirs.push(dir);
+  const outfile = join(dir, 'file-bridge.mjs');
+  buildSync({
+    entryPoints: [
+      join(dirname(fileURLToPath(import.meta.url)), 'file-bridge.ts'),
+    ],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    outfile,
+    logLevel: 'silent',
+  });
+  bundledBridge = outfile;
+  return outfile;
+}
 
 const dirs: string[] = [];
 const children: ChildProcess[] = [];
@@ -38,6 +56,7 @@ afterEach(() => {
   }
   for (const dir of dirs.splice(0))
     rmSync(dir, { recursive: true, force: true });
+  bundledBridge = undefined;
 });
 
 function scratch(): string {
@@ -147,7 +166,7 @@ describe('updateFileLocked failure paths', () => {
     const file = join(dir, 'counter.json');
     writeFileSync(file, '0');
     const script = [
-      `const { updateFileLocked } = await import(${JSON.stringify(BRIDGE_SOURCE)});`,
+      `const { updateFileLocked } = await import(${JSON.stringify(bridgeModule())});`,
       `for (let i = 0; i < 50; i += 1) {`,
       `  updateFileLocked(${JSON.stringify(file)}, (cur) => String(Number(cur) + 1));`,
       `}`,

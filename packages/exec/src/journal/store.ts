@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path';
 import type { FileBridge } from '../file-bridge.js';
-import { createNodeFileBridge, withFileLocked } from '../file-bridge.js';
-import { tightenStateDir } from '../lock-file.js';
+import { createNodeFileBridge } from '../file-bridge.js';
+import { tightenStateDir, withFileLocked } from '../lock-file.js';
 import { BlobStore } from './blobs.js';
 import { deltaFor, reconstructAfter } from './delta.js';
 import { sha256Hex } from './hash.js';
@@ -39,8 +39,7 @@ const MUTATION_LOCK_WAIT_MS = 5_000;
  * it, so two processes cannot interleave: a line appended between a reader's
  * `entries()` and its rename is otherwise silently dropped by the rename, and
  * a blob sweep otherwise deletes the `${hash}.${pid}.tmp` another process is
- * about to rename into place. Exported so a destructive command can observe
- * the lock read-only (`liveLockHolder`) and skip instead of racing.
+ * about to rename into place.
  */
 /** @internal */
 export function journalMutationLockPath(indexPath: string): string {
@@ -114,8 +113,8 @@ export class FileJournalStore {
   /**
    * Run a mutation under the cross-process lock beside the index.
    * A second process waits (up to the lock's wait budget) instead of
-   * interleaving; a crashed holder is stolen after the stale window, so the
-   * journal is never wedged by residue.
+   * interleaving; a crashed holder's lock is taken away, so the journal is
+   * never wedged by residue, and a live holder's never is.
    */
   private withMutationLock<T>(run: () => T): T {
     if (this.mutationLockHeld) return run();

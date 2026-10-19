@@ -35,9 +35,12 @@ undo restore keeps the target file's own mode — Kubic never widens a file it
 writes back.
 
 Cross-process coordination: every
-journal mutation — append, retention rewrite, blob sweep — runs under an
-O_EXCL lock beside the index (stale after ten seconds, so a crashed holder
-never wedges the journal), the rewrite abandons itself when the index changed
+journal mutation — append, retention rewrite, blob sweep — runs under a
+lock beside the index whose claim names its holder (pid, process start time,
+a nonce): a waiter takes it away only when that holder is gone, so a crashed
+holder never wedges the journal and a live one is never robbed of it, a
+takeover runs under a guard so two waiters cannot both take it, and a
+release removes only its own claim. The rewrite abandons itself when the index changed
 under it, and the sweep only removes blobs that are unambiguously dead (never
 a `${hash}.${pid}.tmp` another process is renaming into place, never one newer
 than the pass). Commands that only read step aside for a live run instead of

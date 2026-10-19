@@ -17,7 +17,7 @@ a cwd guardrail against accidental escapes, not a sandbox boundary.
 | `@kubic/exec/env` | The execution seam: `ExecutionEnv` (cwd, file system, shell, provenance), its Node bindings, and the tool process environment (`toolSpawnEnv`) |
 | `@kubic/exec/journal` | The change journal: the store, blobs and retention, the boot baseline and end-of-run sweep, restore and undo, diff and status, and git HEAD state |
 | `@kubic/exec/file-bridge` | The file bridge the agent and host read and write their state through, with durable appends and creation modes |
-| `@kubic/exec/lock-file` | The `O_EXCL` lock-file primitive behind the session lock |
+| `@kubic/exec/lock-file` | The lock-file primitives behind the session lock and the journal's mutation lock (`withFileLocked`), and the private-state mode helpers |
 | `@kubic/exec/ignore` | The `.gitignore`-subset matcher the journal walk and the agent's find and grep share |
 | `@kubic/exec/runtime-exclude` | The entries `kubic run` and `kubic tui` keep in a repo's `.git/info/exclude` |
 | `@kubic/exec/read-roots` | Read-only roots outside the cwd, for skills advertised by absolute path |

@@ -67,10 +67,17 @@ blobs, so a file toggling between two contents grows only the index.
 
 ### The mutation lock
 
-Appends and retention passes hold `index.jsonl.lock`, created with `O_EXCL`
-and recording the holder's pid. A nested call in the same store is
-re-entrant; another process waits up to five seconds, then fails by name; a
-lock older than ten seconds belongs to a crashed holder and is taken over.
+Appends and retention passes hold `index.jsonl.lock`. The claim lands
+atomically (a temp file hard-linked into place) and names its holder: pid,
+process start time where the platform reports it, and a nonce. A nested call
+in the same store is re-entrant; another process waits up to five seconds,
+then fails by name. A waiter takes the lock away only when its holder is
+gone — a dead pid, or one whose start time shows it was reused — and never
+from a live holder, however long it runs; the takeover runs under a guard
+(`index.jsonl.lock.steal`), so two waiters cannot both take a gone holder's
+lock. Residue that names no holder (an older build's bare pid is read by its
+pid; unreadable bytes) is taken over once older than ten seconds. A release
+removes the lock only while it still carries this claim's nonce.
 
 ### Reads
 

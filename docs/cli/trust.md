@@ -49,7 +49,10 @@ committed `.kubic/config.toml`, the project `models.json` (its provider
 URLs are sent the key of any `*_API_KEY` or `KUBIC_*` variable it names,
 `KUBIC_API_KEY` when it names none) and the
 project skills. The help, the interactive prompt and the grant output all
-say so. Exit 0 on success; a corrupt store is named and exits 1; a path that
+say so. **A grant covers the content it was given for**: once any of the
+project's trust-relevant files changes — a pulled commit, a checked-out
+branch, a local edit — the project is untrusted again until you re-confirm
+it (see [What a grant covers](#what-a-grant-covers)). Exit 0 on success; a corrupt store is named and exits 1; a path that
 is not a directory, or `--list` combined with `--revoke`/a path, exits 2.
 
 ## `kubic trust`
@@ -59,7 +62,7 @@ is not a directory, or `--list` combined with `--revoke`/a path, exits 2.
 | `kubic trust` | Records trust for the current directory. |
 | `kubic trust <path>` | Records trust for that directory (must exist and be a directory; a symlink to one is followed and recorded under its resolved path). |
 | `kubic trust --revoke` | Removes the recorded decision; the refusal comes back. |
-| `kubic trust --list` | Prints every recorded decision (`trusted <path>` / `declined <path>`), sorted. |
+| `kubic trust --list` | Prints every recorded decision (`trusted <path>`, `changed  <path>` for a grant whose files changed since, `declined <path>`), sorted. |
 
 Grant output names the canonical path, the store file, and whether a
 project config is waiting there:
@@ -68,8 +71,33 @@ project config is waiting there:
 $ kubic trust
 trusted project /Users/you/src/app (store: /Users/you/.kubic/trust.json)
 project config /Users/you/src/app/.kubic/config.toml will load
-this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills and its project role documents
+this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills
+it covers these files as they are now: a change to any of them makes the project untrusted until you run 'kubic trust' again
 ```
+
+## What a grant covers
+
+A grant records a fingerprint: one digest over every project file the grant
+lets take effect.
+
+- the `.kubic/` tree — `config.toml`, `models.json`, role documents and
+  anything else there — except the runtime state Kubic writes itself
+  (`audit/`, `journal/`, `sessions/`);
+- a root `models.json`;
+- the project skills: `.pi/skills/`, `.agents/skills/`, and the skill
+  directories `package.json` declares (its `skills` and `pi.skills` lists —
+  never the rest of the file, so a dependency bump does not ask again);
+- the `[agent] systemPromptFile` the project config names, when it lives
+  inside the project.
+
+When the fingerprint no longer matches, every consumer treats the project
+as untrusted: the config load refuses with `project-local config changed
+since the project was trusted: <path> — review …, then run 'kubic trust'`,
+the project `models.json` and skills are left out, `kubic tui` asks the
+trust question again (saying the project changed), and `kubic trust --list`
+and `kubic doctor` report it as changed. Review the change (`git diff`, the
+`v` key of the question), then run `kubic trust` to accept the new content.
+A directory granted before its config existed changes when one appears.
 
 Exit codes: **0** recorded, revoked or listed; **1** an unreadable or
 corrupt store (the file is named — fix or delete it and run the command
@@ -83,7 +111,10 @@ Decisions live in one user-owned file, `~/.kubic/trust.json`:
 
 ```json
 {
-  "/Users/you/src/app": true,
+  "/Users/you/src/app": {
+    "trusted": true,
+    "fingerprint": "sha256:5c0f…"
+  },
   "/Users/you/src/experiment": false
 }
 ```
@@ -93,8 +124,11 @@ Decisions live in one user-owned file, `~/.kubic/trust.json`:
   tightened to `0700` on the next `kubic trust` write.
 - **Keys are canonical paths**: the realpath when the directory exists, so
   a symlinked path and its target share one decision.
-- **Values are `true` (trusted) or `false` (declined)**; an absent key is
-  "no decision yet". A `null` value is accepted and read as "no decision".
+- **Values are a grant (`trusted` plus the `fingerprint` of the content it
+  covers) or `false` (declined)**; an absent key is "no decision yet". A
+  `null` value is accepted and read as "no decision", and a bare `true` — a
+  grant recorded before fingerprints — reads as changed, so it is
+  re-confirmed once.
 - **Trust is exact-path.** A decision names the tree its files live in; it
   never applies to a parent or a sibling directory: trusting `/a` does not
   trust `/a-sibling`, and a grant for `/a/b` never unlocks files committed
@@ -131,16 +165,19 @@ key:
                  y  yes   n  not now   v  view file
 ```
 
-- **`y` yes** records `true` and boots the lane with the project layer; the
-  first screen's trust row then reads `.kubic/config.toml loaded`.
+- **`y` yes** records a grant for the project as it is now and boots the
+  lane with the project layer; the first screen's trust row then reads
+  `.kubic/config.toml loaded`.
 - **`v` view file** prints the config (its first 40 lines, control bytes
   removed) and asks again.
 - **`n` not now** records nothing: the lane stops on the refusal (exit 1),
   and the next `kubic tui` asks again.
 - **Cancel** (Ctrl-C / Esc) records nothing and fails closed the same way.
-- A recorded decision is never asked again. `kubic trust --revoke` removes
-  it if you want the question back; `kubic trust` records a grant without
-  the question.
+- A recorded decision is not asked again while the project's files stay as
+  they were. A grant whose files changed is asked again, and the question
+  says the project changed since you trusted it. `kubic trust --revoke`
+  removes a decision if you want the question back; `kubic trust` records a
+  grant without the question.
 - `kubic run` never prompts: it is the non-interactive lane, so an
   untrusted project config refuses with the remedies named. Scripts use
   `KUBIC_TRUST_PROJECT=1` or a prior `kubic trust`.
@@ -163,7 +200,8 @@ is the durable form.
 - `kubic doctor`'s `config-load` check names how the layer was trusted:
   `project layer trusted (recorded in ~/.kubic/trust.json)`,
   `project layer trusted (KUBIC_TRUST_PROJECT=1)`,
-  `project layer not trusted (declined in …; run 'kubic trust' to accept)`
+  `project layer not trusted (declined in …; run 'kubic trust' to accept)`,
+  `project layer not trusted (its files changed since the grant in …; …)`
   or `project layer not trusted (no decision recorded; …)`. A store that
   exists but cannot be read or parsed is named there
   (`project layer not trusted (trust store …)`) instead of being passed off

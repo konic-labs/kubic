@@ -99,7 +99,9 @@ export function loadLayers(
         // and with the remedies named: the durable grant or the
         // per-invocation env opt-in.
         throw new ProjectUntrustedError(
-          `project-local config refused pre-trust: ${path} — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation`,
+          inputs.projectTrustChanged === true
+            ? `project-local config changed since the project was trusted: ${path} — review the project's .kubic/ files, models.json and skills, then run 'kubic trust' to accept them, or set KUBIC_TRUST_PROJECT=1 for this invocation`
+            : `project-local config refused pre-trust: ${path} — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation`,
         );
       }
       continue;

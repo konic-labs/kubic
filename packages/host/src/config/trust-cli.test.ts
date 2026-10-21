@@ -121,6 +121,20 @@ describe('kubic trust command', () => {
     expect(h.lines[1]).toContain(z);
   });
 
+  it('lists a grant whose project files changed as changed', () => {
+    const home = tempDir('kubic-trust-home-');
+    const project = projectWithConfig();
+    const store = new ProjectTrustStore(projectTrustStorePath(home));
+    store.set(project, true);
+    writeFileSync(join(project, '.kubic', 'config.toml'), '[model]\n');
+    const h = harness(
+      new ProjectTrustStore(projectTrustStorePath(home)),
+      join(home, 'elsewhere'),
+    );
+    expect(runTrustCommand({ list: true }, h.deps).exitCode).toBe(0);
+    expect(h.lines).toEqual([`changed  ${realpathSync(project)}`]);
+  });
+
   it('reports an empty store on --list', () => {
     const home = tempDir('kubic-trust-home-');
     const store = new ProjectTrustStore(projectTrustStorePath(home));

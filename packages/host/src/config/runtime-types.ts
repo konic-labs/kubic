@@ -129,6 +129,9 @@ export interface RuntimeConfigInputs {
   // Trust gate for the project layer. An explicit true is the
   // caller's accepted trust prompt; KUBIC_TRUST_PROJECT=1 also opts in.
   projectTrusted?: boolean;
+  // The project had a grant, but its trust-relevant files changed since: the
+  // refusal says so instead of reading as a never-trusted project.
+  projectTrustChanged?: boolean;
   cli?: { model?: RuntimeModelSelection; thinking?: string };
   // Session/agent layers arrive programmatically, never as files.
   session?: KubicConfig;

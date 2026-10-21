@@ -161,6 +161,23 @@ describe('doctor config section', () => {
     expect(undecided.ok).toBe(true);
     expect(undecided.detail).toMatch(/no decision recorded/);
     expect(undecided.detail).toContain('KUBIC_TRUST_PROJECT=1');
+
+    const changed = configDoctorProbe(
+      buildConfigDoctorInput({
+        values: [],
+        projectTrusted: false,
+        projectTrust: {
+          decision: null,
+          changed: true,
+          envTrust: false,
+          storePath: '/home/u/.kubic/trust.json',
+        },
+        ignoreSplitMissing: [],
+        ignoreSplitApplicable: true,
+      }),
+    );
+    expect(changed.detail).toContain('files changed since the grant');
+    expect(changed.detail).toContain("run 'kubic trust'");
   });
 
   it('names a store error instead of reporting no decision', () => {

@@ -1,7 +1,6 @@
 // The prod `kubic tui` boot: the shared session bootstrap (session, role,
 // model, policy, journal baseline, skills, lane) plus what the interactive
 // loop reads from it.
-import { join } from 'node:path';
 import { killLaneProcesses } from '@kubic/agent/lane/abort';
 import type { Lane } from '@kubic/agent/lane/boot';
 import {
@@ -31,7 +30,6 @@ import {
   type InstalledPolicy,
   type SessionFullAccessGrant,
 } from '@kubic/host/approvals';
-import { type SettledTurnSpans, TurnSpans } from '@kubic/host/run';
 import {
   readSessionUsage,
   type SessionSummary,
@@ -39,15 +37,11 @@ import {
   summarizeProjectSessions,
 } from '@kubic/host/sessions';
 import { describeSkillSkips, offeredSkillNames } from '@kubic/host/skills';
-import {
-  approvalCounts,
-  exportRunTelemetry,
-  type TelemetryTarget,
-} from '@kubic/host/telemetry';
 import type { StatusUsageRow } from '@kubic/tui/status-bar';
 import { type BootRefusal, SessionBoot } from '../session/bootstrap.js';
 import { bootedLoop, contextLimitsOf, liveModelOf } from './lane-loop.js';
 import type { TuiRunOptions } from './options.js';
+import { turnSpans } from './turn-sinks.js';
 import type { TuiLaneBoot } from './types.js';
 
 // A refused tool selection: a usage error (exit 2), not a generic lane boot
@@ -191,6 +185,7 @@ function tuiSessionBoot(
       projectInstructions: options.projectInstructions,
       projectProvidersRefusal: options.projectProvidersRefusal,
       sessionTeam: options.sessionTeam,
+      hooks: options.hooks,
       modelPolicy: options.modelPolicy,
       trustProject: options.trustProject,
       skills: options.skills,
@@ -266,7 +261,7 @@ async function describeBoot(
     // The injected sink, threaded to the turn runner
     // for its fault and token lines (absent in prod — no --debug flag).
     debug: options.debug,
-    turnSpans: turnSpans(boot, id, options.telemetry, notices),
+    turnSpans: turnSpans(boot, id, options, notices),
     thinking: thinking ?? 'off',
     // The resolved set travels on the boot so `/scoped-models` can report
     // it.
@@ -360,63 +355,6 @@ async function abortPendingTurn(
   return interrupted === undefined
     ? notice
     : `${notice} — interrupted prompt: ${interrupted}`;
-}
-
-// Per-turn spans next to the headless artifact — the
-// session's spans.jsonl carries one run span per TUI turn plus its
-// tool spans. Best-effort: telemetry never fails a turn or a boot.
-function turnSpans(
-  boot: SessionBoot,
-  id: string,
-  telemetry: TelemetryTarget | undefined,
-  notices: BootNotices,
-): TuiLaneBoot['turnSpans'] {
-  return {
-    turns: new TurnSpans(id),
-    write: (artifact, turn): void => {
-      try {
-        boot.bridge.appendFile(join(id, 'spans.jsonl'), artifact, {
-          mode: 0o600,
-        });
-      } catch {
-        // A failed artifact write is not a turn failure.
-      }
-      if (telemetry !== undefined && turn !== undefined) {
-        void exportTurn(telemetry, boot, id, turn, notices);
-      }
-    },
-  };
-}
-
-// One settled turn to the OpenTelemetry collector; a collector that does not
-// answer is a transcript warning, never a turn failure.
-async function exportTurn(
-  target: TelemetryTarget,
-  boot: SessionBoot,
-  id: string,
-  turn: SettledTurnSpans,
-  notices: BootNotices,
-): Promise<void> {
-  const [provider, ...model] = boot.liveModelRef.split('/');
-  const failed = turn.spans.some(
-    (span) => span.parentId === null && span.error !== undefined,
-  );
-  const failures = await exportRunTelemetry(target, {
-    sessionId: id,
-    status: failed ? 'failed' : 'completed',
-    ...(provider === undefined || model.length === 0
-      ? {}
-      : { model: { provider, id: model.join('/') } }),
-    spans: turn.spans,
-    usage: turn.usage,
-    toolErrors: turn.toolErrors,
-    approvals: approvalCounts(id, boot.env?.cwd, turn.startedAt),
-    startedAt: turn.startedAt,
-    endedAt: Date.now(),
-  });
-  for (const failure of failures) {
-    notices.transcript.push(`warning: telemetry: not exported: ${failure}`);
-  }
 }
 
 // `/resume` and the palette list THIS boot's sessions store, and `/fork`

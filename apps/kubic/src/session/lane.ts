@@ -15,6 +15,7 @@ import {
   isToolAllowedByEnterprise,
 } from '@kubic/host/policy';
 import { resolveRoleThinking } from '../config/model-selection.js';
+import { toolHooksFor } from './admin-hooks.js';
 import type { BootRefusal, SessionBoot } from './bootstrap.js';
 
 // The lane's appended prompt sections: the `[agent] systemPromptFile` text
@@ -106,6 +107,12 @@ export async function bootSessionLane(
     skills?.block,
   );
   const contributions = [...installed.contributions];
+  const toolHooks = toolHooksFor(config.hooks, {
+    sessionId: boot.id,
+    workspace: env.cwd,
+    model: `${model.provider}/${model.id}`,
+    onAuditError: sinks.warn,
+  });
   try {
     boot.lane = await bootLane({
       session,
@@ -170,6 +177,8 @@ export async function bootSessionLane(
                   ),
               }
             : {}),
+          // The `[[hooks]]` around each call.
+          ...(toolHooks === undefined ? {} : { toolHooks }),
         },
         ...(contributions.length === 0 ? {} : { contributions }),
         ...(request.spanHooks === undefined

@@ -16,6 +16,7 @@ import type {
   InstalledPolicy,
 } from '@kubic/host/approvals';
 import type {
+  AdminHook,
   RuntimeEscalation,
   RuntimeThinking,
   SpendCaps,
@@ -205,6 +206,8 @@ export interface TuiRunOptions {
   projectProvidersRefusal?: string;
   // `[cost] team`, as `kubic run` records it.
   sessionTeam?: string;
+  // The `[[hooks]]`, as `kubic run` runs them; a settled turn is a run end.
+  hooks?: readonly AdminHook[];
   // `[telemetry]`: where each settled turn's spans and metrics go.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy — the same

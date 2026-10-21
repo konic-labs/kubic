@@ -37,6 +37,10 @@
       "source": "./src/git/index.ts",
       "default": "./src/git/index.ts"
     },
+    "./hooks": {
+      "source": "./src/hooks/index.ts",
+      "default": "./src/hooks/index.ts"
+    },
     "./instructions": {
       "source": "./src/instructions/index.ts",
       "default": "./src/instructions/index.ts"

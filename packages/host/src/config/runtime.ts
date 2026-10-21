@@ -30,8 +30,10 @@ import {
   isRecord,
 } from './checks.js';
 import type { ApprovalsConfig, ConfigLayer, KubicConfig } from './config.js';
-import { checkSessionCompaction, mergeLayered } from './config.js';
+import { checkSessionCompaction } from './config.js';
 import { ConfigError } from './errors.js';
+import { adminHooksOf } from './hooks-config.js';
+import { mergeLayered } from './layer-merge.js';
 import { checkProjectRestriction } from './project-restriction.js';
 import {
   envFlag,
@@ -180,6 +182,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     loaded.perLayer,
     loaded.paths.project,
   );
+  const hooks = adminHooksOf(loaded.perLayer, loaded.paths.project);
   // Enterprise keys are frozen against every override — a lower file
   // layer, an env override, and a CLI flag included. Nothing un-sets them.
   const frozen = (key: string): boolean => loaded.sources[key] === 'enterprise';
@@ -248,6 +251,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     ...(projectRestriction === undefined ? {} : { projectRestriction }),
     ...(loaded.managed === undefined ? {} : { managed: loaded.managed }),
     spend: spendCapsOf(loaded.perLayer),
+    hooks,
     overriddenAttempts: [
       ...merged.overriddenAttempts,
       ...pin.modelPinOverrides.map(

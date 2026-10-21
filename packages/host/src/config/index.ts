@@ -16,6 +16,7 @@ export {
 export type { ConfigCommandOptions } from './config-cli.js';
 export { runConfigCommand } from './config-cli.js';
 export { buildConfigDoctorInput, configDoctorProbe } from './config-doctor.js';
+export type { AdminHook, HookEvent } from './hooks-config.js';
 export { checkWorkspaceIgnoreSplit } from './ignore-split.js';
 export type { ManagedReport } from './managed.js';
 export {

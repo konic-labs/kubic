@@ -132,6 +132,8 @@ export function tuiBootOptions(
     projectProvidersRefusal: provided.projectProvidersRefusal,
     // `[cost] team`, as `kubic run` records it.
     sessionTeam: provided.sessionTeam,
+    // The `[[hooks]]`, as `kubic run` runs them.
+    hooks: provided.hooks,
     telemetry: provided.telemetry,
     // `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.

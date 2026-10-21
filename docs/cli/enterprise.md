@@ -67,6 +67,8 @@ them:
 - `[[audit]]` — repeatable sink tables (`sink`, `level`, optional `target`
   and `facility`). Unknown kinds, levels and keys are refused by name.
   See [Audit sinks](#audit-sinks-audit).
+- `[[hooks]]` — the organization's scripts before and after each tool call
+  and at run end; see [Admin hooks](#admin-hooks).
 
 `kubic doctor` reports the rest whenever a `[policy]` section is configured
 (see [doctor and debug](doctor-and-debug.md)): `policy:enterprise-sinks`
@@ -324,6 +326,60 @@ enterprise policy ([policy] project_policy = "restricted"))`). A project may
 still narrow: a stricter permission class, `route = "deny"`, a smaller tool
 set. The default is `"open"`.
 
+## Admin hooks
+
+```toml
+[[hooks]]
+event = "beforeTool"
+command = "/opt/acme/kubic-check"
+tools = ["bash", "write", "edit"]
+timeoutMs = 5000
+
+[[hooks]]
+event = "runEnd"
+command = "/opt/acme/kubic-report"
+```
+
+An organization, or a user for their own machine, runs its own scripts at
+three points:
+
+- `beforeTool`: before each tool call, once the approval ask allowed it,
+  with the arguments that will run (an operator's edit included). A hook
+  that exits non-zero refuses the call: the model reads `Tool call blocked:
+  refused by the hook "<command>": <reason>`, where the reason is the first
+  line the hook printed (stdout, else stderr). A hook that runs past
+  `timeoutMs` is killed and refuses the call too, and so does one that
+  cannot start: a before-tool hook fails closed.
+- `afterTool`: after each tool call, with its result. It observes: its exit
+  never changes what the model reads.
+- `runEnd`: when a `kubic run` settles, with its status and final answer.
+  In `kubic tui` each settled turn is a run end, with no answer.
+
+`tools` narrows a tool hook to the tools it names; absent, it runs for every
+tool. The hooks run in order (the enterprise layer's first, then the product
+and global layers'), and the first refusal wins.
+
+Each hook runs as `sh -c <command>` in the workspace, with the event as JSON
+on stdin:
+
+```json
+{"event": "beforeTool", "sessionId": "…", "workspace": "/repo", "model": "anthropic/claude-sonnet-5-5",
+ "tool": {"name": "bash", "arguments": {"command": "npm test"}}}
+```
+
+An `afterTool` payload adds `isError` and `output` (at most 64 KiB) under
+`tool`; a `runEnd` payload carries `status` and `summary` instead of `tool`.
+`KUBIC_HOOK_EVENT` names the event. The environment is the one the tools
+get, so a hook never sees a provider key, and a hook keeps at most 64 KiB of
+what it prints.
+
+Every hook run is a `hook:<event>` row in the audit ledger, with the command,
+the tool and the result: `ok`, `deny` (a refused call) or `error` (an
+after-tool or run-end hook that failed or timed out). The hooks come from the
+enterprise, product and global layers only: a project's `.kubic/config.toml`
+that declares `[[hooks]]` is refused by name, because a repository must not
+run commands of its own around every tool call.
+
 ## Audit sinks (`[[audit]]`)
 
 Enterprises expect audit records to reach syslog or another org sink — a
@@ -362,8 +418,8 @@ target = "/var/log/kubic.jsonl"
   starts (`run:start`), posture changes — the full-access grant
   (`posture:full-access`), its revoke (`posture:approvals`) and a refused
   mid-session change to `posture.json` (`posture:changed-mid-session`) —
-  undo restores (`undo-restore`) and gate commands (`verify:<gate>`),
-  dropping everything else (the per-request credential rows); `all` keeps
+  undo restores (`undo-restore`), gate commands (`verify:<gate>`) and
+  admin hook runs (`hook:<event>`), dropping everything else (the per-request credential rows); `all` keeps
   every row. The repo ledger always keeps everything regardless of level.
 - `target` (syslog): a unix socket path (bare `/dev/log` or
   `unix:/path`; the default is `/var/run/syslog` on macOS and `/dev/log`

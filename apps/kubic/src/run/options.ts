@@ -10,6 +10,7 @@ import type { ExecutionEnv } from '@kubic/exec/env';
 import type { JournalRetention } from '@kubic/exec/journal';
 import type { ApprovalConfig, InstalledPolicy } from '@kubic/host/approvals';
 import type {
+  AdminHook,
   RuntimeThinking,
   RuntimeVerify,
   SpendCaps,
@@ -133,6 +134,8 @@ export interface HeadlessRunDeps {
   spend?: SpendCaps;
   // `[cost] team`: recorded on the session this run creates.
   sessionTeam?: string;
+  // The `[[hooks]]` the run's tool calls and its end go through. Absent: none.
+  hooks?: readonly AdminHook[];
   // `[telemetry]`: where the run's spans and metrics go. Absent: nowhere.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy from the same

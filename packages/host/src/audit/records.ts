@@ -127,7 +127,9 @@ export function isPrivilegedAuditWhat(what: string): boolean {
     what === 'undo-restore' ||
     // A gate command is arbitrary shell from the config, run outside the
     // approval interceptors: an action, not a decision.
-    what.startsWith('verify:')
+    what.startsWith('verify:') ||
+    // An admin hook is shell from the config that can refuse a call.
+    what.startsWith('hook:')
   );
 }
 
@@ -194,6 +196,39 @@ export function verifyCommandAudit(input: VerifyCommandInput): AuditInput {
     posture: 'approvals',
     result: input.verdict === 'pass' ? 'ok' : 'error',
     reason: `${input.baseline ? 'baseline ' : ''}${input.gate} gate ran sh -c ${JSON.stringify(input.command)}: ${input.verdict}`,
+  };
+}
+
+// Audit record for one admin hook run: its event, the command, and what came
+// of it — `ok` (allowed, or ran clean), `deny` (a before-tool hook refused the
+// call), `error` (failed or timed out).
+export interface HookRunInput {
+  sessionId: string;
+  workspace: string;
+  event: string;
+  command: string;
+  tool?: string;
+  result: 'ok' | 'deny' | 'error';
+  reason: string;
+}
+
+export function hookRunAudit(input: HookRunInput): AuditInput {
+  return {
+    who: 'config:hooks',
+    what: `hook:${input.event}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'hook' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    process: { pid: process.pid },
+    workspace: { path: input.workspace, base: UNKNOWN },
+    permission: {
+      permission: input.tool === undefined ? 'hook' : `hook:${input.tool}`,
+      approval: `sh -c ${JSON.stringify(input.command)}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    posture: 'approvals',
+    result: input.result,
+    reason: input.reason,
   };
 }
 

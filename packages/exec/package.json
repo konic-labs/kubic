@@ -17,6 +17,10 @@
       "source": "./src/git-clean.ts",
       "default": "./src/git-clean.ts"
     },
+    "./hook-runner": {
+      "source": "./src/hook-runner.ts",
+      "default": "./src/hook-runner.ts"
+    },
     "./ignore": {
       "source": "./src/ignore.ts",
       "default": "./src/ignore.ts"

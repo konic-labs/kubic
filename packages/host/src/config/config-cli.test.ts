@@ -46,6 +46,7 @@ function runtime(): RuntimeConfig {
     verify: { commands: {} },
     run: {},
     spend: {},
+    hooks: [],
     projectTrusted: true,
     overriddenAttempts: [],
     modelPinOverrides: [],

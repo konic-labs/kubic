@@ -51,4 +51,5 @@ export type {
   ApprovalAskVerdict,
   ApprovalCall,
   PolicyInterceptorOptions,
+  ToolHookCalls,
 } from './types.js';

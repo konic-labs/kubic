@@ -63,6 +63,8 @@ export type KeyCheck =
   | 'auditLevel'
   // A facility name, or a number 0–23.
   | 'facility'
+  // `beforeTool`, `afterTool` or `runEnd`.
+  | 'hookEvent'
   // Files or directories of skills.
   | 'skills';
 
@@ -989,6 +991,44 @@ export const CONFIG_SECTIONS = [
       {
         keys: ['policy.logging_policy'],
         text: 'Parsed and carried (for example `full-audit`); no local mechanism is selected by it, so it is reported, never claimed as enforced.',
+      },
+    ],
+  },
+  {
+    name: 'hooks',
+    shape: 'array',
+    runtime: {
+      effect:
+        'admin hooks: a shell command run before each tool call (a non-zero exit or a timeout refuses the call), after each tool call, or when a run ends; read from the enterprise, product and global layers only, each run audited',
+    },
+    keys: [
+      { name: 'event', check: 'hookEvent', required: true },
+      { name: 'command', check: 'command', required: true },
+      { name: 'tools', check: 'strings' },
+      { name: 'timeoutMs', check: 'timeoutMs' },
+    ],
+    exampleTables: {
+      policy: [
+        'event = "beforeTool"',
+        'command = "/opt/acme/kubic-check"',
+        'tools = ["bash", "write", "edit"]',
+        'timeoutMs = 5000',
+      ],
+    },
+    exampleNote: [
+      'Read from the enterprise, product and global layers only; a project',
+      'config declaring [[hooks]] is refused.',
+    ],
+    docs: [
+      {
+        keys: [
+          'hooks.event',
+          'hooks.command',
+          'hooks.tools',
+          'hooks.timeoutMs',
+        ],
+        label: '`hooks` (`[[hooks]]`)',
+        text: 'Admin hooks: `event` = `beforeTool` \\| `afterTool` \\| `runEnd`, `command` (run as `sh -c` with a JSON payload on stdin and the tool environment, so no provider key), optional `tools` (the tool names a tool hook applies to; all when absent) and `timeoutMs` (default 5000). A `beforeTool` hook that exits non-zero refuses the call, naming the reason from its output; one that times out refuses it too (fails closed). Every hook run is audited (`hook:<event>`). Read from the enterprise, product and global layers, all of them; a project config declaring hooks is refused. See [Admin hooks](enterprise.md#admin-hooks).',
       },
     ],
   },

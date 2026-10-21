@@ -100,6 +100,12 @@ max_run_cost_usd = 5
 max_daily_cost_usd = 50
 project_policy = "restricted"
 
+[[hooks]]
+event = "beforeTool"
+command = "/opt/acme/kubic-check"
+tools = ["bash", "write", "edit"]
+timeoutMs = 5000
+
 [[audit]]
 sink = "syslog"
 level = "privileged"

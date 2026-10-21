@@ -13,6 +13,7 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { JournalRetention } from '@kubic/exec/journal';
 import type { ApprovalConfig } from '@kubic/host/approvals';
 import type {
+  AdminHook,
   ProjectTrustCheck,
   RuntimeConfig,
   RuntimeEscalation,
@@ -153,6 +154,8 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   projectProvidersRefusal?: string;
   /** `[cost] team`: recorded on each session the lane creates. */
   sessionTeam?: string;
+  /** The `[[hooks]]` the lane runs around tool calls and at run end. */
+  hooks?: readonly AdminHook[];
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -185,6 +188,7 @@ export function runtimeLaneDeps(result: CliConfigResult): {
     ...(runtime.config.cost?.team === undefined
       ? {}
       : { sessionTeam: runtime.config.cost.team }),
+    ...(runtime.hooks.length === 0 ? {} : { hooks: runtime.hooks }),
     // No ladder, no field: escalation stays opt-in — the
     // lane climbs nothing it was never configured with.
     ...(runtime.escalate === undefined

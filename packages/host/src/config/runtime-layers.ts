@@ -6,13 +6,14 @@ import { join } from 'node:path';
 import { findProjectRoot } from '../cli/index.js';
 import { safeExists } from './bridge-reads.js';
 import { isRecord } from './checks.js';
-import type { ConfigLayer, KubicConfig, LayerInput } from './config.js';
+import type { ConfigLayer, KubicConfig } from './config.js';
 import {
   defaultLayerPaths,
   parseLayerConfig,
   resolveConfigSkills,
 } from './config.js';
 import { ConfigError, ProjectUntrustedError } from './errors.js';
+import type { LayerInput } from './layer-merge.js';
 import {
   type ManagedReport,
   managedConfigDirs,

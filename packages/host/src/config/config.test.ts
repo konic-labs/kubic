@@ -8,7 +8,6 @@ import {
   CONFIG_LAYERS,
   type ConfigLayer,
   defaultLayerPaths,
-  mergeLayered,
   parseTomlConfig,
 } from './config.js';
 import { ConfigError, ProjectUntrustedError } from './errors.js';
@@ -16,6 +15,7 @@ import {
   checkGitignoreSplit,
   GITIGNORE_REQUIRED_ENTRIES,
 } from './ignore-split.js';
+import { mergeLayered } from './layer-merge.js';
 import { loadRuntimeConfig } from './runtime.js';
 
 // The canonical example, as the schema generates it (scripts/gen-config-docs.mjs).

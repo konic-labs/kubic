@@ -10,6 +10,7 @@ import type {
   KubicConfig,
   VERIFY_COMMAND_KEYS,
 } from './config.js';
+import type { AdminHook } from './hooks-config.js';
 import type { ManagedReport } from './managed.js';
 import type { ProjectRestriction } from './project-restriction.js';
 import type { SpendCaps } from './spend-caps.js';
@@ -195,6 +196,8 @@ export interface RuntimeConfig {
   // `[policy] max_run_cost_usd` / `max_daily_cost_usd`: the lowest of each
   // any layer sets.
   spend: SpendCaps;
+  // `[[hooks]]` of the enterprise, product and global layers, in order.
+  hooks: AdminHook[];
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
   // in `overriddenAttempts`); empty when nothing was overridden — the same pin

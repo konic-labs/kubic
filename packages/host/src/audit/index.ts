@@ -30,6 +30,7 @@ export {
   decisionAudit,
   fullAccessDisabledAudit,
   fullAccessEnabledAudit,
+  hookRunAudit,
   postureChangedAudit,
   runStartAudit,
   undoRestoreAudit,

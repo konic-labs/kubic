@@ -53,7 +53,7 @@ import type {
   InstalledPolicy,
   installPolicy,
 } from '@kubic/host/approvals';
-import type { RuntimeThinking } from '@kubic/host/config';
+import type { AdminHook, RuntimeThinking } from '@kubic/host/config';
 import type { ProjectInstructions } from '@kubic/host/instructions';
 import {
   loadProjectInstructions,
@@ -122,6 +122,8 @@ export interface SessionBootConfig {
   projectProvidersRefusal?: string;
   // `[cost] team`: recorded on a session this boot creates.
   sessionTeam?: string;
+  // The `[[hooks]]` the lane runs around each tool call.
+  hooks?: readonly AdminHook[];
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.

@@ -1,6 +1,6 @@
 // The settled result of a `kubic run`, after its session closed: the report
-// fields, the session's own usage, the secret scrub, the `[verify]` gates and
-// the trajectory.
+// fields, the session's own usage, the secret scrub, the `[verify]` gates,
+// the trajectory, the telemetry export and the run-end hooks.
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { withDetachedCheckout } from '@kubic/exec/git-clean';
@@ -10,6 +10,7 @@ import {
   verifyCommandAudit,
 } from '@kubic/host/audit';
 import { readSessionRunUsage } from '@kubic/host/cost';
+import { runRunEndHooks } from '@kubic/host/hooks';
 import { dataProtectionOf } from '@kubic/host/policy';
 import {
   type GateObserver,
@@ -48,8 +49,9 @@ export async function finishRun(
   const cwd = state.capture.cwd ?? state.deps.env?.cwd;
   const evalLabels = await verifyGates(state, sessionId, cwd);
   const { capture, deps } = state;
+  let trajectoryRef: string | undefined;
   try {
-    const path = persistRunTrajectory({
+    trajectoryRef = persistRunTrajectory({
       sessionsRoot,
       ...(dataProtectionOf(deps.modelPolicy) === undefined
         ? {}
@@ -75,15 +77,38 @@ export async function finishRun(
         interrupted: capture.interrupted,
       },
     });
-    await exportTelemetry(state, settled, cwd);
-    return { ...settled, trajectoryRef: path };
   } catch (error) {
     state.sinks.warn(
       `trajectory not written for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    await exportTelemetry(state, settled, cwd);
-    return settled;
   }
+  await exportTelemetry(state, settled, cwd);
+  await runEndHooks(state, settled, cwd);
+  return trajectoryRef === undefined ? settled : { ...settled, trajectoryRef };
+}
+
+// The `[[hooks]]` run-end hooks, with how the run ended; each is bounded and
+// audited, and none changes the result.
+async function runEndHooks(
+  state: RunState,
+  settled: HeadlessRunResult,
+  cwd: string | undefined,
+): Promise<void> {
+  const hooks = state.deps.hooks;
+  if (hooks === undefined || cwd === undefined) return;
+  const model = state.capture.model;
+  await runRunEndHooks(
+    hooks,
+    { status: settled.terminus, summary: settled.summary },
+    {
+      sessionId: settled.sessionId,
+      workspace: cwd,
+      ...(model === undefined
+        ? {}
+        : { model: `${model.provider}/${model.id}` }),
+      onAuditError: state.sinks.warn,
+    },
+  );
 }
 
 // The run to the OpenTelemetry collector, when `[telemetry]` names one: its

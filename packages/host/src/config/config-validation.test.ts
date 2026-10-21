@@ -2,11 +2,12 @@
 import { describe, expect, it } from 'vitest';
 import { type BridgePick, fakeBridge } from '../test-support/config-bridge.js';
 import { checkRoleModelRef } from './checks.js';
-import { mergeLayered, parseTomlConfig } from './config.js';
+import { parseTomlConfig } from './config.js';
 import {
   checkGitignoreSplit,
   GITIGNORE_REQUIRED_ENTRIES,
 } from './ignore-split.js';
+import { mergeLayered } from './layer-merge.js';
 import { loadRuntimeConfig } from './runtime.js';
 import { McpUnsupportedError } from './stances.js';
 

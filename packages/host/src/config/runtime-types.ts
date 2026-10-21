@@ -10,6 +10,7 @@ import type {
   KubicConfig,
   VERIFY_COMMAND_KEYS,
 } from './config.js';
+import type { ManagedReport } from './managed.js';
 import type { ProjectRestriction } from './project-restriction.js';
 
 // Where an effective value came from: one of the six config layers, the
@@ -126,6 +127,9 @@ export interface RuntimeConfigInputs {
   projectRoot?: string;
   enterprisePath?: string;
   productPath?: string;
+  // The directories the managed files are searched in (tests). Absent: the
+  // platform's managed path, then /etc/kubic.
+  managedDirs?: readonly string[];
   env?: Record<string, string | undefined>;
   // Trust gate for the project layer. An explicit true is the
   // caller's accepted trust prompt; KUBIC_TRUST_PROJECT=1 also opts in.
@@ -185,6 +189,8 @@ export interface RuntimeConfig {
   projectTrusted: boolean;
   // `[policy] project_policy = "restricted"` from a layer above the project.
   projectRestriction?: ProjectRestriction;
+  // Where the managed (enterprise) config came from, when there is one.
+  managed?: ManagedReport;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
   // in `overriddenAttempts`); empty when nothing was overridden — the same pin

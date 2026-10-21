@@ -729,6 +729,42 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'managed',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'url',
+        check: 'string',
+        runtime: {
+          effect:
+            'the signed remote policy merged into the enterprise layer, fetched into ~/.kubic/managed/ and verified on every load',
+        },
+        example: '"https://policy.example.com/kubic/config.toml"',
+      },
+      {
+        name: 'refreshHours',
+        check: 'tokens',
+        default: '24',
+        runtime: {
+          effect:
+            'how old the cached remote policy may get before a command fetches it again',
+        },
+        example: '24',
+      },
+    ],
+    exampleNote: [
+      'Read only from the managed config (/etc/kubic/config.toml, or the',
+      "platform's device-management path); any other layer setting it is refused.",
+    ],
+    docs: [
+      {
+        keys: ['managed.url', 'managed.refreshHours'],
+        text: "The organization's remote policy: a TOML config served at `url` (https, or plain http to this machine) with its Ed25519 signature at `<url>.sig`. A command that reads the config fetches it when the cached copy is older than `refreshHours` (24 by default), verifies it against the `policy.pub` beside the managed config, and keeps it in `~/.kubic/managed/`; every load verifies the cached copy again, and an unreachable server leaves the last verified copy in force. It is merged into the enterprise layer above the local file. Read only from the managed config — any other layer setting it is refused. See [Managed configuration](enterprise.md#managed-configuration).",
+      },
+    ],
+  },
+  {
     name: 'policy',
     shape: 'table',
     runtime: {

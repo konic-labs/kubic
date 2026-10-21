@@ -1,6 +1,7 @@
 // The production runners of the analysis commands: cost, policy, audit,
 // eval, benchmark, replay and export.
 
+import { homedir } from 'node:os';
 import { EXIT_FAILED } from '@kubic/core/cli/exit-codes';
 import { runBenchmarkCommand, runEvalCommand } from '@kubic/eval/cli';
 import { runExportCommand as runTrajectoryExportCommand } from '@kubic/eval/export-cli';
@@ -19,11 +20,14 @@ import {
   policyFromInstalledAllowlist,
   policyWithInstalledAllowlist,
   runPolicyCommand,
+  runPolicyExplainCommand,
+  runPolicyPullCommand,
+  runPolicySignCommand,
 } from '@kubic/host/policy';
 import type { ReplayRuntimeDeps } from '@kubic/host/replay';
 import { runReplayCommand } from '@kubic/host/replay';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
-import { projectTrustFor } from '../config/load.js';
+import { kubicConfigLoader, projectTrustFor } from '../config/load.js';
 import { runtimePolicy } from '../config/model-selection.js';
 import {
   installedPolicyDeps,
@@ -55,6 +59,20 @@ export function costRunner(io: ProdRunnerIo): ProdRunners['cost'] {
 export function policyRunner(io: ProdRunnerIo): ProdRunners['policy'] {
   const { debug } = io;
   return (options, cliConfig) => {
+    // Pull and sign repair and produce the managed policy: they run on no
+    // config, so a refused load (a policy not fetched yet) never stops them.
+    if (options.command === 'pull') {
+      return runPolicyPullCommand({
+        home: cliConfig.trust.home === '' ? homedir() : cliConfig.trust.home,
+        ...analysisReport(io),
+      });
+    }
+    if (options.command === 'sign') {
+      return runPolicySignCommand(
+        { key: options.key ?? '', file: options.file ?? '' },
+        analysisReport(io),
+      );
+    }
     // A refused config is never answered around: the
     // offer and the run must agree, so `kubic policy` reports the refusal
     // instead of printing a decision a run would never enforce.
@@ -67,6 +85,12 @@ export function policyRunner(io: ProdRunnerIo): ProdRunners['policy'] {
     // allowlist `kubic run` boots with and `kubic doctor` reports — so the
     // three surfaces cannot disagree. Deny-by-default still holds once the
     // installed allowlist is supplied; the deciding layer is named.
+    if (options.command === 'explain') {
+      return runPolicyExplainCommand(options, {
+        load: kubicConfigLoader(cliConfig),
+        ...analysisReport(io),
+      });
+    }
     const posture = installedPolicyPosture({
       workspace: process.cwd(),
       ...installedPolicyDeps(cliConfig),

@@ -3,9 +3,10 @@
 > The managed `[policy]` layer an organization deploys, and the audit sinks it
 > requires. Back to [configuration](configuration.md).
 
-An enterprise admin can put a `[policy]` section in
-`/etc/kubic/config.toml` (or in `/etc/kubic/product.toml` for a
-product/vertical profile). It is the highest-precedence layer: a lower
+An enterprise admin can put a `[policy]` section in the managed
+`config.toml` — `/etc/kubic/config.toml`, or the platform's
+device-management path (see [Managed configuration](#managed-configuration))
+— or in the managed `product.toml` for a product/vertical profile. It is the highest-precedence layer: a lower
 layer, a role document or the model can narrow it, never widen or remove
 it. One `EffectivePolicy` is resolved once per process at startup and
 threaded through the composition root.
@@ -71,6 +72,98 @@ them:
 `policy:enterprise-network` (a configured `network_policy` fails as not
 enforced) and `policy:enterprise-enforceability` (passes only when both of
 the others do). With no `[policy]` section none of them is emitted.
+
+## Managed configuration
+
+Device management (Jamf, Intune, Ansible, …) installs Kubic's managed files
+where Kubic looks for them, first match per file:
+
+| Platform | Directories searched |
+| --- | --- |
+| macOS | `/Library/Application Support/Kubic/`, then `/etc/kubic/` |
+| Windows | `%ProgramData%\Kubic\` |
+| Linux and the rest | `/etc/kubic/` |
+
+`config.toml` there is the enterprise layer and `product.toml` the product
+layer.
+
+### Signed managed files
+
+A `policy.pub` in that directory — an Ed25519 public key in PEM form — makes
+a signature mandatory for every managed file loaded from it: `<file>.sig`
+beside the file, the base64 Ed25519 signature of the file's exact bytes. An
+unsigned file, a file changed after it was signed and a file signed with
+another key are refused by name, and the command stops (exit 1) — nothing
+runs on a managed layer the organization did not sign:
+
+```
+error: managed config /etc/kubic/config.toml does not match its signature /etc/kubic/config.toml.sig — it changed after it was signed, or was signed with another key than /etc/kubic/policy.pub
+```
+
+Sign with `kubic policy sign --key <private.pem> <file>`, which writes
+`<file>.sig` and says whether the directory's `policy.pub` accepts it, or
+with OpenSSL 3:
+
+```sh
+openssl genpkey -algorithm ed25519 -out policy.key
+openssl pkey -in policy.key -pubout -out policy.pub
+openssl pkeyutl -sign -inkey policy.key -rawin -in config.toml | base64 > config.toml.sig
+```
+
+Keep the private key off the managed machines; ship `policy.pub`, the files
+and their signatures.
+
+### A remote policy
+
+The managed config can point at a policy the organization serves:
+
+```toml
+[managed]
+url = "https://policy.example.com/kubic/config.toml"
+refreshHours = 24
+```
+
+The document at `url` is a Kubic config (any section but `[managed]`) with
+its signature at `<url>.sig`, and it needs the `policy.pub` beside the
+managed config. A command that runs on the config (`run`, `tui`, `replay`,
+`eval`, `benchmark`, `policy`) fetches it first when the cached copy is
+missing or older than `refreshHours`, verifies it, and keeps it in
+`~/.kubic/managed/` (`0600` files in a `0700` directory). A copy that does
+not verify is never cached. Every load verifies the cached copy again, so
+an edited cache is refused by name, and an unreachable server only warns:
+the last verified copy stays in force offline. Before the first successful
+fetch the load is refused (`the managed policy from <url> has not been
+fetched yet — run 'kubic policy pull' …`). The remote policy is merged into
+the enterprise layer above the local file: where both set a key, the remote
+value wins. `kubic policy pull` fetches it now. `[managed]` is read only
+from the managed `config.toml`; any other layer setting it is refused.
+
+### `kubic policy explain`
+
+Prints the effective policy with the layer behind each value: every
+`[policy]` key (`(not set)` when nothing sets it; each denied tool with the
+layer that denied it), the audit sinks, every config key the enterprise and
+product layers set — they hold against every lower layer, the environment
+and the flags — and where the managed config came from (its file, whether
+its signature verified, and the remote policy's URL and fetch time).
+`--json` prints the same as one document.
+
+```
+$ kubic policy explain
+policy:
+  allowed_models     ["local/*"]  (enterprise)
+  allowed_providers  (not set)
+  …
+  denied_tools       ["bash", "network_fetch"]  (bash: global, network_fetch: enterprise)
+  …
+audit sinks:
+  audit[0]  { sink = "syslog", level = "privileged" }  (enterprise)
+set by the enterprise and product layers (no lower layer or override changes them):
+  model.id        "small"  (enterprise)
+  model.provider  "local"  (enterprise)
+managed config: /etc/kubic/config.toml (signature verified)
+remote policy: https://policy.example.com/kubic/config.toml (fetched 2026-10-21T09:00:00.000Z, signature verified; cached at /Users/you/.kubic/managed/policy.toml)
+```
 
 ## Restricting project configuration
 

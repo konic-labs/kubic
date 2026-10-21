@@ -19,11 +19,16 @@ import { resolveEffectivePolicy } from './resolve.js';
 import type { EffectivePolicy } from './types.js';
 import { normalizeToolName } from './validate.js';
 
-// The parsed `kubic policy` options (commander's `opts()`); `tool` is a
-// required option there, still checked here for direct callers.
+// The parsed `kubic policy` options (commander's `opts()`). `command` names
+// a subcommand (`explain`, `pull`, `sign`); without one, `tool` is the query,
+// refused here when it is missing.
 export interface PolicyOptions {
+  readonly command?: 'explain' | 'pull' | 'sign';
   readonly tool?: string;
   readonly json?: boolean;
+  // `sign`: the private key and the file it signs.
+  readonly key?: string;
+  readonly file?: string;
 }
 
 export interface PolicyCommandDeps {

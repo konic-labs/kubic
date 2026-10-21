@@ -335,7 +335,6 @@ const CONFIG_REPORTING_COMMANDS = new Set([
 // The reporting commands (`config`, `doctor`, `trust`) must still run so
 // the named reason can surface; sessions/journal read only
 // `session.retentionDays` (undefined-safe: no invented window).
-/** @internal */
 export const CONFIG_CONSUMING_COMMANDS: ReadonlySet<string> = new Set([
   'run',
   'tui',
@@ -354,10 +353,16 @@ export const CONFIG_CONSUMING_COMMANDS: ReadonlySet<string> = new Set([
 export function configRefusalExit(
   result: CliConfigResult,
   command: string | undefined,
+  args: readonly string[] = [],
 ): ExitCode | undefined {
   if (result.runtime !== undefined) return undefined;
   if (command === undefined) return undefined;
   if (CONFIG_REPORTING_COMMANDS.has(command)) return undefined;
+  // `policy pull` fetches the policy a refused load is waiting for, and
+  // `policy sign` signs a file: neither runs on the config.
+  if (command === 'policy' && (args[0] === 'pull' || args[0] === 'sign')) {
+    return undefined;
+  }
   return CONFIG_CONSUMING_COMMANDS.has(command) ? EXIT_FAILED : undefined;
 }
 

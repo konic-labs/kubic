@@ -339,6 +339,15 @@ line to stderr. `kubic doctor` names the same set on its
 | `--tool <name>` | **Required.** The tool to query. A missing or whitespace-only name exits 2. |
 | `--json` | Prints `{"tool", "decision"}` instead of the text line, plus `unsupported` (`[{class, level, enforcedAs, reason}]`) when any installed level is unsupported. Exits 0. |
 
+The managed policy has three subcommands, described on the
+[enterprise page](enterprise.md#managed-configuration):
+
+| Subcommand | Meaning |
+| --- | --- |
+| `kubic policy explain [--json]` | The effective policy with the layer behind each value, and where the managed config came from. A refused config exits 1 with its reason. |
+| `kubic policy pull` | Fetch the organization's signed remote policy (`[managed] url`) now, verify it and cache it. Runs even while the config is refused (that is the case it repairs); exit 1 when the managed config names no remote policy, the server cannot be reached or the signature does not verify. |
+| `kubic policy sign --key <private.pem> <file>` | Write `<file>.sig`, the Ed25519 signature a managed file needs when its directory holds a `policy.pub`, and say whether that key accepts it. |
+
 ## `kubic audit [--posture <p>] [--result <r>] [--session <id>] [--json]`
 
 Queries the audit trail, matching each supplied filter exactly. `--session`

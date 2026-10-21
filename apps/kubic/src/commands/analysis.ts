@@ -11,7 +11,7 @@
 // handler's semantics, so a secret-shaped value is redacted before it is
 // echoed and replay/export/eval keep their `--json` error envelopes.
 
-import type { CommandResult } from '@kubic/core/cli/exit-codes';
+import { CliUsageError, type CommandResult } from '@kubic/core/cli/exit-codes';
 import { EVAL_DEFAULT_MODEL, type EvalOptions } from '@kubic/eval/cli';
 import {
   DATASET_TYPES,
@@ -81,6 +81,80 @@ function command(
     .addHelpText('after', examples(usageExamples));
 }
 
+// `kubic policy`: the tool query, and the managed-policy subcommands.
+function registerPolicy(
+  program: KubicProgram,
+  ctx: Parameters<CommandRegistrar>[1],
+): void {
+  const { config, runners } = ctx;
+  const done = (result: CommandResult): void => {
+    ctx.finish(result);
+  };
+  const policy = command(
+    program,
+    'policy',
+    'report the installed tool policy decision for one tool (a routing offer, never enforcement); explain, pull or sign the managed policy',
+    [
+      'kubic policy --tool shell',
+      'kubic policy --tool network_fetch --json',
+      'kubic policy explain',
+      'kubic policy pull',
+      'kubic policy sign --key policy.key /etc/kubic/config.toml',
+    ],
+  )
+    .option('--tool <name>', 'the tool to query')
+    .option('--json', JSON_HELP)
+    .action(async (options) => {
+      // `--tool` is required for the query itself; the subcommands take none.
+      if (options.tool === undefined) {
+        throw new CliUsageError(
+          "required option '--tool <name>' not specified",
+        );
+      }
+      done(await runners.policy(options, config));
+    });
+  policy
+    .command('explain')
+    .description(
+      'print the effective policy: every [policy] key, the audit sinks and the keys the enterprise and product layers set, each with its layer, and where the managed config came from',
+    )
+    .option('--json', JSON_HELP)
+    .action(async (options) =>
+      done(
+        await runners.policy(
+          {
+            command: 'explain',
+            ...(options.json === true ? { json: true } : {}),
+          },
+          config,
+        ),
+      ),
+    );
+  policy
+    .command('pull')
+    .description(
+      "fetch the organization's signed remote policy ([managed] url) now, verify it and cache it",
+    )
+    .action(async () =>
+      done(await runners.policy({ command: 'pull' }, config)),
+    );
+  policy
+    .command('sign')
+    .description(
+      'sign a managed config with an Ed25519 private key (PEM): writes <file>.sig beside it',
+    )
+    .argument('<file>', 'the managed config to sign')
+    .requiredOption('--key <path>', 'the Ed25519 private key, in PEM form')
+    .action(async (file, options) =>
+      done(
+        await runners.policy(
+          { command: 'sign', file, key: options.key },
+          config,
+        ),
+      ),
+    );
+}
+
 export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
   const { config, runners } = ctx;
   const done = (result: CommandResult): void => {
@@ -105,15 +179,7 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     .option('--json', JSON_HELP)
     .action(async (options) => done(await runners.cost(options, config)));
 
-  command(
-    program,
-    'policy',
-    'report the installed tool policy decision for one tool (a routing offer, never enforcement)',
-    ['kubic policy --tool shell', 'kubic policy --tool network_fetch --json'],
-  )
-    .requiredOption('--tool <name>', 'the tool to query')
-    .option('--json', JSON_HELP)
-    .action(async (options) => done(await runners.policy(options, config)));
+  registerPolicy(program, ctx);
 
   command(
     program,

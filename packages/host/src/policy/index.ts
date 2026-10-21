@@ -17,6 +17,11 @@ export {
   policyWithInstalledAllowlist,
   runPolicyCommand,
 } from './policy-cli.js';
+export {
+  runPolicyExplainCommand,
+  runPolicyPullCommand,
+  runPolicySignCommand,
+} from './policy-manage-cli.js';
 export { layerPolicyFromConfig, resolveEffectivePolicy } from './resolve.js';
 export type { AuditSinkKind, EffectivePolicy, PolicyInput } from './types.js';
 export { PolicyDeniedError } from './types.js';

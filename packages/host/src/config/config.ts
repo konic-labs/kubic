@@ -167,6 +167,13 @@ interface RunConfig {
   maxTurns?: number;
 }
 
+// `[managed]`: the signed remote policy a managed config points at. Read only
+// from the managed (enterprise) config.
+interface ManagedConfig {
+  url?: string;
+  refreshHours?: number;
+}
+
 // The `[verify]` gate commands: the section's command keys.
 type VerifyCommandKey = Extract<
   SchemaSection<'verify'>['keys'][number],
@@ -227,6 +234,7 @@ export interface KubicConfig {
   session?: SessionConfig;
   verify?: VerifyConfig;
   run?: RunConfig;
+  managed?: ManagedConfig;
   policy?: PolicyConfig;
   audit?: AuditTableConfig[];
 }
@@ -245,6 +253,7 @@ interface SectionTypes {
   session: SessionConfig;
   verify: VerifyConfig;
   run: RunConfig;
+  managed: ManagedConfig;
   policy: PolicyConfig;
   audit: AuditTableConfig;
 }
@@ -270,6 +279,7 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   session: true,
   verify: true,
   run: true,
+  managed: true,
   policy: true,
   audit: true,
 };

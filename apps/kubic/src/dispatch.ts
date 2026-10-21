@@ -49,7 +49,7 @@ import { registerJournalCommands } from './commands/journal.js';
 import { registerSessionCommands } from './commands/session.js';
 import { registerSetupCommands } from './commands/setup.js';
 import type { CliConfigResult } from './config/load.js';
-import { configRefusalExit } from './config/load.js';
+import { CONFIG_CONSUMING_COMMANDS, configRefusalExit } from './config/load.js';
 
 // The supported command names, read off the help's command groups so the
 // routing table and the listing can never drift apart (program.test.ts also
@@ -252,6 +252,11 @@ export interface DispatchDeps {
   // recorded); true/false is the effective decision threaded into the load.
   // Absent means the path asks nobody — a non-TTY caller keeps the refusal.
   readonly resolveProjectTrust?: () => Promise<boolean | undefined>;
+  // Before a command that runs on the config loads it: fetch the
+  // organization's remote policy when the managed config names one and the
+  // cached copy is stale. Resolves to the warnings to print (an unreachable
+  // server keeps the last verified copy). Absent: nothing is fetched.
+  readonly refreshManagedPolicy?: () => Promise<string[]>;
 }
 
 const BARE_SKIP_FLAG = '--dangerously-skip-approvals';
@@ -387,6 +392,15 @@ async function loadProcessConfig(
   ask: boolean,
   deps: DispatchDeps,
 ): Promise<CliConfigResult> {
+  if (
+    command !== undefined &&
+    CONFIG_CONSUMING_COMMANDS.has(command) &&
+    !(command === 'policy' && (args[0] === 'pull' || args[0] === 'sign'))
+  ) {
+    for (const warning of (await deps.refreshManagedPolicy?.()) ?? []) {
+      (deps.err ?? deps.out)(`warning: ${warning}`);
+    }
+  }
   const trust =
     command !== undefined && ask && INTERACTIVE_TRUST_COMMANDS.has(command)
       ? await deps.resolveProjectTrust?.()
@@ -415,7 +429,7 @@ function stopOnRefusedConfig(
   args: readonly string[],
   deps: DispatchDeps,
 ): ExitCode | undefined {
-  const refusalExit = configRefusalExit(cliConfig, command);
+  const refusalExit = configRefusalExit(cliConfig, command, args);
   if (refusalExit === undefined) return undefined;
   const reason = cliConfig.error ?? 'config refused';
   // A diagnostic, so stderr.

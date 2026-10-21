@@ -245,6 +245,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     run: runFrom(config),
     projectTrusted,
     ...(projectRestriction === undefined ? {} : { projectRestriction }),
+    ...(loaded.managed === undefined ? {} : { managed: loaded.managed }),
     overriddenAttempts: [
       ...merged.overriddenAttempts,
       ...pin.modelPinOverrides.map(

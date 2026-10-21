@@ -74,6 +74,10 @@ timeoutMs = 600000
 timeoutMs = 300000
 maxTurns = 50
 
+[managed]
+url = "https://policy.example.com/kubic/config.toml"
+refreshHours = 24
+
 [policy]
 allowed_models = ["local/*"]
 allowed_providers = ["local"]

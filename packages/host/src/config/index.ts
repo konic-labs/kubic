@@ -16,6 +16,18 @@ export type { ConfigCommandOptions } from './config-cli.js';
 export { runConfigCommand } from './config-cli.js';
 export { buildConfigDoctorInput, configDoctorProbe } from './config-doctor.js';
 export { checkWorkspaceIgnoreSplit } from './ignore-split.js';
+export type { ManagedReport } from './managed.js';
+export {
+  MANAGED_KEY_FILE,
+  managedConfigDirs,
+  managedFilePath,
+  managedKeyPath,
+  parseManagedRemote,
+  pullManagedPolicy,
+  refreshManagedPolicy,
+  signManagedText,
+  verifyManagedText,
+} from './managed.js';
 export { projectProvidersRefusal } from './project-restriction.js';
 export { loadRuntimeConfig, MS_PER_DAY } from './runtime.js';
 export type {
@@ -29,6 +41,8 @@ export {
   effectiveConfigView,
   /** @internal */ renderEffectiveConfig,
 } from './runtime-view.js';
+export type { ConfigKey } from './schema.js';
+export { CONFIG_SECTIONS } from './schema.js';
 export type {
   SetupCommandOptions,
   SetupDeps,

@@ -11,6 +11,7 @@ import { promptKey } from '@kubic/core/cli/prompt';
 import { themeFor } from '@kubic/core/cli/theme';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
+import { refreshManagedPolicy } from '@kubic/host/config';
 import {
   loadCliConfig,
   resolveInteractiveProjectTrust,
@@ -113,6 +114,9 @@ try {
           }
         },
       }),
+    // The organization's remote policy, refreshed when stale before a
+    // command that runs on the config loads it.
+    refreshManagedPolicy: () => refreshManagedPolicy({ home: homedir() }),
     runners: createProdRunners({
       out,
       debug: err,

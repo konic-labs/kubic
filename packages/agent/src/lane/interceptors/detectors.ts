@@ -1,6 +1,7 @@
 // Literal-pattern detector for destructive shell commands.
 import { isAbsolute, resolve } from 'node:path';
 import { commandLead, commandWord, MAX_LEAD_WORDS } from './command-words.js';
+import { isInsideRoot } from './confine.js';
 import { infraDestructive } from './infra.js';
 
 const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
@@ -65,7 +66,7 @@ function rmArgumentsBlocked(args: string, workspace: string): boolean {
     const resolved = isAbsolute(target)
       ? resolve(target)
       : resolve(workspace, target);
-    if (resolved !== root && !resolved.startsWith(`${root}/`)) return true;
+    if (!isInsideRoot(root, resolved)) return true;
     if (SENSITIVE_PATH.test(target)) return true;
   }
   return false;

@@ -41,7 +41,7 @@
 // the host approvals/triggers.ts.
 
 export { commandLead, commandWord } from './command-words.js';
-export { confinePath } from './confine.js';
+export { confinePath, isInsideRoot } from './confine.js';
 export { defaultIsDestructive } from './detectors.js';
 export { policyInterceptorHooks } from './hooks.js';
 export { isNetworkCommand } from './network.js';

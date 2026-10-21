@@ -2,6 +2,7 @@
 // Every behaviour here runs through a REAL Harness over MemoryStorage with
 // the faux provider: first-block-wins, throw-to-block and argument chaining
 // are the harness's own hook semantics, not a hand-rolled stand-in.
+import { win32 } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
@@ -19,7 +20,7 @@ import {
   MemoryStorage,
   Type,
 } from '../../pi-boundary.js';
-import { confinePath } from './confine.js';
+import { confinePath, isInsideRoot } from './confine.js';
 import { defaultIsDestructive } from './detectors.js';
 import { policyInterceptorHooks } from './hooks.js';
 import { isNetworkCommand } from './network.js';
@@ -397,6 +398,38 @@ describe('destructive/confine matchers (unit)', () => {
       confined: '/work/sub/f.txt',
       rewritten: false,
     });
+  });
+
+  it('confines Windows paths: drive letters, backslashes, a letter case aside', () => {
+    expect(confinePath('C:\\work', 'notes.txt', win32)).toEqual({
+      confined: 'C:\\work\\notes.txt',
+      rewritten: false,
+    });
+    expect(confinePath('C:\\work', 'c:\\WORK\\sub\\f.txt', win32)).toEqual({
+      confined: 'c:\\WORK\\sub\\f.txt',
+      rewritten: false,
+    });
+    expect(confinePath('C:\\work', 'D:\\etc\\passwd', win32)).toEqual({
+      confined: 'C:\\work\\etc\\passwd',
+      rewritten: true,
+    });
+    expect(confinePath('C:\\work', '..\\work-evil\\x', win32)).toEqual({
+      confined: 'C:\\work\\work-evil\\x',
+      rewritten: true,
+    });
+    expect(confinePath('C:\\work', '\\\\server\\share\\x', win32)).toEqual({
+      confined: 'C:\\work\\x',
+      rewritten: true,
+    });
+  });
+
+  it('holds a root and what is below it, nothing beside it', () => {
+    expect(isInsideRoot('/work', '/work')).toBe(true);
+    expect(isInsideRoot('/work', '/work/..hidden/x')).toBe(true);
+    expect(isInsideRoot('/work', '/work-evil/x')).toBe(false);
+    expect(isInsideRoot('/work', '/')).toBe(false);
+    expect(isInsideRoot('C:\\work', 'C:\\work\\x', win32)).toBe(true);
+    expect(isInsideRoot('C:\\work', 'D:\\work\\x', win32)).toBe(false);
   });
 
   it('keeps tilde/$VAR tokens workspace-relative for tool paths', () => {

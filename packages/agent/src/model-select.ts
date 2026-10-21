@@ -1,7 +1,8 @@
 // Model selection, one-way escalation, thinking clamp.
 //
 // Selection chain: explicit CLI selection (--model provider/id) beats the
-// recorded config default, which beats first-available. Escalation climbs
+// recorded config default, which beats the implicit pick: the first usable
+// provider's default model (`defaultModelOf`). Escalation climbs
 // a caller-supplied ladder only (one-way: never down, never sideways off
 // the ladder), every step recorded with reason, total steps bounded.
 // Thinking levels clamp to what the model supports (Pi owns the map);
@@ -43,6 +44,69 @@ export interface ModelSelection {
 
 export type AnyModel = Model<string>;
 
+// The coding default of each widely used built-in provider, best first: the
+// first id the catalogue still lists wins. Pi's catalogue order is not a
+// preference (it starts with gpt-4 for openai and a deep-research preview for
+// google), so the implicit pick and `kubic setup` take these instead.
+const CURATED_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
+  anthropic: ['claude-sonnet-5-5', 'claude-sonnet-5', 'claude-sonnet-4-6'],
+  openai: ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.5', 'gpt-5.3-codex', 'gpt-5'],
+  'azure-openai-responses': [
+    'gpt-6.1-sol',
+    'gpt-6-sol',
+    'gpt-5.5',
+    'gpt-5.3-codex',
+    'gpt-5',
+  ],
+  'openai-codex': ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.5'],
+  google: ['gemini-3.1-pro-preview', 'gemini-2.5-pro'],
+  'google-vertex': ['gemini-3.1-pro-preview', 'gemini-2.5-pro'],
+  openrouter: [
+    '~anthropic/claude-sonnet-latest',
+    'anthropic/claude-sonnet-5.5',
+    'anthropic/claude-sonnet-4.6',
+  ],
+  'amazon-bedrock': [
+    'global.anthropic.claude-sonnet-5-5',
+    'global.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-sonnet-4-6',
+    'anthropic.claude-sonnet-5-5',
+    'anthropic.claude-sonnet-4-6',
+  ],
+  'github-copilot': ['claude-sonnet-5.5', 'claude-sonnet-4.6', 'gpt-5.5'],
+  xai: ['grok-4.7', 'grok-4.6'],
+  mistral: ['devstral-latest', 'mistral-medium-latest'],
+  deepseek: ['deepseek-v4-pro', 'deepseek-flash'],
+  groq: ['openai/gpt-oss-120b'],
+};
+
+// What the fallback for a curated provider skips when none of its curated
+// ids is listed: previews, research, realtime, media and small variants.
+const NOT_A_DEFAULT =
+  /(preview|deep-research|realtime|audio|tts|transcribe|image|embed|moderation|computer-use|live|nano|lite|micro|mini|instant|:batch|:free)/iu;
+
+// The model the implicit pick takes from a provider: its curated default, else
+// (for a curated provider whose ids have all gone) the first model of at least
+// 128k tokens that is not a preview or small variant. Any other provider —
+// models.json providers included — keeps its own first model.
+export function defaultModelOf(
+  models: MutableModels,
+  provider: string,
+): AnyModel | undefined {
+  const all = models.getModels(provider);
+  const curated = CURATED_DEFAULTS[provider];
+  if (curated === undefined) return all[0] as AnyModel | undefined;
+  for (const id of curated) {
+    const hit = all.find((model) => model.id === id);
+    if (hit !== undefined) return hit as AnyModel;
+  }
+  const capable = all.find(
+    (model) =>
+      !NOT_A_DEFAULT.test(model.id) && (model.contextWindow ?? 0) >= 128_000,
+  );
+  return (capable ?? all[0]) as AnyModel | undefined;
+}
+
 export function selectModel(
   models: MutableModels,
   explicit?: ModelSelection,
@@ -83,8 +147,8 @@ export function selectModel(
   const candidates =
     fallbackProviders ?? models.getProviders().map((provider) => provider.id);
   for (const providerId of candidates) {
-    const first = models.getModels(providerId)[0];
-    if (first !== undefined) return first as AnyModel;
+    const chosen = defaultModelOf(models, providerId);
+    if (chosen !== undefined) return chosen;
   }
   throw new NoModelAvailableError(
     fallbackProviders === undefined

@@ -5,6 +5,7 @@
 
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { defaultModelOf, selectModel } from '@kubic/agent/model-select';
 import { getSupportedThinkingLevels } from '@kubic/agent/pi-boundary';
 import {
   type CommandResult,
@@ -98,6 +99,20 @@ export interface ProdSetupOptions {
   readonly home?: string;
 }
 
+// The model a run would take with no pin: the first offered provider's
+// default model.
+function implicitPick(
+  models: Parameters<typeof selectModel>[0],
+  offered: readonly string[],
+): { provider: string; id: string } | undefined {
+  try {
+    const model = selectModel(models, undefined, undefined, offered);
+    return { provider: model.provider, id: model.id };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function prodSetupDeps(
   options: ProdSetupOptions,
 ): Promise<SetupDeps> {
@@ -110,21 +125,31 @@ export async function prodSetupDeps(
       ? {}
       : { projectTrust: projectTrustFor(options.cliConfig) }),
   });
-  const providers: SetupProviderChoice[] = [...assembled.providers]
-    .filter(([, info]) => info.usable && info.origin !== 'testing')
-    .map(([id, info]) => ({
+  // The usable providers in the order the implicit pick tries them, each
+  // with its curated default preselected.
+  const offered = assembled.fallbackProviders.filter(
+    (id) => assembled.providers.get(id)?.origin !== 'testing',
+  );
+  const providers: SetupProviderChoice[] = offered.map((id) => {
+    const info = assembled.providers.get(id);
+    const suggested = defaultModelOf(assembled.models, id)?.id;
+    return {
       id,
-      ...(info.authSource === undefined ? {} : { auth: info.authSource }),
+      ...(info?.authSource === undefined ? {} : { auth: info.authSource }),
       models: assembled.models.getModels(id).map((model) => ({
         id: model.id,
         contextWindow: model.contextWindow,
         thinking: getSupportedThinkingLevels(model),
       })),
-    }));
+      ...(suggested === undefined ? {} : { suggested }),
+    };
+  });
   const pin =
     options.cliConfig === undefined
       ? undefined
       : runtimeModelPin(options.cliConfig);
+  // With no pin, setup preselects the model a run would take now.
+  const current = pin ?? implicitPick(assembled.models, offered);
   const frozen =
     options.cliConfig !== undefined && runtimeModelFrozen(options.cliConfig);
   const configPath = globalConfigPath(home);
@@ -134,7 +159,9 @@ export async function prodSetupDeps(
     interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
     ui: clackUi(),
     providers,
-    ...(pin === undefined ? {} : { current: `${pin.provider}/${pin.id}` }),
+    ...(current === undefined
+      ? {}
+      : { current: `${current.provider}/${current.id}` }),
     ...(frozen && pin !== undefined
       ? { enterpriseModel: `${pin.provider}/${pin.id}` }
       : {}),

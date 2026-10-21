@@ -30,6 +30,8 @@ export interface SetupProviderChoice {
   /** Where its key comes from (`ANTHROPIC_API_KEY`, `AWS_PROFILE`, a path). */
   readonly auth?: string;
   readonly models: readonly SetupModelChoice[];
+  /** The model preselected for this provider: its curated default. */
+  readonly suggested?: string;
 }
 
 export interface SetupUi {
@@ -158,7 +160,7 @@ export async function runSetupCommand(
       })),
       provider.models.some((choice) => choice.id === currentId)
         ? currentId
-        : undefined,
+        : provider.suggested,
     );
     if (id === null) return { exitCode: cancelled() };
     const chosen = provider.models.find((choice) => choice.id === id);

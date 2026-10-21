@@ -19,6 +19,7 @@ export type DoctorReason =
   | 'window-default'
   | 'room-short'
   | 'plaintext-key'
+  | 'auth-incomplete'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -41,6 +42,9 @@ export interface ProviderProbe {
   detail?: string;
   models?: string[];
   dialled?: boolean;
+  // Credentials are present but the provider cannot run (Bedrock without a
+  // region): a warning naming the fix, never a reachable provider.
+  warning?: string;
 }
 
 export interface DepProbe {

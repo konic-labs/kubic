@@ -38,11 +38,22 @@ and a `warn:` line names it.
 | `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)` for any registered model, built-in or custom, configured or not; a resolution failure prints `error: …` on stderr and exits 1. |
 
 **Default model.** `kubic run`/`kubic tui` with no `--model`, `[model]`,
-`KUBIC_MODEL` or role pin take the first model of the first usable
-provider: `models.json` customs first, then built-ins whose auth is
-configured. A built-in with no key is never picked implicitly; with nothing
-usable the run exits 6 (`provider_probe_failed`). Pin the model you mean,
-e.g. `[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
+`KUBIC_MODEL` or role pin take the default model of the first usable
+provider. Providers are tried in this order: `models.json` customs, then
+built-ins whose auth is configured — `anthropic`, `openai`, `google` and
+`openrouter` first, the rest in catalogue order, and last the ambient
+credentials a machine often carries for other work (`amazon-bedrock`,
+`google-vertex`, `github-copilot`, `openai-codex`), so an AWS profile never
+takes the default away from an explicit key. A provider's default model is
+its curated coding default (for example `anthropic/claude-sonnet-5-5`,
+`openai/gpt-6.1-sol`, `google/gemini-3.1-pro-preview`), never simply the
+first catalogue entry; a `models.json` provider uses its first model. A
+built-in with no key is never picked implicitly, and neither is Bedrock
+without a region (`AWS_REGION`, `AWS_DEFAULT_REGION` or the active profile's
+`region`): `kubic doctor` warns `provider:amazon-bedrock (auth-incomplete)`
+and names what to set. With nothing usable the run exits 6
+(`provider_probe_failed`). Pin the model you mean, e.g.
+`[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
 
 Usage errors (unknown option, `--resolve` without a value, an unknown
 provider) exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
@@ -54,10 +65,13 @@ under a minute.
 
 1. **Provider** — the providers whose key is detected (the same detection
    `kubic models` and `kubic doctor` use: env keys, Bedrock/Vertex ambient
-   credentials, `models.json` customs; the testing provider is never offered).
-   One detected provider is confirmed as a step; several are a choice.
-2. **Default model** — that provider's chat models, the current pin
-   preselected, each with its context window and thinking support.
+   credentials, `models.json` customs; the testing provider is never offered),
+   in the order the default pick tries them. One detected provider is
+   confirmed as a step; several are a choice, with the current pin's provider
+   (or the one a run would pick) preselected.
+2. **Default model** — that provider's chat models, the current pin (or the
+   provider's default model) preselected, each with its context window and
+   thinking support.
 3. **Thinking level** — only for a model that supports thinking (`medium`
    preselected when supported).
 4. **Trust** — when the current directory has a project layer

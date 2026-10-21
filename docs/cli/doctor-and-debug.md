@@ -98,7 +98,7 @@ the exit code.
 
 | Check id | Meaning | Red means → look at |
 | --- | --- | --- |
-| `provider:<id>` | Is the provider reachable, and how many models are registered? (`listed, not dialled` when nothing contacted it.) | `reason: provider-down` → configure the provider (see [configuration](configuration.md)); note `kubic run` exits 6 on provider failure. |
+| `provider:<id>` | Is the provider reachable, and how many models are registered? (`listed, not dialled` when nothing contacted it.) A built-in whose credentials are present but incomplete — Bedrock with no AWS region — is a `warn` naming what to set, and it is not counted as available. | `reason: provider-down` → configure the provider (see [configuration](configuration.md)); note `kubic run` exits 6 on provider failure. `reason: auth-incomplete` → set what the detail names (`AWS_REGION` for Bedrock). |
 | `dep:<id>` | Is the dependency present? (`node`, which needs >= 22.19.) | `reason: deps-missing` → install/upgrade the dep; the detail line says what was found. |
 | `dep:models-json` | Which `models.json` files were found, their scope (`global`/`project`) and state: `loaded <ids>`, `ignored, untrusted` (a project file before `kubic trust` / `KUBIC_TRUST_PROJECT=1`) or `invalid — <reason>`. Fails only on an invalid file. | Fix or remove the named file — see [configuration](models.md#modelsjson). |
 | `models-window:<provider>/<model>` | Does a `models.json` model run on the 8192-token fallback because it declares no `contextWindow`? One `warn` per such model, which never flips the exit: the context gauge and compaction use that window. | `reason: window-default` → set `"contextWindow"` for the model in `models.json` (see [configuration](models.md#modelsjson)). |

@@ -25,6 +25,15 @@ export function providerChecks(probes: ProviderProbe[]): DoctorCheck[] {
     // plainly; a probe that supplies its own detail keeps it (that is where
     // a real dial's outcome, or a real failure, is named).
     const listed = probe.dialled === true ? 'dialled' : 'listed, not dialled';
+    if (probe.warning !== undefined) {
+      return {
+        id: `provider:${probe.id}`,
+        label: `provider ${probe.id}`,
+        status: 'warn' as DoctorStatus,
+        reason: 'auth-incomplete' as DoctorReason,
+        detail: probe.warning,
+      };
+    }
     if (probe.reachable) {
       return {
         id: `provider:${probe.id}`,

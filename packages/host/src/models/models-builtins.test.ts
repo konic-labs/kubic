@@ -60,6 +60,76 @@ describe('built-in providers', () => {
     expect(picked.provider).toBe('anthropic');
   });
 
+  it('picks a curated coding default, never the first catalogue entry', async () => {
+    for (const [key, expected] of [
+      ['ANTHROPIC_API_KEY', 'anthropic/claude-sonnet-5-5'],
+      ['OPENAI_API_KEY', 'openai/gpt-6.1-sol'],
+      ['GEMINI_API_KEY', 'google/gemini-3.1-pro-preview'],
+    ] as const) {
+      const assembled = await assemble({ [key]: 'x' });
+      const picked = selectModel(
+        assembled.models,
+        undefined,
+        undefined,
+        assembled.fallbackProviders,
+      );
+      expect(`${picked.provider}/${picked.id}`).toBe(expected);
+    }
+  });
+
+  it('prefers an explicit key over ambient AWS credentials', async () => {
+    const assembled = await assemble({
+      ANTHROPIC_API_KEY: 'x',
+      AWS_PROFILE: 'work',
+      AWS_REGION: 'us-east-1',
+    });
+    expect(assembled.providers.get('amazon-bedrock')?.usable).toBe(true);
+    expect(assembled.fallbackProviders[0]).toBe('anthropic');
+    expect(assembled.fallbackProviders.at(-1)).toBe('amazon-bedrock');
+  });
+
+  it('does not count Bedrock credentials without a region as usable, and doctor says why', async () => {
+    const assembled = await assemble({ AWS_PROFILE: 'work' });
+    const info = assembled.providers.get('amazon-bedrock');
+    expect(info?.usable).toBe(false);
+    expect(info?.unusable).toContain('AWS_REGION');
+    expect(assembled.fallbackProviders).not.toContain('amazon-bedrock');
+    expect(
+      providerProbesOf(assembled).find(
+        (probe) => probe.id === 'amazon-bedrock',
+      ),
+    ).toMatchObject({
+      reachable: false,
+      warning: expect.stringContaining('AWS_REGION'),
+    });
+  });
+
+  it("reads Bedrock's region from the active profile in the AWS config file", async () => {
+    const config = join(tempDir('mb-'), 'config');
+    writeFileSync(
+      config,
+      '[default]\nregion = us-west-2\n\n[profile work]\noutput = json\nregion = eu-west-1\n',
+    );
+    for (const env of [
+      { AWS_PROFILE: 'work', AWS_CONFIG_FILE: config },
+      {
+        AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+        AWS_SECRET_ACCESS_KEY: 'x',
+        AWS_CONFIG_FILE: config,
+      },
+    ]) {
+      const assembled = await assemble(env);
+      expect(assembled.providers.get('amazon-bedrock')?.usable).toBe(true);
+    }
+    const none = join(tempDir('mb-'), 'config');
+    writeFileSync(none, '[profile other]\nregion = eu-west-1\n');
+    const assembled = await assemble({
+      AWS_PROFILE: 'work',
+      AWS_CONFIG_FILE: none,
+    });
+    expect(assembled.providers.get('amazon-bedrock')?.usable).toBe(false);
+  });
+
   it('selects a pinned built-in model ([model] provider="anthropic")', async () => {
     const assembled = await assemble({ ANTHROPIC_API_KEY: 'x' });
     const picked = selectModel(

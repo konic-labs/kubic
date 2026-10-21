@@ -101,5 +101,6 @@ isolation, no containment — approvals plus the journal are the controls.
 | [Configuration](configuration.md) | `kubic config` |
 | [Project trust](trust.md) | `kubic trust` |
 | [Doctor and debug](doctor-and-debug.md) | `kubic doctor` |
+| [The GitHub Action](github-action.md) | `uses: konic-labs/kubic@…` in a workflow |
 | [Skills](skills.md) | `kubic skills` |
 | [Analysis](analysis.md) | `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy`, `audit` |

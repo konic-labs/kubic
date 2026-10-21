@@ -80,7 +80,6 @@ function redactListedSecrets(text: string, secrets: readonly string[]): string {
   return out;
 }
 
-/** @internal */
 export class AuditSinkError extends Error {
   constructor(message: string, secrets: readonly string[] = []) {
     // Fail-closed messages: secret-shaped substrings and every listed-secret
@@ -176,15 +175,14 @@ export type SyslogTarget =
 
 // The platform's syslog socket: `/var/run/syslog` on macOS,
 // `/dev/log` elsewhere. No import needed — `process.platform` is global.
-/** @internal */
 export function defaultSyslogSocketPath(): string {
   return process.platform === 'darwin' ? '/var/run/syslog' : '/dev/log';
 }
 
 // A `[[audit]] target` for `sink = "syslog"`: a bare or `unix:`-prefixed
-// socket path (unix datagram), otherwise a `host[:port]` UDP destination
-// (port 514 when absent). Refused by name — a mistyped target must never
-// route the audit trail into the void.
+// socket path (delivered through the system logger), otherwise a
+// `host[:port]` UDP destination (port 514 when absent). Refused by name — a
+// mistyped target must never route the audit trail into the void.
 export function parseSyslogTarget(target: string | undefined): SyslogTarget {
   if (target !== undefined && target.trim() === '') {
     throw new AuditSinkError(`invalid syslog target ${JSON.stringify(target)}`);
@@ -213,9 +211,10 @@ export function parseSyslogTarget(target: string | undefined): SyslogTarget {
 }
 
 // The injectable syslog transport: one RFC 5424 line per
-// call, synchronously (`appendAudit` refuses async sinks). Prod transports
-// (unix datagram, UDP) live in `syslog-transport.ts` — this module stays
-// socket-free so its tests never touch the network.
+// call, handed over synchronously (`appendAudit` refuses async sinks). Prod
+// transports (the system logger for a unix socket, UDP) live in
+// `syslog-transport.ts` — this module stays socket-free so its tests never
+// touch the network.
 export interface SyslogTransport {
   send(line: string): void;
 }
@@ -230,9 +229,10 @@ export interface SyslogSinkOptions {
 // One record → one RFC 5424 line:
 // `<PRI>1 <record.when> <host> <app> <process.pid> - - <record JSON>`.
 // The acting pid (not the sender's) rides the PID field so the line names
-// who acted; severity is info for `ok`, warning for `deny`/`error`. The
-// record arrives already redacted — redaction is the ledger's job, not the
-// wire's — so the MSG is the record JSON verbatim.
+// who acted; severity is notice for `ok` (an audit event is significant, and
+// macOS keeps nothing below notice in its unified log), warning for
+// `deny`/`error`. The record arrives already redacted — redaction is the
+// ledger's job, not the wire's — so the MSG is the record JSON verbatim.
 export function createSyslogSink(options: SyslogSinkOptions): AuditSink {
   const facility = resolveSyslogFacility(options.facility);
   const appName = options.appName ?? 'kubic';
@@ -242,7 +242,7 @@ export function createSyslogSink(options: SyslogSinkOptions): AuditSink {
     name,
     kind: 'syslog',
     write: (record: OrgAuditRecord): void => {
-      const severity = record.result === 'ok' ? 6 : 4;
+      const severity = record.result === 'ok' ? 5 : 4;
       const priority = facility * 8 + severity;
       options.transport.send(
         `<${priority}>1 ${record.when} ${host} ${appName} ${record.process.pid} - - ${JSON.stringify(record)}`,

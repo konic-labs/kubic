@@ -293,8 +293,10 @@ export function appendToLedger(
     // pre-redaction (a redacted `what` would never match the level filter).
     // A configured sink's failure is recorded on its entry and noted on
     // `onError` ONCE per process per sink — then swallowed, so a dead
-    // syslog never blocks the repo write (or the action). A repo-ledger
-    // failure still throws below and reaches `onError` every time.
+    // syslog never blocks the repo write (or the action). A failure the
+    // transport reported asynchronously, after an earlier record, is noted
+    // with the next one. A repo-ledger failure still throws below and
+    // reaches `onError` every time.
     const privileged = isPrivilegedAuditWhat(input.what);
     const sinks: AuditSink[] = [createLedgerSink(dir)];
     for (const entry of configuredAuditSinks) {
@@ -307,12 +309,12 @@ export function appendToLedger(
           try {
             configured.write(record);
           } catch (error) {
-            const message = probeMessage(error);
-            entry.failures.push(message);
-            if (!entry.stderrNoted) {
-              entry.stderrNoted = true;
-              onError(`audit sink '${entry.source}' failed: ${message}`);
-            }
+            entry.failures.push(probeMessage(error));
+          }
+          const last = entry.failures[entry.failures.length - 1];
+          if (last !== undefined && !entry.stderrNoted) {
+            entry.stderrNoted = true;
+            onError(`audit sink '${entry.source}' failed: ${last}`);
           }
         },
       });

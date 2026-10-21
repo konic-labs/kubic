@@ -39,7 +39,11 @@ import {
   runStartAudit,
   undoRestoreAudit,
 } from './records.js';
-import { auditSinksDoctorChecks, buildConfiguredSinks } from './sinks.js';
+import {
+  auditSinksDoctorChecks,
+  buildConfiguredSinks,
+  isSyslogTargetAvailable,
+} from './sinks.js';
 
 const roots: string[] = [];
 let driver: GitSandbox | undefined;
@@ -654,6 +658,7 @@ describe('audit sink doctor checks', () => {
   const probes = {
     socketExists: (path: string): boolean => path === '/dev/log',
     udpAvailable: (): boolean => true,
+    unixTransportProblem: (): string | undefined => undefined,
   };
 
   it('returns no checks without configured tables', () => {
@@ -700,6 +705,30 @@ describe('audit sink doctor checks', () => {
       reason: 'sink-unreachable',
     });
     expect(checks[0]?.detail).toContain('/nonexistent/syslog.sock');
+  });
+
+  it('fails a unix socket the system logger cannot reach', () => {
+    const checks = auditSinksDoctorChecks({
+      tables: [{ sink: 'syslog', level: 'all', target: '/dev/log' }],
+      problems: [],
+      snapshot: [],
+      probes: {
+        ...probes,
+        unixTransportProblem: () => 'no system logger to reach /dev/log',
+      },
+    });
+    expect(checks[0]).toMatchObject({
+      status: 'fail',
+      reason: 'sink-unreachable',
+    });
+    expect(checks[0]?.detail).toContain('no system logger');
+    expect(
+      isSyslogTargetAvailable('/dev/log', {
+        ...probes,
+        unixTransportProblem: () => 'no system logger',
+      }),
+    ).toBe(false);
+    expect(isSyslogTargetAvailable('/dev/log', probes)).toBe(true);
   });
 
   it('fails a table that never built, naming the problem', () => {

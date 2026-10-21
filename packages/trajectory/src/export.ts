@@ -6,6 +6,7 @@
 // env (post-allowlist + role grant), never the intended config:
 // callers must pass capturedFrom: 'used' or the build is refused.
 
+import { win32 } from 'node:path';
 import { EXIT_USAGE, type ExitCode } from '@kubic/core/cli/exit-codes';
 import { redactSecretEnv } from '@kubic/core/secret-keys';
 import {
@@ -121,7 +122,9 @@ function checkProvenance(input: BuildTrajectoryInput): TrajectoryProvenance {
       'trajectory export blocked: provenance.sessionId and provenance.agentId must be non-empty strings',
     );
   }
-  if (!nonEmpty(p.worktree) || !(p.worktree as string).startsWith('/')) {
+  // Absolute on either system (`/repo`, `D:\repo`, `\\server\share`):
+  // a trajectory recorded on Windows is read on Linux too.
+  if (!nonEmpty(p.worktree) || !win32.isAbsolute(p.worktree as string)) {
     throw new TrajectoryExportError(
       'invalid-provenance',
       'trajectory export blocked: provenance.worktree must be an absolute path',

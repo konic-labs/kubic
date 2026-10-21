@@ -90,6 +90,19 @@ describe('trajectory export fail-closed', () => {
     );
   });
 
+  it('takes a worktree absolute on either system, and blocks a relative one', () => {
+    const at = (worktree: string) => () =>
+      buildTrajectoryExport(
+        completeInput({
+          provenance: { ...completeInput().provenance, worktree },
+        }),
+      );
+    expect(at('/repo')).not.toThrow();
+    expect(at('D:\\a\\repo')).not.toThrow();
+    expect(at('\\\\server\\share\\repo')).not.toThrow();
+    expect(at('repo')).toThrow(/provenance\.worktree must be an absolute path/);
+  });
+
   it('blocks export when the used-environment snapshot is missing', () => {
     const input = completeInput();
     const { environment: _dropped, ...rest } = input;

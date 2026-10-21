@@ -173,14 +173,20 @@ describe('NodeShell under bubblewrap', () => {
       })
       .wait();
     expect(result.stdout.trim()).toBe(String(unixSocketFilter()?.length));
+    // The filter's pipe is closed once written: the command settles on its
+    // own exit, with no pipe left held as a background job would.
+    expect(result.background).toBeUndefined();
+    expect(result.stderr).toBe('');
   });
 });
 
 describe('detectSandbox', () => {
   it('offers the sandbox this machine has when it can start one', () => {
-    expect(detectSandbox('darwin', {}, () => undefined)).toEqual({
-      kind: 'seatbelt',
-      binary: '/usr/bin/sandbox-exec',
+    const bin = tempDir('sandbox-detect-bin-');
+    writeFileSync(join(bin, 'bwrap'), '');
+    expect(detectSandbox('linux', { PATH: bin }, () => undefined)).toEqual({
+      kind: 'bubblewrap',
+      binary: join(bin, 'bwrap'),
     });
   });
 

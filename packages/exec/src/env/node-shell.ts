@@ -222,7 +222,9 @@ export class NodeShell implements Shell {
       const filter = child.stdio[3] as Writable | null;
       // A sandbox that fails to start never reads it: its exit says why.
       filter?.on('error', () => {});
-      filter?.end(seccomp);
+      // Closed once written, so whatever holds the far end, this pipe never
+      // keeps the command from settling.
+      filter?.end(seccomp, () => filter.destroy());
     }
     const run = new ShellRun(child, options, groups);
     return {

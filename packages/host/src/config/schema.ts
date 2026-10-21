@@ -678,6 +678,41 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'run',
+    shape: 'table',
+    keys: [
+      {
+        name: 'timeoutMs',
+        check: 'timeoutMs',
+        default: '300000',
+        runtime: {
+          effect:
+            'wall-clock bound of a headless kubic run when --timeout is not given',
+        },
+        example: '300000',
+      },
+      {
+        name: 'maxTurns',
+        check: 'tokens',
+        runtime: {
+          effect:
+            'turn bound of a headless kubic run when --max-turns is not given',
+        },
+        example: '50',
+      },
+    ],
+    docs: [
+      {
+        keys: ['run.timeoutMs'],
+        text: 'Wall-clock bound for a headless `kubic run` (and the bare `kubic "<prompt>"`), a positive integer of milliseconds up to 2147483647 (default 300000). `--timeout` wins over it. A run still going at the bound settles `status: timeout` and exits 1.',
+      },
+      {
+        keys: ['run.maxTurns'],
+        text: 'Turn bound for a headless `kubic run`: a positive integer (no bound by default). `--max-turns` wins over it. A run that reaches the bound exits 3 (`turn_limit`).',
+      },
+    ],
+  },
+  {
     name: 'policy',
     shape: 'table',
     runtime: {

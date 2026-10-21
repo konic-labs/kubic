@@ -146,6 +146,13 @@ export interface RuntimeVerify {
   timeoutMs?: number;
 }
 
+// `[run]`: the headless run bounds, used when `--timeout` / `--max-turns`
+// are not given.
+export interface RuntimeRun {
+  timeoutMs?: number;
+  maxTurns?: number;
+}
+
 export interface RuntimeConfig {
   config: KubicConfig;
   /**
@@ -173,6 +180,7 @@ export interface RuntimeConfig {
   // lane assembles its prompt unchanged.
   systemPromptFile?: RuntimeSystemPrompt;
   verify: RuntimeVerify;
+  run: RuntimeRun;
   projectTrusted: boolean;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named

@@ -19,6 +19,23 @@ npm run build                # esbuild bundle -> gitignored dist/kubic.js
 Kubic runs on the Pi agent harness (`@earendil-works/*` **1.0.2**, exact
 pins), installed from npm like every other dependency.
 
+`npm run build` bundles Kubic's own code into one file, `dist/kubic.js`, with
+esbuild (`scripts/build.mjs`). Third-party packages stay external, so the
+bundle carries only Kubic's code, and a rebuild is byte-equivalent.
+`bin/kubic.js` is the committed executable over that output; `npm run kubic --
+<args>` and `node dist/kubic.js <args>` run the same binary.
+
+## Where things are
+
+| Path | What it is |
+| --- | --- |
+| [`bin/kubic.js`](../bin/kubic.js) | The committed `kubic` executable, a wrapper over the build output |
+| [`apps/kubic/`](../apps/kubic/) | The composition root: `src/main.ts` wires the host and the TUI, and `test/` holds the end-to-end tests |
+| [`packages/`](../packages/) | `core`, `exec`, `agent`, `host`, `trajectory`, `eval` and `tui`, each with a [package page](packages/README.md) |
+| [`scripts/`](../scripts/) | The build, the repository gates, kshot and the docs images, each with its own test |
+| [`test/`](../test/) | Fixtures every package's tests share: the fake terminal, temp directories and the hermetic environment |
+| [`docs/`](README.md) | These pages, and `docs/assets/` for their images |
+
 ## Before you push
 
 Three commands cover everything CI runs:

@@ -22,6 +22,7 @@ import type {
   SpendCaps,
 } from '@kubic/host/config';
 import type { RuntimeOidc } from '@kubic/host/credentials';
+import type { McpServerSpec } from '@kubic/host/mcp';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink } from '@kubic/host/run';
@@ -215,6 +216,8 @@ export interface TuiRunOptions {
   modelFallback?: readonly string[];
   // `[oidc]`, as `kubic run` reads it.
   oidc?: RuntimeOidc;
+  // `[mcp.<name>]`, as `kubic run` reads it.
+  mcp?: readonly McpServerSpec[];
   // `[telemetry]`: where each settled turn's spans and metrics go.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy — the same

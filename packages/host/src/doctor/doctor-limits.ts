@@ -16,7 +16,6 @@ import {
   type ExitCode,
 } from '@kubic/core/cli/exit-codes';
 import { alwaysAskAutoApprove, validatePolicy } from '../approvals/index.js';
-import { mcpRefusalMessage } from '../config/index.js';
 import type { DoctorCheck } from './types.js';
 
 export interface LimitProviderProbe {
@@ -70,12 +69,12 @@ export function staticLimitChecks(): DoctorCheck[] {
         'honest limit (not enforced): the change journal is a review/undo log, not a backup — it cannot restore outside state',
     },
     {
-      id: 'limit:no-third-party-mcp',
-      label: 'limit no third-party MCP',
+      id: 'limit:mcp-servers',
+      label: 'limit MCP servers',
       status: 'warn',
       reason: 'ok',
       detail:
-        'honest limit (not enforced): no third-party tools or MCP servers — requests for them are refused',
+        "honest limit (not enforced): an MCP server runs only from the managed config's allowlist, and each call is approved and audited — but what the server does with its own network and files is the server's, outside Kubic's interceptors",
     },
   ];
 }
@@ -147,8 +146,8 @@ export function depsLimitCheck(deps: readonly LimitDepProbe[]): DoctorCheck {
 const MCP_REQUEST_PATTERN = /^(mcp|extensions?|third-party)(:|$)/;
 const MCP_REQUEST_EXACT = new Set(['mcp', 'extensions', 'extension']);
 
-// v1 enforceability: third-party/MCP requests are valid-shaped policy
-// values that v1 cannot honor, so they fail here with the refusal.
+// Enforceability: `mcp:`/extension/third-party capability names are
+// valid-shaped policy values that name no capability, so they fail here.
 // Invalid shapes are the to fail — this check passes with a pointer
 // instead of double-failing the same root cause.
 export function policyEnforceabilityCheck(raw: unknown): DoctorCheck {
@@ -170,17 +169,6 @@ export function policyEnforceabilityCheck(raw: unknown): DoctorCheck {
       detail: `not assessed: policy invalid — see policy:approvals (${error instanceof Error ? error.message : String(error)})`,
     };
   }
-  if (typeof raw === 'object' && raw !== null && Object.hasOwn(raw, 'mcp')) {
-    return {
-      ...base,
-      status: 'fail',
-      reason: 'policy-mismatch',
-      // The refusal names the settled arrival
-      // requirements — built from the same constant the config-load
-      // refusal throws, so the two can never disagree.
-      detail: mcpRefusalMessage(),
-    };
-  }
   const refused = autoApprove.filter(
     (cap) => MCP_REQUEST_PATTERN.test(cap) || MCP_REQUEST_EXACT.has(cap),
   );
@@ -189,7 +177,7 @@ export function policyEnforceabilityCheck(raw: unknown): DoctorCheck {
       ...base,
       status: 'fail',
       reason: 'policy-mismatch',
-      detail: `${refused.join(', ')} unsupported: no third-party tools or MCP servers yet`,
+      detail: `${refused.join(', ')} unsupported: no such capability — an MCP tool that asks is approved by its name (requires:mcp__<server>__<tool>)`,
     };
   }
   // Same honest count as policy:approvals and `kubic config`: an

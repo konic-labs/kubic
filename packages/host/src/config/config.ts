@@ -18,7 +18,6 @@ import { checkKeys, checkNoUnknown, isRecord } from './checks.js';
 import { ConfigError } from './errors.js';
 import type { ConfigKey } from './schema.js';
 import { CONFIG_SECTIONS } from './schema.js';
-import { assertNoMcpConfig, McpUnsupportedError } from './stances.js';
 import { parseTomlDocument } from './toml-parse.js';
 
 export const CONFIG_LAYERS = [
@@ -217,6 +216,17 @@ interface PolicyConfig {
   maxDailyCostUsd?: number;
 }
 
+// `[mcp.<name>]`: one MCP server the organization allowlists.
+interface McpTableConfig {
+  command?: string;
+  args?: string[];
+  url?: string;
+  version?: string;
+  tools?: string[];
+  approve?: string[];
+  env?: string[];
+}
+
 // `[oidc]`: the job's OIDC token as the credential of a cloud-hosted model.
 interface OidcConfig {
   provider?: string;
@@ -293,6 +303,7 @@ export interface KubicConfig {
   tls?: TlsConfig;
   providers?: Record<string, ProviderFacts>;
   oidc?: OidcConfig;
+  mcp?: Record<string, McpTableConfig>;
   managed?: ManagedConfig;
   policy?: PolicyConfig;
   hooks?: HookTableConfig[];
@@ -318,6 +329,7 @@ interface SectionTypes {
   tls: TlsConfig;
   providers: ProviderFacts;
   oidc: OidcConfig;
+  mcp: McpTableConfig;
   managed: ManagedConfig;
   policy: PolicyConfig;
   hooks: HookTableConfig;
@@ -350,6 +362,7 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   tls: true,
   providers: true,
   oidc: true,
+  mcp: true,
   managed: true,
   policy: true,
   hooks: true,
@@ -429,7 +442,6 @@ function parseSection(section: Section, raw: unknown): unknown {
 }
 
 function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
-  assertNoMcpConfig(raw);
   for (const key of Object.keys(raw)) {
     if (!KNOWN_TOP_LEVEL.has(key)) {
       throw new ConfigError(`unknown section '[${key}]'`);
@@ -545,9 +557,6 @@ export function defaultLayerPaths(args: {
 }
 
 function withLayerContext(layer: ConfigLayer, error: unknown): never {
-  if (error instanceof McpUnsupportedError) {
-    throw new McpUnsupportedError(`layer '${layer}': ${error.message}`);
-  }
   if (error instanceof ConfigError) {
     throw new ConfigError(`layer '${layer}': ${error.message}`);
   }

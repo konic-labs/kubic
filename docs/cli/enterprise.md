@@ -326,6 +326,44 @@ enterprise policy ([policy] project_policy = "restricted"))`). A project may
 still narrow: a stricter permission class, `route = "deny"`, a smaller tool
 set. The default is `"open"`.
 
+## MCP servers
+
+```toml
+# the managed config (enterprise or product layer)
+[mcp.github]
+command = "/opt/mcp/github-mcp-server"
+args = ["stdio"]
+version = "0.9.1"
+tools = ["get_issue", "list_pull_requests", "create_issue"]
+approve = ["create_issue"]
+env = ["GITHUB_TOKEN"]
+
+[mcp.docs]
+url = "https://mcp.corp.example/docs"
+version = "2.1.0"
+```
+
+Kubic runs an MCP server only when the managed config allowlists it: a
+`[mcp.<name>]` table in the enterprise or product layer names a stdio
+server's pinned `command` (an absolute path) and `args`, or a streamable HTTP
+server's `url`, and the `version` it must report. A server named by any other
+layer is refused by name, and a server that reports another version, cannot
+start or does not answer is left out with a stderr line naming why; the run
+goes on without it.
+
+`kubic run` and `kubic tui` connect each allowlisted server at boot and offer
+its tools beside the built-ins as `mcp__<name>__<tool>` — only the ones
+`tools` lists, when it lists any. The enterprise tool gate
+(`allowed_tools`, `denied_tools`) and a role's or `--tools` set narrow them
+like any tool. Every call goes through the same pipeline as a built-in: the
+approval ask (a tool `approve` lists always asks), the admin hooks, the
+secret scan of its output, and one `mcp:<name>/<tool>` audit row with its
+result. A stdio server runs in the workspace with the tool environment —
+no provider key — plus the variables `env` names; its stderr goes to the
+debug channel. What a server does with its own network and files is the
+server's: Kubic approves and audits each call, not the server's own reach
+(`kubic doctor` lists this as `limit:mcp-servers`).
+
 ## Keys and workload identity
 
 Provider keys need not live in shell profiles or in long-lived CI secrets:

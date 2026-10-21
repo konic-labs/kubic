@@ -339,7 +339,8 @@ not listed above, and installs run by a build script (`npm run setup`).
 The literal verb scan over-triggers on quoted text: `echo "git push
 later"` raises `git-push` (an ask, never a silent grant).
 
-One section is forbidden outright: **`[mcp]`** (third-party tools and MCP
-servers are not supported yet — doctor surfaces it as a
-`policy-mismatch` fail pointing at
-[doctor and debug](doctor-and-debug.md)).
+An MCP server's tools go through the same pipeline: a tool its allowlist
+entry lists under `approve` always asks (`requires:mcp__<server>__<tool>`,
+answerable by `autoApprove`, the broker or a pre-approval file like any
+other), and the others run as untriggered calls. See
+[MCP servers](enterprise.md#mcp-servers).

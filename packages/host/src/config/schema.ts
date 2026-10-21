@@ -862,6 +862,52 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'mcp',
+    shape: 'tables',
+    runtime: {
+      effect:
+        "MCP servers the organization allowlists: each server's pinned command or URL and version, the tools offered, the tools that always ask",
+    },
+    keys: [
+      { name: 'command', check: 'string' },
+      { name: 'args', check: 'strings' },
+      { name: 'url', check: 'string' },
+      { name: 'version', check: 'string', required: true },
+      { name: 'tools', check: 'strings' },
+      { name: 'approve', check: 'strings' },
+      { name: 'env', check: 'strings' },
+    ],
+    exampleTables: {
+      github: [
+        'command = "/opt/mcp/github-mcp-server"',
+        'args = ["stdio"]',
+        'version = "0.9.1"',
+        'tools = ["get_issue", "list_pull_requests", "create_issue"]',
+        'approve = ["create_issue"]',
+        'env = ["GITHUB_TOKEN"]',
+      ],
+    },
+    exampleNote: [
+      'Read from the enterprise and product layers only: an MCP server runs',
+      'only when the organization allowlists it.',
+    ],
+    docs: [
+      {
+        keys: [
+          'mcp.<name>.command',
+          'mcp.<name>.args',
+          'mcp.<name>.url',
+          'mcp.<name>.version',
+          'mcp.<name>.tools',
+          'mcp.<name>.approve',
+          'mcp.<name>.env',
+        ],
+        label: '`mcp.<name>` (`[mcp.<name>]`)',
+        text: "An MCP server the organization allowlists: a stdio server's pinned `command` (an absolute path) and `args`, or a streamable HTTP server's `url` (https, or plain http to this machine); the `version` it must report (a server reporting another is refused); the `tools` offered (all when absent), each named `mcp__<name>__<tool>`; the tools that always ask (`approve`); and the variables a stdio server receives (`env`, above the tool environment). Read from the enterprise and product layers only: a server another layer names is refused by name. See [MCP servers](enterprise.md#mcp-servers).",
+      },
+    ],
+  },
+  {
     name: 'oidc',
     shape: 'table',
     omitEmpty: true,

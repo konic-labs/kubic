@@ -21,6 +21,7 @@ import type {
   SpendCaps,
 } from '@kubic/host/config';
 import type { RuntimeOidc } from '@kubic/host/credentials';
+import type { McpServerSpec } from '@kubic/host/mcp';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink, RunProgressSink } from '@kubic/host/run';
@@ -153,6 +154,8 @@ export interface HeadlessRunDeps {
   modelFallback?: readonly string[];
   // `[oidc]`: the job's OIDC token as a cloud credential.
   oidc?: RuntimeOidc;
+  // `[mcp.<name>]`: the MCP servers the organization allowlists.
+  mcp?: readonly McpServerSpec[];
   // `[telemetry]`: where the run's spans and metrics go. Absent: nowhere.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy from the same

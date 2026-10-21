@@ -62,6 +62,7 @@ import {
   loadProjectInstructions,
   projectInstructionsNotices,
 } from '@kubic/host/instructions';
+import type { McpConnection, McpServerSpec } from '@kubic/host/mcp';
 import type { AssembledModels } from '@kubic/host/models';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import { dataProtectionOf } from '@kubic/host/policy';
@@ -75,6 +76,7 @@ import { assembleBootCatalog } from './catalog.js';
 import type { ModelFallback } from './fallback.js';
 import { beginBootJournal, probeBootOverlap } from './journal.js';
 import { bootSessionLane } from './lane.js';
+import { connectBootMcp } from './mcp.js';
 import { resolveBootRole } from './role.js';
 
 // Why a boot stopped before the lane ran. Each front end maps these to its
@@ -140,6 +142,8 @@ export interface SessionBootConfig {
   modelFallback?: readonly string[];
   // `[oidc]`: the job's OIDC token as a cloud credential.
   oidc?: RuntimeOidc;
+  // `[mcp.<name>]`: the MCP servers the organization allowlists.
+  mcp?: readonly McpServerSpec[];
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.
@@ -279,6 +283,8 @@ export class SessionBoot {
   regionGate: RegionGate | undefined;
   // The moves along `[model] fallback` this boot or its run made.
   readonly fallbacks: ModelFallback[] = [];
+  // The allowlisted MCP servers this boot reached.
+  readonly mcp: McpConnection[] = [];
   lane: Lane | undefined;
   // The model the booted lane runs.
   liveModel: { provider: string; id: string } | undefined;
@@ -400,6 +406,7 @@ export class SessionBoot {
     this.bootRunInstructions();
     const skills = this.request.onSkillsBooted?.(this);
     if (skills !== undefined) return skills;
+    await connectBootMcp(this, env);
     if (this.request.cancelled?.() === true) return { kind: 'cancelled' };
     return bootSessionLane(this, env);
   }
@@ -505,6 +512,7 @@ export class SessionBoot {
     } catch {
       // Best-effort.
     }
+    for (const connection of this.mcp) connection.close();
     // The harness owns the storage it adopted; closing it first means the
     // handle's release only gives the lock back.
     try {

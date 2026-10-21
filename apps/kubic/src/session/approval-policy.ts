@@ -13,6 +13,7 @@ import {
 import { resolveRunBaseRevision } from '@kubic/host/audit';
 import { effectiveRoleClasses } from '@kubic/host/roles';
 import type { SessionBoot } from './bootstrap.js';
+import { mcpApprovalTools } from './mcp.js';
 
 // The approval policy the lane runs under — the same derivation doctor
 // reports. Config classes replace the documented DEFAULT_PERMISSIONS; the
@@ -76,8 +77,10 @@ export async function installBootPolicy(
               { ...DEFAULT_PERMISSIONS, ...config.classes },
               role.classes,
             ),
-            ...(role.requires.length === 0 ? {} : { requires: role.requires }),
           }),
+      // The role's approval obligations, and the MCP tools whose allowlist
+      // entry says they always ask.
+      ...requiresOf(role?.requires, mcpApprovalTools(config.mcp)),
       // The layer's own record, so the posture's `source` is the same
       // answer doctor prints.
       source: config.policySource ?? 'default',
@@ -110,4 +113,12 @@ export async function installBootPolicy(
               }),
             }),
     });
+}
+
+function requiresOf(
+  role: readonly string[] | undefined,
+  mcp: readonly string[],
+): { requires?: string[] } {
+  const requires = [...(role ?? []), ...mcp];
+  return requires.length === 0 ? {} : { requires };
 }

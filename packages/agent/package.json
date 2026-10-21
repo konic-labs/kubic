@@ -25,6 +25,10 @@
       "source": "./src/lane/events.ts",
       "default": "./src/lane/events.ts"
     },
+    "./lane/external-tools": {
+      "source": "./src/lane/external-tools.ts",
+      "default": "./src/lane/external-tools.ts"
+    },
     "./lane/failures": {
       "source": "./src/lane/failures.ts",
       "default": "./src/lane/failures.ts"

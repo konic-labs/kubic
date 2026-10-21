@@ -31,6 +31,7 @@ export {
   fullAccessDisabledAudit,
   fullAccessEnabledAudit,
   hookRunAudit,
+  mcpCallAudit,
   postureChangedAudit,
   runStartAudit,
   undoRestoreAudit,

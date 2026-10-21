@@ -53,6 +53,10 @@
       "source": "./src/journal/index.ts",
       "default": "./src/journal/index.ts"
     },
+    "./mcp": {
+      "source": "./src/mcp/index.ts",
+      "default": "./src/mcp/index.ts"
+    },
     "./models": {
       "source": "./src/models/index.ts",
       "default": "./src/models/index.ts"
@@ -96,6 +100,10 @@
     "./telemetry": {
       "source": "./src/telemetry/index.ts",
       "default": "./src/telemetry/index.ts"
+    },
+    "./test-support/fake-mcp-server": {
+      "source": "./src/test-support/fake-mcp-server.ts",
+      "default": "./src/test-support/fake-mcp-server.ts"
     },
     "./test-support/audit-fixtures": {
       "source": "./src/test-support/audit-fixtures.ts",

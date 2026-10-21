@@ -85,6 +85,14 @@ team = "platform"
 [providers.azure-openai-responses]
 region = "westeurope"
 
+[mcp.github]
+command = "/opt/mcp/github-mcp-server"
+args = ["stdio"]
+version = "0.9.1"
+tools = ["get_issue", "list_pull_requests", "create_issue"]
+approve = ["create_issue"]
+env = ["GITHUB_TOKEN"]
+
 [tls]
 systemCa = true
 

@@ -37,6 +37,10 @@
       "source": "./src/lock-file.ts",
       "default": "./src/lock-file.ts"
     },
+    "./mcp-stdio": {
+      "source": "./src/mcp-stdio.ts",
+      "default": "./src/mcp-stdio.ts"
+    },
     "./read-roots": {
       "source": "./src/read-roots.ts",
       "default": "./src/read-roots.ts"

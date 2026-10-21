@@ -169,10 +169,17 @@ describe('canonical TOML example', () => {
     expect(parsed.session?.store).toBe('jsonl');
   });
 
-  it('rejects mcp sections with the unsupported error', () => {
+  it('reads an MCP server table and refuses a key it does not know', () => {
+    const parsed = parseTomlConfig(
+      '[mcp.github]\ncommand = "/opt/mcp/github"\nversion = "1.0.0"\n',
+    );
+    expect(parsed.mcp?.github).toEqual({
+      command: '/opt/mcp/github',
+      version: '1.0.0',
+    });
     expect(() =>
-      parseTomlConfig(`${EXAMPLE_TOML}\n[mcp]\nenabled = true\n`),
-    ).toThrow(/unsupported/i);
+      parseTomlConfig('[mcp.github]\nversion = "1"\nenabled = true\n'),
+    ).toThrow(ConfigError);
   });
 
   it('rejects unknown sections', () => {

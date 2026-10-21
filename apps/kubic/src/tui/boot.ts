@@ -189,6 +189,7 @@ function tuiSessionBoot(
       providerRegions: options.providerRegions,
       modelFallback: options.modelFallback,
       oidc: options.oidc,
+      mcp: options.mcp,
       modelPolicy: options.modelPolicy,
       trustProject: options.trustProject,
       skills: options.skills,

@@ -53,10 +53,6 @@ export type {
 } from './setup-cli.js';
 export { runSetupCommand } from './setup-cli.js';
 export type { SpendCaps } from './spend-caps.js';
-export {
-  /** @internal */ MCP_ARRIVAL_REQUIREMENTS,
-  mcpRefusalMessage,
-} from './stances.js';
 export { parseTomlDocument } from './toml-parse.js';
 export type { TrustCommandOptions } from './trust-cli.js';
 export { runTrustCommand } from './trust-cli.js';

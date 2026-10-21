@@ -129,7 +129,9 @@ export function isPrivilegedAuditWhat(what: string): boolean {
     // approval interceptors: an action, not a decision.
     what.startsWith('verify:') ||
     // An admin hook is shell from the config that can refuse a call.
-    what.startsWith('hook:')
+    what.startsWith('hook:') ||
+    // A call to an allowlisted MCP server's tool.
+    what.startsWith('mcp:')
   );
 }
 
@@ -223,6 +225,37 @@ export function hookRunAudit(input: HookRunInput): AuditInput {
     permission: {
       permission: input.tool === undefined ? 'hook' : `hook:${input.tool}`,
       approval: `sh -c ${JSON.stringify(input.command)}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    posture: 'approvals',
+    result: input.result,
+    reason: input.reason,
+  };
+}
+
+// Audit record for one call to an allowlisted MCP server's tool: the server
+// and tool, and whether the call answered (`ok`) or failed (`error`).
+export interface McpCallInput {
+  sessionId: string;
+  workspace: string;
+  server: string;
+  tool: string;
+  result: 'ok' | 'error';
+  reason: string;
+}
+
+export function mcpCallAudit(input: McpCallInput): AuditInput {
+  return {
+    who: 'agent:root',
+    what: `mcp:${input.server}/${input.tool}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'root' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    process: { pid: process.pid },
+    workspace: { path: input.workspace, base: UNKNOWN },
+    permission: {
+      permission: `mcp:${input.server}`,
+      approval: 'allowlisted by the managed config',
     },
     credential: { sentinel: 'none' },
     network: { ...NO_NETWORK },

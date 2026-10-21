@@ -120,10 +120,10 @@ the exit code.
 | `journal:out-of-scope` | Present only when `journal.outOfScope` is set: names the paths the journal leaves out and the layer that set them. A change under them is never journaled, so `kubic undo` cannot restore it. Always `warn` (exit-neutral). | Drop the entry if those changes should be undoable; see [`journal.outOfScope`](configuration.md). |
 | `platform:shell` | Which platform the shell guards cover. Every approval detector reads POSIX shell commands, so on Linux and macOS this passes, and on Windows it warns (`unsupported-platform`): the bash tool refuses to run there rather than run `cmd` commands no detector reads. Exit-neutral. | Run Kubic on Linux or macOS. |
 | `license:kubic` | License identity (`MIT`). Always passes; reported, never skipped implicitly (explicit `--skip license:kubic` still works). | Nothing — informational. |
-| `policy:enforceability` | Can this version actually honor the policy? `[mcp]` keys and `mcp:`/`extensions:`/`third-party:` autoApprove values fail here with the refusal. Invalid shapes are **not** double-failed — they point at `policy:approvals`. | Remove the unsupported key. |
+| `policy:enforceability` | Can this version actually honor the policy? `mcp:`/`extensions:`/`third-party:` autoApprove values name no capability and fail here (an MCP tool that asks is approved by its tool name). Invalid shapes are **not** double-failed — they point at `policy:approvals`. | Remove the unsupported key. |
 | `limit:provider-availability` | Is at least one provider available? (`listed, not dialled` unless a probe really dialled.) | Same as `provider:<id>` — configure a provider. |
 | `limit:deps-present` | Are all dep probes present? | Same as `dep:<id>`. |
-| `limit:<…>` (five static notices) | Honest limits, always `warn`: no isolation, no injection prevention, policy is an offer not enforcement, journal is not a backup, no third-party MCP. | Nothing to fix — they are disclosures, not failures. If your matrix is all-green except warns, you are healthy (exit 0). |
+| `limit:<…>` (five static notices) | Honest limits, always `warn`: no isolation, no injection prevention, policy is an offer not enforcement, journal is not a backup, an MCP server's own reach is outside Kubic's interceptors. | Nothing to fix — they are disclosures, not failures. If your matrix is all-green except warns, you are healthy (exit 0). |
 
 ## Debugging with `--skip`
 

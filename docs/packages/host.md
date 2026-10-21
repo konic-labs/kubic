@@ -60,7 +60,8 @@ package would depend back on the rest of the host.
 - **The committed/ignored split is derived, not kept twice.**
   `GITIGNORE_REQUIRED_ENTRIES` comes from `@kubic/exec`'s runtime-exclude
   list, and `.kubic/` itself is never ignored, so `config.toml` and
-  `roles/*.md` stay committable. An `[mcp]` table fails closed.
+  `roles/*.md` stay committable. An `[mcp.<name>]` table outside the
+  managed config fails closed.
 - **Spans go to two places:** stderr behind `kubic run --debug`, and
   `spans.jsonl` in the session directory. A tool span opens in the
   `kubic.spans` extension's `beforeTool` hook, which runs after

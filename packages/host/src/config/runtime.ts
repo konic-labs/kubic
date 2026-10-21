@@ -33,6 +33,7 @@ import { checkSessionCompaction } from './config.js';
 import { ConfigError } from './errors.js';
 import { adminHooksOf } from './hooks-config.js';
 import { mergeLayered } from './layer-merge.js';
+import { mcpServersOf } from './mcp-config.js';
 import { oidcOf } from './oidc-config.js';
 import { checkProjectRestriction } from './project-restriction.js';
 import { providerRegionsOf } from './provider-regions.js';
@@ -216,6 +217,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       ? {}
       : { modelFallback: [...config.model.fallback] }),
     ...(oidc === undefined ? {} : { oidc }),
+    mcp: mcpServersOf(loaded.perLayer, loaded.paths.project),
     overriddenAttempts: [
       ...merged.overriddenAttempts,
       ...pin.modelPinOverrides.map(

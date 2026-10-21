@@ -25,6 +25,7 @@ import { CONFIG_LAYERS, checkModelStreamTuning } from '@kubic/host/config';
 import type { RuntimeOidc } from '@kubic/host/credentials';
 import type { ProjectInstructions } from '@kubic/host/instructions';
 import { loadProjectInstructions } from '@kubic/host/instructions';
+import type { McpServerSpec } from '@kubic/host/mcp';
 import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles';
 import type { RunCommandOptions } from '@kubic/host/run';
 import type { TelemetryTarget } from '@kubic/host/telemetry';
@@ -163,6 +164,8 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   modelFallback?: readonly string[];
   /** `[oidc]`: the job's OIDC token as a cloud credential. */
   oidc?: RuntimeOidc;
+  /** `[mcp.<name>]`: the MCP servers the organization allowlists. */
+  mcp?: readonly McpServerSpec[];
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -203,6 +206,7 @@ export function runtimeLaneDeps(result: CliConfigResult): {
       ? {}
       : { modelFallback: runtime.modelFallback }),
     ...(runtime.oidc === undefined ? {} : { oidc: runtime.oidc }),
+    ...(runtime.mcp.length === 0 ? {} : { mcp: runtime.mcp }),
     // No ladder, no field: escalation stays opt-in — the
     // lane climbs nothing it was never configured with.
     ...(runtime.escalate === undefined

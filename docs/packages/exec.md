@@ -24,9 +24,17 @@ a cwd guardrail against accidental escapes, not a sandbox boundary.
 | `@kubic/exec/git-clean` | A synchronous git-cleanliness probe for the composition root |
 | `@kubic/exec/secret-runner` | Runs `!command` secret references |
 | `@kubic/exec/stdin` | Reads stdin text |
+| `@kubic/exec/sandbox` | The bash tool's OS sandbox: Seatbelt profiles, bubblewrap arguments and the seccomp filter that closes local sockets, the credential paths, and detecting a sandbox that can start |
+| `@kubic/exec/hook-runner` | Runs an admin hook command with the call on stdin, in its own process group, killed as a group on timeout |
+| `@kubic/exec/mcp-stdio` | Starts an allowlisted stdio MCP server and frames its JSON-RPC messages |
+| `@kubic/exec/keychain` | The OS credential store: the macOS keychain through `security`, the Secret Service through `secret-tool` |
+| `@kubic/exec/tls-fetch` | A `fetch` with a client certificate and an extra CA, for a provider behind mutual TLS |
+| `@kubic/exec/windows-shell` | The POSIX bash the bash tool runs through on Windows: `KUBIC_BASH`, Git Bash, then WSL |
+| `@kubic/exec/syslog-logger` | Delivers syslog messages to a Unix socket through the system `logger` |
 | `@kubic/exec/test-support/fake-env` | `FakeExecutionEnv`: an in-memory environment whose shell answers only scripted argv |
 | `@kubic/exec/test-support/env-fakes` | An in-memory checkpoint store and `argvKey` |
 | `@kubic/exec/test-support/git-sandbox` | The shared sandbox every test that runs real git uses |
+| `@kubic/exec/test-support/tls-certs` | A throwaway CA, server and client certificates (openssl) for the TLS tests |
 
 ## Invariants
 

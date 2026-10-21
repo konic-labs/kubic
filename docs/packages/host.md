@@ -24,12 +24,15 @@ exist only for tests are tagged `@internal`.
 | `audit/` | The audit ledger (location, redacting append, reads), its records, the configured sinks and the syslog transport, and `kubic audit` |
 | `cli/` | Shared command plumbing: the output channels and theme, and project-root discovery |
 | `config/` | Layered TOML config and its validation, the runtime load every command runs on, comment-preserving edits, project trust, and `kubic config`, `setup` and `trust`; `config/schema` declares every key once, and the parser, the runtime, `example.toml` and the configuration docs derive from it |
+| `credentials/` | Provider keys in the OS credential store (`kubic keys`), and OIDC workload identity exchanged for short-lived cloud and gateway credentials |
 | `cost/` | `kubic cost`: per-session cost rows, the prompt-cache hit rate and the usage a headless run reports |
 | `doctor/` | `kubic doctor`: the checks in report order, the grouped summary, the honest-limit checks and the no-isolation notice |
 | `git/` | `kubic git` (status, log, stage, commit) over the agent's git operations |
+| `hooks/` | The admin hooks (`[[hooks]]`) around each tool call and at the end of a run |
 | `instructions/` | The project's `AGENTS.md` files a run adds to its prompt, under per-directory trust |
 | `journal/` | `kubic diff`, `undo`, `log`, `status` and `journal prune` |
-| `net/` | Posting JSON to a collector over https (plain http only to this machine), for the audit sinks and the telemetry export |
+| `mcp/` | The MCP client over stdio and streamable HTTP, for the servers the managed config allowlists |
+| `net/` | Posting JSON to a collector over https (plain http only to this machine), for the audit sinks and the telemetry export; the egress proxy the bash tool's traffic goes through; the operating system's CA store |
 | `models/` | The model catalogue (built-ins plus `models.json`), provider probes, the `faux` testing provider, key hints and `kubic models` |
 | `policy/` | The enterprise policy: layer validation, resolution, the tool, model and provider gates, its doctor checks and `kubic policy` |
 | `presentation/` | Folds lane events and approval facts into the `KubicPresentationState` the TUI renders |
@@ -38,6 +41,7 @@ exist only for tests are tagged `@internal`.
 | `run/` | `kubic run`: argument parsing, the result envelope and exit codes, spans, the run trajectory, and the `[verify]` gates whose results become `signal:<gate>` labels |
 | `secret-refs/` | Request-time secret references (`$ENV_VAR`, `!command`), the model key resolver and redaction of resolved secrets |
 | `sessions/` | `kubic sessions` and pruning, read-only session access for listings and cost, per-session summaries and usage |
+| `signing/` | Ed25519 signatures over text, for signed managed policies and pre-approval files |
 | `skills/` | The skills boot the lane runs, and `kubic skills` |
 | `telemetry/` | The OpenTelemetry export of runs and tui turns: OTLP/HTTP traces and metrics, and where they go (`[telemetry]` over the `OTEL_*` variables) |
 | `test-support/` | Test-only fixtures; the dependency lint keeps them out of production code |

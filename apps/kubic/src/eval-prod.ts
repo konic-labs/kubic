@@ -23,7 +23,7 @@ import { type EvalSuite, findSuite } from '@kubic/eval/suites';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { gitHeadOf, withDetachedCheckout } from '@kubic/exec/git-clean';
-import { assembleModels } from '@kubic/host/models';
+import { assembleModels, FAUX_PROVIDER_ID } from '@kubic/host/models';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import type { CliConfigResult } from './config/load.js';
@@ -39,7 +39,7 @@ import type { HeadlessRunDeps } from './run/options.js';
 
 export type ProdRunSuite = (
   suiteId: string,
-  task: string,
+  task: string | undefined,
 ) => Promise<SuiteRunOutcome>;
 
 // Seed the fixture's starting files (relative paths; parents created)
@@ -62,6 +62,7 @@ async function runFixture(
   dir: string,
   options: EvalOptions,
   cliConfig: CliConfigResult,
+  task: string | undefined,
 ): Promise<SuiteRunOutcome> {
   const fixture = suite.fixture;
   if (fixture === undefined) {
@@ -109,7 +110,15 @@ async function runFixture(
         : { timeoutMs: fixture.timeoutMs }),
     },
   };
-  const result = await runHeadlessPrompt(fixture.prompt, {}, deps);
+  // The prompt: the caller's task when one was given (`kubic eval
+  // --task`), else the suite's own — scripted for the faux provider, which
+  // cannot read prose, plain language for every real model.
+  const prompt =
+    task ??
+    (selection.provider === FAUX_PROVIDER_ID
+      ? fixture.fauxPrompt
+      : fixture.task);
+  const result = await runHeadlessPrompt(prompt, {}, deps);
   if (result.trajectoryRef === undefined) {
     throw new EvalRunnerError(
       'missing-usage-rows',
@@ -144,7 +153,10 @@ export function createProdRunSuite(
   options: EvalOptions,
   cliConfig: CliConfigResult,
 ): ProdRunSuite {
-  return async (suiteId: string): Promise<SuiteRunOutcome> => {
+  return async (
+    suiteId: string,
+    task: string | undefined,
+  ): Promise<SuiteRunOutcome> => {
     const suite = findSuite(suiteId);
     if (suite === undefined) {
       throw new EvalRunnerError(
@@ -170,7 +182,7 @@ export function createProdRunSuite(
       const outcome = await withDetachedCheckout(
         repo,
         head.revision,
-        (checkout) => runFixture(suite, checkout, options, cliConfig),
+        (checkout) => runFixture(suite, checkout, options, cliConfig, task),
       );
       if (outcome === null) {
         throw new EvalRunnerError(
@@ -183,7 +195,7 @@ export function createProdRunSuite(
     const bridge = createNodeFileBridge('/');
     const dir = bridge.createTempDir('kubic-eval-fixture-');
     try {
-      return await runFixture(suite, dir, options, cliConfig);
+      return await runFixture(suite, dir, options, cliConfig, task);
     } finally {
       bridge.remove(dir, true, true);
     }

@@ -122,16 +122,48 @@ function fixtureRepo(): string {
   return dir;
 }
 
+// The faux provider runs scripted tasks: this one does what swe-bench-mini
+// asks for, so its gate passes.
+const FIX_TASK =
+  'faux:tool write {"path":"src/fix.ts","content":"export const fixed = true;\\n"}';
+
 describe('the live suite runner runs the built-in suites', () => {
+  it('runs the --task prompt it is given against the suite fixture', {
+    timeout: 60_000,
+  }, async () => {
+    const workspace = tempDir('kubic-eval-ws-');
+    const { r, lines } = runners(workspace);
+    // `fix it` is prose the faux provider only echoes: nothing is written,
+    // so the suite's gate fails — the prompt ran, not the suite's own task.
+    await r.eval(
+      {
+        task: 'fix it',
+        suite: 'swe-bench-mini',
+        model: 'faux/echo',
+        worktree: workspace,
+        size: 'smoke',
+        json: true,
+      },
+      cliConfig(),
+    );
+    const envelope = JSON.parse(lines.join('\n')) as {
+      record: { success: boolean; signals: { tests: string } };
+    };
+    expect(envelope.record.success).toBe(false);
+    expect(envelope.record.signals.tests).toBe('fail');
+  });
+
   it('runs one suite end to end: a record, the eval fields and a trajectory file', {
     timeout: 60_000,
   }, async () => {
     const workspace = tempDir('kubic-eval-ws-');
     const { r, lines, errs } = runners(workspace);
+    // The sessions root is shared by every test in this file.
+    const before = new Set(trajectoryFiles());
     const code = (
       await r.eval(
         {
-          task: 'fix it',
+          task: FIX_TASK,
           suite: 'swe-bench-mini',
           model: 'faux/echo',
           worktree: workspace,
@@ -171,7 +203,9 @@ describe('the live suite runner runs the built-in suites', () => {
     expect(envelope.record.toolCalls).toBeGreaterThan(0);
     // The run wrote its trajectory under the sessions root (the score
     // is derived from it).
-    expect(trajectoryFiles()).toHaveLength(1);
+    expect(trajectoryFiles().filter((file) => !before.has(file))).toHaveLength(
+      1,
+    );
   });
 
   it('loads the configured settings skills into the suite lane', {
@@ -191,7 +225,7 @@ describe('the live suite runner runs the built-in suites', () => {
     const code = (
       await r.eval(
         {
-          task: 'fix it',
+          task: FIX_TASK,
           suite: 'swe-bench-mini',
           model: 'faux/echo',
           worktree: workspace,

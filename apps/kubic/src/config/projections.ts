@@ -22,6 +22,7 @@ import type {
   SpendCaps,
 } from '@kubic/host/config';
 import { CONFIG_LAYERS, checkModelStreamTuning } from '@kubic/host/config';
+import type { RuntimeOidc } from '@kubic/host/credentials';
 import type { ProjectInstructions } from '@kubic/host/instructions';
 import { loadProjectInstructions } from '@kubic/host/instructions';
 import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles';
@@ -160,6 +161,8 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   providerRegions?: Readonly<Record<string, string>>;
   /** `[model] fallback`: the models tried when the selected one is unavailable. */
   modelFallback?: readonly string[];
+  /** `[oidc]`: the job's OIDC token as a cloud credential. */
+  oidc?: RuntimeOidc;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -199,6 +202,7 @@ export function runtimeLaneDeps(result: CliConfigResult): {
     ...(runtime.modelFallback === undefined
       ? {}
       : { modelFallback: runtime.modelFallback }),
+    ...(runtime.oidc === undefined ? {} : { oidc: runtime.oidc }),
     // No ladder, no field: escalation stays opt-in — the
     // lane climbs nothing it was never configured with.
     ...(runtime.escalate === undefined

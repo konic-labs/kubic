@@ -17,6 +17,7 @@ import { gitRunner, journalRunner } from './runners/journal.js';
 import { runRunner, sessionsRunner, tuiRunner } from './runners/session.js';
 import {
   configRunner,
+  keysRunner,
   modelsRunner,
   setupRunner,
   skillsRunner,
@@ -33,6 +34,7 @@ export function createProdRunners(io: ProdRunnerIo): ProdRunners {
     setup: setupRunner(io),
     skills: skillsRunner(io),
     trust: trustRunner(io),
+    keys: keysRunner(io),
     run: runRunner(io),
     tui: tuiRunner(io),
     doctor: doctorRunner(io),

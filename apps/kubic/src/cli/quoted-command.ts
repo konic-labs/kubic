@@ -17,6 +17,7 @@ export const SUBCOMMANDS: ReadonlyMap<string, readonly string[]> = new Map([
   ['git', ['status', 'log', 'stage', 'commit']],
   ['policy', ['explain', 'pull', 'sign']],
   ['audit', ['verify', 'flush']],
+  ['keys', ['set', 'list', 'remove']],
 ]);
 
 const COMMANDS: ReadonlySet<string> = new Set(

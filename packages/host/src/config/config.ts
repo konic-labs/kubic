@@ -217,6 +217,16 @@ interface PolicyConfig {
   maxDailyCostUsd?: number;
 }
 
+// `[oidc]`: the job's OIDC token as the credential of a cloud-hosted model.
+interface OidcConfig {
+  provider?: string;
+  tokenEnv?: string;
+  awsRoleArn?: string;
+  gcpAudience?: string;
+  gcpServiceAccount?: string;
+  gatewayAudience?: string;
+}
+
 // `[providers.<id>]`: what the organization declares about a provider, for
 // a provider whose region Kubic cannot read from its environment.
 interface ProviderFacts {
@@ -282,6 +292,7 @@ export interface KubicConfig {
   cost?: CostConfig;
   tls?: TlsConfig;
   providers?: Record<string, ProviderFacts>;
+  oidc?: OidcConfig;
   managed?: ManagedConfig;
   policy?: PolicyConfig;
   hooks?: HookTableConfig[];
@@ -306,6 +317,7 @@ interface SectionTypes {
   cost: CostConfig;
   tls: TlsConfig;
   providers: ProviderFacts;
+  oidc: OidcConfig;
   managed: ManagedConfig;
   policy: PolicyConfig;
   hooks: HookTableConfig;
@@ -337,6 +349,7 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   cost: true,
   tls: true,
   providers: true,
+  oidc: true,
   managed: true,
   policy: true,
   hooks: true,

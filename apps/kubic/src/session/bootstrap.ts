@@ -56,6 +56,7 @@ import type {
   PreApprovals,
 } from '@kubic/host/approvals';
 import type { AdminHook, RuntimeThinking } from '@kubic/host/config';
+import type { RuntimeOidc } from '@kubic/host/credentials';
 import type { ProjectInstructions } from '@kubic/host/instructions';
 import {
   loadProjectInstructions,
@@ -137,6 +138,8 @@ export interface SessionBootConfig {
   // `[model] fallback`: the models tried, in order, when the selected one
   // is unavailable.
   modelFallback?: readonly string[];
+  // `[oidc]`: the job's OIDC token as a cloud credential.
+  oidc?: RuntimeOidc;
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.

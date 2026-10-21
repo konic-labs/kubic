@@ -29,6 +29,10 @@
       "source": "./src/journal/index.ts",
       "default": "./src/journal/index.ts"
     },
+    "./keychain": {
+      "source": "./src/keychain.ts",
+      "default": "./src/keychain.ts"
+    },
     "./lock-file": {
       "source": "./src/lock-file.ts",
       "default": "./src/lock-file.ts"

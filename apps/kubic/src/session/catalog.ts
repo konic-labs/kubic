@@ -6,6 +6,7 @@ import { ModelSelectError } from '@kubic/agent/model-select';
 import type { MutableModels } from '@kubic/agent/pi-boundary';
 import { createSecretCommandRunner } from '@kubic/exec/secret-runner';
 import { createLedgerModelKeyResolver } from '@kubic/host/audit';
+import { type OidcCredentials, prepareOidc } from '@kubic/host/credentials';
 import {
   assembleModels,
   FAUX_NOTICE,
@@ -57,12 +58,26 @@ export async function assembleBootCatalog(
       // production runner — rerun per request.
       runCommand: createSecretCommandRunner({ cwd: workspace }),
     });
-    boot.liveSecrets = keyResolver.live;
     const modelsEnv = Object.fromEntries(
       Object.entries(process.env).filter(
         (entry): entry is [string, string] => entry[1] !== undefined,
       ),
     );
+    // `[oidc]`: the job's token becomes the cloud credential before the
+    // catalogue checks who is usable.
+    let oidc: OidcCredentials | undefined;
+    if (config.oidc !== undefined) {
+      try {
+        oidc = await prepareOidc(config.oidc, process.env, modelsEnv);
+      } catch (error) {
+        return {
+          kind: 'provider',
+          message: `oidc: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      Object.assign(process.env, oidc.processEnv);
+      Object.assign(modelsEnv, oidc.processEnv);
+    }
     const assembled = await assembleModels(
       config.modelsCwd ?? process.cwd(),
       modelsEnv,
@@ -84,6 +99,13 @@ export async function assembleBootCatalog(
     }
     boot.assembled = assembled;
     boot.models = assembled.models;
+    // Every key the run could send is scrubbed from what it prints and
+    // keeps: the resolved ones, the keychain's and the OIDC tokens.
+    boot.liveSecrets = () => [
+      ...keyResolver.live(),
+      ...assembled.keychainSecrets,
+      ...(oidc?.secrets() ?? []),
+    ];
     fallbackProviders = assembled.fallbackProviders;
   } else {
     boot.models = config.models;

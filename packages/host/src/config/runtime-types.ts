@@ -4,6 +4,7 @@
 import type { PermissionClasses } from '@kubic/agent/permissions';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import type { validatePolicy } from '../approvals/index.js';
+import type { RuntimeOidc } from '../credentials/index.js';
 import type { EffectivePolicy } from '../policy/index.js';
 import type {
   ConfigLayer,
@@ -204,6 +205,8 @@ export interface RuntimeConfig {
   // `[model] fallback`: the models tried, in order, when the selected one is
   // unavailable. Absent: none.
   modelFallback?: string[];
+  // `[oidc]`: the job's OIDC token as a cloud credential. Absent: none.
+  oidc?: RuntimeOidc;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
   // in `overriddenAttempts`); empty when nothing was overridden — the same pin

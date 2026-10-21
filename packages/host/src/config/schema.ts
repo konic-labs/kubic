@@ -862,6 +862,37 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'oidc',
+    shape: 'table',
+    omitEmpty: true,
+    runtime: {
+      effect:
+        "the CI job's OIDC token as the credential of a cloud-hosted model: Bedrock through an AWS role, Vertex AI through workload identity federation, a gateway through $KUBIC_OIDC_TOKEN",
+    },
+    keys: [
+      { name: 'provider', check: 'string' },
+      { name: 'tokenEnv', check: 'string' },
+      { name: 'awsRoleArn', check: 'string' },
+      { name: 'gcpAudience', check: 'string' },
+      { name: 'gcpServiceAccount', check: 'string' },
+      { name: 'gatewayAudience', check: 'string' },
+    ],
+    docs: [
+      {
+        keys: [
+          'oidc.provider',
+          'oidc.tokenEnv',
+          'oidc.awsRoleArn',
+          'oidc.gcpAudience',
+          'oidc.gcpServiceAccount',
+          'oidc.gatewayAudience',
+        ],
+        label: '`oidc` (`[oidc]`)',
+        text: 'OIDC workload identity for `kubic run` and `kubic tui` in CI: `provider = "github"` requests the job\'s token from GitHub Actions (the job needs `permissions: id-token: write`), `provider = "env"` reads it from the variable `tokenEnv` names (GitLab\'s `id_tokens`, for example). `awsRoleArn` lets Amazon Bedrock assume that role with it, `gcpAudience` (the workload identity provider\'s resource name, `//iam.googleapis.com/projects/…/providers/…`) lets Vertex AI exchange it, impersonating `gcpServiceAccount` when set, and `gatewayAudience` offers a token for that audience to models.json as `$KUBIC_OIDC_TOKEN`. Read from the enterprise, product and global layers only: a project config setting any key is refused. See [Keys and workload identity](enterprise.md#keys-and-workload-identity).',
+      },
+    ],
+  },
+  {
     name: 'tls',
     shape: 'table',
     omitEmpty: true,

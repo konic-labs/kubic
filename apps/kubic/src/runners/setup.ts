@@ -1,7 +1,11 @@
 // The production runners of the setup commands: models, setup, skills,
-// trust and config. `kubic doctor` is in doctor.ts.
+// trust, keys and config. `kubic doctor` is in doctor.ts.
 
+import { homedir } from 'node:os';
+import { promptSecret } from '@kubic/core/cli/prompt';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { osKeychain } from '@kubic/exec/keychain';
+import { readStdinText } from '@kubic/exec/stdin';
 import { findProjectRoot } from '@kubic/host/cli';
 import {
   ProjectTrustStore,
@@ -10,10 +14,12 @@ import {
   runSetupCommand,
   runTrustCommand,
 } from '@kubic/host/config';
+import { runKeysCommand } from '@kubic/host/credentials';
 import {
   assembleModels,
   FAUX_NOTICE,
   fauxProviderActive,
+  providerKeyHints,
   runModelsCommand,
 } from '@kubic/host/models';
 import { selectRole } from '@kubic/host/roles';
@@ -173,5 +179,28 @@ export function configRunner(io: ProdRunnerIo): ProdRunners['config'] {
       load: kubicConfigLoader(cliConfig),
       // The AGENTS.md search the lane boot runs, from this cwd.
       instructions: () => runtimeProjectInstructions(cliConfig, process.cwd()),
+    });
+}
+
+// `kubic keys`: the keychain of this machine; a key is typed without echo
+// on a terminal and read from standard input otherwise, never from argv.
+export function keysRunner(io: ProdRunnerIo): ProdRunners['keys'] {
+  const { out, debug } = io;
+  return (options) =>
+    runKeysCommand(options, {
+      ...presentation(out, debug, false),
+      home: homedir(),
+      env: process.env,
+      keychain: osKeychain(),
+      variableFor: async (provider) =>
+        (await providerKeyHints([provider])).get(provider),
+      readSecret: async (variable) =>
+        process.stdin.isTTY === true
+          ? promptSecret({
+              message: `the key for ${variable}`,
+              interactive: true,
+              nonInteractive: null,
+            })
+          : readStdinText(),
     });
 }

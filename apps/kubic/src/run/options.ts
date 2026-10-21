@@ -20,6 +20,7 @@ import type {
   RuntimeVerify,
   SpendCaps,
 } from '@kubic/host/config';
+import type { RuntimeOidc } from '@kubic/host/credentials';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink, RunProgressSink } from '@kubic/host/run';
@@ -150,6 +151,8 @@ export interface HeadlessRunDeps {
   providerRegions?: Readonly<Record<string, string>>;
   // `[model] fallback`: the models a run moves to when its model fails.
   modelFallback?: readonly string[];
+  // `[oidc]`: the job's OIDC token as a cloud credential.
+  oidc?: RuntimeOidc;
   // `[telemetry]`: where the run's spans and metrics go. Absent: nowhere.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy from the same

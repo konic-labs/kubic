@@ -21,6 +21,8 @@ import {
   InMemoryCredentialStore,
 } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { type Keychain, osKeychain } from '@kubic/exec/keychain';
+import { keychainKeys } from '../credentials/index.js';
 import { awsRegionOf } from './aws-region.js';
 import {
   FAUX_PROVIDER_ID,
@@ -206,6 +208,8 @@ export interface AssembledModels {
   // configured, in preference order (see PREFERRED_PROVIDERS). A keyless
   // built-in is never on this list.
   readonly fallbackProviders: readonly string[];
+  // The keys read from the keychain, for the run's scrub.
+  readonly keychainSecrets: readonly string[];
 }
 
 // Assembly options are also the provider-registration options: a run passes its
@@ -225,6 +229,9 @@ export interface AssembleOptions extends RegisterCustomProvidersOptions {
   // Why the project models.json stays out even when trusted (an enterprise
   // `[policy] project_policy = "restricted"`). Absent: it loads once trusted.
   readonly projectProvidersRefusal?: string;
+  // Where `kubic keys` stored keys are read from (tests); absent: this
+  // machine's keychain.
+  readonly keychain?: Keychain;
 }
 
 // The user-global models.json (global tree: ~/.kubic/models/).
@@ -276,11 +283,17 @@ function envTrustsProject(env: Env): boolean {
 // Pi's auth context over an explicit env (never the ambient one in tests):
 // built-in auth resolution reads env keys and ambient credential files
 // through it, both at the availability check and at request time.
-function authContextFor(env: Env, home: string): AuthContext {
+// The auth context reads the environment at request time (a refreshed
+// token is seen), then the keys `kubic keys` stored.
+function authContextFor(
+  env: Env,
+  home: string,
+  stored: Readonly<Record<string, string>>,
+): AuthContext {
   return {
     env: async (name) => {
       const value = env[name];
-      return value === undefined || value === '' ? undefined : value;
+      return value === undefined || value === '' ? stored[name] : value;
     },
     fileExists: async (path) =>
       createNodeFileBridge('/').exists(
@@ -308,9 +321,11 @@ export async function assembleModels(
   options: AssembleOptions = {},
 ): Promise<AssembledModels> {
   const home = options.home ?? homedir();
+  // Keys `kubic keys` stored, for the variables the environment leaves unset.
+  const stored = keychainKeys(env, home, options.keychain ?? osKeychain());
   const models = createModels({
     credentials: new InMemoryCredentialStore(),
-    authContext: authContextFor(env, home),
+    authContext: authContextFor(env, home, stored),
   });
   const bridge = createNodeFileBridge('/');
   const providers = new Map<string, ProviderInfo>();
@@ -458,6 +473,7 @@ export async function assembleModels(
     ...preferenceOrder(usableBuiltins.filter((id) => !customs.includes(id))),
   ];
   return {
+    keychainSecrets: Object.values(stored),
     models,
     notes,
     providers,

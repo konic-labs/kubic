@@ -191,6 +191,29 @@ not sent to the proxy. Tool processes get the proxy variables separately,
 with any credentials stripped (see
 [journal and safety](../architecture/journal-and-safety.md#tool-process-environment)).
 
+## `kubic keys set|list|remove`
+
+```sh
+kubic keys set anthropic                                # typed without echo
+printf %s "$GATEWAY_KEY" | kubic keys set KUBIC_GATEWAY_API_KEY
+kubic keys list
+kubic keys remove anthropic
+```
+
+`kubic keys` keeps provider keys in the operating system's keychain instead
+of a shell profile: the macOS keychain, or the Secret Service (GNOME Keyring,
+KWallet) through libsecret's `secret-tool` on Linux. A key is stored under the
+variable it stands for — `kubic keys set anthropic` stores
+`ANTHROPIC_API_KEY`; a models.json provider's variable is named directly —
+and is typed without echo on a terminal or read from standard input
+otherwise, never from the command line. Kubic records the variable names, not
+the values, in `~/.kubic/keychain.json`, and whenever one of those variables
+is not set, the model catalogue reads its key from the keychain: the provider
+is usable with no environment variable, `kubic run` scrubs the key like any
+other, and nothing prints it. A variable set in the environment wins, and
+`kubic keys list` says so. On another system, or without `secret-tool`, the
+command names what is missing and keys stay in the environment.
+
 ## Secrets (never in config)
 
 Secrets never appear in config: a secret-shaped value or a secret ref in

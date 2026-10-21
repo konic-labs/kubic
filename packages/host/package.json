@@ -29,6 +29,10 @@
       "source": "./src/cost/index.ts",
       "default": "./src/cost/index.ts"
     },
+    "./credentials": {
+      "source": "./src/credentials/index.ts",
+      "default": "./src/credentials/index.ts"
+    },
     "./doctor": {
       "source": "./src/doctor/index.ts",
       "default": "./src/doctor/index.ts"

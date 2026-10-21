@@ -326,6 +326,48 @@ enterprise policy ([policy] project_policy = "restricted"))`). A project may
 still narrow: a stricter permission class, `route = "deny"`, a smaller tool
 set. The default is `"open"`.
 
+## Keys and workload identity
+
+Provider keys need not live in shell profiles or in long-lived CI secrets:
+
+- **On a workstation**, `kubic keys set <provider>` stores the key in the
+  operating system's keychain (see [models](models.md#kubic-keys-setlistremove)).
+- **In CI**, the job's OIDC token is the credential:
+
+```toml
+[oidc]
+provider = "github"     # or "env", with tokenEnv naming the variable
+awsRoleArn = "arn:aws:iam::123456789012:role/kubic-ci"
+gcpAudience = "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/ci/providers/github"
+gcpServiceAccount = "kubic-ci@my-project.iam.gserviceaccount.com"
+gatewayAudience = "https://llm-gateway.corp.example"
+```
+
+With `provider = "github"`, `kubic run` and `kubic tui` request the job's
+token from GitHub Actions (the job needs `permissions: id-token: write`);
+with `provider = "env"` they read it from the variable `tokenEnv` names, the
+way GitLab's `id_tokens` provide one. Then:
+
+- `awsRoleArn`: Amazon Bedrock assumes the role with the token — Kubic writes
+  it to a private file and sets `AWS_WEB_IDENTITY_TOKEN_FILE` and
+  `AWS_ROLE_ARN`, which the AWS SDK reads; the role's trust policy names the
+  repository it trusts.
+- `gcpAudience`: Vertex AI exchanges the token through workload identity
+  federation — Kubic writes the external account configuration and sets
+  `GOOGLE_APPLICATION_CREDENTIALS`, impersonating `gcpServiceAccount` when
+  set. Set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` as usual.
+- `gatewayAudience`: a token for that audience is offered to models.json as
+  `$KUBIC_OIDC_TOKEN`, so a gateway that accepts the job's token takes it as
+  the provider's key (`"apiKey": "$KUBIC_OIDC_TOKEN"`).
+
+On GitHub the token files and the gateway token are refreshed every four
+minutes; the files live in a private temporary directory removed when the
+command ends, and every token is scrubbed from what a run prints and keeps.
+A job with no token to request stops before the catalogue is built, naming
+what it lacks. `[oidc]` is read from the enterprise, product and global
+layers only: a repository must not choose where the job's token goes, so a
+project config setting it is refused.
+
 ## Regions and fallbacks
 
 ```toml

@@ -21,6 +21,7 @@ import type {
   RuntimeThinking,
   SpendCaps,
 } from '@kubic/host/config';
+import type { RuntimeOidc } from '@kubic/host/credentials';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink } from '@kubic/host/run';
@@ -212,6 +213,8 @@ export interface TuiRunOptions {
   // them (the fallback applies when the boot's model is unavailable).
   providerRegions?: Readonly<Record<string, string>>;
   modelFallback?: readonly string[];
+  // `[oidc]`, as `kubic run` reads it.
+  oidc?: RuntimeOidc;
   // `[telemetry]`: where each settled turn's spans and metrics go.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy — the same

@@ -348,10 +348,23 @@ The managed policy has three subcommands, described on the
 | `kubic policy pull` | Fetch the organization's signed remote policy (`[managed] url`) now, verify it and cache it. Runs even while the config is refused (that is the case it repairs); exit 1 when the managed config names no remote policy, the server cannot be reached or the signature does not verify. |
 | `kubic policy sign --key <private.pem> <file>` | Write `<file>.sig`, the Ed25519 signature a managed file needs when its directory holds a `policy.pub`, and say whether that key accepts it. |
 
-## `kubic audit [--posture <p>] [--result <r>] [--session <id>] [--json]`
+## `kubic audit [--posture <p>] [--result <r>] [--session <id>] [--since <t>] [--until <t>] [--format <f>] [--json]`
 
 Queries the audit trail, matching each supplied filter exactly. `--session`
-reads one session's rows (`agent.session` is the session).
+reads one session's rows (`agent.session` is the session). `--since` and
+`--until` keep the records at or after, and before, a time: ISO 8601
+(`2026-10-01`, `2026-10-21T09:00:00Z`) or an age (`30m`, `24h`, `7d`, `2w`).
+`--format` picks the output: `table` (the default), `json` (as `--json`),
+`jsonl` (one record per line) or `csv` (a header and one row per record:
+`when`, `who`, `what`, `session`, `role`, `provider`, `model`, `posture`,
+`permission`, `approval`, `result`, `reason`, `workspace`; a value that a
+spreadsheet would run as a formula gets a leading `'`). An unknown time or
+format, or `--json` with another `--format`, exits 2.
+
+| Subcommand | Meaning |
+| --- | --- |
+| `kubic audit verify [--file <path>] [--json]` | Walk the ledger's hash chain and name the first line that does not hold: an edited line, a removed one, records removed from the end. Exit 0 intact, 1 broken or unreadable. `--file` checks a chained `[[audit]] file` target. See [A tamper-evident ledger](enterprise.md#a-tamper-evident-ledger). |
+| `kubic audit flush` | Deliver what the collector sinks hold in their spools now. Prints `<sink>: delivered <n>, <m> waiting` per collector; exit 1 while records still wait. |
 
 **Output.** Text mode prints a table with the columns `WHEN`, `POSTURE`,
 `RESULT`, `WHAT`, `PERMISSION`, `APPROVAL` and `REASON`. With no matching
@@ -375,9 +388,10 @@ secret-shaped values and listed-secret inventory values become
 main checkout: from a subdirectory or from a linked worktree, every writer
 and `kubic audit` resolve the same file (the parent of git's common dir;
 outside git, the current directory). The shipped runtime ignore rules cover
-this file. Each record is appended and fsynced; a new ledger is created
-`0600` in a `0700` directory, and `kubic doctor`'s `state:permissions`
-check names a looser one.
+this file. Each record is appended and fsynced, with a link to the record
+before it (`chain`, which `kubic audit` itself leaves out of what it
+prints); a new ledger is created `0600` in a `0700` directory, and
+`kubic doctor`'s `state:permissions` check names a looser one.
 
 - `kubic run` and `kubic tui` append one record per resolved approval ask,
   approved or denied, with `posture` `approvals` or `full-access`. An

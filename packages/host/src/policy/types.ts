@@ -78,7 +78,7 @@ interface LoggingPolicy {
   policy?: string;
 }
 
-export type AuditSinkKind = 'syslog' | 'file' | 'memory';
+export type AuditSinkKind = 'syslog' | 'file' | 'memory' | 'https' | 'otlp';
 
 export interface AuditSinkSpec {
   kind: AuditSinkKind;

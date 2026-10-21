@@ -33,7 +33,7 @@ const FILESYSTEM_POLICIES = [
   'workspace-write',
   'full',
 ] as const;
-const AUDIT_SINKS = ['syslog', 'file', 'memory'] as const;
+const AUDIT_SINKS = ['syslog', 'file', 'memory', 'https', 'otlp'] as const;
 const AUDIT_LEVELS = ['privileged', 'all'] as const;
 
 // One scoped-model entry: the allowed-set member a

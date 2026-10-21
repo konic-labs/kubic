@@ -7,13 +7,19 @@ export {
   AUDIT_RECORD_VERSION,
 } from './audit.js';
 export type { AuditOptions } from './audit-cli.js';
-export { loadProdAuditSecrets, runAuditCommand } from './audit-cli.js';
+export {
+  loadProdAuditSecrets,
+  runAuditCommand,
+  runAuditFlushCommand,
+  runAuditVerifyCommand,
+} from './audit-cli.js';
 export {
   AUDIT_LEDGER_FILE,
   appendToLedger,
   /** @internal */ auditLedgerDir,
   auditLedgerDirFor,
   auditSinkSnapshot,
+  flushAuditSinks,
   readAuditLedger,
   /** @internal */ resolveRepoRuntimeRoot,
   resolveRunBaseRevision,

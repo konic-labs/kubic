@@ -1,7 +1,8 @@
 // The configured audit sinks: building them from `[[audit]]` tables, probing
 // their targets, and what `kubic doctor` reports about them.
 
-import { basename, dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { AuditTableConfig } from '../config/index.js';
 import type {
@@ -14,9 +15,18 @@ import {
   createMemorySink,
   createSyslogSink,
   parseSyslogTarget,
+  syslogLineFormat,
 } from './audit.js';
+import { appendChainedAuditLine } from './chain.js';
+import {
+  checkCollectorUrl,
+  deliverSyslogStream,
+  otlpLogsBody,
+  postJson,
+} from './collectors.js';
 import type { auditSinkSnapshot, ConfiguredAuditSink } from './ledger.js';
-import { appendAuditLine, probeMessage } from './ledger.js';
+import { probeMessage } from './ledger.js';
+import { createSpooledSink, type SpooledSink } from './spool.js';
 import {
   createUdpSyslogTransport,
   createUnixSyslogTransport,
@@ -30,15 +40,116 @@ export interface BuiltAuditSinks {
   problems: string[];
 }
 
+/** Where the collector sinks keep the records they could not deliver yet. */
+function defaultAuditSpoolDir(): string {
+  return join(homedir(), '.kubic', 'audit-spool');
+}
+
+export interface AuditSinkOverrides {
+  // The syslog wire for the unix and UDP targets (tests).
+  readonly syslogTransport?: SyslogTransport;
+  // The spool directory of the collector sinks. Absent:
+  // `~/.kubic/audit-spool/`.
+  readonly spoolDir?: string;
+  readonly env?: Record<string, string | undefined>;
+}
+
+// The collector a network sink delivers to: its spool identity and how one
+// batch of records reaches it. Throws a named problem for a table it cannot
+// build (an unreadable `ca`, an unset `tokenEnv`, an insecure URL).
+function collectorFor(
+  table: AuditTableConfig,
+  target: SyslogTarget | undefined,
+  env: Record<string, string | undefined>,
+): {
+  identity: string;
+  deliver: (records: readonly OrgAuditRecord[]) => Promise<void>;
+} {
+  const ca =
+    table.ca === undefined
+      ? undefined
+      : (() => {
+          try {
+            return createNodeFileBridge('/').readTextFile(table.ca);
+          } catch (error) {
+            throw new Error(
+              `cannot read ca ${table.ca}: ${probeMessage(error)}`,
+            );
+          }
+        })();
+  if (
+    table.sink === 'syslog' &&
+    target !== undefined &&
+    target.kind !== 'unix' &&
+    target.kind !== 'udp'
+  ) {
+    const format = syslogLineFormat({ facility: table.facility });
+    return {
+      identity: `syslog ${target.kind}://${target.host}:${target.port}`,
+      deliver: (records) =>
+        deliverSyslogStream(
+          {
+            host: target.host,
+            port: target.port,
+            tls: target.kind === 'tls',
+            ...(ca === undefined ? {} : { ca }),
+          },
+          records.map(format),
+        ),
+    };
+  }
+  if (table.target === undefined || table.target === '') {
+    throw new Error(`sink "${table.sink}" needs a target URL`);
+  }
+  const url = checkCollectorUrl(table.target).toString();
+  let headers: Record<string, string> = {};
+  if (table.tokenEnv !== undefined) {
+    const token = env[table.tokenEnv];
+    if (token === undefined || token === '') {
+      throw new Error(`tokenEnv ${table.tokenEnv} is not set`);
+    }
+    headers = { authorization: `Bearer ${token}` };
+  }
+  const collector = { url, headers, ...(ca === undefined ? {} : { ca }) };
+  return {
+    identity: `${table.sink} ${url}`,
+    deliver: (records) =>
+      postJson(
+        collector,
+        table.sink === 'otlp' ? otlpLogsBody(records) : { records },
+      ),
+  };
+}
+
+// A spooled collector sink, or the problem that keeps it from being built.
+function spooledSink(
+  table: AuditTableConfig,
+  target: SyslogTarget | undefined,
+  overrides: AuditSinkOverrides,
+  failures: string[],
+): SpooledSink {
+  const collector = collectorFor(table, target, overrides.env ?? process.env);
+  return createSpooledSink({
+    name: collector.identity,
+    kind: table.sink as SpooledSink['kind'],
+    identity: collector.identity,
+    spoolDir: overrides.spoolDir ?? defaultAuditSpoolDir(),
+    deliver: collector.deliver,
+    onError: (message) => failures.push(`${message} (kept in the spool)`),
+  });
+}
+
 // Build the process's configured sinks from parsed `[[audit]]` tables.
 // `syslogTransport` injects the syslog wire for tests — prod builds real
 // transports from the target (a unix socket path, defaulting per platform and
 // reached through the system logger, or `host[:port]` UDP defaulting to 514).
-// A transport's asynchronous delivery failures land on the sink's own
-// failure list, which the ledger notes and doctor reports.
+// A `tcp://` or `tls://` syslog target, an `https` sink and an `otlp` sink
+// deliver through a durable spool (spool.ts). A transport's asynchronous
+// delivery failures land on the sink's own failure list, which the ledger
+// notes and doctor reports.
 export function buildConfiguredSinks(
   tables: readonly AuditTableConfig[],
-  overrides: { syslogTransport?: SyslogTransport } = {},
+  overrides: AuditSinkOverrides = {},
 ): BuiltAuditSinks {
   const sinks: ConfiguredAuditSink[] = [];
   const problems: string[] = [];
@@ -49,12 +160,32 @@ export function buildConfiguredSinks(
       problems.push(`${source}: invalid level ${JSON.stringify(level)}`);
       return;
     }
+    if (table.sink === 'https' || table.sink === 'otlp') {
+      const failures: string[] = [];
+      try {
+        const sink = spooledSink(table, undefined, overrides, failures);
+        sinks.push({ sink, level, source, failures, stderrNoted: false });
+      } catch (error) {
+        problems.push(`${source}: ${probeMessage(error)}`);
+      }
+      return;
+    }
     if (table.sink === 'syslog') {
       let target: SyslogTarget;
       try {
         target = parseSyslogTarget(table.target);
       } catch (error) {
         problems.push(`${source}: ${probeMessage(error)}`);
+        return;
+      }
+      if (target.kind === 'tcp' || target.kind === 'tls') {
+        const failures: string[] = [];
+        try {
+          const sink = spooledSink(table, target, overrides, failures);
+          sinks.push({ sink, level, source, failures, stderrNoted: false });
+        } catch (error) {
+          problems.push(`${source}: ${probeMessage(error)}`);
+        }
         return;
       }
       const failures: string[] = [];
@@ -116,8 +247,8 @@ export function buildConfiguredSinks(
 
 // A `[[audit]] file` sink: one validated record per line at
 // the EXACT target path (unlike the repo ledger, which owns its filename),
-// appended durably and created private like the repo ledger: the parent is
-// created when missing.
+// chained and appended durably, and created private like the repo ledger:
+// the parent is created when missing.
 function createTargetFileSink(target: string): AuditSink {
   const bridge = createNodeFileBridge(dirname(target));
   const file = basename(target);
@@ -125,7 +256,7 @@ function createTargetFileSink(target: string): AuditSink {
     name: `file:${target}`,
     kind: 'file',
     write: (record: OrgAuditRecord): void => {
-      appendAuditLine(bridge, file, record);
+      appendChainedAuditLine(bridge, dirname(target), file, record);
     },
   };
 }
@@ -157,7 +288,34 @@ export function isSyslogTargetAvailable(
       probes.unixTransportProblem(parsed.path) === undefined
     );
   }
+  // A stream collector delivers through its spool: no record waits on it.
+  if (parsed.kind === 'tcp' || parsed.kind === 'tls') return true;
   return probes.udpAvailable();
+}
+
+// A spooled collector's check: pass while its spool is empty, a warning
+// naming how many records wait while the collector has not taken them.
+function collectorCheck(
+  base: { id: string; label: string; source: string; level: string },
+  where: string,
+  pending: number | undefined,
+): import('../doctor/index.js').DoctorCheck {
+  const waiting = pending ?? 0;
+  return waiting === 0
+    ? {
+        id: base.id,
+        label: base.label,
+        status: 'pass',
+        reason: 'ok',
+        detail: `${base.source} ${where} (${base.level}; spooled on disk until delivered)`,
+      }
+    : {
+        id: base.id,
+        label: base.label,
+        status: 'warn',
+        reason: 'sink-unreachable',
+        detail: `${base.source} ${where} (${base.level}): ${waiting} record(s) wait in the spool — the collector has not taken them yet; \`kubic audit flush\` retries`,
+      };
 }
 
 export interface AuditSinkDoctorInput {
@@ -177,9 +335,13 @@ export function auditSinksDoctorChecks(
 ): import('../doctor/index.js').DoctorCheck[] {
   const { tables, problems, snapshot, probes } = input;
   const failuresBySource = new Map<string, readonly string[]>();
+  const pendingBySource = new Map<string, number>();
   for (const entry of snapshot) {
     if (entry.failures.length > 0) {
       failuresBySource.set(entry.source, entry.failures);
+    }
+    if (entry.pending !== undefined) {
+      pendingBySource.set(entry.source, entry.pending);
     }
   }
   return tables.map((table, index) => {
@@ -197,8 +359,16 @@ export function auditSinksDoctorChecks(
         detail: `${source} not built: ${problem.slice(source.length + 2)}`,
       };
     }
+    const pending = pendingBySource.get(source);
+    if (table.sink === 'https' || table.sink === 'otlp') {
+      return collectorCheck(
+        { id, label, source, level },
+        `${table.sink} ${table.target ?? ''}`,
+        pending,
+      );
+    }
     const failures = failuresBySource.get(source);
-    if (failures !== undefined) {
+    if (failures !== undefined && pending === undefined) {
       return {
         id,
         label,
@@ -219,6 +389,13 @@ export function auditSinksDoctorChecks(
           reason: 'sink-unreachable' as const,
           detail: `${source}: ${probeMessage(error)}`,
         };
+      }
+      if (target.kind === 'tcp' || target.kind === 'tls') {
+        return collectorCheck(
+          { id, label, source, level },
+          `syslog ${target.kind}://${target.host}:${target.port}`,
+          pending,
+        );
       }
       if (target.kind === 'unix') {
         if (!probes.socketExists(target.path)) {

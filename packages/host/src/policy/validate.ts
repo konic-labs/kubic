@@ -82,7 +82,13 @@ const FILESYSTEM_LEVELS: readonly string[] = [
 
 const LOGGING_LEVELS: readonly string[] = ['error', 'warn', 'info', 'debug'];
 
-const SINK_KINDS: readonly string[] = ['syslog', 'file', 'memory'];
+const SINK_KINDS: readonly string[] = [
+  'syslog',
+  'file',
+  'memory',
+  'https',
+  'otlp',
+];
 
 // `allowed_models` patterns: `provider/id`, `provider/*`,
 // a bare id, or `*` globs. Each segment is non-empty and there is at most

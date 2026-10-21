@@ -215,6 +215,10 @@ export interface AuditTableConfig {
   target?: string;
   // Docs promise a name or a number 0–23.
   facility?: string | number;
+  // PEM certificates a TLS syslog, https or otlp collector is checked against.
+  ca?: string;
+  // The environment variable holding a bearer token for https and otlp.
+  tokenEnv?: string;
 }
 
 export interface KubicConfig {

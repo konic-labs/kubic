@@ -81,6 +81,70 @@ function command(
     .addHelpText('after', examples(usageExamples));
 }
 
+// `kubic audit`: the ledger query, its chain check and the collector flush.
+function registerAudit(
+  program: KubicProgram,
+  ctx: Parameters<CommandRegistrar>[1],
+): void {
+  const { config, runners } = ctx;
+  const done = (result: CommandResult): void => {
+    ctx.finish(result);
+  };
+  const audit = command(
+    program,
+    'audit',
+    "query the repo's approval audit ledger (redacted); verify its chain or flush the collector sinks",
+    [
+      'kubic audit',
+      'kubic audit --result deny --json',
+      'kubic audit --since 7d --format csv > audit.csv',
+      'kubic audit verify',
+      'kubic audit flush',
+    ],
+  )
+    .option('--posture <name>', 'filter on posture')
+    .option('--result <result>', 'filter on result: ok|deny|error')
+    .option('--session <id>', 'filter on one session')
+    .option(
+      '--since <time>',
+      'records at or after this time: ISO 8601, or an age such as 24h or 7d',
+    )
+    .option('--until <time>', 'records before this time, in the same forms')
+    .option('--format <format>', 'table (default), json, jsonl or csv')
+    .option('--json', JSON_HELP)
+    .action(async (options) => done(await runners.audit(options, config)));
+  audit
+    .command('verify')
+    .description(
+      "check the ledger's hash chain and name the first line that does not hold",
+    )
+    .option(
+      '--file <path>',
+      'a chained [[audit]] file target instead of the repo ledger',
+    )
+    .option('--json', JSON_HELP)
+    .action(async (options) =>
+      done(
+        await runners.audit(
+          {
+            command: 'verify',
+            ...(options.file === undefined ? {} : { file: options.file }),
+            ...(options.json === true ? { json: true } : {}),
+          },
+          config,
+        ),
+      ),
+    );
+  audit
+    .command('flush')
+    .description(
+      'deliver what the collector sinks (tcp/tls syslog, https, otlp) hold in their spools now',
+    )
+    .action(async () =>
+      done(await runners.audit({ command: 'flush' }, config)),
+    );
+}
+
 // `kubic policy`: the tool query, and the managed-policy subcommands.
 function registerPolicy(
   program: KubicProgram,
@@ -181,17 +245,7 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
 
   registerPolicy(program, ctx);
 
-  command(
-    program,
-    'audit',
-    "query the repo's approval audit ledger (redacted)",
-    ['kubic audit', 'kubic audit --result deny --json'],
-  )
-    .option('--posture <name>', 'filter on posture')
-    .option('--result <result>', 'filter on result: ok|deny|error')
-    .option('--session <id>', 'filter on one session')
-    .option('--json', JSON_HELP)
-    .action(async (options) => done(await runners.audit(options, config)));
+  registerAudit(program, ctx);
 
   command(
     program,

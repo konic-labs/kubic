@@ -29,13 +29,13 @@ import type { CliTheme } from '@kubic/core/cli/theme';
 import { formatVersionLine } from '@kubic/core/license';
 import { suggest } from '@kubic/core/suggest';
 import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
-import { buildConfiguredSinks, setAuditSinks } from '@kubic/host/audit';
 import { refusedReplayEnvelope } from '@kubic/host/replay';
 import {
   buildRunEnvelope,
   refusedRunResult,
   shellQuote,
 } from '@kubic/host/run';
+import { flushAuditSinksAtExit, installAuditSinks } from './audit-sinks.js';
 import type {
   CommandContext,
   CommandRegistrar,
@@ -446,23 +446,6 @@ function stopOnRefusedConfig(
   return refusalExit;
 }
 
-// Configured audit sinks: one build per process from
-// the loaded `[[audit]]` tables — every command fans its audit rows
-// out to these plus the mandatory repo ledger. An unbuildable table is
-// named on stderr here (and fails its doctor check); it never stops the
-// command, and the repo ledger still records everything.
-function installAuditSinks(
-  cliConfig: CliConfigResult,
-  deps: DispatchDeps,
-): void {
-  if (cliConfig.runtime === undefined) return;
-  const built = buildConfiguredSinks(cliConfig.runtime.config.audit ?? []);
-  setAuditSinks(built.sinks);
-  for (const problem of built.problems) {
-    (deps.err ?? deps.out)(`warning: [[audit]] ${problem}`);
-  }
-}
-
 export async function dispatchCommand(
   requested: string | undefined,
   rest: readonly string[],
@@ -493,7 +476,7 @@ export async function dispatchCommand(
   );
   const refusalExit = stopOnRefusedConfig(cliConfig, command, args, deps);
   if (refusalExit !== undefined) return refusalExit;
-  installAuditSinks(cliConfig, deps);
+  installAuditSinks(cliConfig, deps.err ?? deps.out);
   // `.kubic/` runtime state must never
   // reach a user repo's commit path. Before either mode that creates it,
   // ship the runtime ignore rules into the repo-local exclude file
@@ -535,11 +518,13 @@ export async function dispatchCommand(
     reportUnknownCommand(command ?? '', deps);
     return EXIT_USAGE;
   }
-  return runCommand(command, args, cliConfig, deps, {
+  const code = await runCommand(command, args, cliConfig, deps, {
     rootHelp,
     helpTheme,
     crashProbe,
   });
+  await flushAuditSinksAtExit();
+  return code;
 }
 
 // The commander program over every registrar, run on one command. A

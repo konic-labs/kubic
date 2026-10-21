@@ -68,7 +68,8 @@ them:
 
 `kubic doctor` reports the rest whenever a `[policy]` section is configured
 (see [doctor and debug](doctor-and-debug.md)): `policy:enterprise-sinks`
-(the `[[audit]]` sinks are present, syslog-first, and syslog is available),
+(the `[[audit]]` sinks are present, the first is a collector — syslog,
+https or otlp — and syslog is available),
 `policy:enterprise-network` (a configured `network_policy` fails as not
 enforced) and `policy:enterprise-enforceability` (passes only when both of
 the others do). With no `[policy]` section none of them is emitted.
@@ -215,6 +216,13 @@ configured sink **plus** the mandatory repo ledger
 [[audit]]
 sink = "syslog"
 level = "privileged"
+target = "tls://logs.example.com:6514"
+
+[[audit]]
+sink = "https"
+level = "all"
+target = "https://audit.example.com/kubic"
+tokenEnv = "KUBIC_AUDIT_TOKEN"
 
 [[audit]]
 sink = "file"
@@ -224,8 +232,12 @@ target = "/var/log/kubic.jsonl"
 
 - `sink`: `syslog` (one message per record, the record JSON as its
   body; severity notice for an `ok` result, warning for `deny` and
-  `error`), `file` (one JSON line per record appended at the exact
-  `target` path), or `memory` (process-scoped, for embedders and tests).
+  `error`), `https` (a POST of `{"records": [...]}` per batch to the
+  `target` URL), `otlp` (an OpenTelemetry collector's OTLP/HTTP logs
+  endpoint, one log record per audit record with its `what`, `result`,
+  `posture`, session and pid as attributes), `file` (one JSON line per
+  record appended at the exact `target` path), or `memory`
+  (process-scoped, for embedders and tests).
 - `level`: `privileged` keeps approval decisions (`tool:<name>`), run
   starts (`run:start`), posture changes — the full-access grant
   (`posture:full-access`), its revoke (`posture:approvals`) and a refused
@@ -242,13 +254,22 @@ target = "/var/log/kubic.jsonl"
   works with any logger (on macOS it writes to the unified log), and any
   other socket path needs util-linux `logger`. A host with no logger, or a
   socket path its logger cannot reach, is refused by name when the sinks
-  build. A UDP destination receives one RFC 5424 datagram per record.
-  Delivery is best-effort by protocol design: a failed send is recorded on
-  the sink, noted once per process, and reported by `kubic doctor`. `target` (file): the
+  build. A UDP destination receives one RFC 5424 datagram per record;
+  delivery is best-effort by protocol design: a failed send is recorded on
+  the sink, noted once per process, and reported by `kubic doctor`.
+  `tcp://host[:port]` (514) and `tls://host[:port]` (6514, RFC 5425)
+  deliver RFC 5424 lines in octet-counted frames through the sink's spool
+  (below). `target` (https, otlp): the collector URL — https, or plain http
+  to this machine only. `target` (file): the
   exact file path (required); each record is appended and fsynced, and a
   new file is created `0600` (new directories `0700`) while an existing
   one keeps its mode — pre-create it to give a log collector group read
   access. `memory` takes no target.
+- `ca` (TLS syslog, https, otlp): a PEM file of the certificates the
+  collector's certificate must chain to, in place of the system store.
+- `tokenEnv` (https, otlp): the environment variable whose value is sent as
+  `Authorization: Bearer <token>`; an unset variable refuses the table by
+  name.
 - `facility` (syslog): an RFC 5424 facility name (`local0`–`local7`,
   `user`, `authpriv`, …) or number 0–23; default `local0`. Unknown
   facilities and malformed targets are refused by name when the sinks
@@ -258,6 +279,44 @@ target = "/var/log/kubic.jsonl"
   stderr once per process; the repo write is never blocked. `kubic doctor`
   lists every configured sink with a reachability probe (`audit:sink:*`)
   plus any runtime failure the process recorded.
+
+### Collectors: the spool
+
+A collector over the network — `tcp://` or `tls://` syslog, `https`,
+`otlp` — never holds up the command and never loses a record. Each record is
+first appended to the sink's spool, `~/.kubic/audit-spool/<sink>.jsonl`
+(`0600` in a `0700` directory, fsynced): the record is safe from that moment.
+The spool is then delivered in order, in batches, and what the collector
+accepted is removed. A collector that is down keeps its records in the
+spool; the next record, the end of the command (one short try) or
+`kubic audit flush` delivers them when it answers. Delivery is at least once:
+two commands draining one spool can send a batch twice, never lose one.
+`kubic doctor` warns while records wait (`audit[2] https …: 3 record(s) wait
+in the spool`).
+
+### A tamper-evident ledger
+
+Every line of the repo ledger — and of a `file` sink — carries a link to
+the line before it: `"chain": {"prev": "sha256:…", "hash": "sha256:…"}`,
+where `hash` covers `prev` and the record. Editing a line breaks its hash,
+removing one breaks the next line's `prev`, and a head file beside the
+ledger (`audit.jsonl.head`: the last hash and the ledger's size) catches
+records removed from the end. A ledger begun before the chain keeps its older
+lines; the first chained record links to the digest of all of them. Appends
+run under a lock, so two processes writing one ledger never fork the chain.
+`kubic audit verify` walks it:
+
+```
+$ kubic audit verify
+audit ledger /repo/.kubic/audit/audit.jsonl: intact — 214 record(s), head sha256:5f1c…
+$ kubic audit verify
+error: audit ledger /repo/.kubic/audit/audit.jsonl: line 37 was changed after it was written
+```
+
+The chain proves the ledger was not changed after the fact; it cannot stop a
+process with write access from deleting the whole file and its head. Send
+the records to a collector the developer cannot write to — syslog, https or
+otlp — for a copy that holds.
 
 Unknown keys inside `[policy]` fail closed and are named. `kubic policy
 --tool <name>` answers from the merged enterprise and installed policy and

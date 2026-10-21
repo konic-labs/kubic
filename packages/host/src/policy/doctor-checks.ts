@@ -2,8 +2,14 @@
 import type { EffectivePolicy } from './types.js';
 
 export interface EnterpriseDoctorEnv {
+  // The configured `[[audit]]` sinks, in order. Absent: the policy's own
+  // engine-level sinks (a programmatic policy).
+  sinks?: ReadonlyArray<{ readonly kind: string }>;
   syslogAvailable: boolean;
 }
+
+// The sinks that take records off this machine.
+const COLLECTORS: ReadonlySet<string> = new Set(['syslog', 'https', 'otlp']);
 
 // Unenforceable policy is never silent: every check below is always
 // emitted — enforceable leaves report pass, unenforceable ones report fail
@@ -13,7 +19,7 @@ export function enterpriseDoctorChecks(
   policy: EffectivePolicy,
   env: EnterpriseDoctorEnv,
 ): import('../doctor/index.js').DoctorCheck[] {
-  const sinks = policy.audit.sinks;
+  const sinks = env.sinks ?? policy.audit.sinks;
   let sinksCheck: import('../doctor/index.js').DoctorCheck;
   if (sinks.length === 0) {
     sinksCheck = {
@@ -23,13 +29,14 @@ export function enterpriseDoctorChecks(
       reason: 'policy-mismatch',
       detail: 'no audit sinks: privileged actions would go unaudited',
     };
-  } else if (sinks[0]?.kind !== 'syslog') {
+  } else if (!COLLECTORS.has(sinks[0]?.kind ?? '')) {
     sinksCheck = {
       id: 'policy:enterprise-sinks',
       label: 'policy enterprise audit sinks',
       status: 'fail',
       reason: 'policy-mismatch',
-      detail: 'audit sinks must be syslog-first ([[audit]] order)',
+      detail:
+        'the first audit sink must be a collector — syslog, https or otlp ([[audit]] order) — so records leave the machine',
     };
   } else if (
     sinks.some((sink) => sink.kind === 'syslog') &&
@@ -48,7 +55,7 @@ export function enterpriseDoctorChecks(
       label: 'policy enterprise audit sinks',
       status: 'pass',
       reason: 'ok',
-      detail: `syslog-first, ${sinks.length} sink(s) configured`,
+      detail: `collector-first (${sinks[0]?.kind}), ${sinks.length} sink(s) configured`,
     };
   }
   // `network_policy` and `allowed_domains` are parsed and resolved, but

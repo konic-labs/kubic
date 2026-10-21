@@ -3,18 +3,25 @@
 // before printing. Faux-only — shape-matching values below carry a FAUX
 // marker and stay inert.
 
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   containsSecretShape,
   REDACTED_SECRET,
 } from '@kubic/core/secret-shapes';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { describe, expect, it } from 'vitest';
+import { tempDir } from '../../../../test/temp-dir.js';
 import { EXAMPLE_AUDIT_RECORD } from '../test-support/audit-fixtures.js';
 import { capture } from '../test-support/capture.js';
+import { appendChainedAuditLine } from './chain.js';
 import {
   AUDIT_FIELDS,
   fullAccessEnabledAudit,
   type OrgAuditRecord,
   runAuditCommand,
+  runAuditFlushCommand,
+  runAuditVerifyCommand,
   undoRestoreAudit,
 } from './index.js';
 
@@ -308,5 +315,146 @@ describe('kubic audit prod secrets wiring', () => {
     const text = cap.errs.join('\n');
     expect(text).not.toContain(FAUX_SHAPED);
     expect(text).toContain(REDACTED_SECRET);
+  });
+});
+
+describe('kubic audit time range and formats', () => {
+  const at = (when: string, what: string): OrgAuditRecord => ({
+    ...EXAMPLE_AUDIT_RECORD,
+    agent: { ...EXAMPLE_AUDIT_RECORD.agent },
+    model: { ...EXAMPLE_AUDIT_RECORD.model },
+    process: { ...EXAMPLE_AUDIT_RECORD.process },
+    workspace: { ...EXAMPLE_AUDIT_RECORD.workspace },
+    permission: { ...EXAMPLE_AUDIT_RECORD.permission },
+    credential: { ...EXAMPLE_AUDIT_RECORD.credential },
+    network: { ...EXAMPLE_AUDIT_RECORD.network },
+    when,
+    what,
+  });
+  const RECORDS = [
+    at('2026-10-01T00:00:00.000Z', 'tool:old'),
+    at('2026-10-20T12:00:00.000Z', 'tool:recent'),
+    at('2026-10-21T09:00:00.000Z', '=HYPERLINK("x")'),
+  ];
+  const now = () => Date.parse('2026-10-21T10:00:00.000Z');
+
+  async function run(options: Parameters<typeof runAuditCommand>[0]) {
+    const cap = capture();
+    const code = (
+      await runAuditCommand(options, {
+        loadRecords: () => RECORDS,
+        now,
+        out: cap.out,
+        err: cap.err,
+      })
+    ).exitCode;
+    return { code, ...cap };
+  }
+
+  it('keeps the records inside --since and --until, absolute or as an age', async () => {
+    const recent = await run({ since: '2d', format: 'jsonl' });
+    expect(recent.code).toBe(0);
+    expect(
+      recent.lines.map((line) => (JSON.parse(line) as OrgAuditRecord).what),
+    ).toEqual(['tool:recent', '=HYPERLINK("x")']);
+    const window = await run({
+      since: '2026-10-01',
+      until: '2026-10-21T00:00:00Z',
+      format: 'json',
+    });
+    expect(
+      (JSON.parse(window.lines.join('\n')) as OrgAuditRecord[]).map(
+        (record) => record.what,
+      ),
+    ).toEqual(['tool:old', 'tool:recent']);
+  });
+
+  it('prints CSV with a header, quoting and defused formulas', async () => {
+    const csv = await run({ format: 'csv' });
+    const rows = (csv.lines[0] ?? '').split('\n');
+    expect(rows[0]).toBe(
+      'when,who,what,session,role,provider,model,posture,permission,approval,result,reason,workspace',
+    );
+    expect(rows).toHaveLength(4);
+    expect(rows[3]).toContain(`"'=HYPERLINK(""x"")"`);
+  });
+
+  it('refuses an unknown time, an unknown format and --json with another format', async () => {
+    expect((await run({ since: 'yesterday' })).errs.join('\n')).toContain(
+      'unknown time "yesterday" for --since',
+    );
+    expect((await run({ format: 'xml' })).code).toBe(2);
+    expect((await run({ format: 'csv', json: true })).code).toBe(2);
+  });
+});
+
+describe('kubic audit verify and flush', () => {
+  it('reports an intact ledger and names the line of a broken one', () => {
+    const dir = tempDir('audit-verify-');
+    const bridge = createNodeFileBridge(dir);
+    for (const what of ['run:start', 'tool:bash']) {
+      appendChainedAuditLine(bridge, dir, 'audit.jsonl', {
+        ...EXAMPLE_AUDIT_RECORD,
+        what,
+      });
+    }
+    const ledgerPath = join(dir, 'audit.jsonl');
+    const intact = capture();
+    expect(
+      runAuditVerifyCommand(
+        {},
+        { ledgerPath, out: intact.out, err: intact.err },
+      ).exitCode,
+    ).toBe(0);
+    expect(intact.lines[0]).toMatch(
+      new RegExp(
+        `^audit ledger ${ledgerPath}: intact — 2 record\\(s\\), head sha256:[0-9a-f]{64}$`,
+      ),
+    );
+    writeFileSync(
+      ledgerPath,
+      readFileSync(ledgerPath, 'utf8').replace('tool:bash', 'tool:read'),
+    );
+    const broken = capture();
+    expect(
+      runAuditVerifyCommand(
+        {},
+        { ledgerPath, out: broken.out, err: broken.err },
+      ).exitCode,
+    ).toBe(1);
+    expect(broken.errs.join('\n')).toContain(
+      `audit ledger ${ledgerPath}: line 2 was changed after it was written`,
+    );
+  });
+
+  it('says how much each collector delivered and what still waits', async () => {
+    const none = capture();
+    expect(
+      (await runAuditFlushCommand({ ...none, flush: async () => [] })).exitCode,
+    ).toBe(0);
+    expect(none.lines).toEqual([
+      'no collector sinks configured: nothing is spooled',
+    ]);
+    const waiting = capture();
+    expect(
+      (
+        await runAuditFlushCommand({
+          ...waiting,
+          flush: async () => [
+            { source: 'audit[1]', delivered: 2, pending: 0 },
+            {
+              source: 'audit[2]',
+              delivered: 0,
+              pending: 3,
+              error: 'https://collector answered 503',
+            },
+          ],
+        })
+      ).exitCode,
+    ).toBe(1);
+    expect(waiting.lines).toEqual([
+      'audit[1]: delivered 2, 0 waiting',
+      'audit[2]: delivered 0, 3 waiting',
+    ]);
   });
 });

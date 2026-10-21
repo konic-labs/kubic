@@ -241,10 +241,13 @@ function policyChecks(
       : {
           enterpriseChecks: () =>
             enterpriseDoctorChecks(enterprisePolicy, {
-              syslogAvailable: enterprisePolicy.audit.sinks.every(
-                (sink) =>
-                  sink.kind !== 'syslog' ||
-                  isSyslogTargetAvailable(sink.target, auditProbes),
+              sinks: (cliConfig.runtime?.config.audit ?? []).map((table) => ({
+                kind: table.sink,
+              })),
+              syslogAvailable: (cliConfig.runtime?.config.audit ?? []).every(
+                (table) =>
+                  table.sink !== 'syslog' ||
+                  isSyslogTargetAvailable(table.target, auditProbes),
               ),
             }),
         }),

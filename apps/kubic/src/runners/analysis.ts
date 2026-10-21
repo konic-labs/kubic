@@ -2,6 +2,7 @@
 // eval, benchmark, replay and export.
 
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { EXIT_FAILED } from '@kubic/core/cli/exit-codes';
 import { runBenchmarkCommand, runEvalCommand } from '@kubic/eval/cli';
 import { runExportCommand as runTrajectoryExportCommand } from '@kubic/eval/export-cli';
@@ -10,10 +11,14 @@ import { isGitWorktreeClean } from '@kubic/exec/git-clean';
 import { readStdinText } from '@kubic/exec/stdin';
 import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
+  AUDIT_LEDGER_FILE,
   auditLedgerDirFor,
+  flushAuditSinks,
   loadProdAuditSecrets,
   readAuditLedger,
   runAuditCommand,
+  runAuditFlushCommand,
+  runAuditVerifyCommand,
 } from '@kubic/host/audit';
 import { loadSessionCostRows, runCostCommand } from '@kubic/host/cost';
 import {
@@ -112,18 +117,34 @@ export function policyRunner(io: ProdRunnerIo): ProdRunners['policy'] {
 }
 
 export function auditRunner(io: ProdRunnerIo): ProdRunners['audit'] {
-  return (options) =>
+  return async (options) => {
+    if (options.command === 'verify') {
+      return runAuditVerifyCommand(options, {
+        ledgerPath: join(auditLedgerDirFor(process.cwd()), AUDIT_LEDGER_FILE),
+        ...analysisReport(io),
+      });
+    }
+    if (options.command === 'flush') {
+      return runAuditFlushCommand({
+        flush: () => flushAuditSinks(AUDIT_FLUSH_MS),
+        ...analysisReport(io),
+      });
+    }
     // Audit query over the repo-root ledger (one OrgAuditRecord per
     // line, <repo>/.kubic/audit/audit.jsonl): the approval layer writes
     // every decision there through emitAudit.
     // loadSecrets is the prod inventory hook: every printed record is
     // redacted against it, so a listed value never echoes via --json.
-    runAuditCommand(options, {
+    return runAuditCommand(options, {
       loadRecords: () => readAuditLedger(auditLedgerDirFor(process.cwd())),
       loadSecrets: loadProdAuditSecrets,
       ...analysisReport(io),
     });
+  };
 }
+
+// How long `kubic audit flush` waits on each collector.
+const AUDIT_FLUSH_MS = 30_000;
 
 export function evalRunner(io: ProdRunnerIo): ProdRunners['eval'] {
   return (options, cliConfig) =>

@@ -910,15 +910,24 @@ export const CONFIG_SECTIONS = [
       { name: 'level', check: 'auditLevel', required: true },
       { name: 'target', check: 'string' },
       { name: 'facility', check: 'facility' },
+      { name: 'ca', check: 'string' },
+      { name: 'tokenEnv', check: 'string' },
     ],
     exampleTables: {
       syslog: ['sink = "syslog"', 'level = "privileged"'],
     },
     docs: [
       {
-        keys: ['audit.sink', 'audit.level', 'audit.target', 'audit.facility'],
+        keys: [
+          'audit.sink',
+          'audit.level',
+          'audit.target',
+          'audit.facility',
+          'audit.ca',
+          'audit.tokenEnv',
+        ],
         label: '`audit` (`[[audit]]`)',
-        text: 'Sink tables (`sink` = `syslog` \\| `file` \\| `memory`, `level` = `privileged` \\| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory repo ledger (see [Audit sinks](enterprise.md#audit-sinks-audit)).',
+        text: 'Sink tables (`sink` = `syslog` \\| `https` \\| `otlp` \\| `file` \\| `memory`, `level` = `privileged` \\| `all`, optional `target`, `facility`, `ca` and `tokenEnv`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory, hash-chained repo ledger. A collector over the network (`tcp://`/`tls://` syslog, `https`, `otlp`) is spooled on disk and drained when it answers (see [Audit sinks](enterprise.md#audit-sinks-audit)).',
       },
     ],
   },

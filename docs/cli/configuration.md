@@ -226,7 +226,7 @@ A refused config prints
 - `[run]`: `timeoutMs`, `maxTurns`
 - `[managed]`: `url`, `refreshHours`
 - `[policy]`: `allowed_models`, `allowed_providers`, `allowed_tools`, `denied_tools`, `network_policy`, `allowed_domains`, `filesystem_policy`, `data_policy`, `logging_policy`, `project_policy`
-- `[[audit]]`, an array of tables: `sink` (required), `level` (required), `target`, `facility`
+- `[[audit]]`, an array of tables: `sink` (required), `level` (required), `target`, `facility`, `ca`, `tokenEnv`
 - `skills`: a top-level key, not a section
 <!-- /generated:config-sections -->
 
@@ -302,7 +302,7 @@ quietly stop configuring anything.
 | `policy.filesystem_policy` | Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from the `[permissions]` classes, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it. |
 | `policy.project_policy` | What a repository may set for itself: `"open"` (the default) or `"restricted"`. Set in a layer above the project (enterprise, product or global; the first that sets it wins), `"restricted"` refuses a project config that sets `[approvals] autoApprove`, widens a `[permissions]` class past the layers above (or the defaults), or declares `[verify]` commands — the load names every such key, before anything runs — and keeps the project `models.json` providers out of the catalog (`kubic models` and `kubic doctor` name the file). A project may still narrow. See [Restricting project configuration](enterprise.md#restricting-project-configuration). |
 | `policy.data_policy`, `policy.logging_policy` | Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced. |
-| `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory repo ledger (see [Audit sinks](enterprise.md#audit-sinks-audit)). |
+| `audit` (`[[audit]]`) | Sink tables (`sink` = `syslog` \| `https` \| `otlp` \| `file` \| `memory`, `level` = `privileged` \| `all`, optional `target`, `facility`, `ca` and `tokenEnv`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory, hash-chained repo ledger. A collector over the network (`tcp://`/`tls://` syslog, `https`, `otlp`) is spooled on disk and drained when it answers (see [Audit sinks](enterprise.md#audit-sinks-audit)). |
 | `skills` | Settings skills: files or directories loaded with source `settings` on every lane a command boots — `kubic run`, `kubic tui`, the suite runs of `kubic eval`/`kubic benchmark` and the re-executing tiers of `kubic replay` (see [Settings skills](#settings-skills)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load. |
 <!-- /generated:config-keys -->
 

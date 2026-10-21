@@ -98,6 +98,18 @@ describe('thirdPartyExternals', () => {
     );
   });
 
+  it('leaves the entry point to esbuild, a Windows drive path included', () => {
+    assert.equal(
+      resolver.callback({
+        path: 'D:\\a\\kubic\\kubic\\apps\\kubic\\src\\main.ts',
+        importer: '',
+        resolveDir: 'D:\\a\\kubic\\kubic',
+        kind: 'entry-point',
+      }),
+      undefined,
+    );
+  });
+
   it('matches bare specifiers only, never relative or absolute paths', () => {
     assert.ok(resolver.options.filter.test('commander'));
     assert.ok(resolver.options.filter.test('@kubic/host/doctor'));

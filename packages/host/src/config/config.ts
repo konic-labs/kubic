@@ -13,7 +13,6 @@
 // module never touches node:fs directly. Never imports agent impl.
 
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
 import type { RoleModelEntry } from './checks.js';
 import { checkKeys, checkNoUnknown, isRecord } from './checks.js';
 import { ConfigError, ProjectUntrustedError } from './errors.js';
@@ -206,6 +205,14 @@ interface PolicyConfig {
   loggingPolicy?: string;
   // 'open' (default) or 'restricted': what a repository may set for itself.
   projectPolicy?: string;
+  // Spend caps in US dollars; the lowest any layer sets wins.
+  maxRunCostUsd?: number;
+  maxDailyCostUsd?: number;
+}
+
+// `[cost]`: the team new sessions are billed to.
+interface CostConfig {
+  team?: string;
 }
 
 // `[[audit]]` (parsed here; built in audit/sinks.ts).
@@ -238,6 +245,7 @@ export interface KubicConfig {
   session?: SessionConfig;
   verify?: VerifyConfig;
   run?: RunConfig;
+  cost?: CostConfig;
   managed?: ManagedConfig;
   policy?: PolicyConfig;
   audit?: AuditTableConfig[];
@@ -257,6 +265,7 @@ interface SectionTypes {
   session: SessionConfig;
   verify: VerifyConfig;
   run: RunConfig;
+  cost: CostConfig;
   managed: ManagedConfig;
   policy: PolicyConfig;
   audit: AuditTableConfig;
@@ -283,6 +292,7 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   session: true,
   verify: true,
   run: true,
+  cost: true,
   managed: true,
   policy: true,
   audit: true,
@@ -558,24 +568,6 @@ export function defaultLayerPaths(args: {
     // Session + agent layers are supplied programmatically (never files).
     session: undefined,
     agent: undefined,
-  };
-}
-
-// The rule set is owned by the module that writes it:
-// @kubic/exec `runtime-exclude.ts` is what `kubic run` ships into a user
-// repo, so this list is a projection of
-// that module — never a second hand-maintained copy. `config.test.ts`
-// pins the two together, so a rule added there cannot go unchecked here.
-/** @internal */
-export const GITIGNORE_REQUIRED_ENTRIES = [...RUNTIME_EXCLUDE_ENTRIES] as const;
-
-export function checkGitignoreSplit(gitignoreText: string): {
-  missing: string[];
-} {
-  return {
-    missing: GITIGNORE_REQUIRED_ENTRIES.filter(
-      (entry) => !gitignoreText.includes(entry),
-    ),
   };
 }
 

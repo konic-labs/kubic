@@ -166,6 +166,44 @@ managed config: /etc/kubic/config.toml (signature verified)
 remote policy: https://policy.example.com/kubic/config.toml (fetched 2026-10-21T09:00:00.000Z, signature verified; cached at /Users/you/.kubic/managed/policy.toml)
 ```
 
+## Spend caps
+
+```toml
+[policy]
+max_run_cost_usd = 5
+max_daily_cost_usd = 50
+
+[cost]
+team = "platform"
+```
+
+Two caps bound what Kubic spends, from the cost the providers report on each
+model response:
+
+- `max_run_cost_usd` stops a `kubic run` once its own spend reaches the cap.
+  `kubic tui` counts its spend since the process started: the turn that
+  reaches the cap is cancelled and no prompt is sent again.
+- `max_daily_cost_usd` bounds this machine's spend for the UTC day, read from
+  the session store when the run starts: a run on a day already spent is
+  refused before a session exists, and a run that reaches the cap stops.
+
+A stopped `kubic run` exits 3 with status `spend_limit` and names the spend,
+the cap and the layer that set it (`spend limit reached: this run cost
+$5.02, and [policy] max_run_cost_usd allows $5.00 (set by the enterprise
+layer)`). Every layer may set a cap and the **lowest** wins, so a user can
+tighten the organization's cap but never loosen it; `kubic policy explain`
+names the winning value and its layer.
+
+What the caps cannot do, stated plainly: the check runs after each response,
+so the response that crosses a cap is already spent; a provider that reports
+no cost spends nothing as far as the caps can see; and a session another live
+run holds is counted toward the day only once it ends, so two runs started at
+the same moment can each pass a cap the other has not reported yet.
+
+`kubic cost` reports the spend: `--by user`, `--by team` (the `[cost] team`
+each session was created under), `--by model` and `--by day`, and
+`--format csv` for a spreadsheet — see [kubic cost](analysis.md).
+
 ## Restricting project configuration
 
 A developer who trusts a repository lets its `.kubic/config.toml` and

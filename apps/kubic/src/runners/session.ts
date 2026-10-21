@@ -23,6 +23,7 @@ import {
   runtimeLaneDeps,
   runtimeRunDeps,
   runtimeSkillsDeps,
+  runtimeSpendDeps,
   runtimeStreamTuning,
   runtimeSystemPromptSection,
   sessionRetentionDays,
@@ -78,6 +79,8 @@ export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
     // load, loaded with source 'settings'. The lane falls back to the
     // prod home/cwd/trust around it (only this key is set).
     skills: { ...runtimeSkillsDeps(cliConfig) },
+    // The `[policy]` spend caps the run is held to.
+    ...runtimeSpendDeps(cliConfig),
   };
 }
 
@@ -158,6 +161,8 @@ export function prodTuiDeps(
     // The same settings-skills projection `kubic run`
     // threads — the interactive lane loads the config skills too.
     skills: { ...runtimeSkillsDeps(cliConfig) },
+    // The same `[policy]` spend caps.
+    ...runtimeSpendDeps(cliConfig),
   };
 }
 

@@ -15,7 +15,11 @@ import type {
   ApprovalVerdict,
   InstalledPolicy,
 } from '@kubic/host/approvals';
-import type { RuntimeEscalation, RuntimeThinking } from '@kubic/host/config';
+import type {
+  RuntimeEscalation,
+  RuntimeThinking,
+  SpendCaps,
+} from '@kubic/host/config';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink } from '@kubic/host/run';
@@ -52,6 +56,9 @@ export interface TuiRunDeps {
   // Observes a failed journal-panel read or apply (tests; the
   // loop itself swallows it — the journal is observed, never a gate).
   journalFeedError?: (error: unknown) => void;
+  // The `[policy]` spend caps the process is held to, and the sessions root
+  // the day's spend is read from. Absent: no caps.
+  spend?: { caps: SpendCaps; sessionsRoot?: string };
   // The bound on the quit-time drain (a turn still running when
   // the operator quits is aborted, its kills run, and the loop waits at most
   // this long for it to settle before the sweep and session close). Absent
@@ -195,6 +202,8 @@ export interface TuiRunOptions {
   projectInstructions?: boolean;
   // The project models.json refusal, as `kubic run` reads it.
   projectProvidersRefusal?: string;
+  // `[cost] team`, as `kubic run` records it.
+  sessionTeam?: string;
   // The `[session]` compaction policy — the same
   // projection `kubic run` threads, so the interactive lane compacts under
   // config, not the lane defaults. Absent means the own defaults.

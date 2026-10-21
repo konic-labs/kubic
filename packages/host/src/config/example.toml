@@ -74,6 +74,9 @@ timeoutMs = 600000
 timeoutMs = 300000
 maxTurns = 50
 
+[cost]
+team = "platform"
+
 [managed]
 url = "https://policy.example.com/kubic/config.toml"
 refreshHours = 24
@@ -88,6 +91,8 @@ allowed_domains = ["registry.npmjs.org", "github.com"]
 filesystem_policy = "workspace-only"
 data_policy = "no-external-training"
 logging_policy = "full-audit"
+max_run_cost_usd = 5
+max_daily_cost_usd = 50
 project_policy = "restricted"
 
 [[audit]]

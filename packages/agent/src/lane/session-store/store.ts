@@ -119,6 +119,9 @@ export async function createSession(
     workspace?: string;
     // The run's mode, recorded in the creating commit.
     mode?: RunMode;
+    // Who creates it and the team it is billed to.
+    user?: string;
+    team?: string;
   },
   context: Context,
 ): Promise<SessionHandle> {
@@ -140,6 +143,8 @@ export async function createSession(
       createdAt: new Date().toISOString(),
       ...(opts.workspace === undefined ? {} : { workspace: opts.workspace }),
       ...(opts.mode === undefined ? {} : { mode: opts.mode }),
+      ...(opts.user === undefined ? {} : { user: opts.user }),
+      ...(opts.team === undefined ? {} : { team: opts.team }),
     };
     const storage = await openSessionStorage(store, sessionDir, context);
     // The creating commit: the session's metadata is written with the session
@@ -155,6 +160,8 @@ export async function createSession(
         doc.createdAt = meta.createdAt;
         if (meta.workspace !== undefined) doc.workspace = meta.workspace;
         if (meta.mode !== undefined) doc.mode = meta.mode;
+        if (meta.user !== undefined) doc.user = meta.user;
+        if (meta.team !== undefined) doc.team = meta.team;
       }, context);
     } finally {
       // The kernel owns the storage it was opened over: closing it closes the

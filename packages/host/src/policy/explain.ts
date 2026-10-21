@@ -84,6 +84,16 @@ function policyRows(runtime: RuntimeConfig): PolicyExplainRow[] {
                 .join(', '),
       };
     }
+    // A spend cap is the lowest any layer sets, not the first.
+    const cap =
+      key.name === 'max_run_cost_usd'
+        ? runtime.spend.run
+        : key.name === 'max_daily_cost_usd'
+          ? runtime.spend.daily
+          : undefined;
+    if (cap !== undefined) {
+      return { key: key.name, value: String(cap.usd), source: cap.layer };
+    }
     const value = set[field];
     return value === undefined
       ? { key: key.name, value: UNSET, source: '-' }

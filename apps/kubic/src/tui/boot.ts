@@ -185,6 +185,7 @@ function tuiSessionBoot(
       systemPromptSection: options.systemPromptSection,
       projectInstructions: options.projectInstructions,
       projectProvidersRefusal: options.projectProvidersRefusal,
+      sessionTeam: options.sessionTeam,
       modelPolicy: options.modelPolicy,
       trustProject: options.trustProject,
       skills: options.skills,

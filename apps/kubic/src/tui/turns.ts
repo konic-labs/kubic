@@ -41,6 +41,7 @@ export function buildTurn(ctx: TuiContext): TuiTurnRunner | undefined {
         ctx.journalFeed?.request();
       }
       if (COMMITS.has(event.type)) void ctx.contextMeter?.request();
+      if (event.type === 'usage') spendOn(ctx, event.row.usage.cost?.total);
       // A fresh inbox list replaces the queued rows (it is
       // a snapshot); a `run-start` names the submission the harness
       // just PLACED, so its row becomes the pending echo instead.
@@ -190,4 +191,14 @@ export function startTurn(
       if (ctx.inFlightTurns === 0) ctx.chrome.refreshWorkspace();
       ctx.render();
     });
+}
+
+// One response's cost against the `[policy]` caps: the first cap it reaches
+// cancels the turn in flight and refuses every later prompt.
+function spendOn(ctx: TuiContext, costUsd: number | undefined): void {
+  const stop = ctx.spend?.add(costUsd ?? 0);
+  if (stop === undefined || ctx.spendStop !== undefined) return;
+  ctx.spendStop = stop;
+  ctx.say(`error: ${stop}`);
+  void ctx.activeTurn?.cancel();
 }

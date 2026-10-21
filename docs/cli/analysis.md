@@ -275,13 +275,13 @@ written (`export-failed`); 2 a usage error or an empty match
 manifest is written last, so a failed batch leaves a partial JSONL and no
 `<out>.manifest.json` — the missing manifest is the completeness marker.
 
-## `kubic cost [--session <id>] [--all] [--by <level>] [--json]`
+## `kubic cost [--session <id>] [--all] [--by <level>] [--format <f>] [--json]`
 
 Reads real usage out of the durable session store, scoped to the current
 project by default: only sessions touching the invoking workspace are
 reported, with `--all` for the machine-global total the command prints. The unit is the session: rows aggregate to the `--by` level
-(`request | session | project`, default `session`), one `GROUP / MODEL / IN
-/ OUT / CACHE-R / CACHE-W / COST` row each — a session that ran more than one
+(`request | session | project | user | team | model | day`, default
+`session`), one `GROUP / MODEL / IN / OUT / CACHE-R / CACHE-W / COST` row each — a session that ran more than one
 model reads as one row per model, with input, output and prefix-cache
 counters split out — followed by
 `task total $<sum> (<n> <level>)`. The total is exactly the sum of the
@@ -292,7 +292,15 @@ The numbers are the sessions' `pi.usage` documents, so they match what
 boots a lane. `--by request` lists one row per assistant entry that
 carries its response's usage (the model spend of that request — tools that
 report their own spend aggregate at the higher levels); `--by project`
-rolls each workspace to a single row. A session whose storage a live run
+rolls each workspace to a single row. `--by user` and `--by team` group on
+the OS user who ran each session and the team it is billed to
+(`[cost] team`, recorded when the session is created; older sessions read
+`(unknown)`), `--by model` sums each model across sessions, and `--by day`
+sums each request on the UTC day its response arrived. `--format csv` prints
+the same rows for a spreadsheet — the level, `model`, `input`, `output`,
+`cacheRead`, `cacheWrite` and `costUsd` (six decimals) — with a value a
+spreadsheet would run as a formula defused by a leading `'`; `--format json`
+is `--json`, and an unknown format exits 2. A session whose storage a live run
 owns is skipped, never opened (pi-durable: one process per storage), and
 reported as a zero row with `MODEL` `(locked)`; a session that cannot be
 read at all (a half-written directory) is `(unreadable)` the same way. A session that goes live *during* the read —

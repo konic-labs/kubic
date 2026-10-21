@@ -51,6 +51,9 @@ import type {
   SessionCostSummary,
 } from './session-cost.js';
 import {
+  COST_GROUP_BY_NAMES,
+  costCsv,
+  costGroupOf,
   DEFAULT_COST_GROUP_BY,
   formatCostUsd,
   groupCostRows,
@@ -67,6 +70,8 @@ export interface CostOptions {
   // picks the aggregation level (default session).
   readonly all?: boolean;
   readonly by?: string;
+  // `table` (default), `json` (as `--json`) or `csv`.
+  readonly format?: string;
 }
 
 // What the loader filters and aggregates on: the argv flags plus the
@@ -168,6 +173,8 @@ export async function loadSessionCostRows(
     const identity = {
       session: entry.id,
       ...(project === undefined ? {} : { project }),
+      ...(entry.meta?.user === undefined ? {} : { user: entry.meta.user }),
+      ...(entry.meta?.team === undefined ? {} : { team: entry.meta.team }),
     } as const;
     const live = sessionLockIsLive(join(sessionsRoot, entry.id));
     if (live !== undefined) {
@@ -222,7 +229,7 @@ export async function loadSessionCostRows(
       // carries its response's usage — the model spend of that request.
       // Tools that report their own spend aggregate at the higher levels;
       // a request row never invents their attribution.
-      if (by === 'request') {
+      if (by === 'request' || by === 'day') {
         const items = entriesToTranscript(
           await readSessionEntries(storage, BACKGROUND_CONTEXT),
         );
@@ -231,6 +238,9 @@ export async function loadSessionCostRows(
           rows.push({
             ...identity,
             request: item.entryId,
+            ...(item.timestamp === undefined
+              ? {}
+              : { day: new Date(item.timestamp).toISOString().slice(0, 10) }),
             model:
               item.provider !== undefined && item.model !== undefined
                 ? `${item.provider}/${item.model}`
@@ -365,17 +375,11 @@ function costTable(
   deps: CostCommandDeps,
   by: CostGroupBy,
 ): string {
-  const groupHeader =
-    by === 'request' ? 'REQUEST' : by === 'session' ? 'SESSION' : 'PROJECT';
-  const groupOf = (entry: SessionCostInput): string => {
-    if (by === 'request') return `#${entry.request ?? '?'}`;
-    if (by === 'session') return entry.session ?? '(unknown)';
-    return entry.project ?? '(unknown)';
-  };
+  const groupHeader = by.toUpperCase();
   const cell = (value: string): string =>
     stripUnsafeCharacters(value).replace(/\s+/g, ' ');
   const rows = summary.rows.map((entry) => [
-    cell(groupOf(entry)),
+    cell(costGroupOf(entry, by)),
     cell(entry.model),
     String(entry.input),
     String(entry.output),
@@ -400,9 +404,7 @@ function costTable(
 
 // The noun a level's count is reported in: `(1 session)`, `(2 sessions)`.
 function unitNoun(by: CostGroupBy, count: number): string {
-  const noun =
-    by === 'request' ? 'request' : by === 'session' ? 'session' : 'project';
-  return count === 1 ? noun : `${noun}s`;
+  return count === 1 ? by : `${by}s`;
 }
 
 // `kubic cost` over parsed options: commander (apps/kubic/src/commands/
@@ -412,11 +414,22 @@ export async function runCostCommand(
   options: CostOptions,
   deps: CostCommandDeps,
 ): Promise<CommandResult> {
-  const json = options.json === true;
-  const theme = json ? PLAIN : (deps.theme ?? PLAIN);
+  const format = options.format ?? (options.json === true ? 'json' : 'table');
+  const json = format === 'json';
+  const plain = format !== 'table';
+  const theme = plain ? PLAIN : (deps.theme ?? PLAIN);
   const log = createLineLogger(deps.err, {
-    theme: json ? PLAIN : (deps.errTheme ?? PLAIN),
+    theme: plain ? PLAIN : (deps.errTheme ?? PLAIN),
   });
+  if (
+    (format !== 'table' && format !== 'json' && format !== 'csv') ||
+    (options.json === true && format !== 'json')
+  ) {
+    log.error(
+      `invalid --format ${redactSecretShapes(JSON.stringify(options.format))} (use table|json|csv; --json is --format json)`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
   const sessionId = options.session;
   if (sessionId !== undefined && !SESSION_ID_PATTERN.test(sessionId)) {
     // Fail-closed echo: the rejected id is argv-controlled and may
@@ -437,7 +450,7 @@ export async function runCostCommand(
         : undefined;
   if (by === undefined) {
     log.error(
-      `invalid --by ${redactSecretShapes(JSON.stringify(options.by))} (use request|session|project)`,
+      `invalid --by ${redactSecretShapes(JSON.stringify(options.by))} (use ${COST_GROUP_BY_NAMES})`,
     );
     return { exitCode: EXIT_USAGE };
   }
@@ -467,6 +480,10 @@ export async function runCostCommand(
   const summary = summarizeSessionCost(rows, by);
   if (json) {
     deps.out(formatJson(toCostJson(summary)));
+    return { exitCode: EXIT_OK };
+  }
+  if (format === 'csv') {
+    deps.out(costCsv(summary.rows, by));
     return { exitCode: EXIT_OK };
   }
   if (rows.length === 0) {

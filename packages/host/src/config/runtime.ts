@@ -62,6 +62,7 @@ import type {
   RuntimeThinking,
 } from './runtime-types.js';
 import { configKey } from './schema.js';
+import { spendCapsOf } from './spend-caps.js';
 import { resolveSystemPromptFile } from './system-prompt-file.js';
 
 // Days→ms is the only conversion journal retention needs: bounds are
@@ -246,6 +247,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     projectTrusted,
     ...(projectRestriction === undefined ? {} : { projectRestriction }),
     ...(loaded.managed === undefined ? {} : { managed: loaded.managed }),
+    spend: spendCapsOf(loaded.perLayer),
     overriddenAttempts: [
       ...merged.overriddenAttempts,
       ...pin.modelPinOverrides.map(

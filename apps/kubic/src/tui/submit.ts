@@ -95,6 +95,12 @@ function submitTurn(
   steer: boolean,
   busy: boolean,
 ): TuiSubmitOutcome {
+  // A spend cap reached (or a day already spent) sends nothing more.
+  const capped = ctx.spendStop ?? ctx.spend?.blocked();
+  if (capped !== undefined) {
+    ctx.say(`error: ${capped}`);
+    return 'refused';
+  }
   const sentImages = ctx.pendingImages;
   const imageOptions: TuiTurnOptions =
     sentImages.length === 0 ? {} : { images: sentImages };

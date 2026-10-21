@@ -18,6 +18,7 @@ import type {
   RuntimeEscalation,
   RuntimeThinking,
   RuntimeVerify,
+  SpendCaps,
 } from '@kubic/host/config';
 import { CONFIG_LAYERS, checkModelStreamTuning } from '@kubic/host/config';
 import type { ProjectInstructions } from '@kubic/host/instructions';
@@ -148,6 +149,8 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   projectInstructions?: boolean;
   /** Why the project models.json providers stay out, when they do. */
   projectProvidersRefusal?: string;
+  /** `[cost] team`: recorded on each session the lane creates. */
+  sessionTeam?: string;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -177,6 +180,9 @@ export function runtimeLaneDeps(result: CliConfigResult): {
       ? { projectInstructions: false }
       : {}),
     ...projectModelsDeps(result),
+    ...(runtime.config.cost?.team === undefined
+      ? {}
+      : { sessionTeam: runtime.config.cost.team }),
     // No ladder, no field: escalation stays opt-in — the
     // lane climbs nothing it was never configured with.
     ...(runtime.escalate === undefined
@@ -426,4 +432,16 @@ export function runtimeProjectInstructions(
     trustProject: projectTrustFor(result),
     enabled: result.runtime?.config.agent?.projectInstructions !== false,
   });
+}
+
+// The `[policy]` spend caps `kubic run` and `kubic tui` are held to: nothing
+// when no layer sets one.
+export function runtimeSpendDeps(result: CliConfigResult): {
+  spend?: SpendCaps;
+} {
+  const caps = result.runtime?.spend;
+  return caps === undefined ||
+    (caps.run === undefined && caps.daily === undefined)
+    ? {}
+    : { spend: caps };
 }

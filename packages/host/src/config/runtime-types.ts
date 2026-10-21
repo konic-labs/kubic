@@ -12,6 +12,7 @@ import type {
 } from './config.js';
 import type { ManagedReport } from './managed.js';
 import type { ProjectRestriction } from './project-restriction.js';
+import type { SpendCaps } from './spend-caps.js';
 
 // Where an effective value came from: one of the six config layers, the
 // documented environment overrides, the explicit CLI flag, or the product's
@@ -191,6 +192,9 @@ export interface RuntimeConfig {
   projectRestriction?: ProjectRestriction;
   // Where the managed (enterprise) config came from, when there is one.
   managed?: ManagedReport;
+  // `[policy] max_run_cost_usd` / `max_daily_cost_usd`: the lowest of each
+  // any layer sets.
+  spend: SpendCaps;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
   // in `overriddenAttempts`); empty when nothing was overridden — the same pin

@@ -61,6 +61,7 @@ export function createRunBoot(state: RunState, guard: RunGuard): SessionBoot {
       systemPromptSection: deps.systemPromptSection,
       projectInstructions: deps.projectInstructions,
       projectProvidersRefusal: deps.projectProvidersRefusal,
+      sessionTeam: deps.sessionTeam,
       modelPolicy: deps.modelPolicy,
       trustProject: deps.trustProject,
       skills: deps.skills,

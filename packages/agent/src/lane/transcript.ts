@@ -42,6 +42,8 @@ export type TranscriptItem =
       provider?: string;
       model?: string;
       thinkingLevel?: string;
+      // When the response arrived (ms since the epoch), when it says.
+      timestamp?: number;
       entryId: string;
     }
   | {
@@ -127,11 +129,17 @@ function itemFor(entry: EntryRecord): TranscriptItem | undefined {
     const usage = isRecord(message.usage)
       ? (message.usage as unknown as Usage)
       : undefined;
+    const timestamp =
+      typeof message.timestamp === 'number' &&
+      Number.isFinite(message.timestamp)
+        ? message.timestamp
+        : undefined;
     return {
       kind: 'assistant',
       text: texts.join('\n'),
       toolCalls,
       ...(usage === undefined ? {} : { usage }),
+      ...(timestamp === undefined ? {} : { timestamp }),
       ...(provider === undefined ? {} : { provider }),
       ...(model === undefined ? {} : { model }),
       ...(thinkingLevel === undefined ? {} : { thinkingLevel }),

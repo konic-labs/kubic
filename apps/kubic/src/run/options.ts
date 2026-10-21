@@ -9,7 +9,11 @@ import type { StreamTuningTables } from '@kubic/agent/stream-options';
 import type { ExecutionEnv } from '@kubic/exec/env';
 import type { JournalRetention } from '@kubic/exec/journal';
 import type { ApprovalConfig, InstalledPolicy } from '@kubic/host/approvals';
-import type { RuntimeThinking, RuntimeVerify } from '@kubic/host/config';
+import type {
+  RuntimeThinking,
+  RuntimeVerify,
+  SpendCaps,
+} from '@kubic/host/config';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink, RunProgressSink } from '@kubic/host/run';
@@ -124,6 +128,10 @@ export interface HeadlessRunDeps {
   // Why the project models.json stays out of the catalog (an enterprise
   // `[policy] project_policy = "restricted"`). Absent: it loads once trusted.
   projectProvidersRefusal?: string;
+  // The `[policy]` spend caps the run is held to. Absent: none.
+  spend?: SpendCaps;
+  // `[cost] team`: recorded on the session this run creates.
+  sessionTeam?: string;
   // The `[session]` compaction policy from the same
   // config load — the boot hands it to the settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent

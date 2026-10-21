@@ -25,7 +25,9 @@ import {
   EXIT_WORKSPACE,
 } from '@kubic/core/cli/exit-codes';
 import { createNodeFileBridge, type FileBridge } from '@kubic/exec/file-bridge';
+import { SpendWatch, spentToday } from '@kubic/host/cost';
 import { mapCaughtErrorToTerminus } from '@kubic/host/run';
+import { defaultSessionsRoot } from '@kubic/host/sessions';
 import {
   type ApprovalSurface,
   createApprovalSurface,
@@ -113,6 +115,7 @@ export async function runTuiCommand(
     surface,
     boot: booted.boot,
   });
+  ctx.spend = await tuiSpendWatch(deps);
   return runLoop(ctx, options);
 }
 
@@ -360,4 +363,23 @@ async function openScreen(ctx: TuiContext, terminal: Terminal): Promise<void> {
     app.appendNotice([line]);
   }
   ctx.render();
+}
+
+// The process's spend against the `[policy]` caps; undefined when none is set.
+// The day's spend is read only when a daily cap needs it.
+async function tuiSpendWatch(
+  deps: TuiRunDeps,
+): Promise<SpendWatch | undefined> {
+  const caps = deps.spend?.caps;
+  if (
+    caps === undefined ||
+    (caps.run === undefined && caps.daily === undefined)
+  ) {
+    return undefined;
+  }
+  const today =
+    caps.daily === undefined
+      ? 0
+      : await spentToday(deps.spend?.sessionsRoot ?? defaultSessionsRoot());
+  return new SpendWatch(caps, today);
 }

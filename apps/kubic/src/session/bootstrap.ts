@@ -12,7 +12,7 @@
 // counter. Pending work, the turn itself, progress output and the TUI's
 // interactive switches stay with each front end.
 
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import type { Lane, LaneCompactionOptions } from '@kubic/agent/lane/boot';
 import type {
@@ -119,6 +119,8 @@ export interface SessionBootConfig {
   projectInstructions?: boolean;
   // Why the project models.json stays out of the catalog, when it does.
   projectProvidersRefusal?: string;
+  // `[cost] team`: recorded on a session this boot creates.
+  sessionTeam?: string;
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.
@@ -326,6 +328,7 @@ export class SessionBoot {
               {
                 cwd: this.config.env?.cwd ?? process.cwd(),
                 ...(sessionMode === undefined ? {} : { mode: sessionMode }),
+                ...sessionOwner(this.config.sessionTeam),
               },
               context,
             )
@@ -500,4 +503,22 @@ async function settledWithin<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+// Who a new session is billed to: the OS user running it, and the configured
+// team. A user the platform cannot name is left out, never guessed.
+function sessionOwner(team: string | undefined): {
+  user?: string;
+  team?: string;
+} {
+  let user: string | undefined;
+  try {
+    user = userInfo().username;
+  } catch {
+    user = process.env.USER ?? process.env.USERNAME;
+  }
+  return {
+    ...(user === undefined || user === '' ? {} : { user }),
+    ...(team === undefined ? {} : { team }),
+  };
 }

@@ -8,6 +8,7 @@
 // counters read off real usage rows; a caller without usage rows omits them.
 // The `--json` document is `CostJsonShape` (`rows`, `taskTotal`).
 
+import { csvField } from '../cli/index.js';
 import { type PrefixHitRate, prefixHitRate } from './cache.js';
 
 // One cost row. `session` is the session id; `project` is the recorded
@@ -26,17 +27,82 @@ export interface SessionCostInput {
   session?: string;
   project?: string;
   request?: string;
+  // Who ran the session, the team it is billed to (`[cost] team`), and the
+  // UTC day a request's response arrived (`YYYY-MM-DD`, request rows only).
+  user?: string;
+  team?: string;
+  day?: string;
 }
 
-// The level `kubic cost --by` aggregates at: request, session or project.
-// The default is the session: one row per session and model it ran.
-export type CostGroupBy = 'request' | 'session' | 'project';
+// The level `kubic cost --by` aggregates at. The default is the session: one
+// row per session and model it ran.
+export type CostGroupBy =
+  | 'request'
+  | 'session'
+  | 'project'
+  | 'user'
+  | 'team'
+  | 'model'
+  | 'day';
 
 const COST_GROUP_BYS: readonly CostGroupBy[] = [
   'request',
   'session',
   'project',
+  'user',
+  'team',
+  'model',
+  'day',
 ];
+
+/** The levels, for a usage message: `request|session|…`. */
+export const COST_GROUP_BY_NAMES = COST_GROUP_BYS.join('|');
+
+const UNKNOWN = '(unknown)';
+
+/** The cell a row's group shows at a level. */
+export function costGroupOf(row: SessionCostInput, by: CostGroupBy): string {
+  switch (by) {
+    case 'request':
+      return `#${row.request ?? '?'}`;
+    case 'session':
+      return row.session ?? UNKNOWN;
+    case 'project':
+      return row.project ?? UNKNOWN;
+    case 'user':
+      return row.user ?? UNKNOWN;
+    case 'team':
+      return row.team ?? UNKNOWN;
+    case 'model':
+      return row.model;
+    case 'day':
+      return row.day ?? UNKNOWN;
+  }
+}
+
+/** The rows as CSV: the level, the model and the counters, one row each. */
+export function costCsv(
+  rows: readonly SessionCostInput[],
+  by: CostGroupBy,
+): string {
+  const lines = rows.map((row) =>
+    [
+      costGroupOf(row, by),
+      row.model,
+      String(num(row.input)),
+      String(num(row.output)),
+      String(num(row.cacheRead)),
+      String(num(row.cacheWrite)),
+      num(row.costUsd).toFixed(6),
+    ]
+      .map(csvField)
+      .join(','),
+  );
+  return [
+    `${by},model,input,output,cacheRead,cacheWrite,costUsd`,
+    ...lines,
+  ].join('\n');
+}
 
 export const DEFAULT_COST_GROUP_BY: CostGroupBy = 'session';
 
@@ -63,25 +129,16 @@ export function groupCostRows(
   by: CostGroupBy,
 ): SessionCostInput[] {
   if (by === 'request') return rows.map((row) => ({ ...row }));
-  const keyOf = (row: SessionCostInput): string => {
-    if (by === 'session') {
-      return `${row.session ?? ''}\n${row.model}`;
-    }
-    return row.project ?? '(unknown)';
-  };
+  const keyOf = (row: SessionCostInput): string =>
+    by === 'session'
+      ? `${row.session ?? ''}\n${row.model}`
+      : costGroupOf(row, by);
   const grouped = new Map<string, SessionCostInput>();
   for (const row of rows) {
     const key = keyOf(row);
     const entry = grouped.get(key);
     if (entry === undefined) {
-      grouped.set(key, {
-        ...row,
-        // A project row aggregates every model away: it names the project,
-        // never one model.
-        ...(by === 'project'
-          ? { model: '-', session: undefined, request: undefined }
-          : {}),
-      });
+      grouped.set(key, firstOfGroup(row, by));
       continue;
     }
     entry.costUsd += num(row.costUsd);
@@ -93,6 +150,40 @@ export function groupCostRows(
     }
   }
   return [...grouped.values()];
+}
+
+// The first row of a group, keeping only what names the group: a project,
+// user, team or day row aggregates every model away, and a model row every
+// session.
+function firstOfGroup(
+  row: SessionCostInput,
+  by: CostGroupBy,
+): SessionCostInput {
+  if (by === 'session') return { ...row };
+  const counters: SessionCostInput = {
+    model: by === 'model' ? row.model : '-',
+    costUsd: num(row.costUsd),
+    input: num(row.input),
+    output: num(row.output),
+    ...(row.cacheRead === undefined && row.cacheWrite === undefined
+      ? {}
+      : { cacheRead: num(row.cacheRead), cacheWrite: num(row.cacheWrite) }),
+  };
+  const group = costGroupOf(row, by);
+  switch (by) {
+    case 'project':
+      return row.project === undefined
+        ? counters
+        : { ...counters, project: group };
+    case 'user':
+      return { ...counters, user: group };
+    case 'team':
+      return { ...counters, team: group };
+    case 'day':
+      return { ...counters, day: group };
+    default:
+      return counters;
+  }
 }
 
 export interface SessionCostSummary {

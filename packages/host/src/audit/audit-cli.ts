@@ -18,6 +18,7 @@ import { formatJson } from '@kubic/core/cli/output';
 import { renderTable } from '@kubic/core/cli/table';
 import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
 import { REDACTED_SECRET, redactSecretShapes } from '@kubic/core/secret-shapes';
+import { csvField } from '../cli/index.js';
 import { type AuditResult, type OrgAuditRecord, queryAudits } from './audit.js';
 import { type ChainVerification, verifyAuditChain } from './chain.js';
 import type { AuditSinkFlush } from './ledger.js';
@@ -58,13 +59,6 @@ function parseAuditTime(value: string, now: number): number | undefined {
   }
   const at = Date.parse(value);
   return Number.isNaN(at) ? undefined : at;
-}
-
-// One CSV field: quoted when it must be, and a leading formula character
-// defused so a spreadsheet shows the value instead of running it.
-function csvField(value: string): string {
-  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
 const CSV_COLUMNS = [

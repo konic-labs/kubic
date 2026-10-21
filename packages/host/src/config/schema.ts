@@ -729,6 +729,28 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'cost',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'team',
+        check: 'string',
+        runtime: {
+          effect:
+            'the team recorded on each new session, which `kubic cost --by team` groups on',
+        },
+        example: '"platform"',
+      },
+    ],
+    docs: [
+      {
+        keys: ['cost.team'],
+        text: 'The team a new session is billed to: recorded on the session with the OS user who ran it, so `kubic cost --by team` and `--by user` group spend by them. Set it in the managed config to bill a fleet by team. Sessions recorded before it report `(unknown)`.',
+      },
+    ],
+  },
+  {
     name: 'managed',
     shape: 'table',
     omitEmpty: true,
@@ -858,6 +880,26 @@ export const CONFIG_SECTIONS = [
         example: '"full-audit"',
       },
       {
+        name: 'max_run_cost_usd',
+        field: 'maxRunCostUsd',
+        check: 'number',
+        runtime: {
+          effect:
+            'stops a `kubic run` (or a `kubic tui` process) once its own spend reaches this many US dollars; the lowest value any layer sets wins',
+        },
+        example: '5',
+      },
+      {
+        name: 'max_daily_cost_usd',
+        field: 'maxDailyCostUsd',
+        check: 'number',
+        runtime: {
+          effect:
+            "refuses a run, or stops it, once this machine's spend for the UTC day reaches this many US dollars; the lowest value any layer sets wins",
+        },
+        example: '50',
+      },
+      {
         name: 'project_policy',
         field: 'projectPolicy',
         check: 'projectPolicy',
@@ -888,6 +930,10 @@ export const CONFIG_SECTIONS = [
       {
         keys: ['policy.filesystem_policy'],
         text: "Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from the `[permissions]` classes, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it.",
+      },
+      {
+        keys: ['policy.max_run_cost_usd', 'policy.max_daily_cost_usd'],
+        text: "Spend caps in US dollars, from the cost the providers report. `max_run_cost_usd` stops a `kubic run` once its own spend reaches the cap (a `kubic tui` process counts its spend since it started); `max_daily_cost_usd` refuses a run when this machine's spend for the UTC day has reached the cap, and stops one that reaches it. Unlike other policy keys, every layer may set a cap and the **lowest** wins, so a user can tighten an organization's cap but never loosen it. A run stopped by a cap exits 3 with status `spend_limit`; the check runs after each model response, so one response can overshoot the cap by its own cost. See [Spend caps](enterprise.md#spend-caps).",
       },
       {
         keys: ['policy.project_policy'],

@@ -6,6 +6,7 @@ import type { PermissionClasses } from '@kubic/agent/permissions';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import type { JournalRetention } from '@kubic/exec/journal';
 import type { ApprovalConfig, InstalledPolicy } from '@kubic/host/approvals';
+import type { SpendCaps } from '@kubic/host/config';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import { ProcessTerminal } from '@kubic/tui/tui-boundary';
 import type { runtimeLaneDeps } from '../config/projections.js';
@@ -23,6 +24,8 @@ export type TuiDepsInput = {
   // state — invocation facts, forwarded by name below.
   version?: string;
   projectTrust?: 'loaded' | 'untrusted';
+  // The `[policy]` spend caps, as `kubic run` is held to them.
+  spend?: SpendCaps;
 } & TuiConfigProjection;
 
 // The config projections `kubic tui` consumes. The lane half is
@@ -124,6 +127,8 @@ export function tuiBootOptions(
     projectInstructions: provided.projectInstructions,
     // The project models.json refusal, as `kubic run` reads it.
     projectProvidersRefusal: provided.projectProvidersRefusal,
+    // `[cost] team`, as `kubic run` records it.
+    sessionTeam: provided.sessionTeam,
     // `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,
@@ -185,6 +190,9 @@ export function tuiDepsWithDefaults(
     ...(provided.projectTrust === undefined
       ? {}
       : { projectTrust: provided.projectTrust }),
+    ...(provided.spend === undefined
+      ? {}
+      : { spend: { caps: provided.spend } }),
     // The header's workspace facts and clock.
     readWorkspace: () =>
       readTuiWorkspace(

@@ -23,13 +23,14 @@ function load() {
         '[policy]',
         'allowed_models = ["local/*"]',
         'denied_tools = ["network_fetch"]',
+        'max_run_cost_usd = 5',
         'project_policy = "restricted"',
         '[[audit]]',
         'sink = "syslog"',
         'level = "privileged"',
       ].join('\n'),
       '/home/u/.kubic/config.toml':
-        '[policy]\ndenied_tools = ["bash"]\n[journal]\nretentionDays = 3\n',
+        '[policy]\ndenied_tools = ["bash"]\nmax_run_cost_usd = 2\n[journal]\nretentionDays = 3\n',
     }),
     home: '/home/u',
     cwd: '/repo',
@@ -64,6 +65,8 @@ describe('kubic policy explain', () => {
         },
         { key: 'project_policy', value: '"restricted"', source: 'enterprise' },
         { key: 'network_policy', value: '(not set)', source: '-' },
+        // The lowest cap wins: the user's 2 under the enterprise's 5.
+        { key: 'max_run_cost_usd', value: '2', source: 'global' },
       ]),
     );
     expect(explanation.policy.map((row) => row.key)).toEqual([
@@ -76,6 +79,8 @@ describe('kubic policy explain', () => {
       'filesystem_policy',
       'data_policy',
       'logging_policy',
+      'max_run_cost_usd',
+      'max_daily_cost_usd',
       'project_policy',
     ]);
     expect(explanation.audit).toEqual([
@@ -99,8 +104,14 @@ describe('kubic policy explain', () => {
   it('renders one fact per line', () => {
     const lines = renderPolicyExplain(explainPolicy(load()));
     expect(lines[0]).toBe('policy:');
-    expect(lines).toContain('  allowed_models     ["local/*"]  (enterprise)');
-    expect(lines).toContain('  network_policy     (not set)');
+    expect(lines).toContainEqual(
+      expect.stringMatching(
+        /^ {2}allowed_models +\["local\/\*"\] {2}\(enterprise\)$/,
+      ),
+    );
+    expect(lines).toContainEqual(
+      expect.stringMatching(/^ {2}network_policy +\(not set\)$/),
+    );
     expect(lines).toContain(
       'managed config: /etc/kubic/config.toml (not signed)',
     );
@@ -112,7 +123,7 @@ describe('kubic policy explain', () => {
       (await runPolicyExplainCommand({ json: true }, { ...json.deps, load }))
         .exitCode,
     ).toBe(0);
-    expect(JSON.parse(json.out.join('\n')).policy).toHaveLength(10);
+    expect(JSON.parse(json.out.join('\n')).policy).toHaveLength(12);
     const broken = io();
     expect(
       (

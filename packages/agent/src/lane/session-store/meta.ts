@@ -47,6 +47,10 @@ export interface KubicSessionMeta {
   // The run's mode, recorded when the run names it
   // (absent ⇒ off by default, never assumed).
   mode?: RunMode;
+  // Who ran it — the OS user — and the `[cost] team` it is billed to:
+  // what `kubic cost --by user|team` groups on. Absent on older sessions.
+  user?: string;
+  team?: string;
   [k: string]: JsonValue | undefined;
 }
 
@@ -62,6 +66,8 @@ export const KubicSessionDoc = defineDoc<{
   conversation?: number;
   forkedFrom?: { session: string; at: number };
   mode?: RunMode;
+  user?: string;
+  team?: string;
 }>({
   kind: 'kubic.session',
   version: 1,
@@ -191,6 +197,12 @@ function metaFrom(
     typeof forkedFrom.at === 'number'
       ? { forkedFrom: { session: forkedFrom.session, at: forkedFrom.at } }
       : {}),
+    ...(typeof value.user === 'string' && value.user !== ''
+      ? { user: value.user }
+      : {}),
+    ...(typeof value.team === 'string' && value.team !== ''
+      ? { team: value.team }
+      : {}),
   };
 }
 
@@ -225,6 +237,8 @@ export function writeSessionHeader(
       createdAt: meta.createdAt,
       ...(meta.workspace === undefined ? {} : { workspace: meta.workspace }),
       ...(meta.mode === undefined ? {} : { mode: meta.mode }),
+      ...(meta.user === undefined ? {} : { user: meta.user }),
+      ...(meta.team === undefined ? {} : { team: meta.team }),
     })}\n`,
     { mode: 0o600 },
   );

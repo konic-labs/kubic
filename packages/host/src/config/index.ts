@@ -50,6 +50,7 @@ export type {
   SetupUi,
 } from './setup-cli.js';
 export { runSetupCommand } from './setup-cli.js';
+export type { SpendCaps } from './spend-caps.js';
 export {
   /** @internal */ MCP_ARRIVAL_REQUIREMENTS,
   mcpRefusalMessage,

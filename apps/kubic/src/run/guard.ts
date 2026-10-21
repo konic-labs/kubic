@@ -4,6 +4,7 @@
 // the one the run reports.
 import { turnAbort } from '@kubic/agent/lane/turn';
 import { type Context, withCancel } from '@kubic/agent/pi-boundary';
+import type { SpendWatch } from '@kubic/host/cost';
 import type { InterruptSignal, SignalSource } from './options.js';
 
 const INTERRUPT_SIGNALS: readonly InterruptSignal[] = [
@@ -19,7 +20,9 @@ const INTERRUPT_SIGNALS: readonly InterruptSignal[] = [
 export type GuardStop =
   | { readonly kind: 'interrupted'; readonly signal: string }
   | { readonly kind: 'timeout'; readonly ms: number }
-  | { readonly kind: 'turn-limit'; readonly turns: number };
+  | { readonly kind: 'turn-limit'; readonly turns: number }
+  // A `[policy]` spend cap, named with the spend and the cap.
+  | { readonly kind: 'spend-limit'; readonly message: string };
 
 export function guardStopMessage(stop: GuardStop): string {
   switch (stop.kind) {
@@ -29,6 +32,8 @@ export function guardStopMessage(stop: GuardStop): string {
       return `run timed out after ${stop.ms}ms`;
     case 'turn-limit':
       return `turn limit reached after ${stop.turns} turns`;
+    case 'spend-limit':
+      return stop.message;
   }
 }
 
@@ -41,6 +46,7 @@ export class RunGuard {
   private readonly cancel: (reason: unknown) => void;
   private readonly signals: SignalSource;
   private readonly maxTurns: number | undefined;
+  private readonly spend: SpendWatch | undefined;
   private firstStop: GuardStop | undefined;
   private signalled: string | undefined;
   // Counted from the committed usage events: one per assistant response,
@@ -54,12 +60,14 @@ export class RunGuard {
     parent: Context,
     signals: SignalSource,
     maxTurns: number | undefined,
+    spend?: SpendWatch,
   ) {
     const guard = withCancel(parent);
     this.context = guard.context;
     this.cancel = (reason) => guard.cancel(reason);
     this.signals = signals;
     this.maxTurns = maxTurns;
+    this.spend = spend;
   }
 
   // The stop that ended the run's waits, if any: the first one wins.
@@ -96,12 +104,15 @@ export class RunGuard {
     );
   }
 
-  // One committed response: past `--max-turns`, the run stops.
-  countTurn(): void {
+  // One committed response: past `--max-turns`, or at a spend cap, the run
+  // stops.
+  countTurn(costUsd = 0): void {
     this.turns += 1;
     if (this.maxTurns !== undefined && this.turns > this.maxTurns) {
       this.trip({ kind: 'turn-limit', turns: this.turns - 1 });
     }
+    const spent = this.spend?.add(costUsd);
+    if (spent !== undefined) this.trip({ kind: 'spend-limit', message: spent });
   }
 
   // In-flight work is dead: a later signal takes the default path again.

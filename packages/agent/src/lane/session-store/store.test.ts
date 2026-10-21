@@ -215,6 +215,26 @@ describe('pi-durable session storage', () => {
     ).toEqual(committed);
   });
 
+  it('records who created a session and the team it is billed to', async () => {
+    const root = tmpRoot();
+    const store = storeFor(root);
+    const session = track(
+      await createSession(
+        store,
+        { cwd: '/work', user: 'ada', team: 'core' },
+        BACKGROUND_CONTEXT,
+      ),
+    );
+    expect(session.meta).toMatchObject({ user: 'ada', team: 'core' });
+    expect(readHeader(root, session.id)).toMatchObject({
+      user: 'ada',
+      team: 'core',
+    });
+    expect(
+      await readSessionMetadata(session.storage, BACKGROUND_CONTEXT),
+    ).toMatchObject({ user: 'ada', team: 'core' });
+  });
+
   it('records a declared workspace beside the cwd', async () => {
     const root = tmpRoot();
     const store = storeFor(root);

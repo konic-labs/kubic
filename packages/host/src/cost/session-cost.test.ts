@@ -2,6 +2,7 @@
 // each level counts.
 import { describe, expect, it } from 'vitest';
 import {
+  costCsv,
   formatCostUsd,
   groupCostRows,
   isCostGroupBy,
@@ -88,12 +89,19 @@ describe('cost precision and grouping', () => {
     expect(formatCostUsd(1)).toBe('$1.00');
   });
 
-  it('accepts exactly the three levels', () => {
-    expect(isCostGroupBy('request')).toBe(true);
-    expect(isCostGroupBy('session')).toBe(true);
-    expect(isCostGroupBy('project')).toBe(true);
+  it('accepts exactly the seven levels', () => {
+    for (const level of [
+      'request',
+      'session',
+      'project',
+      'user',
+      'team',
+      'model',
+      'day',
+    ]) {
+      expect(isCostGroupBy(level)).toBe(true);
+    }
     expect(isCostGroupBy('agent')).toBe(false);
-    expect(isCostGroupBy('model')).toBe(false);
     expect(isCostGroupBy('')).toBe(false);
   });
 
@@ -178,5 +186,78 @@ describe('cost precision and grouping', () => {
     const grouped = groupCostRows(requested, 'request');
     expect(grouped).toHaveLength(4);
     expect(grouped[1]?.request).toBe('2');
+  });
+});
+
+describe('cost by user, team, model and day', () => {
+  const ROWS = [
+    {
+      session: 's1',
+      project: '/a',
+      user: 'ada',
+      team: 'core',
+      day: '2026-10-20',
+      model: 'anthropic/x',
+      costUsd: 1,
+      input: 10,
+      output: 1,
+    },
+    {
+      session: 's2',
+      project: '/a',
+      user: 'ada',
+      team: 'core',
+      day: '2026-10-21',
+      model: 'openai/y',
+      costUsd: 2,
+      input: 20,
+      output: 2,
+    },
+    {
+      session: 's3',
+      project: '/b',
+      user: 'lin',
+      day: '2026-10-21',
+      model: 'anthropic/x',
+      costUsd: 4,
+      input: 40,
+      output: 4,
+    },
+  ];
+
+  it('sums each level and keeps only what names the group', () => {
+    expect(groupCostRows(ROWS, 'user')).toEqual([
+      { user: 'ada', model: '-', costUsd: 3, input: 30, output: 3 },
+      { user: 'lin', model: '-', costUsd: 4, input: 40, output: 4 },
+    ]);
+    expect(groupCostRows(ROWS, 'team')).toEqual([
+      { team: 'core', model: '-', costUsd: 3, input: 30, output: 3 },
+      { team: '(unknown)', model: '-', costUsd: 4, input: 40, output: 4 },
+    ]);
+    expect(groupCostRows(ROWS, 'model')).toEqual([
+      { model: 'anthropic/x', costUsd: 5, input: 50, output: 5 },
+      { model: 'openai/y', costUsd: 2, input: 20, output: 2 },
+    ]);
+    expect(
+      groupCostRows(ROWS, 'day').map((row) => [row.day, row.costUsd]),
+    ).toEqual([
+      ['2026-10-20', 1],
+      ['2026-10-21', 6],
+    ]);
+  });
+
+  it('prints CSV with the level column first, quoting and defusing values', () => {
+    const csv = costCsv(
+      [
+        { team: '=cmd|x', model: '-', costUsd: 1.5, input: 3, output: 4 },
+        { team: 'a,b', model: '-', costUsd: 0, input: 0, output: 0 },
+      ],
+      'team',
+    );
+    expect(csv.split('\n')).toEqual([
+      'team,model,input,output,cacheRead,cacheWrite,costUsd',
+      "'=cmd|x,-,3,4,0,0,1.500000",
+      '"a,b",-,0,0,0,0,0.000000',
+    ]);
   });
 });

@@ -7,13 +7,15 @@ import { type BridgePick, fakeBridge } from '../test-support/config-bridge.js';
 import {
   CONFIG_LAYERS,
   type ConfigLayer,
-  checkGitignoreSplit,
   defaultLayerPaths,
-  GITIGNORE_REQUIRED_ENTRIES,
   mergeLayered,
   parseTomlConfig,
 } from './config.js';
 import { ConfigError, ProjectUntrustedError } from './errors.js';
+import {
+  checkGitignoreSplit,
+  GITIGNORE_REQUIRED_ENTRIES,
+} from './ignore-split.js';
 import { loadRuntimeConfig } from './runtime.js';
 
 // The canonical example, as the schema generates it (scripts/gen-config-docs.mjs).

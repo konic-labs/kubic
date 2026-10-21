@@ -105,7 +105,7 @@ function onLaneEvent(
     return;
   }
   if (event.type !== 'usage') return;
-  guard.countTurn();
+  guard.countTurn(event.row.usage.cost?.total ?? 0);
 }
 
 // A turn a dead process left open would refuse this

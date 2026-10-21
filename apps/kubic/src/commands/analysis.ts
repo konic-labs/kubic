@@ -229,7 +229,11 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     program,
     'cost',
     'report token and dollar cost over stored sessions',
-    ['kubic cost', 'kubic cost --session 3f2a --json'],
+    [
+      'kubic cost',
+      'kubic cost --session 3f2a --json',
+      'kubic cost --all --by team --format csv > spend.csv',
+    ],
   )
     .option('--session <id>', 'read only this session ([A-Za-z0-9_-])')
     .option(
@@ -238,8 +242,9 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     )
     .option(
       '--by <level>',
-      'group rows: request|session|project (default session)',
+      'group rows: request|session|project|user|team|model|day (default session)',
     )
+    .option('--format <format>', 'table (default), json or csv')
     .option('--json', JSON_HELP)
     .action(async (options) => done(await runners.cost(options, config)));
 

@@ -18,6 +18,7 @@ import {
   parseRunTimeout,
   parseSessionIdArg,
 } from '@kubic/host/run';
+import { parseSessionExportFormat } from '@kubic/host/sessions';
 import { collect, examples, rule } from '../cli/argv.js';
 import type { CommandContext, CommandRegistrar } from '../cli/context.js';
 
@@ -296,11 +297,80 @@ function registerTui(program: Command, ctx: CommandContext): void {
     });
 }
 
+// `sessions fork` and `sessions export`: the two subcommands that copy a
+// session out — into a new session, or into a document.
+function registerSessionCopies(
+  sessions: Command,
+  run: (
+    invocation: Parameters<CommandContext['runners']['sessions']>[0],
+  ) => Promise<void>,
+): void {
+  sessions
+    .command('fork')
+    .description(
+      'fork a session into a new one (at an entry, default the newest; --tree copies every branch)',
+    )
+    .argument(
+      '<id>',
+      'the source session id ([A-Za-z0-9_-])',
+      rule(parseSessionIdArg),
+    )
+    .option(
+      '--at <entry>',
+      'fork at this entry id (inclusive; `kubic sessions attach --ids` shows them)',
+      nonNegativeInt('integer entry id'),
+    )
+    .option('--tree', 'copy the whole tree: every conversation and branch tip')
+    .option('--json', 'print {id, source, at} as one JSON document')
+    .addHelpText(
+      'after',
+      examples([
+        'kubic sessions fork <id>',
+        'kubic sessions fork <id> --at 12 --json',
+        'kubic tui --session "$(kubic sessions fork <id> --at 12)"',
+      ]),
+    )
+    .action(async (id, opts) => {
+      await run({
+        command: 'fork',
+        id,
+        ...(opts.at === undefined ? {} : { at: opts.at }),
+        ...(opts.tree === true ? { tree: true } : {}),
+        ...(opts.json === true ? { json: true } : {}),
+      });
+    });
+  sessions
+    .command('export')
+    .description(
+      'print a session as Markdown or HTML: its conversation, tool calls, audit rows and changes, secrets redacted',
+    )
+    .argument('<id>', 'the session id ([A-Za-z0-9_-])', rule(parseSessionIdArg))
+    .option(
+      '--format <format>',
+      'md (default) or html',
+      rule(parseSessionExportFormat),
+    )
+    .addHelpText(
+      'after',
+      examples([
+        'kubic sessions export <id> > session.md',
+        'kubic sessions export <id> --format html > session.html',
+      ]),
+    )
+    .action(async (id, opts) => {
+      await run({
+        command: 'export',
+        id,
+        ...(opts.format === undefined ? {} : { format: opts.format }),
+      });
+    });
+}
+
 function registerSessions(program: Command, ctx: CommandContext): void {
   const sessions = program
     .command('sessions')
     .description(
-      'list sessions (with no subcommand), or create, attach to, fork or prune one',
+      'list sessions (with no subcommand), or create, attach to, fork, export or prune one',
     )
     .option(
       '--json',
@@ -327,7 +397,7 @@ function registerSessions(program: Command, ctx: CommandContext): void {
       return;
     }
     throw new CliUsageError(
-      `unknown command '${name}' (create | list | attach | fork | prune)`,
+      `unknown command '${name}' (create | list | attach | fork | export | prune)`,
     );
   });
   sessions
@@ -380,40 +450,7 @@ function registerSessions(program: Command, ctx: CommandContext): void {
         ...(opts.json === true ? { json: true } : {}),
       });
     });
-  sessions
-    .command('fork')
-    .description(
-      'fork a session into a new one (at an entry, default the newest; --tree copies every branch)',
-    )
-    .argument(
-      '<id>',
-      'the source session id ([A-Za-z0-9_-])',
-      rule(parseSessionIdArg),
-    )
-    .option(
-      '--at <entry>',
-      'fork at this entry id (inclusive; `kubic sessions attach --ids` shows them)',
-      nonNegativeInt('integer entry id'),
-    )
-    .option('--tree', 'copy the whole tree: every conversation and branch tip')
-    .option('--json', 'print {id, source, at} as one JSON document')
-    .addHelpText(
-      'after',
-      examples([
-        'kubic sessions fork <id>',
-        'kubic sessions fork <id> --at 12 --json',
-        'kubic tui --session "$(kubic sessions fork <id> --at 12)"',
-      ]),
-    )
-    .action(async (id, opts) => {
-      await run({
-        command: 'fork',
-        id,
-        ...(opts.at === undefined ? {} : { at: opts.at }),
-        ...(opts.tree === true ? { tree: true } : {}),
-        ...(opts.json === true ? { json: true } : {}),
-      });
-    });
+  registerSessionCopies(sessions, run);
   sessions
     .command('prune')
     .description(

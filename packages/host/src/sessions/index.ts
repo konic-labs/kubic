@@ -1,5 +1,7 @@
 // Sessions: `kubic sessions` and its pruning, read-only session access for
 // listings and cost, and per-session summaries and usage.
+
+export { parseSessionExportFormat } from './session-export.js';
 export {
   openReadOnlySessionStorage,
   touchesWorkspace,

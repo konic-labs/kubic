@@ -205,10 +205,12 @@ const ENTRY_PAGE = 256;
 // a pi-durable Storage — the path every CLI reader takes (`kubic sessions
 // attach`, `kubic cost`'s run usage). No Harness and no model layer are
 // booted and nothing is written: a reader must be able to inspect a session
-// it is not allowed to run.
+// it is not allowed to run. `history: 'all'` reads past the newest compaction
+// or reset too: the whole conversation, as `kubic sessions export` shows it.
 export async function readSessionEntries(
   storage: Storage,
   context: Context,
+  options: { history?: 'context' | 'all' } = {},
 ): Promise<EntryRecord[]> {
   // The lane conversation — a fork's recorded one, else the
   // root. A session that never ran has no root conversation yet: no
@@ -221,7 +223,10 @@ export async function readSessionEntries(
   // The newest entry that starts a context (a compaction or reset) is the
   // range's lower bound; without one, the conversation's whole visible
   // history. Scans are newest-first, so the result is reversed at the end.
-  const marker = await storage.findLatestHeadMarker(laneId, undefined, context);
+  const marker =
+    options.history === 'all'
+      ? undefined
+      : await storage.findLatestHeadMarker(laneId, undefined, context);
   const minEntryId = marker?.head;
   const entries: EntryRecord[] = [];
   let cursor: Awaited<ReturnType<Storage['scanEntries']>>['next'];

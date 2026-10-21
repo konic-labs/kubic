@@ -40,6 +40,10 @@ import {
 } from '../approvals/index.js';
 import { type CliIo, diagnosticsOf, themeOf } from '../cli/index.js';
 import {
+  runSessionExportCommand,
+  type SessionExportFormat,
+} from './session-export.js';
+import {
   deleteSessionPruneCandidates,
   planSessionPrune,
   type SessionPrunePlan,
@@ -88,6 +92,11 @@ export type SessionsInvocation =
       readonly at?: number;
       readonly tree?: boolean;
       readonly json?: boolean;
+    }
+  | {
+      readonly command: 'export';
+      readonly id: string;
+      readonly format?: SessionExportFormat;
     }
   | {
       readonly command: 'prune';
@@ -311,6 +320,9 @@ export async function runSessionsCommand(
   }
   if (invocation.command === 'fork') {
     return { exitCode: await runForkCommand(invocation, deps, store) };
+  }
+  if (invocation.command === 'export') {
+    return runSessionExportCommand(invocation, deps, root);
   }
   // attach
   const { id } = invocation;

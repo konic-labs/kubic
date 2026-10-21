@@ -18,7 +18,11 @@ import {
 } from '@kubic/host/models';
 import { selectRole } from '@kubic/host/roles';
 import { runSkillsCommand } from '@kubic/host/skills';
-import { kubicConfigLoader, projectTrustFor } from '../config/load.js';
+import {
+  kubicConfigLoader,
+  projectModelsDeps,
+  projectTrustFor,
+} from '../config/load.js';
 import { runtimeModelPin, runtimePolicy } from '../config/model-selection.js';
 import {
   installedPolicyClasses,
@@ -40,6 +44,7 @@ export function modelsRunner(io: ProdRunnerIo): ProdRunners['models'] {
     const assembled = await assembleModels(process.cwd(), process.env, {
       home: cliConfig.trust.home,
       projectTrust: projectTrustFor(cliConfig),
+      ...projectModelsDeps(cliConfig),
     });
     for (const note of assembled.notes) view.logger.info(note);
     if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);

@@ -20,9 +20,10 @@ import { exitProcessAfterFlush } from './exit.js';
 import { createProdRunners } from './prod-runners.js';
 import { prodFirstRunSetup } from './setup-prod.js';
 import {
-  TRUST_KEYS,
   trustFileLines,
+  trustKeys,
   trustQuestionLines,
+  trustReviewLines,
 } from './trust-question.js';
 
 // License identity: the version is the one in the manifest named kubic, the
@@ -96,10 +97,18 @@ try {
             ).join('\n'),
             interactive: true,
             nonInteractive: 'not-now',
-            choices: TRUST_KEYS,
+            choices: trustKeys(question.changed),
           }),
         show: (path) => {
           for (const line of trustFileLines(themeFor(process.stdout), path)) {
+            out(line);
+          }
+        },
+        showChanges: (review) => {
+          for (const line of trustReviewLines(
+            themeFor(process.stdout),
+            review,
+          )) {
             out(line);
           }
         },

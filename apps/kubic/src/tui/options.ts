@@ -193,6 +193,8 @@ export interface TuiRunOptions {
   systemPromptSection?: string;
   // `[agent] projectInstructions = false`, as `kubic run` reads it.
   projectInstructions?: boolean;
+  // The project models.json refusal, as `kubic run` reads it.
+  projectProvidersRefusal?: string;
   // The `[session]` compaction policy — the same
   // projection `kubic run` threads, so the interactive lane compacts under
   // config, not the lane defaults. Absent means the own defaults.

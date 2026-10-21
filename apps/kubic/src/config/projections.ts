@@ -25,7 +25,7 @@ import { loadProjectInstructions } from '@kubic/host/instructions';
 import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles';
 import type { RunCommandOptions } from '@kubic/host/run';
 import type { CliConfigResult } from './load.js';
-import { projectTrustFor } from './load.js';
+import { projectModelsDeps, projectTrustFor } from './load.js';
 
 // The config `[approvals]` policy as the install consumes it: route,
 // maxPendingMs, autoApprove, requireJustification and sessionScoped, projected
@@ -146,6 +146,8 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   escalate?: RuntimeEscalation;
   /** `[agent] projectInstructions = false`: no AGENTS.md is read. */
   projectInstructions?: boolean;
+  /** Why the project models.json providers stay out, when they do. */
+  projectProvidersRefusal?: string;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -174,6 +176,7 @@ export function runtimeLaneDeps(result: CliConfigResult): {
     ...(runtime.config.agent?.projectInstructions === false
       ? { projectInstructions: false }
       : {}),
+    ...projectModelsDeps(result),
     // No ladder, no field: escalation stays opt-in — the
     // lane climbs nothing it was never configured with.
     ...(runtime.escalate === undefined

@@ -122,6 +122,8 @@ export function tuiBootOptions(
     systemPromptSection: provided.systemPromptSection,
     // `[agent] projectInstructions`, as `kubic run` reads it.
     projectInstructions: provided.projectInstructions,
+    // The project models.json refusal, as `kubic run` reads it.
+    projectProvidersRefusal: provided.projectProvidersRefusal,
     // `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,

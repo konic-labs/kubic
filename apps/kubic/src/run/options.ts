@@ -121,6 +121,9 @@ export interface HeadlessRunDeps {
   // `[agent] projectInstructions = false` turns the AGENTS.md search off.
   // Absent means on.
   projectInstructions?: boolean;
+  // Why the project models.json stays out of the catalog (an enterprise
+  // `[policy] project_policy = "restricted"`). Absent: it loads once trusted.
+  projectProvidersRefusal?: string;
   // The `[session]` compaction policy from the same
   // config load — the boot hands it to the settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent

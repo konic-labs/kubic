@@ -70,6 +70,8 @@ export function modelsSourcesProbe(assembled: AssembledModels): DepProbe {
       return `${where}: loaded ${source.providers.join(', ')}`;
     if (source.status === 'untrusted')
       return `${where}: ignored, untrusted (KUBIC_TRUST_PROJECT=1 to load)`;
+    if (source.status === 'forbidden')
+      return `${where}: ignored, ${source.error ?? 'forbidden by policy'}`;
     return `${where}: invalid — ${source.error ?? 'unreadable'}`;
   });
   return {

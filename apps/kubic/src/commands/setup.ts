@@ -182,10 +182,15 @@ function registerTrust(program: Command, ctx: CommandContext): void {
     )
     .option('--revoke', 'remove the recorded decision — the refusal comes back')
     .option('--list', 'list every recorded decision')
+    .option(
+      '--diff',
+      'show what changed in the project since the last grant, and record nothing',
+    )
     .addHelpText(
       'after',
       examples([
         'kubic trust',
+        'kubic trust --diff',
         'kubic trust --list',
         'kubic trust --revoke',
         'kubic trust ../another-repo',
@@ -198,6 +203,7 @@ function registerTrust(program: Command, ctx: CommandContext): void {
             ...(path === undefined ? {} : { path }),
             ...(opts.revoke === true ? { revoke: true } : {}),
             ...(opts.list === true ? { list: true } : {}),
+            ...(opts.diff === true ? { diff: true } : {}),
           },
           ctx.config,
         ),

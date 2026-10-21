@@ -72,6 +72,9 @@ export async function runProdReplay(
         ...(runRuntime.trustProject === undefined
           ? {}
           : { projectTrust: runRuntime.trustProject }),
+        ...(runRuntime.projectProvidersRefusal === undefined
+          ? {}
+          : { projectProvidersRefusal: runRuntime.projectProvidersRefusal }),
       });
       try {
         const selection = parseModelFlag(model);

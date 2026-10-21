@@ -25,6 +25,7 @@ const MAX_TIMER_MS = 2_147_483_647;
 
 const CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
 const NETWORK_POLICIES = ['proxy', 'none', 'allowlist', 'full'] as const;
+const PROJECT_POLICIES = ['open', 'restricted'] as const;
 const FILESYSTEM_POLICIES = [
   'workspace-only',
   'none',
@@ -188,6 +189,8 @@ const CHECKS: Record<KeyCheck, Check> = {
     oneOf(nonEmptyString(value, path, key), NETWORK_POLICIES, path, key),
   filesystemPolicy: (value, path, key) =>
     oneOf(nonEmptyString(value, path, key), FILESYSTEM_POLICIES, path, key),
+  projectPolicy: (value, path, key) =>
+    oneOf(nonEmptyString(value, path, key), PROJECT_POLICIES, path, key),
   auditSink: (value, path, key) =>
     oneOf(nonEmptyString(value, path, key), AUDIT_SINKS, path, key),
   auditLevel: (value, path, key) => {

@@ -60,6 +60,7 @@ export function createRunBoot(state: RunState, guard: RunGuard): SessionBoot {
       reconcileOutOfScope: deps.reconcileOutOfScope,
       systemPromptSection: deps.systemPromptSection,
       projectInstructions: deps.projectInstructions,
+      projectProvidersRefusal: deps.projectProvidersRefusal,
       modelPolicy: deps.modelPolicy,
       trustProject: deps.trustProject,
       skills: deps.skills,

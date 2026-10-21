@@ -26,6 +26,19 @@ export const TRUST_KEYS = [
   { key: 'v', label: 'view file', value: 'view' },
 ] as const;
 
+const CHANGES_KEY = {
+  key: 'd',
+  label: 'view changes',
+  value: 'changes',
+} as const;
+
+/** The keys for this question: a changed project also offers its diff. */
+export function trustKeys(
+  changed: boolean,
+): ReadonlyArray<(typeof TRUST_KEYS)[number] | typeof CHANGES_KEY> {
+  return changed ? [...TRUST_KEYS, CHANGES_KEY] : TRUST_KEYS;
+}
+
 function wrapWords(text: string, width: number): string[] {
   const lines: string[] = [];
   let line = '';
@@ -57,12 +70,20 @@ export function trustQuestionLines(
 ): string[] {
   const ui = theme.ui;
   const room = Math.max(30, Math.floor(width) - HANGING.length - 1);
-  const keys = TRUST_KEYS.map(
-    ({ key, label }) =>
-      `${ui.style({ fg: 'fg0', bold: true })(key)}  ${ui.fg('fg2')(label)}`,
-  ).join('   ');
+  const keys = trustKeys(question.changed)
+    .map(
+      ({ key, label }) =>
+        `${ui.style({ fg: 'fg0', bold: true })(key)}  ${ui.fg('fg2')(label)}`,
+    )
+    .join('   ');
   return [
-    `  ${ui.fg('warn')('◆')} ${ui.fg('fg1')('trust'.padEnd(LABEL))} ${ui.fg('fg0')(`${tilde(question.configPath, home)} found — load project config?`)}`,
+    `  ${ui.fg('warn')('◆')} ${ui.fg('fg1')('trust'.padEnd(LABEL))} ${ui.fg(
+      'fg0',
+    )(
+      question.changed
+        ? `${tilde(question.root, home)} changed since you trusted it — load its project config again?`
+        : `${tilde(question.configPath, home)} found — load project config?`,
+    )}`,
     ...wrapWords(DISCLOSURE, room).map(
       (line) => `${HANGING}${ui.fg('fg2')(line)}`,
     ),
@@ -109,6 +130,29 @@ export function trustFileLines(theme: CliTheme, path: string): string[] {
           `${HANGING}${ui.fg('fg2')(`… ${lines.length - shown.length} more lines`)}`,
         ]
       : []),
+    '',
+  ];
+}
+
+/** `d`: what changed since the grant, as lines for the terminal. */
+export function trustReviewLines(
+  theme: CliTheme,
+  review: readonly string[],
+): string[] {
+  const ui = theme.ui;
+  const paint = (line: string): string =>
+    line.startsWith('+++ ') || line.startsWith('--- ')
+      ? ui.style({ fg: 'fg0', bold: true })(line)
+      : line.startsWith('@@')
+        ? ui.fg('warn')(line)
+        : line.startsWith('+')
+          ? ui.fg('add')(line)
+          : line.startsWith('-')
+            ? ui.fg('del')(line)
+            : ui.fg('fg2')(line);
+  return [
+    '',
+    ...review.map((line) => `${HANGING}${paint(line.replace(CONTROL, ''))}`),
     '',
   ];
 }

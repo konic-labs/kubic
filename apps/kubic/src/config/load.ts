@@ -36,9 +36,11 @@ import {
   loadRuntimeConfig,
   NO_PROJECT_TRUST,
   ProjectTrustStore,
+  projectProvidersRefusal,
   projectTrustCheck,
   projectTrustReport,
   projectTrustStorePath,
+  renderTrustReview,
 } from '@kubic/host/config';
 import type { DepProbe } from '@kubic/host/doctor';
 
@@ -182,6 +184,16 @@ export function projectTrustFor(result: CliConfigResult): ProjectTrustCheck {
   });
 }
 
+// The project models.json refusal an enterprise `[policy] project_policy =
+// "restricted"` sets, as the spread every models assembly takes: the project
+// providers stay out even when the project is trusted.
+export function projectModelsDeps(result: CliConfigResult): {
+  projectProvidersRefusal?: string;
+} {
+  const refusal = projectProvidersRefusal(result.runtime?.projectRestriction);
+  return refusal === undefined ? {} : { projectProvidersRefusal: refusal };
+}
+
 // The interactive half of the trust gate: `kubic tui` and the
 // bare `kubic` on a TTY ask once about a present, undecided project config
 // before the config load, persist the answer and hand it back — so the
@@ -191,7 +203,7 @@ export function projectTrustFor(result: CliConfigResult): ProjectTrustCheck {
 // A cancelled prompt is not an answer: nothing is persisted, and the
 // invocation fails closed into the refusal path.
 // The restyled question's answers.
-type TrustAnswer = 'yes' | 'not-now' | 'view';
+type TrustAnswer = 'yes' | 'not-now' | 'view' | 'changes';
 
 export interface TrustQuestion {
   /** The canonical project root the decision is keyed to. */
@@ -199,6 +211,8 @@ export interface TrustQuestion {
   readonly configPath: string;
   /** The full disclosure on one line (what `confirm` asks). */
   readonly message: string;
+  /** The project changed since its grant: the question offers the diff. */
+  readonly changed: boolean;
 }
 
 export interface InteractiveTrustDeps {
@@ -213,6 +227,8 @@ export interface InteractiveTrustDeps {
   // asked instead of `confirm`.
   ask?: (question: TrustQuestion) => Promise<TrustAnswer | null>;
   show?: (path: string) => void;
+  // `d`: what changed since the grant, as review lines (then it asks again).
+  showChanges?: (lines: string[]) => void;
   store?: ProjectTrustStore;
 }
 
@@ -257,9 +273,14 @@ export async function resolveInteractiveProjectTrust(
         root: report.key,
         configPath: report.configPath,
         message,
+        changed: report.changed,
       });
       if (answer === 'view') {
         deps.show?.(report.configPath);
+        continue;
+      }
+      if (answer === 'changes') {
+        deps.showChanges?.(renderTrustReview(store.review(root)));
         continue;
       }
       if (answer === 'yes') {

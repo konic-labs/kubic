@@ -10,6 +10,7 @@ import type {
   KubicConfig,
   VERIFY_COMMAND_KEYS,
 } from './config.js';
+import type { ProjectRestriction } from './project-restriction.js';
 
 // Where an effective value came from: one of the six config layers, the
 // documented environment overrides, the explicit CLI flag, or the product's
@@ -182,6 +183,8 @@ export interface RuntimeConfig {
   verify: RuntimeVerify;
   run: RuntimeRun;
   projectTrusted: boolean;
+  // `[policy] project_policy = "restricted"` from a layer above the project.
+  projectRestriction?: ProjectRestriction;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
   // in `overriddenAttempts`); empty when nothing was overridden — the same pin

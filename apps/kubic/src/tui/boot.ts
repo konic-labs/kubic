@@ -184,6 +184,7 @@ function tuiSessionBoot(
       reconcileOutOfScope: options.reconcileOutOfScope,
       systemPromptSection: options.systemPromptSection,
       projectInstructions: options.projectInstructions,
+      projectProvidersRefusal: options.projectProvidersRefusal,
       modelPolicy: options.modelPolicy,
       trustProject: options.trustProject,
       skills: options.skills,

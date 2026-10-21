@@ -69,6 +69,8 @@ export interface ReplayRuntimeDeps {
   // gates the project models.json of the assembled catalog. Absent falls
   // back to the env opt-in inside assembleModels.
   trustProject?: (path: string) => boolean;
+  // Why the project models.json stays out of the catalog, when it does.
+  projectProvidersRefusal?: string;
   // The shared lane projections `kubic run` threads
   // — the configured agent id, the config-sourced role layers the pinned
   // role merges under its document, and the declared out-of-scope paths.

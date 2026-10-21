@@ -50,6 +50,7 @@ import type { CliConfigResult } from '../config/load.js';
 import {
   doctorConfigProbe,
   doctorPolicyLoader,
+  projectModelsDeps,
   projectTrustFor,
 } from '../config/load.js';
 import { runtimeModelPin, runtimePolicy } from '../config/model-selection.js';
@@ -87,6 +88,7 @@ export function doctorRunner(io: ProdRunnerIo): ProdRunners['doctor'] {
     const assembled = await assembleModels(process.cwd(), process.env, {
       home: cliConfig.trust.home,
       projectTrust: projectTrustFor(cliConfig),
+      ...projectModelsDeps(cliConfig),
     });
     for (const note of assembled.notes) view.logger.info(note);
     if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
@@ -393,8 +395,8 @@ async function sessionChecks(
     // private. Best-effort like the overlap probe: an unreadable root makes
     // no claim.
     // The trust store and its directory, this workspace's audit ledger and
-    // its directory, then every session below the root: the walk is bounded
-    // and names what it skipped.
+    // its directory, then the trust snapshots and every session below the
+    // root: the walk is bounded and names what it skipped.
     probeStatePermissions: () => {
       const ledgerDir = auditLedgerDirFor(process.cwd());
       return scanStateModes(
@@ -405,7 +407,11 @@ async function sessionChecks(
           ledgerDir,
           join(ledgerDir, AUDIT_LEDGER_FILE),
         ],
-        [sessionsRoot],
+        [
+          // The trust grants' snapshots hold copies of project files.
+          ...(home === '' ? [] : [join(home, '.kubic', 'trust-snapshots')]),
+          sessionsRoot,
+        ],
       );
     },
   };

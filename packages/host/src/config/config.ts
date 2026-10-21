@@ -197,6 +197,8 @@ interface PolicyConfig {
   filesystemPolicy?: string;
   dataPolicy?: string;
   loggingPolicy?: string;
+  // 'open' (default) or 'restricted': what a repository may set for itself.
+  projectPolicy?: string;
 }
 
 // `[[audit]]` (parsed here; built in audit/sinks.ts).

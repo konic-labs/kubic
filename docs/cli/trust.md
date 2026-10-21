@@ -37,7 +37,7 @@ searched, and a user skill root is never reported as a project skill.
 The decision is threaded to every consuming command (`run`, `tui`,
 `replay`, `models` and `doctor`).
 
-## `kubic trust [--revoke] [--list] [path]`
+## `kubic trust [--revoke] [--list] [--diff] [path]`
 
 Record, revoke or list the durable project-trust decision that makes a
 committed `.kubic/config.toml` usable — see [project trust](trust.md).
@@ -64,6 +64,7 @@ is not a directory, or `--list` combined with `--revoke`/a path, exits 2.
 | `kubic trust <path>` | Records trust for that directory (must exist and be a directory; a symlink to one is followed and recorded under its resolved path). |
 | `kubic trust --revoke` | Removes the recorded decision; the refusal comes back. |
 | `kubic trust --list` | Prints every recorded decision (`trusted <path>`, `changed  <path>` for a grant whose files changed since, `declined <path>`), sorted. |
+| `kubic trust --diff [path]` | Prints what changed in the project since its grant and records nothing (see [What a grant covers](#what-a-grant-covers)). |
 
 Grant output names the canonical path, the store file, and whether a
 project config is waiting there:
@@ -94,20 +95,50 @@ lets take effect.
 - the `[agent] systemPromptFile` the project config names, when it lives
   inside the project.
 
+A grant also keeps a **snapshot** of those files — each one's digest, and its
+text when it is a text file under 64 KiB (1 MiB in all) — in
+`~/.kubic/trust-snapshots/`, private like the store (`0600` files in a `0700`
+directory). It is what a review compares against; the grant itself is the
+fingerprint. A revoke or a decline drops it.
+
 When the fingerprint no longer matches, every consumer treats the project
 as untrusted: the config load refuses with `project-local config changed
 since the project was trusted: <path> — review …, then run 'kubic trust'`,
 the project `models.json` and skills are left out, `kubic tui` asks the
 trust question again (saying the project changed), and `kubic trust --list`
-and `kubic doctor` report it as changed. Review the change (`git diff`, the
-`v` key of the question), then run `kubic trust` to accept the new content.
+and `kubic doctor` report it as changed. Review the change, then run
+`kubic trust` to accept the new content:
+
+- `kubic trust --diff` prints what changed since the grant and records
+  nothing: a unified diff per changed file, `added <file>` and
+  `removed <file>` with their lines, and a note for a binary or oversized
+  file whose text the snapshot did not keep. It is cut at 400 lines.
+- `kubic trust` on a changed project prints the same review before it
+  records the new grant.
+- The interactive question says the project changed and adds a `d` key
+  (view changes) that prints the review and asks again.
+
+A grant recorded before snapshots has nothing to compare against: the review
+then lists every file the grant covers, for you to read before you trust it.
+
+```
+$ kubic trust --diff
+1 file changed in /Users/you/src/app since the last grant:
+--- a/.kubic/config.toml
++++ b/.kubic/config.toml
+@@ -1,2 +1,3 @@
+ [approvals]
+ route = "ask-user"
++autoApprove = ["destructive-shell"]
+```
 A directory granted before its config existed changes when one appears.
 
 Exit codes: **0** recorded, revoked or listed; **1** an unreadable or
 corrupt store (the file is named — fix or delete it and run the command
 again); **2** a usage error (a path that is not a directory, `--list`
-combined with `--revoke` or a path). `kubic trust --help` prints the
-generated usage — [commands](#kubic-trust---revoke---list-path).
+combined with `--revoke`, `--diff` or a path, or `--diff` with `--revoke`).
+`kubic trust --help` prints the generated usage —
+[commands](#kubic-trust---revoke---list---diff-path).
 
 ## The store
 
@@ -169,6 +200,10 @@ key:
                  y  yes   n  not now   v  view file
 ```
 
+A project whose files changed since its grant is asked about the same way,
+headed `<project> changed since you trusted it — load its project config
+again?`, with a fourth key, `d  view changes`, that prints the review.
+
 - **`y` yes** records a grant for the project as it is now and boots the
   lane with the project layer; the first screen's trust row then reads
   `.kubic/config.toml loaded`.
@@ -216,5 +251,7 @@ is the durable form.
 ## Out of scope
 
 Enterprise-managed allowlists are not implemented: trust is a per-user,
-per-path decision. See [configuration](configuration.md) for the layer
+per-path decision. An organization can still bound what a trusted project may
+set with `[policy] project_policy = "restricted"` — see
+[Restricting project configuration](enterprise.md#restricting-project-configuration). See [configuration](configuration.md) for the layer
 precedence and [exit codes](exit-codes.md) for the code table.

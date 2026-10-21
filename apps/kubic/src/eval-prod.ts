@@ -27,7 +27,7 @@ import { assembleModels, FAUX_PROVIDER_ID } from '@kubic/host/models';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import type { CliConfigResult } from './config/load.js';
-import { projectTrustFor } from './config/load.js';
+import { projectModelsDeps, projectTrustFor } from './config/load.js';
 import { runtimePolicy } from './config/model-selection.js';
 import {
   runtimeLaneDeps,
@@ -78,6 +78,7 @@ async function runFixture(
   const selection = parseModelFlag(options.model ?? EVAL_DEFAULT_MODEL);
   const assembled = await assembleModels(dir, process.env, {
     projectTrust: projectTrustFor(cliConfig),
+    ...projectModelsDeps(cliConfig),
   });
   if (
     assembled.models.getProvider(selection.provider) === undefined ||

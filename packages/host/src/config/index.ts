@@ -16,6 +16,7 @@ export type { ConfigCommandOptions } from './config-cli.js';
 export { runConfigCommand } from './config-cli.js';
 export { buildConfigDoctorInput, configDoctorProbe } from './config-doctor.js';
 export { checkWorkspaceIgnoreSplit } from './ignore-split.js';
+export { projectProvidersRefusal } from './project-restriction.js';
 export { loadRuntimeConfig, MS_PER_DAY } from './runtime.js';
 export type {
   RuntimeConfig,
@@ -41,6 +42,7 @@ export {
 } from './stances.js';
 export type { TrustCommandOptions } from './trust-cli.js';
 export { runTrustCommand } from './trust-cli.js';
+export { renderTrustReview } from './trust-review.js';
 export type { ProjectTrustCheck, ProjectTrustReport } from './trust-store.js';
 export {
   NO_PROJECT_TRUST,

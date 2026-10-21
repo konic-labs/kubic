@@ -104,7 +104,7 @@ interface ModelsSource {
   readonly path: string;
   readonly scope: 'global' | 'project';
   readonly trusted: boolean;
-  readonly status: 'loaded' | 'untrusted' | 'invalid';
+  readonly status: 'loaded' | 'untrusted' | 'forbidden' | 'invalid';
   readonly providers: readonly string[];
   readonly error?: string;
 }
@@ -206,6 +206,9 @@ export interface AssembleOptions extends RegisterCustomProvidersOptions {
   // /repo/pkg never reaches /repo. Absent leaves only the global
   // KUBIC_TRUST_PROJECT opt-in.
   readonly projectTrust?: (path: string) => boolean;
+  // Why the project models.json stays out even when trusted (an enterprise
+  // `[policy] project_policy = "restricted"`). Absent: it loads once trusted.
+  readonly projectProvidersRefusal?: string;
 }
 
 // The user-global models.json (global tree: ~/.kubic/models/).
@@ -312,9 +315,22 @@ export async function assembleModels(
     path: string,
     scope: ModelsSource['scope'],
     trusted: boolean,
+    refusal?: string,
   ): void => {
     if (!bridge.exists(path)) return;
     const label = scope === 'global' ? 'global' : 'project';
+    if (refusal !== undefined) {
+      sources.push({
+        path,
+        scope,
+        trusted,
+        status: 'forbidden',
+        providers: [],
+        error: refusal,
+      });
+      notes.push(`models.json ignored: ${path} (${label}, ${refusal})`);
+      return;
+    }
     if (!trusted) {
       // Refused before the file is read: nothing in it reaches the catalog.
       sources.push({
@@ -394,6 +410,7 @@ export async function assembleModels(
     projectModelsPath(projectRoot),
     'project',
     options.projectTrust?.(projectRoot) === true || envTrustsProject(env),
+    options.projectProvidersRefusal,
   );
   const checks = await Promise.all(
     builtins.map(async (provider) => {

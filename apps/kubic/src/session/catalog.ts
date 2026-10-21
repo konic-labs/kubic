@@ -70,6 +70,9 @@ export async function assembleBootCatalog(
         ...(config.trustProject === undefined
           ? {}
           : { projectTrust: config.trustProject }),
+        ...(config.projectProvidersRefusal === undefined
+          ? {}
+          : { projectProvidersRefusal: config.projectProvidersRefusal }),
       },
     );
     // A refused models.json is a config error the user must see: it goes

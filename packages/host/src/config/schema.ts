@@ -57,6 +57,8 @@ export type KeyCheck =
   | 'command'
   | 'networkPolicy'
   | 'filesystemPolicy'
+  // `open` or `restricted`.
+  | 'projectPolicy'
   | 'auditSink'
   | 'auditLevel'
   // A facility name, or a number 0–23.
@@ -819,6 +821,16 @@ export const CONFIG_SECTIONS = [
         },
         example: '"full-audit"',
       },
+      {
+        name: 'project_policy',
+        field: 'projectPolicy',
+        check: 'projectPolicy',
+        runtime: {
+          effect:
+            'from a layer above the project, "restricted" refuses a project config that auto-approves, widens a permission class or declares [verify] commands, and keeps the project models.json providers out',
+        },
+        example: '"restricted"',
+      },
     ],
     docs: [
       {
@@ -840,6 +852,10 @@ export const CONFIG_SECTIONS = [
       {
         keys: ['policy.filesystem_policy'],
         text: "Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from the `[permissions]` classes, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it.",
+      },
+      {
+        keys: ['policy.project_policy'],
+        text: 'What a repository may set for itself: `"open"` (the default) or `"restricted"`. Set in a layer above the project (enterprise, product or global; the first that sets it wins), `"restricted"` refuses a project config that sets `[approvals] autoApprove`, widens a `[permissions]` class past the layers above (or the defaults), or declares `[verify]` commands — the load names every such key, before anything runs — and keeps the project `models.json` providers out of the catalog (`kubic models` and `kubic doctor` name the file). A project may still narrow. See [Restricting project configuration](enterprise.md#restricting-project-configuration).',
       },
       {
         keys: ['policy.data_policy', 'policy.logging_policy'],

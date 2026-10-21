@@ -25,6 +25,8 @@ filesystem_policy = "workspace-only"
 data_policy = "no-external-training"
 logging_policy = "full-audit"
 
+project_policy = "restricted"
+
 [[audit]]
 sink = "syslog"
 level = "privileged"
@@ -57,6 +59,8 @@ them:
   listed by `kubic config`; each one's enforcement status is the key-effect
   row above, never a claim. `kubic doctor` does not report these two, nor
   `filesystem_policy`.
+- `project_policy` — `"restricted"` bounds what a repository may set for
+  itself; see [Restricting project configuration](#restricting-project-configuration).
 - `[[audit]]` — repeatable sink tables (`sink`, `level`, optional `target`
   and `facility`). Unknown kinds, levels and keys are refused by name.
   See [Audit sinks](#audit-sinks-audit).
@@ -67,6 +71,44 @@ them:
 `policy:enterprise-network` (a configured `network_policy` fails as not
 enforced) and `policy:enterprise-enforceability` (passes only when both of
 the others do). With no `[policy]` section none of them is emitted.
+
+## Restricting project configuration
+
+A developer who trusts a repository lets its `.kubic/config.toml` and
+`models.json` take effect (see [project trust](trust.md)). An organization
+can bound what that grant may change:
+
+```toml
+[policy]
+project_policy = "restricted"
+```
+
+Set in the enterprise, product or global layer (the first that sets
+`project_policy` wins, so an enterprise `"open"` holds against a global
+`"restricted"`; a project's own value is ignored), it refuses a trusted
+project config that:
+
+- sets `[approvals] autoApprove` — a repository cannot pre-approve its own
+  commands;
+- widens a `[permissions]` class past the layers above, or past the defaults
+  where no layer above sets the class (`network = "full"` when nothing above
+  allows more than `none`);
+- declares `[verify]` gate commands, which run as shell after each run
+  outside approvals (`timeoutMs` alone is allowed).
+
+The load names every such key and the layer that set the restriction, before
+anything runs:
+
+```
+error: project config /repo/.kubic/config.toml sets 'approvals.autoApprove', 'verify.tests', which the enterprise policy forbids ([policy] project_policy = "restricted": a project may narrow approvals and permissions, never widen them, and may not run [verify] commands) — remove them from the project config
+```
+
+The project's `models.json` providers stay out of the catalog even when the
+project is trusted: `kubic models`, `kubic doctor` and the run's warning
+line name the file (`models.json ignored: <path> (project, forbidden by the
+enterprise policy ([policy] project_policy = "restricted"))`). A project may
+still narrow: a stricter permission class, `route = "deny"`, a smaller tool
+set. The default is `"open"`.
 
 ## Audit sinks (`[[audit]]`)
 

@@ -148,6 +148,27 @@ describe('models.json trust gate', () => {
     );
   });
 
+  it('keeps a trusted project models.json out under a restricting policy, naming why', async () => {
+    const home = tempDir('mt-');
+    const cwd = tempDir('mt-');
+    const path = writeProject(cwd, provider('theirs'));
+    const refusal =
+      'forbidden by the enterprise policy ([policy] project_policy = "restricted")';
+    const assembled = await assembleModels(
+      cwd,
+      {},
+      { home, projectTrust: () => true, projectProvidersRefusal: refusal },
+    );
+    expect(assembled.models.getProvider('theirs')).toBeUndefined();
+    expect(registered.calls).toEqual([]);
+    expect(assembled.notes).toContain(
+      `models.json ignored: ${path} (project, ${refusal})`,
+    );
+    const probe = modelsSourcesProbe(assembled);
+    expect(probe.ok).toBe(true);
+    expect(probe.detail).toContain(`${path} (project): ignored, ${refusal}`);
+  });
+
   it('fails the doctor probe on an invalid models.json, naming it', async () => {
     const home = tempDir('mt-');
     const dir = join(home, '.kubic', 'models');

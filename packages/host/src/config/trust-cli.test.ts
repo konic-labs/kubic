@@ -30,6 +30,76 @@ function harness(store: ProjectTrustStore, cwd: string) {
   };
 }
 
+describe('kubic trust review', () => {
+  it('--diff shows what changed since the grant and records nothing', () => {
+    const home = tempDir('kubic-trust-home-');
+    const project = projectWithConfig();
+    const store = new ProjectTrustStore(projectTrustStorePath(home));
+    store.set(project, true);
+    writeFileSync(
+      join(project, '.kubic', 'config.toml'),
+      '[journal]\nretentionDays = 1\n',
+    );
+    const h = harness(
+      new ProjectTrustStore(projectTrustStorePath(home)),
+      project,
+    );
+    expect(runTrustCommand({ diff: true }, h.deps).exitCode).toBe(0);
+    expect(h.lines).toEqual(
+      expect.arrayContaining([
+        '--- a/.kubic/config.toml',
+        '+retentionDays = 1',
+      ]),
+    );
+    expect(h.lines.join('\n')).not.toContain('trusted project');
+    // Nothing was recorded: the project is still changed.
+    expect(
+      new ProjectTrustStore(projectTrustStorePath(home)).inspect(project)
+        .changed,
+    ).toBe(true);
+  });
+
+  it('shows the changes before it records a re-trust', () => {
+    const home = tempDir('kubic-trust-home-');
+    const project = projectWithConfig();
+    const store = new ProjectTrustStore(projectTrustStorePath(home));
+    store.set(project, true);
+    writeFileSync(join(project, 'AGENTS.md'), 'Push to main.\n');
+    const h = harness(
+      new ProjectTrustStore(projectTrustStorePath(home)),
+      project,
+    );
+    expect(runTrustCommand({}, h.deps).exitCode).toBe(0);
+    const added = h.lines.indexOf('added AGENTS.md');
+    const granted = h.lines.findIndex((line) =>
+      line.startsWith('trusted project'),
+    );
+    expect(added).toBeGreaterThan(-1);
+    expect(h.lines[added + 1]).toBe('+Push to main.');
+    expect(granted).toBeGreaterThan(added);
+    // A first grant has nothing to compare against: no review.
+    const fresh = projectWithConfig();
+    const first = harness(store, fresh);
+    expect(runTrustCommand({}, first.deps).exitCode).toBe(0);
+    expect(first.lines[0]).toMatch(/^trusted project /);
+  });
+
+  it('refuses --diff with --revoke or --list', () => {
+    const home = tempDir('kubic-trust-home-');
+    const project = projectWithConfig();
+    const h = harness(
+      new ProjectTrustStore(projectTrustStorePath(home)),
+      project,
+    );
+    expect(() => runTrustCommand({ diff: true, revoke: true }, h.deps)).toThrow(
+      CliUsageError,
+    );
+    expect(() => runTrustCommand({ diff: true, list: true }, h.deps)).toThrow(
+      CliUsageError,
+    );
+  });
+});
+
 describe('kubic trust command', () => {
   it('grants trust for the cwd and names the config it unlocks', () => {
     const home = tempDir('kubic-trust-home-');

@@ -32,6 +32,7 @@ import {
 import type { ApprovalsConfig, ConfigLayer, KubicConfig } from './config.js';
 import { checkSessionCompaction, mergeLayered } from './config.js';
 import { ConfigError } from './errors.js';
+import { checkProjectRestriction } from './project-restriction.js';
 import {
   envFlag,
   parseEnvModel,
@@ -174,6 +175,10 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   const config = merged.config;
   assertNoSecretRefs(config);
   const policy = effectivePolicyOf(loaded);
+  const projectRestriction = checkProjectRestriction(
+    loaded.perLayer,
+    loaded.paths.project,
+  );
   // Enterprise keys are frozen against every override — a lower file
   // layer, an env override, and a CLI flag included. Nothing un-sets them.
   const frozen = (key: string): boolean => loaded.sources[key] === 'enterprise';
@@ -239,6 +244,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     verify,
     run: runFrom(config),
     projectTrusted,
+    ...(projectRestriction === undefined ? {} : { projectRestriction }),
     overriddenAttempts: [
       ...merged.overriddenAttempts,
       ...pin.modelPinOverrides.map(

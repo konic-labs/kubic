@@ -117,6 +117,8 @@ export interface SessionBootConfig {
   systemPromptSection?: string;
   // `[agent] projectInstructions`: false skips the AGENTS.md search.
   projectInstructions?: boolean;
+  // Why the project models.json stays out of the catalog, when it does.
+  projectProvidersRefusal?: string;
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.

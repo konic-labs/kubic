@@ -290,6 +290,34 @@ describe('exportDataset', () => {
     }
   });
 
+  it('redacts secrets a tool read in every batch record', () => {
+    const exported = {
+      ...passing(),
+      actions: [{ seq: 1, tool: 'read', args: { path: '.netrc' } }],
+      observations: [
+        {
+          seq: 2,
+          actionSeq: 1,
+          output:
+            'machine api login me password hunter2-value AKIAABCDEFGHIJKLMNOP',
+          truncated: false,
+          bytesOriginal: 64,
+        },
+      ],
+    };
+    const m = memoryFs({ 'traj/a.json': JSON.stringify(exported) });
+    exportDataset({
+      type: 'tooluse',
+      dataset: 'traj/*.json',
+      out: 'out.jsonl',
+      fs: m.fs,
+    });
+    const [line] = m.lines();
+    expect(line).toContain('[REDACTED]');
+    expect(line).not.toContain('hunter2-value');
+    expect(line).not.toContain('AKIAABCDEFGHIJKLMNOP');
+  });
+
   it('refuses a malformed trajectory by name (exit 1)', () => {
     const m = memoryFs({ 'traj/bad.json': '{not json' });
     try {

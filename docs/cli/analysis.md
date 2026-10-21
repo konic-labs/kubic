@@ -219,6 +219,13 @@ validation. `grpo` refuses with exit 2 when its candidates answer
 different prompts or tasks. Stripped provenance or failure labels also
 refuse with exit 2.
 
+Every record is redacted before it is written, in single-file and batch
+mode alike: provider key shapes, PEM blocks, URL userinfo
+(`postgres://[REDACTED]@db:5432`), authorization values and the values of
+secret-named assignments (`password: [REDACTED]`) — a dataset leaves the
+machine, so the redaction over-redacts on purpose (a code sample's
+`password: string` field is redacted too).
+
 Text mode prints the canonical record JSON. `--json` wraps it in
 `{ok, exitCode, type, record}`, or `{…, excluded}` for an excluded pair.
 Failures are envelopes under `--json` and `error: [<code>] …` lines

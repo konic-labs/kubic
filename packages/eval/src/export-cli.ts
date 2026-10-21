@@ -47,6 +47,7 @@ import {
   buildPreferencePair,
   validatePreferencePair,
 } from './rl/preference.js';
+import { redactRecord } from './rl/redact.js';
 import { buildSftRecord, validateSftRecord } from './rl/sft.js';
 import { buildToolUseRecord, validateToolUseRecord } from './rl/tooluse.js';
 import { RlProvenanceError } from './rl/types.js';
@@ -254,7 +255,8 @@ function exportOutput(
       else log.error(`[${code}] ${message}`);
       return exitCode;
     },
-    record: (type, record) => {
+    record: (type, built) => {
+      const record = redactRecord(built);
       if (json) out(formatJson({ ok: true, exitCode: EXIT_OK, type, record }));
       else out(canonicalJson(record));
       return EXIT_OK;

@@ -1,12 +1,13 @@
 // The built binary on Windows (CI's windows job), runnable on any system:
-// under a scratch HOME and cwd with the faux provider, `kubic run` makes a
-// bash tool call — on Windows it runs through Git Bash — that writes a file
-// in the workspace; the file lands, the journal records it (`kubic log`),
-// and `kubic doctor` names the shell the bash tool runs through. No network, no key.
-// Run after `npm run build`.
+// under a scratch HOME and a trusted scratch cwd with the faux provider,
+// `kubic run` makes a bash tool call — on Windows it runs through Git Bash —
+// that writes a file in the workspace; the file lands, the run writes its
+// trajectory, the journal records the file (`kubic log`), and `kubic doctor`
+// names the shell the bash tool runs through and the AGENTS.md the run
+// loads. No network, no key. Run after `npm run build`.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +25,7 @@ function kubic(args, cwd, home) {
       USERPROFILE: home,
       KUBIC_PROVIDER: 'faux',
       KUBIC_NO_NOTICE: '1',
+      KUBIC_TRUST_PROJECT: '1',
       NO_COLOR: '1',
     },
     timeout: 120_000,
@@ -43,6 +45,7 @@ function fail(message, result) {
 const home = mkdtempSync(join(tmpdir(), 'kubic-smoke-home-'));
 const cwd = mkdtempSync(join(tmpdir(), 'kubic-smoke-ws-'));
 try {
+  writeFileSync(join(cwd, 'AGENTS.md'), '# Smoke\n\nAnswer in one line.\n');
   const prompt =
     'faux:tool bash {"command":"echo from-the-bash-tool > made.txt"}';
   const run = kubic(['run', `--prompt=${prompt}`, '--json'], cwd, home);
@@ -53,6 +56,8 @@ try {
     !readFileSync(join(cwd, 'made.txt'), 'utf8').includes('from-the-bash-tool')
   ) {
     fail('the bash tool did not write made.txt', run);
+  } else if (run.stderr.includes('trajectory not written')) {
+    fail('the run wrote no trajectory', run);
   }
   const log = kubic(['log'], cwd, home);
   if (log.status !== 0 || !log.stdout.includes('made.txt')) {
@@ -65,6 +70,12 @@ try {
   );
   if (platform?.status !== 'pass') {
     fail(`platform:shell is ${platform?.status}: ${platform?.detail}`, doctor);
+  }
+  const instructions = (report.checks ?? []).find(
+    (check) => check.id === 'instructions',
+  );
+  if (!/^1 loaded \(.*AGENTS\.md\)$/.test(instructions?.detail ?? '')) {
+    fail(`instructions: ${instructions?.detail}`, doctor);
   }
   if (process.exitCode !== 1) console.log('windows-smoke: ok');
 } finally {

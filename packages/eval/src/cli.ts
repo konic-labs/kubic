@@ -17,6 +17,7 @@ import { formatJson } from '@kubic/core/cli/output';
 import { renderTable } from '@kubic/core/cli/table';
 import { type CliTheme, createCliTheme } from '@kubic/core/cli/theme';
 import { parseTrajectoryExport } from '@kubic/trajectory/schema';
+import { type CompareDeps, runCompareCommand } from './compare.js';
 import type { EvalDeterminism, EvalRecord } from './records.js';
 import {
   checkEvalProvenance,
@@ -54,6 +55,9 @@ export interface EvalCliDeps extends EvalTaskDeps {
   // stdout's); absent means plain.
   errTheme?: CliTheme;
   fancy?: boolean;
+  // The compare mode's seams (`--suite-file`): absent, it is refused.
+  loadSuiteFiles?: CompareDeps['loadSuiteFiles'];
+  runFileSuite?: CompareDeps['runFileSuite'];
 }
 
 // The parsed `kubic eval` / `kubic benchmark` options (commander's
@@ -71,6 +75,11 @@ export interface EvalOptions {
   readonly worktree?: string;
   readonly size?: string;
   readonly json?: boolean;
+  // `kubic benchmark --suite-file`: the compare mode's suites, models and
+  // repetitions.
+  readonly suiteFile?: readonly string[];
+  readonly models?: string;
+  readonly repeat?: string;
 }
 
 // model/thinking/worktree stay undefined when their flag is absent: the
@@ -372,6 +381,9 @@ export async function runBenchmarkCommand(
   deps: EvalCliDeps,
 ): Promise<CommandResult> {
   const log = loggerFor(options, deps);
+  if (options.suiteFile !== undefined && options.suiteFile.length > 0) {
+    return compareFromFiles(options, deps, options.suiteFile);
+  }
   const parsed = normalize(options);
   if (typeof parsed === 'string') {
     log.error(parsed);
@@ -512,4 +524,38 @@ export async function runBenchmarkCommand(
   const verdict = `benchmark ${allOk ? 'ok' : 'FAILED'}: ${executed.filter((r) => r.success).length}/${executed.length} suites passed, ${results.length - executed.length} stub(s) skipped`;
   deps.out(allOk ? theme.success(verdict) : theme.error(verdict));
   return { exitCode: exit };
+}
+
+// `--suite-file`: the team's suites across `--models` (else `--model`),
+// `--repeat` times each, reported side by side.
+function compareFromFiles(
+  options: EvalOptions,
+  deps: EvalCliDeps,
+  suiteFile: readonly string[],
+): Promise<CommandResult> | CommandResult {
+  const { loadSuiteFiles, runFileSuite } = deps;
+  if (loadSuiteFiles === undefined || runFileSuite === undefined) {
+    loggerFor(options, deps).error('--suite-file cannot run in this build');
+    return { exitCode: EXIT_USAGE };
+  }
+  const models = (options.models ?? options.model ?? EVAL_DEFAULT_MODEL)
+    .split(',')
+    .map((model) => model.trim())
+    .filter((model) => model !== '');
+  return runCompareCommand(
+    {
+      suiteFile,
+      models,
+      repeat: options.repeat === undefined ? 1 : Number(options.repeat),
+      json: options.json === true,
+    },
+    {
+      out: deps.out,
+      err: deps.err,
+      ...(deps.theme === undefined ? {} : { theme: deps.theme }),
+      ...(deps.fancy === undefined ? {} : { fancy: deps.fancy }),
+      loadSuiteFiles,
+      runFileSuite,
+    },
+  );
 }

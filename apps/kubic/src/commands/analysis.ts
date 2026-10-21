@@ -280,10 +280,29 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
   command(
     program,
     'benchmark',
-    'run the reproducible suite matrix (stub suites are reported, never passed)',
-    ['kubic benchmark --worktree wt --size smoke --json'],
+    'run the reproducible suite matrix (stub suites are reported, never passed), or your own suite files across models side by side',
+    [
+      'kubic benchmark --worktree wt --size smoke --json',
+      'kubic benchmark --suite-file .kubic/evals --models anthropic/claude-sonnet-5-5,openai/gpt-5 --repeat 3',
+    ],
   )
     .option('--suite <id>', 'one suite instead of the whole matrix')
+    .option(
+      '--suite-file <path>',
+      'a suite file, or a directory of *.toml suites, to compare models on (repeatable)',
+      (value: string, previous: string[] | undefined) => [
+        ...(previous ?? []),
+        value,
+      ],
+    )
+    .option(
+      '--models <a,b>',
+      'the models a --suite-file comparison runs, comma-separated (default: --model)',
+    )
+    .option(
+      '--repeat <n>',
+      'how many times each suite runs on each model (1-20, default 1)',
+    )
     .option('--model <id>', MODEL_HELP, EVAL_DEFAULT_MODEL)
     .option('--worktree <path>', WORKTREE_HELP)
     .option('--size <size>', SIZE_HELP)

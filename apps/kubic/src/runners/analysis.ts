@@ -42,6 +42,7 @@ import {
   runtimeSkillsDeps,
   runtimeSystemPromptSection,
 } from '../config/projections.js';
+import { createFileSuiteRunner, loadSuiteFiles } from '../eval-files.js';
 import { createProdRunSuite } from '../eval-prod.js';
 import { runProdReplay } from '../replay-run.js';
 import { resolveSessionTrajectory } from '../run/trajectory.js';
@@ -171,6 +172,10 @@ export function benchmarkRunner(io: ProdRunnerIo): ProdRunners['benchmark'] {
     runBenchmarkCommand(options, {
       runSuite: createProdRunSuite(options, cliConfig),
       ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
+      // `--suite-file`: the team's suites, trust checked, each run in a
+      // fresh workspace on every model compared.
+      loadSuiteFiles: (paths) => loadSuiteFiles(paths, cliConfig),
+      runFileSuite: createFileSuiteRunner(options, cliConfig),
       ...analysisReport(io),
     });
 }

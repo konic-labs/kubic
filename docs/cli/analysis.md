@@ -82,7 +82,7 @@ a skipped stub, which names the tier it would run at).
 Text mode prints one `eval ok: suite …` line on stdout. A refusal prints
 `error: [<code>] <message>` on stderr.
 
-## `kubic benchmark [--suite <id>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+## `kubic benchmark [--suite <id>] [--suite-file <path>]... [--models <a,b>] [--repeat <n>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
 
 Runs the reproducible matrix: every suite, or a single one with
 `--suite`. The output is a `SUITE / CATEGORY / STATUS` table followed by
@@ -110,6 +110,48 @@ The flags are the same as `kubic eval` without `--task` and
 plain-language task for a real `--model`, so the matrix scores the model,
 and the scripted task for the faux provider (the default), so it stays
 deterministic in CI. `--json` prints `{ok, exitCode, results}`.
+
+### Your own suites: `--suite-file`
+
+```toml
+# .kubic/evals/health.toml
+title = "Add a health endpoint"
+task = """
+Add a GET /health route to src/server.ts that answers {"ok": true}, with a test.
+"""
+fixture = "fixtures/server"   # a directory beside this file, copied into the workspace
+timeoutMs = 600000
+
+[files]                       # more starting files, inline
+"notes.md" = "the service listens on PORT"
+
+[gates]
+tests = "npm test"
+typecheck = "npx tsc --noEmit"
+```
+
+`kubic benchmark --suite-file <path>` runs a team's own suites instead of the
+built-in matrix, to judge models on the team's work before adding them to
+`allowed_models`. A path is a suite file or a directory of `*.toml` suites,
+and the flag repeats. Each suite names its `task`, its starting files (a
+`fixture` directory beside the file and inline `[files]`) and at least one
+gate command (`tests`, `build`, `lint`, `typecheck`); `id` defaults to the
+file name, and `fauxTask` is the scripted task the testing provider runs
+instead of prose. An unknown key, a suite with no gate or a binary fixture
+file is refused by name (exit 2).
+
+Every suite runs on every model of `--models a,b` (else `--model`),
+`--repeat` times each (1 to 20, default 1), each run in a fresh temporary
+workspace through the real lane and scored from its trajectory by the gates.
+The report puts the models side by side — runs, passes, pass rate, cost per
+run, median latency and tokens per run — followed by each suite's passes per
+model; `--json` prints `{ok, exitCode, models, suites, runs}`. The command
+exits 0 when every run could be scored and 1 when one could not (an unknown
+model, a provider that never answered), named on stderr.
+
+A suite file inside a project's `.kubic/` is project configuration: its gates
+are commands the repository chose, so an untrusted project's suite file is
+refused before anything runs, like its config, models.json and skills.
 
 ## `kubic replay ([--] <trajectory.json> | --session <id>) [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
 

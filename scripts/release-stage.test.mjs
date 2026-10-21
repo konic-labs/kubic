@@ -1,15 +1,18 @@
 // Unit tests for the pure parts of scripts/release-stage.mjs: the generated
 // release manifest, the lockfile it is seeded with, and the checks on the
-// shrinkwrap and the packed tarball. Staging itself runs in CI's
+// shrinkwrap, the packed tarball and the SBOM. Staging itself runs in CI's
 // pack-contract job (`npm run release:stage`).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   dropPlatformEntries,
+  finishSbom,
   PACK_BUDGET_BYTES,
   packProblems,
   RELEASE_FILES,
   releaseManifest,
+  sbomFileName,
+  sbomProblems,
   seedLockfile,
   shrinkwrapProblems,
 } from './release-stage.mjs';
@@ -218,5 +221,59 @@ describe('packProblems', () => {
     const problems = packProblems({ ...pack, size: PACK_BUDGET_BYTES + 1 });
     assert.equal(problems.length, 1);
     assert.match(problems[0], /above the .* budget/);
+  });
+});
+
+describe('the SBOM', () => {
+  const shrinkwrap = {
+    packages: {
+      '': { name: 'kubic', version: '0.1.0' },
+      'node_modules/consola': { version: '3.4.2' },
+      'node_modules/@earendil-works/pi-ai': { version: '1.0.2' },
+      'node_modules/a/node_modules/b': { version: '2.0.0' },
+    },
+  };
+  const sbom = {
+    bomFormat: 'CycloneDX',
+    metadata: {
+      component: {
+        'bom-ref': 'kubic@0.1.0',
+        name: 'release',
+        version: '0.1.0',
+      },
+    },
+    components: [
+      { name: 'consola', version: '3.4.2' },
+      { name: '@earendil-works/pi-ai', version: '1.0.2' },
+      { name: 'b', version: '2.0.0' },
+    ],
+  };
+
+  it('is named after the package and sits beside the tarball', () => {
+    assert.equal(
+      sbomFileName({ name: 'kubic', version: '0.1.0' }),
+      'kubic-0.1.0.cdx.json',
+    );
+  });
+
+  it('names the root component after the package, not the staging folder', () => {
+    const finished = finishSbom(sbom, { name: 'kubic', version: '0.1.0' });
+    assert.equal(finished.metadata.component.name, 'kubic');
+    assert.equal(finished.metadata.component['bom-ref'], 'kubic@0.1.0');
+    assert.deepEqual(finished.components, sbom.components);
+  });
+
+  it('accepts an SBOM that lists every pinned package', () => {
+    assert.deepEqual(sbomProblems(sbom, shrinkwrap), []);
+  });
+
+  it('names a pinned package the SBOM misses, and a non-CycloneDX document', () => {
+    const missing = { ...sbom, components: sbom.components.slice(1) };
+    assert.deepEqual(sbomProblems(missing, shrinkwrap), [
+      'the SBOM does not list consola@3.4.2',
+    ]);
+    assert.deepEqual(sbomProblems({ bomFormat: 'SPDX' }, shrinkwrap), [
+      'the SBOM is not CycloneDX',
+    ]);
   });
 });

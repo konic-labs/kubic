@@ -34,7 +34,9 @@ convention `kubic tui` also pins: a `kubic run` interrupted by
   did you mean kubic <command>?` when a command is close (`kubic stauts`
   → `status`), otherwise `hint: to run it as a prompt: kubic run -p
   '<word>'` for a word-shaped token (a multi-word token is the bare prompt and runs like `kubic run -p`), and last `hint: kubic
-  --help lists the commands`. `kubic help` and `kubic version` point at
+  --help lists the commands`. A multi-word token that reads exactly as a
+  command (`kubic "sessions list"`) is `error: quoted command '<token>'`,
+  exit 2, with `hint: run it unquoted: kubic <token>` and the prompt form. `kubic help` and `kubic version` point at
   the real flags instead. On a colour terminal the same information is an
   error block (`✕ unknown command <name>`, indented hints, a faint `exit 2
   · usage`). A registered group's bad subcommand is commander's `error:

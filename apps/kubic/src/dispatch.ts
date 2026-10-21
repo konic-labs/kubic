@@ -42,6 +42,7 @@ import type {
   DispatchRunners,
 } from './cli/context.js';
 import { createKubicProgram, runKubicProgram } from './cli/program.js';
+import { isQuotedCommand } from './cli/quoted-command.js';
 import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './cli/root-help.js';
 import { registerAnalysisCommands } from './commands/analysis.js';
 import { registerJournalCommands } from './commands/journal.js';
@@ -268,13 +269,20 @@ const FLAG_WORD_HINTS: ReadonlyMap<string, string> = new Map([
 // An unknown command or root option names what was typed,
 // the closest command when one is near (`kubic stauts` → `status`), the
 // prompt form for a word nothing resembles, and `kubic --help`. The
-// internal crash probe gets no prompt hint (it is not a user surface).
+// internal crash probe gets no prompt hint (it is not a user surface). A
+// quoted command gets its unquoted form and the prompt form.
 function reportUnknownCommand(command: string, deps: DispatchDeps): void {
   const err = deps.err ?? deps.out;
   const option = command.startsWith('-');
+  const quoted = !option && /\s/u.test(command) && isQuotedCommand(command);
   const hints: string[] = [];
   const flagWord = FLAG_WORD_HINTS.get(command);
-  if (flagWord !== undefined) {
+  if (quoted) {
+    hints.push(`run it unquoted: \`kubic ${command.trim()}\``);
+    hints.push(
+      `to send it as a prompt: \`kubic run -p ${shellQuote(command)}\``,
+    );
+  } else if (flagWord !== undefined) {
     if (flagWord !== '') hints.push(flagWord);
   } else if (!option) {
     const [close] = suggest(command, [...COMMAND_NAMES]);
@@ -291,7 +299,11 @@ function reportUnknownCommand(command: string, deps: DispatchDeps): void {
       ? '`kubic --help` lists the commands and options'
       : '`kubic --help` lists the commands',
   );
-  const message = option ? 'unknown option' : 'unknown command';
+  const message = option
+    ? 'unknown option'
+    : quoted
+      ? 'quoted command'
+      : 'unknown command';
   const theme = deps.errorTheme?.();
   if (theme?.enabled === true) {
     for (const line of errorBlock(theme, {
@@ -327,14 +339,16 @@ function resolveInvocation(
   // `kubic "<prompt>"` is the headline entry point.
   // A single argv token that contains whitespace is a prompt; an unknown
   // command word has no whitespace, so `kubic nosuch` stays the documented
-  // usage error with a hint naming the prompt form. The
+  // usage error with a hint naming the prompt form, and a quoted command
+  // (`kubic "sessions list"`) is a usage error too, never a model run. The
   // prompt form behaves exactly like `kubic run -p "<prompt>"` — headless
   // in both modes.
   const barePrompt =
     requested !== undefined &&
     /\s/.test(requested) &&
     !ROOT_OPTIONS.has(requested) &&
-    !COMMAND_NAMES.has(requested);
+    !COMMAND_NAMES.has(requested) &&
+    !isQuotedCommand(requested);
   const bareModel =
     requested !== undefined &&
     (requested === BARE_MODEL_FLAG ||

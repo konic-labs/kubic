@@ -12,6 +12,7 @@ import type { CliConfigResult } from '../config/load.js';
 import { COMMAND_NAMES } from '../dispatch.js';
 import type { CommandContext, DispatchRunners } from './context.js';
 import { createKubicProgram, runKubicProgram } from './program.js';
+import { SUBCOMMANDS } from './quoted-command.js';
 import { ROOT_HELP } from './root-help.js';
 
 function io() {
@@ -240,6 +241,20 @@ describe('command registry', () => {
     expect([...names].sort()).toEqual([...COMMAND_NAMES].sort());
     expect(COMMAND_NAMES.size).toBe(25);
     expect(ROOT_HELP).toContain('run · tui · resume · attach · sessions');
+  });
+
+  it('lists exactly the registered subcommands of each command group', () => {
+    const groups = new Map(
+      registered()
+        .commands.filter((command) => command.commands.length > 0)
+        .map((command) => [
+          command.name(),
+          command.commands.map((sub) => sub.name()).sort(),
+        ]),
+    );
+    expect(
+      new Map([...SUBCOMMANDS].map(([name, subs]) => [name, [...subs].sort()])),
+    ).toEqual(groups);
   });
 
   it('every command carries a summary for generated help', () => {

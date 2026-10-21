@@ -24,6 +24,8 @@ import {
   readLockFile,
   removeLockFile,
   scanStateModes,
+  startTimeFromLstart,
+  withFileLocked,
 } from './lock-file.js';
 
 const roots: string[] = [];
@@ -115,10 +117,48 @@ describe('atomic lock claim', () => {
   });
 });
 
-// Process start time: the pid-reuse guard behind the stale
-// rule. Linux-only: /proc is the only portable-enough source, and anywhere
-// else the lock falls back to the pid probe.
+// Process start time: the pid-reuse guard behind the stale rule. Linux reads
+// /proc, macOS asks ps; anywhere else the lock falls back to the pid probe.
 describe('process start time', () => {
+  (process.platform === 'darwin' ? it : it.skip)(
+    "reads this process's start from ps, the same on every read",
+    () => {
+      const start = processStartTimeOf(process.pid);
+      expect(start).toBeDefined();
+      const uptimeStart = Date.now() - process.uptime() * 1000;
+      expect(Math.abs((start as number) - uptimeStart)).toBeLessThan(60_000);
+      expect(processStartTimeOf(process.pid)).toBe(start);
+      // Another live process: its parent, read through the same path.
+      expect(processStartTimeOf(process.ppid)).toBeDefined();
+    },
+  );
+
+  // A claim naming a live pid whose recorded start is not that process's
+  // start belongs to a holder that is gone: the pid was reused.
+  (processStartTimeOf(process.pid) === undefined ? it.skip : it)(
+    'takes over a file lock whose live pid started at another time',
+    () => {
+      const path = tmpFile('index.lock');
+      writeFileSync(
+        path,
+        JSON.stringify({ pid: process.pid, startedAt: 1, nonce: 'gone' }),
+      );
+      expect(withFileLocked(path, () => 'ran', { waitMs: 200 })).toBe('ran');
+    },
+  );
+
+  it('parses ps lstart output as a UTC instant, refusing anything else', () => {
+    expect(startTimeFromLstart('Wed Oct 21 06:04:15 2026    \n')).toBe(
+      Date.UTC(2026, 9, 21, 6, 4, 15),
+    );
+    expect(startTimeFromLstart('Mon Jan  5 00:00:01 2026')).toBe(
+      Date.UTC(2026, 0, 5, 0, 0, 1),
+    );
+    expect(startTimeFromLstart('')).toBeUndefined();
+    expect(startTimeFromLstart('Wed Foo 21 06:04:15 2026')).toBeUndefined();
+    expect(startTimeFromLstart('21 Oct 2026 06:04')).toBeUndefined();
+  });
+
   (process.platform === 'linux' && processStartTimeOf(process.pid) !== undefined
     ? it
     : it.skip)("reads this process's start from /proc", () => {

@@ -37,7 +37,9 @@ writes back.
 Cross-process coordination: every
 journal mutation — append, retention rewrite, blob sweep — runs under a
 lock beside the index whose claim names its holder (pid, process start time,
-a nonce): a waiter takes it away only when that holder is gone, so a crashed
+a nonce): a waiter takes it away only when that holder is gone — its pid is
+dead, or alive but started at another time (a reused pid; the start time
+comes from `/proc` on Linux and `ps` on macOS) — so a crashed
 holder never wedges the journal and a live one is never robbed of it, a
 takeover runs under a guard so two waiters cannot both take it, and a
 release removes only its own claim. The rewrite abandons itself when the index changed

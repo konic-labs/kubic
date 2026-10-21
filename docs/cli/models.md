@@ -176,6 +176,20 @@ of entries with their own `id` is accepted as an alias):
 | `input` | Input modalities: a non-empty list from `text`, `image` (default `["text"]`). |
 | `samplingParams`, `samplingParamsByThinkingLevel` | Extra request-body fields Pi assigns into the provider request verbatim (`temperature`, `top_p`, …). The by-level form is keyed by thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`); at request time the effective level's object is merged over `samplingParams`. An unknown level or a non-object body is refused with the field named. Supported for the OpenAI-compatible APIs this file declares (`openai-completions`, `openai-responses`). |
 
+## Proxies
+
+Model requests honour `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` (either
+case). Node reads them only when it starts with its proxy support on, so when
+one is set the `kubic` launcher runs the CLI in a child process that has it
+(`NODE_USE_ENV_PROXY=1`): stdio, signals and the exit status pass through,
+and Node 22's experimental-feature warning is silenced. A `NODE_USE_ENV_PROXY`
+you set yourself is respected, `0` included; on a Node without
+`--use-env-proxy` the variables are not read and model traffic goes direct.
+List a local model server (`localhost`, `127.0.0.1`) in `NO_PROXY` so it is
+not sent to the proxy. Tool processes get the proxy variables separately,
+with any credentials stripped (see
+[journal and safety](../architecture/journal-and-safety.md#tool-process-environment)).
+
 ## Secrets (never in config)
 
 Secrets never appear in config: a secret-shaped value or a secret ref in

@@ -63,6 +63,7 @@ export const PACK_BUDGET_BYTES = 1.5 * 1024 * 1024;
 const COPIED = [
   'bin/kubic.js',
   'bin/node-guard.mjs',
+  'bin/env-proxy.mjs',
   'dist/kubic.js',
   'dist/kubic.js.map',
   'README.md',

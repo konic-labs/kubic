@@ -9,6 +9,7 @@
 // above the import (asserted by scripts/binary-contract.test.mjs); the
 // refusal line is pinned end to end by scripts/binary-contract.mjs.
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { nodeVersionSupported } from './node-guard.mjs';
 
 if (!nodeVersionSupported(process.versions.node)) {
@@ -34,19 +35,29 @@ if (process.env.KUBIC_DEBUG === '1') {
   process.setSourceMapsEnabled(true);
 }
 
-try {
-  await import('../dist/kubic.js');
-} catch (error) {
-  // The bundle exists, so a module it cannot find is a dependency.
-  if (
-    error !== null &&
-    typeof error === 'object' &&
-    'code' in error &&
-    error.code === 'ERR_MODULE_NOT_FOUND'
-  ) {
-    console.error(`kubic: a dependency is missing: ${error.message}`);
-    console.error('kubic: reinstall kubic, or run `npm ci` in a clone.');
-    process.exit(1);
+// Model traffic honours the proxy variables only when Node starts with its
+// proxy support on: with a proxy variable set, the CLI runs in a child that
+// has it (bin/env-proxy.mjs).
+const { needsEnvProxyRelaunch, relaunchWithEnvProxy } = await import(
+  './env-proxy.mjs'
+);
+if (needsEnvProxyRelaunch(process.env, process.allowedNodeEnvironmentFlags)) {
+  relaunchWithEnvProxy(fileURLToPath(import.meta.url), process.argv.slice(2));
+} else {
+  try {
+    await import('../dist/kubic.js');
+  } catch (error) {
+    // The bundle exists, so a module it cannot find is a dependency.
+    if (
+      error !== null &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === 'ERR_MODULE_NOT_FOUND'
+    ) {
+      console.error(`kubic: a dependency is missing: ${error.message}`);
+      console.error('kubic: reinstall kubic, or run `npm ci` in a clone.');
+      process.exit(1);
+    }
+    throw error;
   }
-  throw error;
 }

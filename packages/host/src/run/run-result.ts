@@ -207,6 +207,9 @@ export interface HeadlessRunResult {
   // default. Absent when no session was ever created (same bound as
   // posture — the mode is read from the session record).
   mode?: RunMode;
+  // The moves along `[model] fallback`: the model that could not be used,
+  // the one used instead and why. Absent when none was made.
+  fallbacks?: ReadonlyArray<{ from: string; to: string; reason: string }>;
 }
 
 export interface RunUsage {
@@ -236,6 +239,7 @@ export interface RunEnvelope {
   error?: { kind: string; message: string };
   // The failure code, remedy and retry strategy, additive.
   failure?: ClassifiedFailure;
+  fallbacks?: ReadonlyArray<{ from: string; to: string; reason: string }>;
 }
 
 export function buildRunEnvelope(
@@ -261,6 +265,7 @@ export function buildRunEnvelope(
     ...(result.mode === undefined ? {} : { mode: result.mode }),
     ...(result.error === undefined ? {} : { error: result.error }),
     ...(failure === undefined ? {} : { failure }),
+    ...(result.fallbacks === undefined ? {} : { fallbacks: result.fallbacks }),
   };
 }
 

@@ -72,6 +72,7 @@ describe('kubic policy explain', () => {
     expect(explanation.policy.map((row) => row.key)).toEqual([
       'allowed_models',
       'allowed_providers',
+      'allowed_regions',
       'allowed_tools',
       'denied_tools',
       'network_policy',
@@ -123,7 +124,7 @@ describe('kubic policy explain', () => {
       (await runPolicyExplainCommand({ json: true }, { ...json.deps, load }))
         .exitCode,
     ).toBe(0);
-    expect(JSON.parse(json.out.join('\n')).policy).toHaveLength(12);
+    expect(JSON.parse(json.out.join('\n')).policy).toHaveLength(13);
     const broken = io();
     expect(
       (

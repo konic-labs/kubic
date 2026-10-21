@@ -199,6 +199,11 @@ export interface RuntimeConfig {
   spend: SpendCaps;
   // `[[hooks]]` of the enterprise, product and global layers, in order.
   hooks: AdminHook[];
+  // `[providers.<id>] region` from the enterprise and product layers.
+  providerRegions: Record<string, string>;
+  // `[model] fallback`: the models tried, in order, when the selected one is
+  // unavailable. Absent: none.
+  modelFallback?: string[];
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
   // in `overriddenAttempts`); empty when nothing was overridden — the same pin

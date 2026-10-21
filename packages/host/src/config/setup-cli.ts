@@ -79,6 +79,9 @@ const NO_KEY_LINES = [
   '  export ANTHROPIC_API_KEY=…     anthropic',
   '  export OPENAI_API_KEY=…        openai',
   '  export OPENROUTER_API_KEY=…    many models through one key',
+  '  export AWS_PROFILE=… AWS_REGION=…                          amazon-bedrock',
+  '  export GOOGLE_CLOUD_PROJECT=… GOOGLE_CLOUD_LOCATION=…      google-vertex (after gcloud auth application-default login)',
+  '  export AZURE_OPENAI_API_KEY=… AZURE_OPENAI_RESOURCE_NAME=…  azure-openai-responses',
   '  or add a local model in ~/.kubic/models/models.json',
 ];
 

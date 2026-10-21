@@ -146,6 +146,10 @@ export interface HeadlessRunDeps {
   approvalBroker?: ApprovalBrokerTarget;
   // A verified `--pre-approvals` file. Absent: none.
   preApprovals?: PreApprovals;
+  // `[providers.<id>] region` declarations, for `[policy] allowed_regions`.
+  providerRegions?: Readonly<Record<string, string>>;
+  // `[model] fallback`: the models a run moves to when its model fails.
+  modelFallback?: readonly string[];
   // `[telemetry]`: where the run's spans and metrics go. Absent: nowhere.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy from the same

@@ -270,6 +270,14 @@ export const CONFIG_SECTIONS = [
             'climbs allowed per run on the escalation ladder; unset means the ladder length',
         },
       },
+      {
+        name: 'fallback',
+        check: 'escalate',
+        runtime: {
+          effect:
+            'the models a run falls back to, in order, when the selected one is unavailable',
+        },
+      },
     ],
     docs: [
       {
@@ -283,6 +291,10 @@ export const CONFIG_SECTIONS = [
           'roles.<name>.escalate',
         ],
         text: "The escalation ladder: `escalate` lists the rungs as concrete `provider/id` refs in climbing order (wildcards refused per entry at load); a role's `escalate` wins outright for runs as that role, even an empty list (which freezes every `/model` switch — opting out of climbing, not of the gate). `maxEscalations` bounds the climbs per run, unset meaning the ladder length. Climbs are one-way (a down-step or off-ladder target is refused by name with the live model untouched) and recorded: `/model <ref>` climbs the ladder silently, `/escalate <ref> [reason]` climbs naming why, and three consecutive tool-failure turns climb one rung automatically — once per run, never back (`kubic run` settles one turn per invocation, so the automatic trigger lives on the `kubic tui` lane). Every climb appends an `escalation: <from> → <to> (<reason>)` transcript row and lands on the trajectory's `model.escalations` (per-model usage already attributes the spend each side of the move).",
+      },
+      {
+        keys: ['model.fallback'],
+        text: 'The fallback chain: concrete `provider/id` refs in the order they are tried. When the selected model cannot be used — its provider has no credentials, is not registered, or is refused by `[policy]` — the first usable rung is selected instead, named on stderr. During a `kubic run`, a turn that fails with a provider error (unreachable, overloaded, rate-limited after the retries, or refusing the credentials) is run again on the next rung. Each move is named on stderr, listed as `fallbacks` in the `--json` envelope and recorded as an escalation on the trajectory, with the error that caused it. See [Regions and fallbacks](enterprise.md#regions-and-fallbacks).',
       },
       {
         keys: ['model.thinking'],
@@ -827,6 +839,29 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'providers',
+    shape: 'tables',
+    runtime: {
+      effect:
+        'what the managed config declares about a provider: the region its endpoint runs in, for [policy] allowed_regions',
+    },
+    keys: [{ name: 'region', check: 'string' }],
+    exampleTables: {
+      'azure-openai-responses': ['region = "westeurope"'],
+    },
+    exampleNote: [
+      'Read from the enterprise and product layers only: the region a',
+      "provider runs in is the organization's declaration.",
+    ],
+    docs: [
+      {
+        keys: ['providers.<name>.region'],
+        label: '`providers.<name>.region` (`[providers.<name>]`)',
+        text: "The region a provider's endpoint runs in, for a provider whose region Kubic cannot read from its environment: Azure OpenAI, a gateway in models.json, a direct API. `[policy] allowed_regions` checks it. Read from the enterprise and product layers only — a region is the organization's declaration, so a global or project config setting one is refused by name. Amazon Bedrock and Vertex AI always use the region their environment selects.",
+      },
+    ],
+  },
+  {
     name: 'tls',
     shape: 'table',
     omitEmpty: true,
@@ -910,6 +945,15 @@ export const CONFIG_SECTIONS = [
             'provider gate shared by model selection and the implicit fallback pick',
         },
         example: '["local"]',
+      },
+      {
+        name: 'allowed_regions',
+        field: 'allowedRegions',
+        check: 'strings',
+        runtime: {
+          effect:
+            'region gate: a model whose endpoint region is unknown or unlisted is refused before any request',
+        },
       },
       {
         name: 'allowed_tools',
@@ -1013,6 +1057,10 @@ export const CONFIG_SECTIONS = [
       {
         keys: ['policy.allowed_models'],
         text: 'The model gate: `provider/id`, `provider/*` (or `*` glob) patterns and bare model ids. A selection outside the list — `--model`, `[model]`, `KUBIC_MODEL`, a role pin, or the implicit first-available pick — exits 6 with a named policy refusal before any provider call; the implicit pick skips disallowed providers. It gates `kubic run`, `kubic tui` (boot and `/model` switches — a refused switch leaves the live model untouched) and the re-executing tiers of `kubic replay`.',
+      },
+      {
+        keys: ['policy.allowed_regions'],
+        text: 'The regions a model endpoint may run in, as region ids or `*` globs (`["eu-*", "europe-*", "westeurope"]`). The region is read from the environment for Amazon Bedrock (`AWS_REGION`, `AWS_DEFAULT_REGION` or the profile) and Vertex AI (`GOOGLE_CLOUD_LOCATION`), is `local` for the testing provider and a models.json provider on this machine, and is what the managed config declares for any other provider (`[providers.<id>] region`). A model whose region is unknown or unlisted is refused before any request — at selection, on a resumed session and on a `/model` switch. See [Regions and fallbacks](enterprise.md#regions-and-fallbacks).',
       },
       {
         keys: ['policy.allowed_providers'],

@@ -60,6 +60,8 @@ export interface ModelConfig {
   escalate?: string[];
   /** Escalation bound: climbs allowed per run. */
   maxEscalations?: number;
+  /** The models a run falls back to, in order, when this one is unavailable. */
+  fallback?: string[];
 }
 
 export interface ApprovalsConfig {
@@ -196,6 +198,8 @@ export const VERIFY_COMMAND_KEYS: readonly VerifyCommandKey[] = sectionNamed(
 interface PolicyConfig {
   allowedModels?: string[];
   allowedProviders?: string[];
+  // The regions a model endpoint may run in (`*` globs).
+  allowedRegions?: string[];
   allowedTools?: string[];
   deniedTools?: string[];
   // 'proxy' is the spelling of the engine's 'allowlist' mode; the engine
@@ -211,6 +215,12 @@ interface PolicyConfig {
   // Spend caps in US dollars; the lowest any layer sets wins.
   maxRunCostUsd?: number;
   maxDailyCostUsd?: number;
+}
+
+// `[providers.<id>]`: what the organization declares about a provider, for
+// a provider whose region Kubic cannot read from its environment.
+interface ProviderFacts {
+  region?: string;
 }
 
 // `[tls]`: the certificate store model and collector traffic trusts.
@@ -271,6 +281,7 @@ export interface KubicConfig {
   telemetry?: TelemetryConfig;
   cost?: CostConfig;
   tls?: TlsConfig;
+  providers?: Record<string, ProviderFacts>;
   managed?: ManagedConfig;
   policy?: PolicyConfig;
   hooks?: HookTableConfig[];
@@ -294,6 +305,7 @@ interface SectionTypes {
   telemetry: TelemetryConfig;
   cost: CostConfig;
   tls: TlsConfig;
+  providers: ProviderFacts;
   managed: ManagedConfig;
   policy: PolicyConfig;
   hooks: HookTableConfig;
@@ -324,6 +336,7 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   telemetry: true,
   cost: true,
   tls: true,
+  providers: true,
   managed: true,
   policy: true,
   hooks: true,

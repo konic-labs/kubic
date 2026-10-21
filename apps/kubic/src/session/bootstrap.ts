@@ -68,8 +68,10 @@ import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles';
 import { redactBridgeWrites, scanBridgeWrites } from '@kubic/host/secret-refs';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { bootSkills } from '@kubic/host/skills';
+import type { RegionGate } from '../config/model-selection.js';
 import { installBootPolicy } from './approval-policy.js';
 import { assembleBootCatalog } from './catalog.js';
+import type { ModelFallback } from './fallback.js';
 import { beginBootJournal, probeBootOverlap } from './journal.js';
 import { bootSessionLane } from './lane.js';
 import { resolveBootRole } from './role.js';
@@ -130,6 +132,11 @@ export interface SessionBootConfig {
   approvalBroker?: ApprovalBrokerTarget;
   // A verified pre-approval file the policy grants from.
   preApprovals?: PreApprovals;
+  // `[providers.<id>] region` declarations, for `[policy] allowed_regions`.
+  providerRegions?: Readonly<Record<string, string>>;
+  // `[model] fallback`: the models tried, in order, when the selected one
+  // is unavailable.
+  modelFallback?: readonly string[];
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.
@@ -264,6 +271,11 @@ export class SessionBoot {
   reconciliation: RunReconciliation | undefined;
   skills: ReturnType<typeof bootSkills> | undefined;
   instructions: ProjectInstructions | undefined;
+  // `[policy] allowed_regions` as a gate on this boot's catalog; absent when
+  // no region gate is configured.
+  regionGate: RegionGate | undefined;
+  // The moves along `[model] fallback` this boot or its run made.
+  readonly fallbacks: ModelFallback[] = [];
   lane: Lane | undefined;
   // The model the booted lane runs.
   liveModel: { provider: string; id: string } | undefined;

@@ -29,3 +29,4 @@ export {
   /** @internal */ renderModelsCatalog,
 } from './models-render.js';
 export { providerKeyHints } from './provider-key-hints.js';
+export { regionRefusal } from './regions.js';

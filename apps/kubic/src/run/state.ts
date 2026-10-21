@@ -6,6 +6,7 @@ import { BACKGROUND_CONTEXT, type Context } from '@kubic/agent/pi-boundary';
 import { gitHeadOf } from '@kubic/exec/git-clean';
 import { type RunOutcome, RunSpans } from '@kubic/host/run';
 import type { SessionBoot } from '../session/bootstrap.js';
+import type { ModelFallback } from '../session/fallback.js';
 import type { HeadlessRunDeps, HeadlessRunOptions } from './options.js';
 import { type RunSinks, runSinks } from './output.js';
 
@@ -50,6 +51,8 @@ export interface RunReport {
   posture?: 'approvals' | 'full-access';
   // The run's mode, set from the session record once the session exists.
   mode?: RunMode;
+  // The moves along `[model] fallback`, the boot's and the run's.
+  fallbacks?: readonly ModelFallback[];
 }
 
 export class RunState {

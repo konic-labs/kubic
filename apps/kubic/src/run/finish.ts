@@ -69,6 +69,19 @@ export async function finishRun(
       endedAt: Date.now(),
       base: state.base,
       evalLabels,
+      // Each move along `[model] fallback`, with the error that caused it.
+      ...(state.report.fallbacks === undefined ||
+      state.report.fallbacks.length === 0
+        ? {}
+        : {
+            escalations: state.report.fallbacks.map((move) => ({
+              reason: `fallback: ${move.reason}`,
+              at: new Date(move.at).toISOString(),
+              fromModel: move.from,
+              toModel: move.to,
+              thinking: capture.thinking ?? null,
+            })),
+          }),
       warn: state.sinks.warn,
       outcome: {
         terminus: settled.terminus,
@@ -158,6 +171,15 @@ function withReport(
     ...result,
     ...(report.model === undefined ? {} : { model: report.model }),
     ...(report.posture === undefined ? {} : { posture: report.posture }),
+    ...(report.fallbacks === undefined || report.fallbacks.length === 0
+      ? {}
+      : {
+          fallbacks: report.fallbacks.map(({ from, to, reason }) => ({
+            from,
+            to,
+            reason,
+          })),
+        }),
     ...(report.mode === undefined ? {} : { mode: report.mode }),
   };
 }

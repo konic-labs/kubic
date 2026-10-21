@@ -117,6 +117,8 @@ async function runBooted(
   }
   state.report.model =
     boot.liveModel === undefined ? undefined : boot.liveModelRef;
+  // The boot's fallback moves, and the run's as they happen.
+  state.report.fallbacks = boot.fallbacks;
   state.options.progress?.begin({
     ...(state.report.model === undefined ? {} : { model: state.report.model }),
     ...(state.capture.role === undefined ? {} : { role: state.capture.role }),

@@ -326,6 +326,56 @@ enterprise policy ([policy] project_policy = "restricted"))`). A project may
 still narrow: a stricter permission class, `route = "deny"`, a smaller tool
 set. The default is `"open"`.
 
+## Regions and fallbacks
+
+```toml
+[policy]
+allowed_regions = ["eu-*", "europe-*", "westeurope"]
+
+[providers.azure-openai-responses]
+region = "westeurope"
+
+[model]
+provider = "amazon-bedrock"
+id = "anthropic.claude-sonnet-5-5"
+fallback = ["google-vertex/claude-sonnet-5-5", "azure-openai-responses/gpt-5"]
+```
+
+`allowed_regions` lists the regions a model endpoint may run in, as region
+ids or `*` globs. Kubic reads the region from the environment where the
+provider selects it: the AWS region for Amazon Bedrock (`AWS_REGION`,
+`AWS_DEFAULT_REGION` or the profile) and `GOOGLE_CLOUD_LOCATION` for Vertex
+AI. The testing provider and a `models.json` provider on this machine are
+`local`. Any other provider (Azure OpenAI, a gateway, a direct API) has the
+region the managed config declares under `[providers.<id>] region`; a region
+is the organization's declaration, so only the enterprise and product layers
+may set one. A model whose region is unknown or unlisted is refused before
+any request — at selection, on a resumed session and on a `/model` switch:
+
+```
+error: model 'amazon-bedrock/anthropic.claude-sonnet-5-5' refused: provider 'amazon-bedrock' runs in us-east-1, outside [policy] allowed_regions (eu-*, europe-*, westeurope)
+```
+
+`[model] fallback` lists the models tried, in order, when the selected one
+cannot be used. At boot, a model whose provider has no credentials, is not
+registered or is refused by the policy or the regions gives way to the first
+rung that can be selected. During a `kubic run`, a turn that fails with a
+provider error — unreachable, overloaded or rate-limited after the retries,
+out of quota, or refusing the credentials — runs again on the next rung.
+Each move is named on stderr
+(`model: primary/big is unavailable (…); using backup/small`), listed as
+`fallbacks` in the `--json` envelope, and recorded as an escalation on the
+trajectory with the error that caused it. A rung outside the policy or the
+regions is skipped. `kubic tui` takes the fallback at boot; during a session,
+`/model` switches.
+
+`kubic doctor` and `kubic models` name what a cloud provider still lacks:
+an AWS region for Bedrock, the resource (`AZURE_OPENAI_RESOURCE_NAME` or
+`AZURE_OPENAI_BASE_URL`) for Azure OpenAI — with
+`AZURE_OPENAI_DEPLOYMENT_NAME_MAP` when a deployment is not named after its
+model — and `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` for Vertex AI
+after `gcloud auth application-default login`.
+
 ## Corporate networks
 
 Three settings make Kubic work behind TLS inspection and LLM gateways:

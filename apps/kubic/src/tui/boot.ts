@@ -186,6 +186,8 @@ function tuiSessionBoot(
       projectProvidersRefusal: options.projectProvidersRefusal,
       sessionTeam: options.sessionTeam,
       hooks: options.hooks,
+      providerRegions: options.providerRegions,
+      modelFallback: options.modelFallback,
       modelPolicy: options.modelPolicy,
       trustProject: options.trustProject,
       skills: options.skills,

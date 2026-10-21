@@ -82,6 +82,9 @@ content = false
 [cost]
 team = "platform"
 
+[providers.azure-openai-responses]
+region = "westeurope"
+
 [tls]
 systemCa = true
 

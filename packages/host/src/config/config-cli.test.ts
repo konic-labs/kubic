@@ -47,6 +47,7 @@ function runtime(): RuntimeConfig {
     run: {},
     spend: {},
     hooks: [],
+    providerRegions: {},
     projectTrusted: true,
     overriddenAttempts: [],
     modelPinOverrides: [],

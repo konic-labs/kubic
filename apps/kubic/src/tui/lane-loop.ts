@@ -311,6 +311,8 @@ async function switchLaneModel(
     // Escalation outside the role's set is refused: the live model
     // stays put, like the enterprise gate.
     roleModelScope(boot.role?.resolved),
+    // So is a switch outside `[policy] allowed_regions`.
+    boot.regionGate,
   );
   // With a ladder configured the switch climbs
   // it through escalateLaneModel — one-way, budget-bounded,

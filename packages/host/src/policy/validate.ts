@@ -293,7 +293,7 @@ function modelsSection(
   }
   checkNoUnknown(
     models,
-    new Set(['providers', 'ids', 'thinking', 'allowed']),
+    new Set(['providers', 'ids', 'thinking', 'allowed', 'regions']),
     'models',
     layer,
   );
@@ -312,6 +312,7 @@ function modelsSection(
     ids: stringArray(models.ids, `${layer}.models.ids`),
     ...(thinking === undefined ? {} : { thinking }),
     allowed: modelPatternList(models.allowed, `${layer}.models.allowed`),
+    regions: stringArray(models.regions, `${layer}.models.regions`),
   };
 }
 

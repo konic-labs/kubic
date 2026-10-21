@@ -134,6 +134,10 @@ export function tuiBootOptions(
     sessionTeam: provided.sessionTeam,
     // The `[[hooks]]`, as `kubic run` runs them.
     hooks: provided.hooks,
+    // The region declarations and the fallback chain, as `kubic run` reads
+    // them.
+    providerRegions: provided.providerRegions,
+    modelFallback: provided.modelFallback,
     telemetry: provided.telemetry,
     // `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.

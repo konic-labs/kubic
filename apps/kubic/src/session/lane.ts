@@ -82,11 +82,20 @@ export async function bootSessionLane(
       : undefined;
   // The stored model of a resumed session is gated too: the selection is
   // checked above, the stored one only by this closure.
-  const modelGate =
+  const policyGate =
     policy !== undefined && hasModelPolicy(policy)
       ? (provider: string, modelId: string): boolean =>
           isModelAllowed(policy, provider, modelId)
       : undefined;
+  // `[policy] allowed_regions` gates the stored model of a resumed session
+  // too.
+  const regionGate = boot.regionGate;
+  const modelGate =
+    policyGate === undefined && regionGate === undefined
+      ? undefined
+      : (provider: string, modelId: string): boolean =>
+          (policyGate?.(provider, modelId) ?? true) &&
+          regionGate?.(provider) === undefined;
   // Request options: the merged `[model]` tuning with the role layered
   // over it becomes this lane's `settings.stream`.
   const stream = resolveStreamOptions(

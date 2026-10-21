@@ -53,6 +53,8 @@ interface ModelsPolicy {
    * `providers`/`ids` lists so both vocabularies meet in one policy.
    */
   allowed?: string[];
+  /** `allowed_regions`: region ids or `*` globs a model endpoint may run in. */
+  regions?: string[];
 }
 
 export type FilesystemLevel = 'none' | 'read' | 'workspace-write' | 'full';
@@ -119,6 +121,7 @@ export interface EffectivePolicy {
     ids: string[] | undefined;
     thinking: string | undefined;
     allowed: string[] | undefined;
+    regions: string[] | undefined;
   };
   filesystem: {
     level: FilesystemLevel | undefined;

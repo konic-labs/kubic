@@ -21,6 +21,7 @@ import {
   InMemoryCredentialStore,
 } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { awsRegionOf } from './aws-region.js';
 import {
   FAUX_PROVIDER_ID,
   fauxProviderActive,
@@ -64,37 +65,52 @@ function preferenceOrder(ids: readonly string[]): string[] {
   return [...preferred, ...rest, ...ambient];
 }
 
-// The AWS region Bedrock would use: AWS_REGION or AWS_DEFAULT_REGION, else
-// the `region` of the active profile in the shared config file — the order
-// the AWS SDK resolves it.
-function awsRegionOf(env: Env, home: string): string | undefined {
-  const fromEnv = env.AWS_REGION || env.AWS_DEFAULT_REGION;
-  if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
-  let text: string;
-  try {
-    text = createNodeFileBridge('/').readTextFile(
-      env.AWS_CONFIG_FILE || join(home, '.aws', 'config'),
-    );
-  } catch {
-    return undefined;
+// What a built-in with credentials still lacks to reach its endpoint:
+// Bedrock without a region ("Region is missing"), Azure OpenAI without its
+// resource, Vertex AI's application-default login without a project and a
+// location (Pi then reports no credentials at all).
+function endpointGap(
+  provider: string,
+  source: string | undefined,
+  env: Env,
+  home: string,
+): string | undefined {
+  if (
+    provider === 'amazon-bedrock' &&
+    source !== undefined &&
+    awsRegionOf(env, home) === undefined
+  ) {
+    return `credentials from ${source} but no AWS region: set AWS_REGION (or AWS_DEFAULT_REGION, or region in the profile) to use it`;
   }
-  const profile = env.AWS_PROFILE || 'default';
-  const sections =
-    profile === 'default'
-      ? ['default', 'profile default']
-      : [`profile ${profile}`];
-  let inProfile = false;
-  for (const raw of text.split(/\r?\n/u)) {
-    const line = raw.trim();
-    const header = /^\[\s*(.+?)\s*\]$/u.exec(line);
-    if (header !== null) {
-      inProfile = sections.includes((header[1] ?? '').replace(/\s+/gu, ' '));
-      continue;
-    }
-    const region = inProfile ? /^region\s*=\s*(\S+)/u.exec(line) : null;
-    if (region?.[1] !== undefined) return region[1];
+  if (
+    provider === 'azure-openai-responses' &&
+    source !== undefined &&
+    !env.AZURE_OPENAI_RESOURCE_NAME &&
+    !env.AZURE_OPENAI_BASE_URL
+  ) {
+    return `a key from ${source} but no Azure OpenAI resource: set AZURE_OPENAI_RESOURCE_NAME (or AZURE_OPENAI_BASE_URL), and AZURE_OPENAI_DEPLOYMENT_NAME_MAP when a deployment is not named after its model`;
+  }
+  if (
+    provider === 'google-vertex' &&
+    source === undefined &&
+    vertexLoginFound(env, home) &&
+    (!(env.GOOGLE_CLOUD_PROJECT || env.GCLOUD_PROJECT) ||
+      !env.GOOGLE_CLOUD_LOCATION)
+  ) {
+    return 'an application-default Google login but no project or location: set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION (a Vertex AI region, or global) to use it';
   }
   return undefined;
+}
+
+function vertexLoginFound(env: Env, home: string): boolean {
+  if (env.GOOGLE_APPLICATION_CREDENTIALS) return true;
+  try {
+    return createNodeFileBridge('/').exists(
+      join(home, '.config', 'gcloud', 'application_default_credentials.json'),
+    );
+  } catch {
+    return false;
+  }
 }
 
 // One models.json location the assembly looked at: the
@@ -424,14 +440,9 @@ export async function assembleModels(
   const usableBuiltins: string[] = [];
   builtins.forEach((provider, index) => {
     const check = checks[index];
-    // Bedrock credentials without a region fail every request ("Region is
-    // missing"): such a provider is not usable, and doctor says what to set.
-    const unusable =
-      check !== undefined &&
-      provider.id === 'amazon-bedrock' &&
-      awsRegionOf(env, home) === undefined
-        ? `credentials from ${check.source ?? 'the AWS environment'} but no AWS region: set AWS_REGION (or AWS_DEFAULT_REGION, or region in the profile) to use it`
-        : undefined;
+    // Credentials that cannot reach an endpoint fail every request: such a
+    // provider is not usable, and doctor says what to set.
+    const unusable = endpointGap(provider.id, check?.source, env, home);
     const usable = check !== undefined && unusable === undefined;
     if (usable) usableBuiltins.push(provider.id);
     providers.set(provider.id, {

@@ -36,6 +36,7 @@ import { headlessApprovalsOf } from './headless-approvals.js';
 import { adminHooksOf } from './hooks-config.js';
 import { mergeLayered } from './layer-merge.js';
 import { checkProjectRestriction } from './project-restriction.js';
+import { providerRegionsOf } from './provider-regions.js';
 import {
   envFlag,
   parseEnvModel,
@@ -260,6 +261,10 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     ...(loaded.managed === undefined ? {} : { managed: loaded.managed }),
     spend: spendCapsOf(loaded.perLayer),
     hooks,
+    providerRegions: providerRegionsOf(loaded.perLayer, loaded.paths.project),
+    ...(config.model?.fallback === undefined
+      ? {}
+      : { modelFallback: [...config.model.fallback] }),
     overriddenAttempts: [
       ...merged.overriddenAttempts,
       ...pin.modelPinOverrides.map(

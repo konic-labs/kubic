@@ -15,6 +15,7 @@ import {
 import { roleModelScope, selectBootModel } from '../config/model-selection.js';
 import { hasExplicitModelSelection } from '../model-projection.js';
 import type { BootRefusal, SessionBoot } from './bootstrap.js';
+import { regionGateFor, selectFallbackModel } from './fallback.js';
 
 // The provider ids and model ids a catalog names: the words a live key value
 // must not be scrubbed out of.
@@ -101,6 +102,11 @@ export async function assembleBootCatalog(
   const fauxPinned = override.kind === 'faux' && config.models === undefined;
   if (fauxPinned) sinks.fauxNotice?.(FAUX_NOTICE);
   const roleModel = boot.role?.resolved.model;
+  boot.regionGate = regionGateFor(
+    config.modelPolicy,
+    boot.models,
+    config.providerRegions,
+  );
   try {
     // An explicit pin wins over default selection; the role layer's own
     // `provider/id` pin is the next default, and with neither the first
@@ -115,18 +121,35 @@ export async function assembleBootCatalog(
       fallbackProviders,
       policy: config.modelPolicy,
       roleScope: roleModelScope(boot.role?.resolved),
+      ...(boot.regionGate === undefined ? {} : { regionGate: boot.regionGate }),
     });
   } catch (error) {
-    if (error instanceof ModelSelectError) {
+    if (!(error instanceof ModelSelectError)) throw error;
+    // The selected model cannot be used: the `[model] fallback` chain is
+    // tried in order before the boot gives up.
+    const primary =
+      config.model === undefined
+        ? (roleModel ?? 'the default model')
+        : `${config.model.provider}/${config.model.id}`;
+    const fallback = selectFallbackModel(
+      boot,
+      boot.models,
+      primary,
+      error.message,
+    );
+    if (fallback === undefined) {
       return { kind: 'provider', message: error.message };
     }
-    throw error;
+    boot.model = fallback;
   }
-  boot.explicitModel = hasExplicitModelSelection({
-    fauxPinned,
-    pin: config.model,
-    roleModel,
-  });
+  // A fallback is an explicit selection: a resumed session moves to it.
+  boot.explicitModel =
+    boot.fallbacks.length > 0 ||
+    hasExplicitModelSelection({
+      fauxPinned,
+      pin: config.model,
+      roleModel,
+    });
   boot.liveModelRef = `${boot.model.provider}/${boot.model.id}`;
   return undefined;
 }

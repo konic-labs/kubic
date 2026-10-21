@@ -156,6 +156,10 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   sessionTeam?: string;
   /** The `[[hooks]]` the lane runs around tool calls and at run end. */
   hooks?: readonly AdminHook[];
+  /** `[providers.<id>] region`, for the `[policy] allowed_regions` gate. */
+  providerRegions?: Readonly<Record<string, string>>;
+  /** `[model] fallback`: the models tried when the selected one is unavailable. */
+  modelFallback?: readonly string[];
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -189,6 +193,12 @@ export function runtimeLaneDeps(result: CliConfigResult): {
       ? {}
       : { sessionTeam: runtime.config.cost.team }),
     ...(runtime.hooks.length === 0 ? {} : { hooks: runtime.hooks }),
+    ...(Object.keys(runtime.providerRegions).length === 0
+      ? {}
+      : { providerRegions: runtime.providerRegions }),
+    ...(runtime.modelFallback === undefined
+      ? {}
+      : { modelFallback: runtime.modelFallback }),
     // No ladder, no field: escalation stays opt-in — the
     // lane climbs nothing it was never configured with.
     ...(runtime.escalate === undefined

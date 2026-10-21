@@ -83,6 +83,7 @@ const FIRST_SET_LEAVES: ReadonlyArray<
   ['models.ids', (p) => p.models?.ids],
   ['models.thinking', (p) => p.models?.thinking],
   ['models.allowed', (p) => p.models?.allowed],
+  ['models.regions', (p) => p.models?.regions],
   ['filesystem.level', (p) => p.filesystem?.level],
   ['filesystem.roots', (p) => p.filesystem?.roots],
   ['data.retentionDays', (p) => p.data?.retentionDays],
@@ -154,6 +155,7 @@ function effectivePolicyOf(merge: Merge): EffectivePolicy {
       ids: leaf<string[]>('models.ids'),
       thinking: leaf<string>('models.thinking'),
       allowed: leaf<string[]>('models.allowed'),
+      regions: leaf<string[]>('models.regions'),
     },
     filesystem: {
       level: leaf<FilesystemLevel>('filesystem.level'),
@@ -207,7 +209,11 @@ export function layerPolicyFromConfig(config: KubicConfig): LayerPolicy {
       ...(p.deniedTools === undefined ? {} : { deny: [...p.deniedTools] }),
     };
   }
-  if (p.allowedProviders !== undefined || p.allowedModels !== undefined) {
+  if (
+    p.allowedProviders !== undefined ||
+    p.allowedModels !== undefined ||
+    p.allowedRegions !== undefined
+  ) {
     out.models = {
       ...(p.allowedProviders === undefined
         ? {}
@@ -215,6 +221,9 @@ export function layerPolicyFromConfig(config: KubicConfig): LayerPolicy {
       ...(p.allowedModels === undefined
         ? {}
         : { allowed: [...p.allowedModels] }),
+      ...(p.allowedRegions === undefined
+        ? {}
+        : { regions: [...p.allowedRegions] }),
     };
   }
   if (p.networkPolicy !== undefined || p.allowedDomains !== undefined) {

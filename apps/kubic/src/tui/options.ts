@@ -208,6 +208,10 @@ export interface TuiRunOptions {
   sessionTeam?: string;
   // The `[[hooks]]`, as `kubic run` runs them; a settled turn is a run end.
   hooks?: readonly AdminHook[];
+  // `[providers.<id>] region` and `[model] fallback`, as `kubic run` reads
+  // them (the fallback applies when the boot's model is unavailable).
+  providerRegions?: Readonly<Record<string, string>>;
+  modelFallback?: readonly string[];
   // `[telemetry]`: where each settled turn's spans and metrics go.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy — the same

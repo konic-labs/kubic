@@ -186,6 +186,32 @@ describe('credential-access detector', () => {
     ).toEqual([]);
   });
 
+  it('raises credentials for a read of the OS credential store', () => {
+    const ctx = triggerContext();
+    for (const command of [
+      'security find-generic-password -s kubic -w',
+      '/usr/bin/security -q find-internet-password -s github.com -g',
+      'security dump-keychain -d login.keychain',
+      'security export -k login.keychain -t identities -o out.p12',
+      'x=$(security find-generic-password -w -s api)',
+      'secret-tool lookup service openai',
+      'secret-tool search --all service kubic',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([
+        'credentials',
+      ]);
+    }
+    // Listing keychains or reading a certificate reveals no secret.
+    for (const command of [
+      'security list-keychains',
+      'security find-certificate -a -p',
+      'secret-tool store --label=x service kubic',
+      'grep -r security src',
+    ]) {
+      expect(detectTriggers('bash', { command }, ctx), command).toEqual([]);
+    }
+  });
+
   it('keeps ordinary commands and credential templates quiet', () => {
     const ctx = triggerContext();
     for (const command of [

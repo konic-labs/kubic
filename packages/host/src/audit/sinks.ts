@@ -16,7 +16,7 @@ import {
   parseSyslogTarget,
 } from './audit.js';
 import type { auditSinkSnapshot, ConfiguredAuditSink } from './ledger.js';
-import { probeMessage } from './ledger.js';
+import { appendAuditLine, probeMessage } from './ledger.js';
 import {
   createUdpSyslogTransport,
   createUnixSyslogTransport,
@@ -111,8 +111,9 @@ export function buildConfiguredSinks(
 }
 
 // A `[[audit]] file` sink: one validated record per line at
-// the EXACT target path (unlike the repo ledger, which owns its filename).
-// Fail-open dirs like the repo ledger: the parent is created when missing.
+// the EXACT target path (unlike the repo ledger, which owns its filename),
+// appended durably and created private like the repo ledger: the parent is
+// created when missing.
 function createTargetFileSink(target: string): AuditSink {
   const bridge = createNodeFileBridge(dirname(target));
   const file = basename(target);
@@ -120,8 +121,7 @@ function createTargetFileSink(target: string): AuditSink {
     name: `file:${target}`,
     kind: 'file',
     write: (record: OrgAuditRecord): void => {
-      if (!bridge.exists('.')) bridge.createDir('.', true);
-      bridge.appendFile(file, `${JSON.stringify(record)}\n`);
+      appendAuditLine(bridge, file, record);
     },
   };
 }

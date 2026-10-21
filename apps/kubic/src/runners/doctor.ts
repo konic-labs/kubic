@@ -14,6 +14,8 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { scanStateModes } from '@kubic/exec/lock-file';
 import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
+  AUDIT_LEDGER_FILE,
+  auditLedgerDirFor,
   auditSinkSnapshot,
   auditSinksDoctorChecks,
   buildConfiguredSinks,
@@ -378,12 +380,21 @@ async function sessionChecks(
     // Always injected: the check itself passes when the sessions root is
     // private. Best-effort like the overlap probe: an unreadable root makes
     // no claim.
-    // The trust store and its directory, then every session below the
-    // root: the walk is bounded and names what it skipped.
-    probeStatePermissions: () =>
-      scanStateModes(
-        home === '' ? [] : [join(home, '.kubic'), projectTrustStorePath(home)],
+    // The trust store and its directory, this workspace's audit ledger and
+    // its directory, then every session below the root: the walk is bounded
+    // and names what it skipped.
+    probeStatePermissions: () => {
+      const ledgerDir = auditLedgerDirFor(process.cwd());
+      return scanStateModes(
+        [
+          ...(home === ''
+            ? []
+            : [join(home, '.kubic'), projectTrustStorePath(home)]),
+          ledgerDir,
+          join(ledgerDir, AUDIT_LEDGER_FILE),
+        ],
         [sessionsRoot],
-      ),
+      );
+    },
   };
 }

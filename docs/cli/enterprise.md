@@ -101,7 +101,10 @@ target = "/var/log/kubic.jsonl"
   `unix:/path`; the default is `/var/run/syslog` on macos and `/dev/log`
   elsewhere) or a `host[:port]` UDP destination (port 514 when absent).
   UDP delivery is best-effort by protocol design. `target` (file): the
-  exact file path (required). `memory` takes no target.
+  exact file path (required); each record is appended and fsynced, and a
+  new file is created `0600` (new directories `0700`) while an existing
+  one keeps its mode — pre-create it to give a log collector group read
+  access. `memory` takes no target.
 - `facility` (syslog): an RFC 5424 facility name (`local0`–`local7`,
   `user`, `authpriv`, …) or number 0–23; default `local0`. Unknown
   facilities and malformed targets are refused by name when the sinks

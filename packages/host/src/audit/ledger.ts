@@ -109,6 +109,29 @@ export async function resolveRunBaseRevision(
   return 'none';
 }
 
+// The creation modes of audit files: private like every other piece of
+// Kubic state. They apply only to what an append creates; an existing file or
+// directory keeps its own mode.
+const AUDIT_FILE_MODE = 0o600;
+const AUDIT_DIR_MODE = 0o700;
+
+// One record line appended durably (fsync) where the bridge offers it — the
+// journal's own primitive — so a crash cannot lose an acknowledged record.
+// Shared by the repo ledger and the `[[audit]] file` sink.
+export function appendAuditLine(
+  bridge: ReturnType<typeof createNodeFileBridge>,
+  file: string,
+  record: OrgAuditRecord,
+): void {
+  if (!bridge.exists('.')) bridge.createDir('.', true, AUDIT_DIR_MODE);
+  const line = `${JSON.stringify(record)}\n`;
+  if (bridge.appendDurably !== undefined) {
+    bridge.appendDurably(file, line, { mode: AUDIT_FILE_MODE });
+  } else {
+    bridge.appendFile(file, line, { mode: AUDIT_FILE_MODE });
+  }
+}
+
 // A synchronous file sink: one validated record per line. appendAudit
 // refuses async sinks, so the append completes before emitAudit returns.
 function createLedgerSink(dir: string): AuditSink {
@@ -117,15 +140,7 @@ function createLedgerSink(dir: string): AuditSink {
     name: `file:${join(dir, AUDIT_LEDGER_FILE)}`,
     kind: 'file',
     write: (record: OrgAuditRecord): void => {
-      if (!bridge.exists('.')) bridge.createDir('.', true);
-      const line = `${JSON.stringify(record)}\n`;
-      // Durable append (fsync) where the bridge offers it — the journal's
-      // own primitive — so a crash cannot lose an acknowledged record.
-      if (bridge.appendDurably !== undefined) {
-        bridge.appendDurably(AUDIT_LEDGER_FILE, line);
-      } else {
-        bridge.appendFile(AUDIT_LEDGER_FILE, line);
-      }
+      appendAuditLine(bridge, AUDIT_LEDGER_FILE, record);
     },
   };
 }

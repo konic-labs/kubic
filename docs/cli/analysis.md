@@ -357,7 +357,9 @@ secret-shaped values and listed-secret inventory values become
 main checkout: from a subdirectory or from a linked worktree, every writer
 and `kubic audit` resolve the same file (the parent of git's common dir;
 outside git, the current directory). The shipped runtime ignore rules cover
-this file.
+this file. Each record is appended and fsynced; a new ledger is created
+`0600` in a `0700` directory, and `kubic doctor`'s `state:permissions`
+check names a looser one.
 
 - `kubic run` and `kubic tui` append one record per resolved approval ask,
   approved or denied, with `posture` `approvals` or `full-access`. An

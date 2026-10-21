@@ -29,8 +29,8 @@ including 0600 sources like `.env`, and the index names every path of the run.
 An existing group- or world-accessible state directory (the sessions root, a
 journal directory) is tightened to 0700 when the next lock is taken, and
 `kubic doctor`'s `state:permissions` check walks the state — the sessions
-root, every session directory, journal and file below it, and the trust
-store — and names whatever stays loose. The
+root, every session directory, journal and file below it, the trust store
+and the workspace's audit ledger — and names whatever stays loose. The
 undo restore keeps the target file's own mode — Kubic never widens a file it
 writes back.
 

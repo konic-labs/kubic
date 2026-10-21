@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -64,6 +65,29 @@ function repo(): string {
 }
 
 describe('audit ledger', () => {
+  it.skipIf(process.platform === 'win32')(
+    'creates a new ledger 0600 in new 0700 directories',
+    () => {
+      const root = repo();
+      const dir = auditLedgerDir(root);
+      appendToLedger(
+        dir,
+        decisionAudit({
+          sessionId: 's',
+          toolName: 'bash',
+          trigger: 'destructive-shell',
+          workspace: root,
+          approved: false,
+          reason: 'user denied',
+          posture: 'approvals',
+        }),
+      );
+      expect(statSync(join(dir, AUDIT_LEDGER_FILE)).mode & 0o777).toBe(0o600);
+      expect(statSync(dir).mode & 0o777).toBe(0o700);
+      expect(statSync(join(root, '.kubic')).mode & 0o777).toBe(0o700);
+    },
+  );
+
   it('decisions share the ledger and the format', () => {
     const root = repo();
     const dir = auditLedgerDir(root);
@@ -587,6 +611,21 @@ describe('configured sink fan-out', () => {
     expect(built.problems).toHaveLength(3);
     expect(built.problems[0]).toMatch(/audit\[1\]/);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'creates a new file-sink target 0600 in new 0700 directories',
+    () => {
+      const root = repo();
+      const target = join(root, 'org', 'logs', 'kubic.jsonl');
+      setAuditSinks(
+        buildConfiguredSinks([{ sink: 'file', level: 'all', target }]).sinks,
+      );
+      appendToLedger(auditLedgerDir(root), privilegedInput());
+      expect(statSync(target).mode & 0o777).toBe(0o600);
+      expect(statSync(join(root, 'org', 'logs')).mode & 0o777).toBe(0o700);
+      expect(statSync(join(root, 'org')).mode & 0o777).toBe(0o700);
+    },
+  );
 
   it('buildConfiguredSinks builds file sinks at the exact target path', () => {
     const root = repo();

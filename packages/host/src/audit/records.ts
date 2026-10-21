@@ -121,6 +121,9 @@ export function isPrivilegedAuditWhat(what: string): boolean {
     // posture change reaches privileged sinks too — the disable half of
     // a grant must never vanish while the grant is kept.
     what === 'posture:approvals' ||
+    // A refused mid-session posture change is the tamper signal an auditor
+    // most wants: it travels with the posture rows it guards.
+    what === 'posture:changed-mid-session' ||
     what === 'undo-restore' ||
     // A gate command is arbitrary shell from the config, run outside the
     // approval interceptors: an action, not a decision.

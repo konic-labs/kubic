@@ -38,11 +38,22 @@ and a `warn:` line names it.
 | `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)` for any registered model, built-in or custom, configured or not; a resolution failure prints `error: …` on stderr and exits 1. |
 
 **Default model.** `kubic run`/`kubic tui` with no `--model`, `[model]`,
-`KUBIC_MODEL` or role pin take the first model of the first usable
-provider: `models.json` customs first, then built-ins whose auth is
-configured. A built-in with no key is never picked implicitly; with nothing
-usable the run exits 6 (`provider_probe_failed`). Pin the model you mean,
-e.g. `[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
+`KUBIC_MODEL` or role pin take the default model of the first usable
+provider. Providers are tried in this order: `models.json` customs, then
+built-ins whose auth is configured — `anthropic`, `openai`, `google` and
+`openrouter` first, the rest in catalogue order, and last the ambient
+credentials a machine often carries for other work (`amazon-bedrock`,
+`google-vertex`, `github-copilot`, `openai-codex`), so an AWS profile never
+takes the default away from an explicit key. A provider's default model is
+its curated coding default (for example `anthropic/claude-sonnet-5-5`,
+`openai/gpt-6.1-sol`, `google/gemini-3.1-pro-preview`), never simply the
+first catalogue entry; a `models.json` provider uses its first model. A
+built-in with no key is never picked implicitly, and neither is Bedrock
+without a region (`AWS_REGION`, `AWS_DEFAULT_REGION` or the active profile's
+`region`): `kubic doctor` warns `provider:amazon-bedrock (auth-incomplete)`
+and names what to set. With nothing usable the run exits 6
+(`provider_probe_failed`). Pin the model you mean, e.g.
+`[model] provider = "anthropic"`, `id = "claude-sonnet-4-6"`.
 
 Usage errors (unknown option, `--resolve` without a value, an unknown
 provider) exit 2 on stderr. `--help`/`-h` prints the generated help and exits 0.
@@ -54,10 +65,13 @@ under a minute.
 
 1. **Provider** — the providers whose key is detected (the same detection
    `kubic models` and `kubic doctor` use: env keys, Bedrock/Vertex ambient
-   credentials, `models.json` customs; the testing provider is never offered).
-   One detected provider is confirmed as a step; several are a choice.
-2. **Default model** — that provider's chat models, the current pin
-   preselected, each with its context window and thinking support.
+   credentials, `models.json` customs; the testing provider is never offered),
+   in the order the default pick tries them. One detected provider is
+   confirmed as a step; several are a choice, with the current pin's provider
+   (or the one a run would pick) preselected.
+2. **Default model** — that provider's chat models, the current pin (or the
+   provider's default model) preselected, each with its context window and
+   thinking support.
 3. **Thinking level** — only for a model that supports thinking (`medium`
    preselected when supported).
 4. **Trust** — when the current directory has a project layer
@@ -147,7 +161,7 @@ of entries with their own `id` is accepted as an alias):
 
 | Provider key | Meaning |
 | --- | --- |
-| `baseUrl` | `http(s)` endpoint (required). |
+| `baseUrl` | `http(s)` endpoint (required). A plain `http:` URL to a host other than this machine (`localhost`, `127.0.0.0/8` and `::1` are exempt), on a provider with a key or a secret header, sends that key in clear text: the load receipt says so (`models.json: provider '<id>' sends its API key over plain http to <host>`) and `kubic doctor` warns (`models-transport:<id>`). |
 | `api` | `openai-completions` or `openai-responses` (required). |
 | `apiKey` | A literal key (e.g. `not-needed` for a keyless local server), an allowlisted `$VAR` (same allowlist as `apiKeyEnv`), or a `!command` resolved per request. Escaped `\$` / `\!` stay literal. Not together with `apiKeyEnv`. |
 | `apiKeyEnv` | The env variable holding the key (allowlist above; default `KUBIC_API_KEY`). |
@@ -161,6 +175,20 @@ of entries with their own `id` is accepted as an alias):
 | `cost` | `{input, output, cacheRead, cacheWrite}` in USD per 1M tokens; cache reads and writes are priced separately and reach `kubic models --json` as `cacheReadCost`/`cacheWriteCost`. The flat `inputCost`/`outputCost` keys still work — one place per field, never both. |
 | `input` | Input modalities: a non-empty list from `text`, `image` (default `["text"]`). |
 | `samplingParams`, `samplingParamsByThinkingLevel` | Extra request-body fields Pi assigns into the provider request verbatim (`temperature`, `top_p`, …). The by-level form is keyed by thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`); at request time the effective level's object is merged over `samplingParams`. An unknown level or a non-object body is refused with the field named. Supported for the OpenAI-compatible APIs this file declares (`openai-completions`, `openai-responses`). |
+
+## Proxies
+
+Model requests honour `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` (either
+case). Node reads them only when it starts with its proxy support on, so when
+one is set the `kubic` launcher runs the CLI in a child process that has it
+(`NODE_USE_ENV_PROXY=1`): stdio, signals and the exit status pass through,
+and Node 22's experimental-feature warning is silenced. A `NODE_USE_ENV_PROXY`
+you set yourself is respected, `0` included; on a Node without
+`--use-env-proxy` the variables are not read and model traffic goes direct.
+List a local model server (`localhost`, `127.0.0.1`) in `NO_PROXY` so it is
+not sent to the proxy. Tool processes get the proxy variables separately,
+with any credentials stripped (see
+[journal and safety](../architecture/journal-and-safety.md#tool-process-environment)).
 
 ## Secrets (never in config)
 

@@ -6,6 +6,7 @@
 // O_EXCL create is atomic on a local filesystem — no network/shared-disk
 // (NFS/SMB) locking semantics are provided or claimed.
 
+import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
   linkSync,
@@ -245,18 +246,83 @@ function readProcBootTimeMs(): number | undefined {
   return undefined;
 }
 
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
 /**
- * When `pid` started, as epoch milliseconds — the pid-reuse
- * guard behind the session lock's stale rule. Linux-only (`/proc` is the
- * only source that needs no spawn and no privileges); `undefined` on any
- * other platform and for any unreadable pid, so the caller falls back to
- * the pid probe. Never throws. A reboot moves every start time, so this
- * also catches reuse across boots.
+ * The pure half of the macOS start-time reader: `ps -o lstart=` output
+ * (`Wed Oct 21 06:04:15 2026`, printed in UTC) as epoch milliseconds.
+ * @internal
+ */
+export function startTimeFromLstart(text: string): number | undefined {
+  const match =
+    /^\s*[A-Za-z]{3}\s+([A-Za-z]{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})\s*$/.exec(
+      text,
+    );
+  if (match === null) return undefined;
+  const month = MONTHS.indexOf(match[1] ?? '');
+  if (month === -1) return undefined;
+  return Date.UTC(
+    Number(match[6]),
+    month,
+    Number(match[2]),
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+  );
+}
+
+// macOS has no /proc: `ps` names a process's start time to the second. The
+// C locale and UTC make every process read the same instant the same way,
+// whatever the user's own locale and time zone. A dead pid, a missing `ps`
+// or a slow one reads as unknown.
+function readPsStartTimeMs(pid: number): number | undefined {
+  try {
+    return startTimeFromLstart(
+      execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
+        encoding: 'utf8',
+        timeout: 1000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: { LC_ALL: 'C', TZ: 'UTC', PATH: '/bin:/usr/bin' },
+      }),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+// This process's own start, read once: a lock claim names it on every
+// acquire (each journal append), and a spawn per claim would be costly.
+let ownStartTime: { readonly value: number | undefined } | undefined;
+
+/**
+ * When `pid` started, as epoch milliseconds — the pid-reuse guard behind
+ * the session and file locks' stale rules. Linux reads `/proc` (no spawn,
+ * no privileges); macOS asks `ps`, once per process for its own pid and on
+ * the contention path for another one. `undefined` on any other platform and
+ * for any unreadable pid, so the caller falls back to the pid probe. Never
+ * throws. A reboot moves every start time, so this also catches reuse
+ * across boots.
  */
 export function processStartTimeOf(pid: number): number | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
-  if (process.platform !== 'linux') return undefined;
-  return readProcStartTimeMs(pid);
+  if (process.platform === 'linux') return readProcStartTimeMs(pid);
+  if (process.platform !== 'darwin') return undefined;
+  if (pid !== process.pid) return readPsStartTimeMs(pid);
+  ownStartTime ??= { value: readPsStartTimeMs(pid) };
+  return ownStartTime.value;
 }
 
 /**

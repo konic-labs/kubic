@@ -129,6 +129,9 @@ export interface RuntimeConfigInputs {
   // Trust gate for the project layer. An explicit true is the
   // caller's accepted trust prompt; KUBIC_TRUST_PROJECT=1 also opts in.
   projectTrusted?: boolean;
+  // The project had a grant, but its trust-relevant files changed since: the
+  // refusal says so instead of reading as a never-trusted project.
+  projectTrustChanged?: boolean;
   cli?: { model?: RuntimeModelSelection; thinking?: string };
   // Session/agent layers arrive programmatically, never as files.
   session?: KubicConfig;
@@ -141,6 +144,13 @@ export interface RuntimeConfigInputs {
 export interface RuntimeVerify {
   commands: Partial<Record<(typeof VERIFY_COMMAND_KEYS)[number], string>>;
   timeoutMs?: number;
+}
+
+// `[run]`: the headless run bounds, used when `--timeout` / `--max-turns`
+// are not given.
+export interface RuntimeRun {
+  timeoutMs?: number;
+  maxTurns?: number;
 }
 
 export interface RuntimeConfig {
@@ -170,6 +180,7 @@ export interface RuntimeConfig {
   // lane assembles its prompt unchanged.
   systemPromptFile?: RuntimeSystemPrompt;
   verify: RuntimeVerify;
+  run: RuntimeRun;
   projectTrusted: boolean;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named

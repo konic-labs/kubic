@@ -308,6 +308,33 @@ describe('runDoctorCommand', () => {
     expect(window?.detail).toContain('8192');
   });
 
+  it('warns about a provider key sent over plain http; exit stays 0', async () => {
+    const lines: string[] = [];
+    const deps: DoctorDeps = {
+      ...cleanDeps((line: string) => lines.push(line)),
+      probePlaintextKeys: () => [{ provider: 'gw', host: 'gw.corp:8080' }],
+    };
+    const code = (await runDoctorCommand({ json: true }, deps)).exitCode;
+    expect(code).toBe(0);
+    const report = JSON.parse(lines.join('\n')) as {
+      checks: Array<{
+        id: string;
+        status: string;
+        reason: string;
+        detail: string;
+      }>;
+    };
+    const transport = report.checks.find(
+      (check) => check.id === 'models-transport:gw',
+    );
+    expect(transport).toMatchObject({
+      status: 'warn',
+      reason: 'plaintext-key',
+    });
+    expect(transport?.detail).toContain('gw.corp:8080');
+    expect(transport?.detail).toContain('https');
+  });
+
   // The room check measures the models the user can configure: the models in
   // models.json and the default model the configuration pins. A built-in model
   // is never in its scope, so a probe with nothing configurable has no check.

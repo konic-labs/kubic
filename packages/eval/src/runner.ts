@@ -73,7 +73,9 @@ export interface SuiteRunOutcome {
 
 export interface EvalTaskOptions {
   suite: string;
-  task: string;
+  // The prompt to run against the suite's fixture; absent, the suite's own
+  // task runs.
+  task?: string;
   model: string;
   thinking: string | null;
   worktree: string;
@@ -82,7 +84,10 @@ export interface EvalTaskOptions {
 }
 
 export interface EvalTaskDeps {
-  runSuite: (suiteId: string, task: string) => Promise<SuiteRunOutcome>;
+  runSuite: (
+    suiteId: string,
+    task: string | undefined,
+  ) => Promise<SuiteRunOutcome>;
   ensureCleanWorktree?: (worktree: string) => boolean;
 }
 

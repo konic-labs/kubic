@@ -24,6 +24,7 @@ import { buildDpoRecord } from './dpo.js';
 import { buildGrpoGroup } from './grpo.js';
 import { canonicalJson } from './manifest.js';
 import { buildPreferencePair } from './preference.js';
+import { redactRecord } from './redact.js';
 import { buildSftRecord } from './sft.js';
 import { buildToolUseRecord } from './tooluse.js';
 import { referenceVerifier } from './verifier.js';
@@ -220,7 +221,7 @@ export function exportDataset(options: DatasetExportOptions): DatasetManifest {
   fs.writeFile(options.out, '');
 
   const append = (record: unknown): void => {
-    fs.appendFile(options.out, `${canonicalJson(record)}\n`);
+    fs.appendFile(options.out, `${canonicalJson(redactRecord(record))}\n`);
     records += 1;
   };
   const exclude = (file: string, tag: string, reason: string): void => {

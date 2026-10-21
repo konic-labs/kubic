@@ -63,6 +63,7 @@ import {
   runtimeStreamTuning,
   runtimeSystemPromptSection,
   sessionRetentionDays,
+  withRunBounds,
 } from './projections.js';
 
 function storeFor(home: string): ProjectTrustStore {
@@ -431,6 +432,36 @@ describe('remaining projections stay fail-closed', () => {
     expect(sessionRetentionDays(refused)).toBeUndefined();
     expect(runtimeRunDeps(refused).policySource).toBe('default');
     expect(runtimeLaneDeps(refused)).toEqual({});
+  });
+
+  it('fills the run bounds from [run] where the flags set none', () => {
+    const { home, cwd } = globalHome(
+      '[run]\ntimeoutMs = 90000\nmaxTurns = 7\n',
+    );
+    const result = loadCliConfig({ cwd, home, env: {} });
+    expect(withRunBounds({ prompt: 'p' }, result)).toEqual({
+      prompt: 'p',
+      timeoutMs: 90000,
+      maxTurns: 7,
+    });
+    // A flag wins over the config, bound by bound.
+    expect(
+      withRunBounds(
+        { prompt: 'p', timeoutMs: 1000, maxTurns: undefined },
+        result,
+      ),
+    ).toEqual({ prompt: 'p', timeoutMs: 1000, maxTurns: 7 });
+    // No [run] section and a refused config both leave the options alone.
+    const plain = globalHome('[agent]\nname = "x"\n');
+    expect(
+      withRunBounds(
+        { prompt: 'p' },
+        loadCliConfig({ cwd: plain.cwd, home: plain.home, env: {} }),
+      ),
+    ).toEqual({ prompt: 'p' });
+    expect(withRunBounds({ prompt: 'p' }, refusedGlobal())).toEqual({
+      prompt: 'p',
+    });
   });
 });
 

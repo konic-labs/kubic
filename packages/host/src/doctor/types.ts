@@ -18,6 +18,8 @@ export type DoctorReason =
   | 'sink-unreachable'
   | 'window-default'
   | 'room-short'
+  | 'plaintext-key'
+  | 'auth-incomplete'
   | 'skipped';
 
 export interface DoctorCheck {
@@ -40,12 +42,21 @@ export interface ProviderProbe {
   detail?: string;
   models?: string[];
   dialled?: boolean;
+  // Credentials are present but the provider cannot run (Bedrock without a
+  // region): a warning naming the fix, never a reachable provider.
+  warning?: string;
 }
 
 export interface DepProbe {
   id: string;
   ok: boolean;
   detail?: string;
+}
+
+// A models.json provider that would send its key over plain http.
+export interface PlaintextKeyProbe {
+  readonly provider: string;
+  readonly host: string;
 }
 
 // A models.json model that runs on the fallback context window.
@@ -79,6 +90,7 @@ export interface DoctorDeps extends CliIo {
   probeProviders: () => ProviderProbe[];
   // Models on the fallback context window: one warn each. Absent: no check.
   probeModelWindows?: () => readonly ModelWindowProbe[];
+  probePlaintextKeys?: () => readonly PlaintextKeyProbe[];
   // The room a compaction leaves for each model: one warn when a model has
   // less than the floor. Absent: no check.
   probeContextRoom?: () => ContextRoomProbe;

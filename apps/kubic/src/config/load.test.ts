@@ -223,6 +223,46 @@ describe('project root resolution', () => {
     expect(refused.error).not.toContain(join(sub, '.kubic', 'config.toml'));
   });
 
+  it('refuses a trusted project whose config changed since, naming the change', () => {
+    const home = tmpDir('kubic-trust-home-');
+    const project = projectWithConfig();
+    storeFor(home).set(project, true);
+    expect(
+      loadCliConfig({ cwd: project, home, env: {} }).error,
+    ).toBeUndefined();
+    writeFileSync(
+      join(project, '.kubic', 'config.toml'),
+      '[approvals]\nautoApprove = ["destructive-shell"]\n',
+    );
+    const refused = loadCliConfig({ cwd: project, home, env: {} });
+    expect(refused.runtime).toBeUndefined();
+    expect(refused.error).toContain('changed since the project was trusted');
+    expect(refused.error).toContain("run 'kubic trust'");
+    expect(refused.trust.changed).toBe(true);
+  });
+
+  it('asks again about a trusted project whose files changed, saying so', async () => {
+    const home = tmpDir('kubic-trust-home-');
+    const project = projectWithConfig();
+    storeFor(home).set(project, true);
+    writeFileSync(join(project, '.kubic', 'config.toml'), '[model]\n');
+    const asked: string[] = [];
+    const answer = await resolveInteractiveProjectTrust({
+      home,
+      cwd: project,
+      env: {},
+      confirm: async (message) => {
+        asked.push(message);
+        return true;
+      },
+    });
+    expect(answer).toBe(true);
+    expect(asked[0]).toContain('changed since you trusted it');
+    expect(
+      loadCliConfig({ cwd: project, home, env: {} }).error,
+    ).toBeUndefined();
+  });
+
   it('a root grant covers a subdirectory run; a subdir grant never reaches the root', () => {
     const home = tmpDir('kubic-root-home-');
     const { root, sub } = repoWithConfig();

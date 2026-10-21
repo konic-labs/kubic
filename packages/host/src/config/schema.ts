@@ -487,7 +487,7 @@ export const CONFIG_SECTIONS = [
         ],
         label:
           '`roles.<name>.model`, `roles.<name>.tools`, `roles.<name>.thinking`, `roles.<name>.requires`, `roles.<name>.models`',
-        text: "Per-role defaults layered under the role document for `kubic run --role <name>`: `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list, `thinking` is the role's thinking default — below the session's stored level and any `--thinking`/`KUBIC_MODEL_THINKING` override, above the `[model].thinking` file default — `requires` names tools that always require approval under the role — unioned with the document's own `requires:` list, never subtracted. `models` is the role's allowed model set: entries are `\"provider/id\"` or `\"provider/*\"` strings, or `{ id, thinking? }` tables whose thinking beats the flat role default for the matched model — an empty set (or none) allows every registered model, a malformed entry is refused by name at load, and selection plus every `/model` switch resolve against it, refusing out-of-set by name (`kubic config` renders the winning layer's list with provenance; `/scoped-models` reports the resolved set on the TUI lane). Each leaf is attributed to the layer that set it (enterprise > product > global > project > workspace > session > agent). A malformed model ref, an unknown thinking level, a malformed set entry, or a mistyped request option is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools + thinking + requires + models) and install the most restrictive merge of the config classes and the role's (a role declaring `network: none` runs under it even when config allows full); the TUI also takes the `[agent].name` agent id. No role, model or provider is invented when none of those levels sets one. `timeoutMs`/`maxRetries`/`maxRetryDelayMs`/`cacheRetention` layer over the `[model]` request tuning per key for runs as that role.",
+        text: "Per-role defaults layered under the role document for `kubic run --role <name>`: `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list, `thinking` is the role's thinking default — below the session's stored level and any `--thinking`/`KUBIC_MODEL_THINKING` override, above the `[model].thinking` file default — `requires` names tools that always require approval under the role — unioned with the document's own `requires:` list, never subtracted. `models` is the role's allowed model set: entries are `\"provider/id\"` or `\"provider/*\"` strings, or `{ id, thinking? }` tables whose thinking beats the flat role default for the matched model — an empty set (or none) allows every registered model, a malformed entry is refused by name at load, and selection plus every `/model` switch resolve against it, refusing out-of-set by name (`kubic config` renders the winning layer's list with provenance; `/scoped-models` reports the resolved set on the TUI lane). Each leaf is attributed to the layer that set it (enterprise > product > global > project > session > agent). A malformed model ref, an unknown thinking level, a malformed set entry, or a mistyped request option is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools + thinking + requires + models) and install the most restrictive merge of the config classes and the role's (a role declaring `network: none` runs under it even when config allows full); the TUI also takes the `[agent].name` agent id. No role, model or provider is invented when none of those levels sets one. `timeoutMs`/`maxRetries`/`maxRetryDelayMs`/`cacheRetention` layer over the `[model]` request tuning per key for runs as that role.",
       },
       {
         keys: [],
@@ -674,6 +674,41 @@ export const CONFIG_SECTIONS = [
       {
         keys: ['verify.timeoutMs'],
         text: 'Per-command bound for the `[verify]` gates, a positive integer of milliseconds up to 2147483647 (default 600000). A command still running at the bound is killed and its gate is `fail`.',
+      },
+    ],
+  },
+  {
+    name: 'run',
+    shape: 'table',
+    keys: [
+      {
+        name: 'timeoutMs',
+        check: 'timeoutMs',
+        default: '300000',
+        runtime: {
+          effect:
+            'wall-clock bound of a headless kubic run when --timeout is not given',
+        },
+        example: '300000',
+      },
+      {
+        name: 'maxTurns',
+        check: 'tokens',
+        runtime: {
+          effect:
+            'turn bound of a headless kubic run when --max-turns is not given',
+        },
+        example: '50',
+      },
+    ],
+    docs: [
+      {
+        keys: ['run.timeoutMs'],
+        text: 'Wall-clock bound for a headless `kubic run` (and the bare `kubic "<prompt>"`), a positive integer of milliseconds up to 2147483647 (default 300000). `--timeout` wins over it. A run still going at the bound settles `status: timeout` and exits 1.',
+      },
+      {
+        keys: ['run.maxTurns'],
+        text: 'Turn bound for a headless `kubic run`: a positive integer (no bound by default). `--max-turns` wins over it. A run that reaches the bound exits 3 (`turn_limit`).',
       },
     ],
   },

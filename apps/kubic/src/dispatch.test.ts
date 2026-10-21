@@ -172,6 +172,35 @@ describe('dispatch routing', () => {
     ]);
   });
 
+  it('a quoted command is refused as a usage error, never sent as a prompt', async () => {
+    for (const [token, unquoted] of [
+      ['sessions list', 'kubic sessions list'],
+      ['status --json', 'kubic status --json'],
+      ['git log', 'kubic git log'],
+    ] as const) {
+      const h = harness();
+      expect(await dispatchCommand(token, [], h.deps)).toBe(2);
+      expect(h.lines).toEqual([
+        `error: quoted command '${token}'`,
+        `hint: run it unquoted: ${unquoted}`,
+        `hint: to send it as a prompt: kubic run -p '${token}'`,
+        'hint: kubic --help lists the commands',
+      ]);
+      expect(h.calls).toEqual([]);
+      expect(h.state.excludeCalls).toBe(0);
+    }
+  });
+
+  it('a prompt that only starts with a command word still runs', async () => {
+    const h = harness();
+    expect(await dispatchCommand('commit the staged changes', [], h.deps)).toBe(
+      0,
+    );
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['run', { prompt: 'commit the staged changes' }],
+    ]);
+  });
+
   it('a single-word unknown token stays an unknown command with the prompt hint', async () => {
     const h = harness();
     expect(await dispatchCommand('nosuch', [], h.deps)).toBe(2);

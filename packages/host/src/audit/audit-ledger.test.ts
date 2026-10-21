@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,10 +35,15 @@ import {
   decisionAudit,
   fullAccessEnabledAudit,
   isPrivilegedAuditWhat,
+  postureChangedAudit,
   runStartAudit,
   undoRestoreAudit,
 } from './records.js';
-import { auditSinksDoctorChecks, buildConfiguredSinks } from './sinks.js';
+import {
+  auditSinksDoctorChecks,
+  buildConfiguredSinks,
+  isSyslogTargetAvailable,
+} from './sinks.js';
 
 const roots: string[] = [];
 let driver: GitSandbox | undefined;
@@ -63,6 +69,29 @@ function repo(): string {
 }
 
 describe('audit ledger', () => {
+  it.skipIf(process.platform === 'win32')(
+    'creates a new ledger 0600 in new 0700 directories',
+    () => {
+      const root = repo();
+      const dir = auditLedgerDir(root);
+      appendToLedger(
+        dir,
+        decisionAudit({
+          sessionId: 's',
+          toolName: 'bash',
+          trigger: 'destructive-shell',
+          workspace: root,
+          approved: false,
+          reason: 'user denied',
+          posture: 'approvals',
+        }),
+      );
+      expect(statSync(join(dir, AUDIT_LEDGER_FILE)).mode & 0o777).toBe(0o600);
+      expect(statSync(dir).mode & 0o777).toBe(0o700);
+      expect(statSync(join(root, '.kubic')).mode & 0o777).toBe(0o700);
+    },
+  );
+
   it('decisions share the ledger and the format', () => {
     const root = repo();
     const dir = auditLedgerDir(root);
@@ -435,11 +464,13 @@ describe('configured sink fan-out', () => {
       // The revoke half of a privileged
       // posture change reaches privileged sinks too.
       'posture:approvals',
+      'posture:changed-mid-session',
       'undo-restore',
+      'verify:tests',
     ]) {
       expect(isPrivilegedAuditWhat(what)).toBe(true);
     }
-    for (const what of ['credential:openai', 'merge:kubic/w-1']) {
+    for (const what of ['credential:openai', 'credential:anthropic']) {
       expect(isPrivilegedAuditWhat(what)).toBe(false);
     }
   });
@@ -504,6 +535,28 @@ describe('configured sink fan-out', () => {
     expect(errors).toEqual([]);
   });
 
+  it('level=privileged keeps the refused mid-session posture change', () => {
+    const dir = auditLedgerDir(repo());
+    mkdirSync(dir, { recursive: true });
+    const fake = fakeLines();
+    setAuditSinks(
+      buildConfiguredSinks([{ sink: 'syslog', level: 'privileged' }], {
+        syslogTransport: fake,
+      }).sinks,
+    );
+    appendToLedger(
+      dir,
+      postureChangedAudit({
+        sessionId: 'sess-1',
+        workspace: '/repo',
+        bootFullAccess: false,
+        observedFullAccess: true,
+      }),
+    );
+    expect(fake.lines).toHaveLength(1);
+    expect(fake.lines[0]).toContain('"what":"posture:changed-mid-session"');
+  });
+
   it('level=all keeps non-privileged records', () => {
     const dir = auditLedgerDir(repo());
     mkdirSync(dir, { recursive: true });
@@ -563,6 +616,21 @@ describe('configured sink fan-out', () => {
     expect(built.problems[0]).toMatch(/audit\[1\]/);
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'creates a new file-sink target 0600 in new 0700 directories',
+    () => {
+      const root = repo();
+      const target = join(root, 'org', 'logs', 'kubic.jsonl');
+      setAuditSinks(
+        buildConfiguredSinks([{ sink: 'file', level: 'all', target }]).sinks,
+      );
+      appendToLedger(auditLedgerDir(root), privilegedInput());
+      expect(statSync(target).mode & 0o777).toBe(0o600);
+      expect(statSync(join(root, 'org', 'logs')).mode & 0o777).toBe(0o700);
+      expect(statSync(join(root, 'org')).mode & 0o777).toBe(0o700);
+    },
+  );
+
   it('buildConfiguredSinks builds file sinks at the exact target path', () => {
     const root = repo();
     const target = join(root, 'extra.jsonl');
@@ -590,6 +658,7 @@ describe('audit sink doctor checks', () => {
   const probes = {
     socketExists: (path: string): boolean => path === '/dev/log',
     udpAvailable: (): boolean => true,
+    unixTransportProblem: (): string | undefined => undefined,
   };
 
   it('returns no checks without configured tables', () => {
@@ -636,6 +705,30 @@ describe('audit sink doctor checks', () => {
       reason: 'sink-unreachable',
     });
     expect(checks[0]?.detail).toContain('/nonexistent/syslog.sock');
+  });
+
+  it('fails a unix socket the system logger cannot reach', () => {
+    const checks = auditSinksDoctorChecks({
+      tables: [{ sink: 'syslog', level: 'all', target: '/dev/log' }],
+      problems: [],
+      snapshot: [],
+      probes: {
+        ...probes,
+        unixTransportProblem: () => 'no system logger to reach /dev/log',
+      },
+    });
+    expect(checks[0]).toMatchObject({
+      status: 'fail',
+      reason: 'sink-unreachable',
+    });
+    expect(checks[0]?.detail).toContain('no system logger');
+    expect(
+      isSyslogTargetAvailable('/dev/log', {
+        ...probes,
+        unixTransportProblem: () => 'no system logger',
+      }),
+    ).toBe(false);
+    expect(isSyslogTargetAvailable('/dev/log', probes)).toBe(true);
   });
 
   it('fails a table that never built, naming the problem', () => {

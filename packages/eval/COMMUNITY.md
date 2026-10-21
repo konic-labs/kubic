@@ -14,8 +14,15 @@ Append one row to `EVAL_SUITES` in `packages/eval/src/suites.ts`:
   id: 'my-suite',
   category: 'bugfix', // one of the 8 EVAL_CATEGORIES
   title: 'My suite',
-  stub: true, // flip to false when it runs faux-only
+  stub: true, // flip to false once the fixture below runs
   description: 'What signal it measures.',
+  // An executable suite carries a fixture:
+  // fixture: {
+  //   task: 'Plain-language task a real model can follow.',
+  //   fauxPrompt: 'faux:tool write {"path":"out.txt","content":"ok\\n"}',
+  //   files: { 'check.sh': 'grep -q ok out.txt\n' },
+  //   verify: { tests: 'sh check.sh' },
+  // },
 }
 ```
 
@@ -24,6 +31,9 @@ Rules:
 - `id` is unique, lowercase, hyphenated.
 - `category` is one of `swe`, `repo-mod`, `bugfix`, `refactor`,
   `testgen`, `review`, `terminal`, `agentic`.
+- Each executable suite gives two tasks: `task`, the plain language a
+  real model reads, and `fauxPrompt`, the script the faux provider runs —
+  both must pass the suite's gates when done right.
 - Suites must run faux-only (zero network, zero paid tokens) in CI.
   Anything needing a capability the binary does not ship (a live PTY)
   stays `stub: true`; a faux-drivable fixture is executable.
@@ -31,9 +41,9 @@ Rules:
 ## 2. Run it
 
 ```sh
-# Single eval against a task prompt
+# Single eval: run a prompt against the suite's fixture and gates
 kubic eval --task "fix the widget" --suite my-suite \
-  --model faux/echo --worktree /wt/eval-1 \
+  --model anthropic/claude-sonnet-5-5 --worktree /wt/eval-1 \
   --size smoke --json
 
 # Score an existing trajectory file without re-running it (`-` reads stdin)
@@ -41,8 +51,9 @@ kubic eval --trajectory run.trajectory.json --suite my-suite \
   --model faux/echo --worktree /wt/eval-1 \
   --size smoke --json
 
-# Full matrix (or one suite) — clean worktree required with
-# --workspace worktree
+# Full matrix (or one suite): each suite runs its own task — the scripted
+# one on the faux provider, the plain-language one on a real model. A clean
+# worktree is required with --workspace worktree
 kubic benchmark --suite my-suite --workspace worktree \
   --model faux/echo --worktree /wt/eval-1 \
   --size smoke --json

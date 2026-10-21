@@ -14,6 +14,8 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { scanStateModes } from '@kubic/exec/lock-file';
 import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
+  AUDIT_LEDGER_FILE,
+  auditLedgerDirFor,
   auditSinkSnapshot,
   auditSinksDoctorChecks,
   buildConfiguredSinks,
@@ -121,19 +123,23 @@ export function doctorRunner(io: ProdRunnerIo): ProdRunners['doctor'] {
   };
 }
 
-// The providers, the models on the fallback window, and the room a
-// compaction leaves.
+// The providers, the models on the fallback window, the keys sent over plain
+// http, and the room a compaction leaves.
 function modelChecks(
   assembled: AssembledModels,
   cliConfig: CliConfigResult,
 ): Pick<
   DoctorDeps,
-  'probeProviders' | 'probeModelWindows' | 'probeContextRoom'
+  | 'probeProviders'
+  | 'probeModelWindows'
+  | 'probePlaintextKeys'
+  | 'probeContextRoom'
 > {
   return {
     probeProviders: () => providerProbesOf(assembled),
     // Models on the fallback window: one warning each, naming the key.
     probeModelWindows: () => assembled.defaultedWindows,
+    probePlaintextKeys: () => assembled.plaintextKeys,
     // The room a compaction leaves for the models the user can configure,
     // from the configured keys the lane boots with (absent: the defaults)
     // and the default model the configuration pins.
@@ -378,12 +384,21 @@ async function sessionChecks(
     // Always injected: the check itself passes when the sessions root is
     // private. Best-effort like the overlap probe: an unreadable root makes
     // no claim.
-    // The trust store and its directory, then every session below the
-    // root: the walk is bounded and names what it skipped.
-    probeStatePermissions: () =>
-      scanStateModes(
-        home === '' ? [] : [join(home, '.kubic'), projectTrustStorePath(home)],
+    // The trust store and its directory, this workspace's audit ledger and
+    // its directory, then every session below the root: the walk is bounded
+    // and names what it skipped.
+    probeStatePermissions: () => {
+      const ledgerDir = auditLedgerDirFor(process.cwd());
+      return scanStateModes(
+        [
+          ...(home === ''
+            ? []
+            : [join(home, '.kubic'), projectTrustStorePath(home)]),
+          ledgerDir,
+          join(ledgerDir, AUDIT_LEDGER_FILE),
+        ],
         [sessionsRoot],
-      ),
+      );
+    },
   };
 }

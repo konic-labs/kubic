@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clampThinking,
+  defaultModelOf,
   type EscalationLadder,
   escalateModel,
   parseThinkingFlag,
@@ -91,6 +92,47 @@ describe('model selection + escalation + thinking', () => {
     expect(Array.isArray(levels)).toBe(true);
     const clamped = clampThinking(models, model, 'max');
     expect(levels.includes(clamped)).toBe(true);
+  });
+});
+
+describe('the implicit default of a provider', () => {
+  function provider(
+    id: string,
+    models: { id: string; contextWindow: number }[],
+  ) {
+    const catalogue = createModels();
+    catalogue.setProvider(fauxProvider({ provider: id, models }).provider);
+    return catalogue;
+  }
+
+  it("keeps a provider's own first model when it has no curated default", () => {
+    const models = provider('local', [
+      { id: 'small', contextWindow: 8192 },
+      { id: 'big', contextWindow: 200_000 },
+    ]);
+    expect(defaultModelOf(models, 'local')?.id).toBe('small');
+  });
+
+  it('takes the first curated id the catalogue lists', () => {
+    const models = provider('openai', [
+      { id: 'gpt-4', contextWindow: 8192 },
+      { id: 'gpt-5', contextWindow: 400_000 },
+      { id: 'gpt-5.5', contextWindow: 272_000 },
+    ]);
+    expect(defaultModelOf(models, 'openai')?.id).toBe('gpt-5.5');
+    expect(selectModel(models, undefined, undefined, ['openai']).id).toBe(
+      'gpt-5.5',
+    );
+  });
+
+  it('falls back past previews, small variants and short windows for a curated provider', () => {
+    const models = provider('google', [
+      { id: 'deep-research-preview', contextWindow: 131_000 },
+      { id: 'tiny', contextWindow: 32_000 },
+      { id: 'gem-flash-lite', contextWindow: 1_000_000 },
+      { id: 'gem-pro', contextWindow: 1_000_000 },
+    ]);
+    expect(defaultModelOf(models, 'google')?.id).toBe('gem-pro');
   });
 });
 

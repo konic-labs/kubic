@@ -4,7 +4,10 @@
 
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import type { RegisterCustomProvidersOptions } from '@kubic/agent/models-config';
+import type {
+  CustomProviderSpec,
+  RegisterCustomProvidersOptions,
+} from '@kubic/agent/models-config';
 import {
   DEFAULT_CONTEXT_WINDOW,
   parseModelsJson,
@@ -34,6 +37,64 @@ export interface ProviderInfo {
   readonly usable: boolean;
   // The auth source Pi reported for a configured built-in (e.g. the env key).
   readonly authSource?: string;
+  // Why a built-in with credentials still cannot run (Bedrock without a
+  // region); doctor warns with it.
+  readonly unusable?: string;
+}
+
+// The order the implicit pick tries usable built-ins: the providers a key is
+// most likely meant for first, then the rest in catalogue order, and last the
+// ambient credentials a machine carries for other reasons (an AWS profile, a
+// Google application-default login, an editor's Copilot or Codex session), so
+// they never take the default away from an explicit key.
+const PREFERRED_PROVIDERS = ['anthropic', 'openai', 'google', 'openrouter'];
+const AMBIENT_PROVIDERS: ReadonlySet<string> = new Set([
+  'amazon-bedrock',
+  'google-vertex',
+  'github-copilot',
+  'openai-codex',
+]);
+
+function preferenceOrder(ids: readonly string[]): string[] {
+  const preferred = PREFERRED_PROVIDERS.filter((id) => ids.includes(id));
+  const rest = ids.filter(
+    (id) => !PREFERRED_PROVIDERS.includes(id) && !AMBIENT_PROVIDERS.has(id),
+  );
+  const ambient = ids.filter((id) => AMBIENT_PROVIDERS.has(id));
+  return [...preferred, ...rest, ...ambient];
+}
+
+// The AWS region Bedrock would use: AWS_REGION or AWS_DEFAULT_REGION, else
+// the `region` of the active profile in the shared config file — the order
+// the AWS SDK resolves it.
+function awsRegionOf(env: Env, home: string): string | undefined {
+  const fromEnv = env.AWS_REGION || env.AWS_DEFAULT_REGION;
+  if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
+  let text: string;
+  try {
+    text = createNodeFileBridge('/').readTextFile(
+      env.AWS_CONFIG_FILE || join(home, '.aws', 'config'),
+    );
+  } catch {
+    return undefined;
+  }
+  const profile = env.AWS_PROFILE || 'default';
+  const sections =
+    profile === 'default'
+      ? ['default', 'profile default']
+      : [`profile ${profile}`];
+  let inProfile = false;
+  for (const raw of text.split(/\r?\n/u)) {
+    const line = raw.trim();
+    const header = /^\[\s*(.+?)\s*\]$/u.exec(line);
+    if (header !== null) {
+      inProfile = sections.includes((header[1] ?? '').replace(/\s+/gu, ' '));
+      continue;
+    }
+    const region = inProfile ? /^region\s*=\s*(\S+)/u.exec(line) : null;
+    if (region?.[1] !== undefined) return region[1];
+  }
+  return undefined;
 }
 
 // One models.json location the assembly looked at: the
@@ -63,6 +124,43 @@ interface CustomModelRef {
   readonly model: string;
 }
 
+// A models.json provider whose key would travel unencrypted: a plain-http
+// base URL to a host other than this machine.
+interface PlaintextKey {
+  readonly provider: string;
+  readonly host: string;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/gu, '');
+  return (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    /^127(\.\d{1,3}){3}$/u.test(host) ||
+    host === '::1'
+  );
+}
+
+// The host a provider would send its key to in clear text: an `http:` base
+// URL off this machine, with a key or a secret header. Local model servers
+// (localhost, 127.0.0.0/8, ::1) are not flagged.
+function plaintextKeyHost(spec: CustomProviderSpec): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(spec.baseUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'http:' || isLoopbackHost(url.hostname)) {
+    return undefined;
+  }
+  const keyed =
+    spec.apiKeyEnv !== undefined ||
+    spec.apiKey !== undefined ||
+    Object.keys(spec.headerRefs ?? {}).length > 0;
+  return keyed ? url.host : undefined;
+}
+
 // Removes the entries of one provider id, in place: a later file that defines
 // the provider replaces what an earlier file recorded for it.
 function dropProvider(
@@ -85,9 +183,12 @@ export interface AssembledModels {
   readonly defaultedWindows: readonly DefaultedWindow[];
   // The models the loaded models.json files define.
   readonly customModels: readonly CustomModelRef[];
-  // The providers the implicit first-available pick may use, preferred
-  // first: the testing provider, models.json customs, then built-ins whose
-  // auth is configured. A keyless built-in is never on this list.
+  // The loaded providers that would send their key over plain http.
+  readonly plaintextKeys: readonly PlaintextKey[];
+  // The providers the implicit pick may use, preferred first: the testing
+  // provider, models.json customs, then the built-ins whose auth is
+  // configured, in preference order (see PREFERRED_PROVIDERS). A keyless
+  // built-in is never on this list.
   readonly fallbackProviders: readonly string[];
 }
 
@@ -199,6 +300,7 @@ export async function assembleModels(
   const customs: string[] = [];
   const defaultedWindows: DefaultedWindow[] = [];
   const customModels: CustomModelRef[] = [];
+  const plaintextKeys: PlaintextKey[] = [];
   if (fauxProviderActive(env)) {
     registerFauxProvider(models);
     providers.set(FAUX_PROVIDER_ID, { origin: 'testing', usable: true });
@@ -246,6 +348,14 @@ export async function assembleModels(
         // for it, so a fallback an earlier file left cannot survive.
         dropProvider(defaultedWindows, spec.id);
         dropProvider(customModels, spec.id);
+        dropProvider(plaintextKeys, spec.id);
+        const clear = plaintextKeyHost(spec);
+        if (clear !== undefined) {
+          plaintextKeys.push({ provider: spec.id, host: clear });
+          notes.push(
+            `models.json: provider '${spec.id}' sends its API key over plain http to ${clear} — use an https baseUrl`,
+          );
+        }
         for (const model of spec.models) {
           customModels.push({ provider: spec.id, model: model.id });
           if (model.contextWindow !== undefined) continue;
@@ -297,17 +407,27 @@ export async function assembleModels(
   const usableBuiltins: string[] = [];
   builtins.forEach((provider, index) => {
     const check = checks[index];
-    if (check !== undefined) usableBuiltins.push(provider.id);
+    // Bedrock credentials without a region fail every request ("Region is
+    // missing"): such a provider is not usable, and doctor says what to set.
+    const unusable =
+      check !== undefined &&
+      provider.id === 'amazon-bedrock' &&
+      awsRegionOf(env, home) === undefined
+        ? `credentials from ${check.source ?? 'the AWS environment'} but no AWS region: set AWS_REGION (or AWS_DEFAULT_REGION, or region in the profile) to use it`
+        : undefined;
+    const usable = check !== undefined && unusable === undefined;
+    if (usable) usableBuiltins.push(provider.id);
     providers.set(provider.id, {
       origin: 'built-in',
-      usable: check !== undefined,
+      usable,
       ...(check?.source === undefined ? {} : { authSource: check.source }),
+      ...(unusable === undefined ? {} : { unusable }),
     });
   });
   const fallbackProviders = [
     ...(providers.has(FAUX_PROVIDER_ID) ? [FAUX_PROVIDER_ID] : []),
     ...customs,
-    ...usableBuiltins.filter((id) => !customs.includes(id)),
+    ...preferenceOrder(usableBuiltins.filter((id) => !customs.includes(id))),
   ];
   return {
     models,
@@ -316,6 +436,7 @@ export async function assembleModels(
     sources,
     defaultedWindows,
     customModels,
+    plaintextKeys,
     fallbackProviders,
   };
 }

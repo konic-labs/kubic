@@ -23,6 +23,8 @@ export interface FileChange {
   sessionId: string;
   timestamp: number;
   unattributed: boolean;
+  // Swept while these other sessions were live in the workspace.
+  contested?: readonly string[];
   reversible: boolean;
   before: string | null;
   after: string | null;
@@ -123,6 +125,7 @@ function buildChange(
     ...(last.toolName === undefined ? {} : { toolName: last.toolName }),
     ...(last.turn === undefined ? {} : { turn: last.turn }),
     unattributed: last.unattributed === true,
+    ...(last.contested === undefined ? {} : { contested: last.contested }),
     reversible: before !== null || isUndoableCreate(first),
     before,
     after,
@@ -238,6 +241,9 @@ export function renderDiff(changes: FileChange[]): string {
     const who = `toolCall=${c.toolCallId ?? 'none'}`;
     const flags = [
       c.unattributed ? 'unattributed' : null,
+      c.contested === undefined
+        ? null
+        : `contested by session ${c.contested.join(', ')}`,
       c.reversible ? null : 'non-reversible',
     ].filter((f) => f !== null);
     out.push(`--- a/${c.path}`);
@@ -277,7 +283,13 @@ export function renderDiffStat(changes: FileChange[]): string[] {
       if (line.startsWith('+')) added += 1;
       else if (line.startsWith('-')) removed += 1;
     }
-    const what = c.toolName ?? (c.unattributed ? 'reconciled' : c.op);
+    const what =
+      c.toolName ??
+      (c.unattributed
+        ? c.contested === undefined
+          ? 'reconciled'
+          : 'reconciled, contested'
+        : c.op);
     const turn = c.turn === undefined ? '' : `, turn ${c.turn}`;
     return `${c.path} +${added} -${removed} ${what}${turn}`;
   });

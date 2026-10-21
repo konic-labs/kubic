@@ -126,7 +126,8 @@ export function stateAfterUndo(step: JournalEntry): FileCurrentState {
 type Verdict =
   | { kind: 'restore' }
   | { kind: 'already-undone'; reason: string }
-  | { kind: 'stale'; reason: string };
+  | { kind: 'stale'; reason: string }
+  | { kind: 'contested'; reason: string };
 
 // The already-undone rule needs the plan's journaled before-states per
 // path: a disk state matching ANY of them means the file sits at a state
@@ -147,6 +148,14 @@ export function verdictFor(
     };
   }
   if (force) return { kind: 'restore' };
+  // Swept while another session was live here: the change may be that
+  // session's work, which a restore would discard.
+  if (entry.contested !== undefined && entry.contested.length > 0) {
+    return {
+      kind: 'contested',
+      reason: `contested: '${entry.path}' changed while session ${entry.contested.join(', ')} was running in this workspace — it may be that session's work; use --force`,
+    };
+  }
   if (state.missing) {
     // The recreate path of the matrix: a missing file can always be
     // restored — there is nothing on disk for the restore to destroy.

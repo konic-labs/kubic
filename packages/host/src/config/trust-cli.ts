@@ -81,8 +81,16 @@ export function runTrustCommand(
         );
         return { exitCode: EXIT_OK };
       }
+      // `changed`: a grant whose project files changed since it was given —
+      // refused until `kubic trust` accepts the new content.
       for (const entry of entries) {
-        deps.out(`${entry.decision ? 'trusted ' : 'declined'} ${entry.path}`);
+        const state =
+          entry.decision === false
+            ? 'declined'
+            : entry.changed === true
+              ? 'changed '
+              : 'trusted ';
+        deps.out(`${state} ${entry.path}`);
       }
       return { exitCode: EXIT_OK };
     }
@@ -105,11 +113,14 @@ export function runTrustCommand(
     deps.out(
       BRIDGE.exists(configPath)
         ? `project config ${configPath} will load`
-        : `no project config at ${configPath} yet — this grant applies when one appears`,
+        : `no project config at ${configPath} yet — one added later changes the project, so it needs 'kubic trust' again`,
     );
     // The grant is per project tree, not per file: say what else it unlocks.
     deps.out(
       "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills",
+    );
+    deps.out(
+      "it covers these files as they are now: a change to any of them makes the project untrusted until you run 'kubic trust' again",
     );
     return { exitCode: EXIT_OK };
   } catch (error) {

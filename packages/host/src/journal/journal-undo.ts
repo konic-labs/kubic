@@ -14,10 +14,16 @@ import {
 import type { JournalRun, JournalUndoOptions } from './journal-run.js';
 import { lockHolderOf, sessionHolderOf } from './journal-run.js';
 
-type SkipKind = 'stale' | 'already-undone' | 'non-reversible' | 'head-moved';
+type SkipKind =
+  | 'stale'
+  | 'already-undone'
+  | 'non-reversible'
+  | 'head-moved'
+  | 'contested';
 
 function skipKindOf(reason: string): SkipKind {
   if (reason.startsWith('stale:')) return 'stale';
+  if (reason.startsWith('contested:')) return 'contested';
   if (reason.startsWith('already undone:')) return 'already-undone';
   if (reason.startsWith('head-moved:')) return 'head-moved';
   return 'non-reversible';
@@ -143,9 +149,12 @@ export function journalUndo(
   // HEAD-move refusals are their own class — neither
   // unrecoverable (force proceeds) nor a content mismatch.
   const movedCount = kinds.filter((k) => k === 'head-moved').length;
-  const classified = staleCount > 0 || undoneCount > 0 || movedCount > 0;
+  // Contested: swept while another session was live in the workspace.
+  const contestedCount = kinds.filter((k) => k === 'contested').length;
+  const classified =
+    staleCount > 0 || undoneCount > 0 || movedCount > 0 || contestedCount > 0;
   const skipLabel = classified
-    ? ` (${[staleCount > 0 ? `${staleCount} stale` : null, undoneCount > 0 ? `${undoneCount} already undone` : null, movedCount > 0 ? `${movedCount} head-moved` : null].filter((s) => s !== null).join(', ')})`
+    ? ` (${[staleCount > 0 ? `${staleCount} stale` : null, undoneCount > 0 ? `${undoneCount} already undone` : null, movedCount > 0 ? `${movedCount} head-moved` : null, contestedCount > 0 ? `${contestedCount} contested` : null].filter((s) => s !== null).join(', ')})`
     : ' non-reversible';
   if (dryRun) {
     deps.out(
@@ -169,7 +178,9 @@ export function journalUndo(
           ? `${theme.muted('already undone (skipped):')} ${detail.path}`
           : kind === 'head-moved'
             ? `${theme.warning('head-moved (skipped):')} ${detail.path} — ${detail.reason}`
-            : `${theme.warning('non-reversible (skipped):')} ${detail.path}`,
+            : kind === 'contested'
+              ? `${theme.warning('contested (skipped):')} ${detail.path} — ${detail.reason}`
+              : `${theme.warning('non-reversible (skipped):')} ${detail.path}`,
     );
   });
   deps.out(

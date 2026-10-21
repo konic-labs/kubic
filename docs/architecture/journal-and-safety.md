@@ -29,15 +29,17 @@ including 0600 sources like `.env`, and the index names every path of the run.
 An existing group- or world-accessible state directory (the sessions root, a
 journal directory) is tightened to 0700 when the next lock is taken, and
 `kubic doctor`'s `state:permissions` check walks the state — the sessions
-root, every session directory, journal and file below it, and the trust
-store — and names whatever stays loose. The
+root, every session directory, journal and file below it, the trust store
+and the workspace's audit ledger — and names whatever stays loose. The
 undo restore keeps the target file's own mode — Kubic never widens a file it
 writes back.
 
 Cross-process coordination: every
 journal mutation — append, retention rewrite, blob sweep — runs under a
 lock beside the index whose claim names its holder (pid, process start time,
-a nonce): a waiter takes it away only when that holder is gone, so a crashed
+a nonce): a waiter takes it away only when that holder is gone — its pid is
+dead, or alive but started at another time (a reused pid; the start time
+comes from `/proc` on Linux and `ps` on macOS) — so a crashed
 holder never wedges the journal and a live one is never robbed of it, a
 takeover runs under a guard so two waiters cannot both take it, and a
 release removes only its own claim. The rewrite abandons itself when the index changed
@@ -82,7 +84,23 @@ file back from the object store — so a bash `rm`, `sed -i`, formatter or
 Only clean files qualify (restoring a committed version over uncommitted
 work would destroy it), and the pre-image must hash to the baseline digest
 — a mismatch, a binary file, or a pre-image above 4 MiB keeps the hash-only
-shape. Untracked files and non-repositories are unchanged. Changes the sweep
+shape. Untracked files and non-repositories are unchanged. The baseline walk is a metadata walk, but it hashes every file it visits,
+so a digest cache keeps it cheap: a file whose size, modification time,
+change time and inode all match the previous walk keeps its digest instead
+of being read again, within a run (each turn, the sweep) and across runs
+(one private file per workspace under the sessions root's
+`.baseline-cache/`, `0600` in `0700`). A file changed within two seconds of
+the walk that hashed it is read again (it is racily clean: its timestamps
+could not tell a later change), and a change that keeps the size and
+restores the modification time still moves the change time, so it is read
+again too. A missing, corrupt or foreign cache file only costs the reuse.
+Two sessions may run in one workspace at once, and each sweep compares
+against its own run's baseline, so the sweep reads the other sessions'
+journals first: a path another session journaled during this run is that
+session's change and is left out, and a change found while another session
+is live may be its work, so it is recorded as contested — `kubic log` and
+`kubic diff` name the session, and `kubic undo` skips it unless `--force`.
+Changes the sweep
 captures are bounded the same way: a changed file above 4 MiB — or one whose
 utf-8 decode would be lossy (binary content) — is recorded hash-only
 (`changed, N bytes`; `diff` shows a size-only line), never as a mangled or

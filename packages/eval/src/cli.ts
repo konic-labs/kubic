@@ -423,7 +423,7 @@ export async function runBenchmarkCommand(
       const record = await runEvalTask(
         {
           suite: suite.id,
-          task: parsed.task ?? `benchmark:${suite.id}`,
+          ...(parsed.task === undefined ? {} : { task: parsed.task }),
           ...provenance,
           size: parsed.size,
           workspace: parsed.workspace,

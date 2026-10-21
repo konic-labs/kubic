@@ -37,6 +37,10 @@ jobs:
       # first, so a typo fails in seconds, before the test suite.
       - if: matrix.node == '22'
         run: npm run check
+      # A known high or critical advisory in a production dependency fails
+      # the run (the audit asks the registry).
+      - if: matrix.node == '22'
+        run: npm audit --omit=dev --audit-level=high
       # The Node 22 leg measures coverage against the floors in
       # vitest.config.ts; the other leg runs the plain suite.
       - if: matrix.node == '22'

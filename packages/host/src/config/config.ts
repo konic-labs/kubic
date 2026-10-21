@@ -159,6 +159,12 @@ export interface VerifyConfig {
   timeoutMs?: number;
 }
 
+// `[run]`: the headless run bounds a config sets when the flags do not.
+interface RunConfig {
+  timeoutMs?: number;
+  maxTurns?: number;
+}
+
 // The `[verify]` gate commands: the section's command keys.
 type VerifyCommandKey = Extract<
   SchemaSection<'verify'>['keys'][number],
@@ -216,6 +222,7 @@ export interface KubicConfig {
   ui?: UiConfig;
   session?: SessionConfig;
   verify?: VerifyConfig;
+  run?: RunConfig;
   policy?: PolicyConfig;
   audit?: AuditTableConfig[];
 }
@@ -233,6 +240,7 @@ interface SectionTypes {
   ui: UiConfig;
   session: SessionConfig;
   verify: VerifyConfig;
+  run: RunConfig;
   policy: PolicyConfig;
   audit: AuditTableConfig;
 }
@@ -257,6 +265,7 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   ui: true,
   session: true,
   verify: true,
+  run: true,
   policy: true,
   audit: true,
 };
@@ -398,6 +407,16 @@ export function checkVerifyConfig(
   const section = sectionNamed('verify');
   checkNoUnknown(verify, keyNames(section), keyPath);
   return checkKeys(section.keys, verify, keyPath);
+}
+
+// `[run]`, checked for a programmatic layer the same way a file layer is.
+export function checkRunConfig(
+  run: Record<string, unknown>,
+  keyPath: string,
+): RunConfig {
+  const section = sectionNamed('run');
+  checkNoUnknown(run, keyNames(section), keyPath);
+  return checkKeys(section.keys, run, keyPath);
 }
 
 // Resolve one layer's `skills` entries against the

@@ -221,6 +221,63 @@ describe('a models.json model whose contextWindow was defaulted', () => {
   });
 });
 
+describe('a models.json provider that sends its key over plain http', () => {
+  const provider = (baseUrl: string, key: Record<string, unknown>) => ({
+    providers: [
+      {
+        id: 'gw',
+        name: 'Gateway',
+        baseUrl,
+        api: 'openai-completions',
+        models: [{ id: 'm1', contextWindow: 32768 }],
+        ...key,
+      },
+    ],
+  });
+
+  async function assembled(file: unknown) {
+    const dir = tempDir('m-');
+    writeFileSync(join(dir, 'models.json'), JSON.stringify(file));
+    return assembleModels(
+      dir,
+      { KUBIC_TRUST_PROJECT: '1', GW_API_KEY: 'gw-key-value-0001' },
+      { home: tempDir('m-') },
+    );
+  }
+
+  it('is named in the load receipt and recorded for doctor', async () => {
+    const result = await assembled(
+      provider('http://gw.corp:8080/v1', { apiKeyEnv: 'GW_API_KEY' }),
+    );
+    expect(result.plaintextKeys).toEqual([
+      { provider: 'gw', host: 'gw.corp:8080' },
+    ]);
+    expect(
+      result.notes.some(
+        (note) =>
+          note.includes("provider 'gw'") &&
+          note.includes('plain http to gw.corp:8080'),
+      ),
+    ).toBe(true);
+  });
+
+  it('stays quiet for a local server, an https URL or a provider with no key', async () => {
+    for (const file of [
+      provider('http://localhost:11434/v1', { apiKeyEnv: 'GW_API_KEY' }),
+      provider('http://127.0.0.1:8080/v1', { apiKey: 'not-needed' }),
+      provider('http://[::1]:8080/v1', { apiKeyEnv: 'GW_API_KEY' }),
+      provider('https://gw.corp/v1', { apiKeyEnv: 'GW_API_KEY' }),
+      provider('http://gw.corp:8080/v1', {}),
+    ]) {
+      const result = await assembled(file);
+      expect(result.plaintextKeys).toEqual([]);
+      expect(result.notes.some((note) => note.includes('plain http'))).toBe(
+        false,
+      );
+    }
+  });
+});
+
 describe('a later models.json that declares the window replaces the default', () => {
   const LOCAL = (models: unknown[]) => ({
     providers: [

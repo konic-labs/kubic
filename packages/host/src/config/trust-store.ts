@@ -2,10 +2,11 @@
 //
 // Trust for a project-local layer is a user decision, not a per-invocation
 // env export: this module is the durable half — one JSON file under
-// `~/.kubic/`, keyed by the canonical project path, holding `true`
-// (trusted) or `false` (declined). An absent key means "no decision yet".
+// `~/.kubic/`, keyed by the canonical project path, holding a grant (the
+// fingerprint of the content it was given for) or `false` (declined). An
+// absent key means "no decision yet".
 //
-// Two rules the design names explicitly:
+// Three rules the design names explicitly:
 //
 //   exact path    — a decision for one directory is never inherited by its
 //                   children and never leaks to a sibling (`/a` does not
@@ -13,6 +14,12 @@
 //                   trust-manager.
 //   canonical key — symlinked paths and their targets are one project, so
 //                   the key is the realpath when it exists.
+//   content-bound — a grant covers the content it was given for
+//                   (trust-fingerprint.ts): once the project's trust-relevant
+//                   files change, the grant reads as `changed` and the
+//                   project is untrusted until the user re-confirms it. A
+//                   bare `true` (recorded before fingerprints) reads as
+//                   changed too.
 //
 // Fail-closed posture: a missing, unreadable or corrupt store reads as "no
 // decision" — every consuming command then refuses the project layer by
@@ -31,15 +38,18 @@ import {
 } from '@kubic/exec/file-bridge';
 import { tightenStateDir } from '@kubic/exec/lock-file';
 import { RUNTIME_ENV_OVERRIDES } from './runtime-env.js';
+import { projectTrustFingerprint } from './trust-fingerprint.js';
 
 // A recorded decision: true (trusted), false (declined), or null (no
 // decision recorded — the store never persists this).
 export type ProjectTrustDecision = boolean | null;
 
-// One recorded boolean decision, for `kubic trust --list`.
+// One recorded boolean decision, for `kubic trust --list`. `changed` marks a
+// grant whose project content no longer matches the content it was given for.
 export interface ProjectTrustEntry {
   readonly path: string;
   readonly decision: boolean;
+  readonly changed?: boolean;
 }
 
 // The trust state of one project directory, as the commands report it.
@@ -52,8 +62,12 @@ export interface ProjectTrustReport {
   readonly configPath: string;
   // Whether that file exists (an absent file needs no trust).
   readonly present: boolean;
-  // The recorded decision, exactly as stored.
+  // The effective recorded decision: true only for a grant whose content
+  // still matches, false for a decline, null otherwise.
   readonly decision: ProjectTrustDecision;
+  // A grant exists, but the project's trust-relevant files changed since it
+  // was given (or it predates fingerprints): re-confirm with `kubic trust`.
+  readonly changed: boolean;
   // KUBIC_TRUST_PROJECT=1/true in the process env.
   readonly envTrust: boolean;
   // The effective gate: a recorded true or the env opt-in.
@@ -85,6 +99,7 @@ export const NO_PROJECT_TRUST: ProjectTrustReport = {
   configPath: '',
   present: false,
   decision: null,
+  changed: false,
   envTrust: false,
   trusted: false,
   storePath: '',
@@ -124,13 +139,22 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// The store's wire shape: canonical path → true | false | null. `null` is
-// accepted (Pi's vocabulary) and read as "no decision"; it is never
-// written — removing a key IS the null decision.
+// One stored decision: a grant with the fingerprint of the content it was
+// given for (absent for a grant recorded before fingerprints), or a decline.
+interface StoredDecision {
+  readonly trusted: boolean;
+  readonly fingerprint?: string;
+}
+
+// The store's wire shape: canonical path → a grant
+// (`{"trusted": true, "fingerprint": "sha256:…"}`), `false` (declined), or
+// the older `true` (a grant without a fingerprint). `null` is accepted (Pi's
+// vocabulary) and read as "no decision"; it is never written — removing a key
+// IS the null decision.
 function parseTrustFile(
   text: string,
   path: string,
-): Record<string, boolean | null> {
+): Record<string, StoredDecision | null> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -148,61 +172,129 @@ function parseTrustFile(
   // object would silently swallow a JSON `"__proto__"` key into the
   // prototype instead of an own entry (the repo's prototype-pollution
   // posture).
-  const entries = Object.create(null) as Record<string, boolean | null>;
+  const entries = Object.create(null) as Record<string, StoredDecision | null>;
   for (const [key, value] of Object.entries(parsed)) {
-    if (value !== true && value !== false && value !== null) {
-      throw new TrustStoreError(
-        `trust store ${path} has an invalid decision for ${JSON.stringify(key)}: expected true, false or null`,
-      );
-    }
-    entries[key] = value;
+    entries[key] = storedDecision(value, key, path);
   }
   return entries;
 }
 
+function storedDecision(
+  value: unknown,
+  key: string,
+  path: string,
+): StoredDecision | null {
+  if (value === null) return null;
+  if (value === true || value === false) return { trusted: value };
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    const grant = value as Record<string, unknown>;
+    if (grant.trusted === true && typeof grant.fingerprint === 'string') {
+      return { trusted: true, fingerprint: grant.fingerprint };
+    }
+  }
+  throw new TrustStoreError(
+    `trust store ${path} has an invalid decision for ${JSON.stringify(key)}: expected a grant, false or null`,
+  );
+}
+
 // Stable, human-readable file: sorted keys, two-space JSON, trailing
 // newline — a diff of two grants stays minimal.
-function serializeTrustFile(entries: Record<string, boolean | null>): string {
-  const sorted = Object.create(null) as Record<string, boolean>;
+function serializeTrustFile(
+  entries: Record<string, StoredDecision | null>,
+): string {
+  const sorted = Object.create(null) as Record<string, unknown>;
   for (const key of Object.keys(entries).sort()) {
     const value = entries[key];
-    if (value === true || value === false) sorted[key] = value;
+    if (value === null || value === undefined) continue;
+    sorted[key] =
+      value.trusted && value.fingerprint !== undefined
+        ? { trusted: true, fingerprint: value.fingerprint }
+        : value.trusted;
   }
   return `${JSON.stringify(sorted, null, 2)}\n`;
 }
 
+// What a recorded decision means for the project as it is now.
+type TrustStatus = 'trusted' | 'changed' | 'declined' | 'none';
+
 export class ProjectTrustStore {
   readonly file: string;
+  // The home the store lives under: a project config may name its
+  // systemPromptFile with `~/`.
+  private readonly home: string;
+  // One fingerprint per project per store: a command reads it several times
+  // (the config gate, models.json, each skills ancestor).
+  private readonly fingerprints = new Map<string, string>();
 
   constructor(file: string) {
     this.file = file;
+    this.home = dirname(dirname(file));
   }
 
-  // The decision for `cwd`; null when absent or when the store cannot be
-  // read (fail closed — the caller refuses the project layer by name).
+  private fingerprintOf(key: string): string {
+    let fingerprint = this.fingerprints.get(key);
+    if (fingerprint === undefined) {
+      fingerprint = projectTrustFingerprint(key, this.home);
+      this.fingerprints.set(key, fingerprint);
+    }
+    return fingerprint;
+  }
+
+  private statusOf(
+    entries: Record<string, StoredDecision | null>,
+    cwd: string,
+  ): TrustStatus {
+    const key = canonicalTrustPath(cwd);
+    const value = entries[key];
+    if (value === null || value === undefined) return 'none';
+    if (!value.trusted) return 'declined';
+    return value.fingerprint === this.fingerprintOf(key)
+      ? 'trusted'
+      : 'changed';
+  }
+
+  // The decision for `cwd`: true only for a grant whose content still
+  // matches, false for a decline, null when absent, changed, or when the
+  // store cannot be read (fail closed — the caller refuses the project layer
+  // by name).
   get(cwd: string): ProjectTrustDecision {
-    const read = this.readStore();
-    return read.kind === 'entries' ? decisionOf(read.entries, cwd) : null;
+    return this.inspect(cwd).decision;
   }
 
-  // As `get`, plus the reason when the store exists but could not be used: the
-  // report and doctor then say "unreadable" or "corrupt" instead of implying
-  // the user simply never decided.
-  inspect(cwd: string): { decision: ProjectTrustDecision; error?: string } {
+  // As `get`, plus whether a grant went stale and the reason when the store
+  // exists but could not be used: the report and doctor then say "changed",
+  // "unreadable" or "corrupt" instead of implying the user never decided.
+  inspect(cwd: string): {
+    decision: ProjectTrustDecision;
+    changed: boolean;
+    error?: string;
+  } {
     const read = this.readStore();
     if (read.kind === 'unreadable' || read.kind === 'corrupt') {
-      return { decision: null, error: read.error };
+      return { decision: null, changed: false, error: read.error };
     }
+    if (read.kind !== 'entries') return { decision: null, changed: false };
+    const status = this.statusOf(read.entries, cwd);
     return {
-      decision: read.kind === 'entries' ? decisionOf(read.entries, cwd) : null,
+      decision:
+        status === 'trusted' ? true : status === 'declined' ? false : null,
+      changed: status === 'changed',
     };
   }
 
-  // Records `decision`; null removes the entry (revoke). The read → update
-  // → tmp+rename write runs under the exec lock, so concurrent grants to
-  // different paths never lose an update.
+  // Records `decision`; null removes the entry (revoke). A grant records the
+  // fingerprint of the project as it is now. The read → update → tmp+rename
+  // write runs under the exec lock, so concurrent grants to different paths
+  // never lose an update.
   set(cwd: string, decision: ProjectTrustDecision): void {
     const key = canonicalTrustPath(cwd);
+    this.fingerprints.delete(key);
+    const stored: StoredDecision | null =
+      decision === null
+        ? null
+        : decision
+          ? { trusted: true, fingerprint: this.fingerprintOf(key) }
+          : { trusted: false };
     // Kubic state, private whichever command creates it first: the store is
     // written 0600, a new `~/.kubic` is created 0700, and a loose one is
     // tightened here — only a `.kubic` directory, never a path's parent the
@@ -214,8 +306,8 @@ export class ProjectTrustStore {
       (current) => {
         const entries =
           current === undefined ? {} : parseTrustFile(current, this.file);
-        if (decision === null) delete entries[key];
-        else entries[key] = decision;
+        if (stored === null) delete entries[key];
+        else entries[key] = stored;
         return serializeTrustFile(entries);
       },
       { mode: 0o600 },
@@ -232,8 +324,13 @@ export class ProjectTrustStore {
     if (read.kind !== 'entries') return [];
     const out: ProjectTrustEntry[] = [];
     for (const [path, value] of Object.entries(read.entries)) {
-      if (value === true || value === false)
-        out.push({ path, decision: value });
+      if (value === null || value === undefined) continue;
+      if (!value.trusted) {
+        out.push({ path, decision: false });
+        continue;
+      }
+      const changed = value.fingerprint !== this.fingerprintOf(path);
+      out.push({ path, decision: true, ...(changed ? { changed } : {}) });
     }
     out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     return out;
@@ -267,15 +364,7 @@ type StoreRead =
   | { kind: 'missing' }
   | { kind: 'unreadable'; error: string }
   | { kind: 'corrupt'; error: string }
-  | { kind: 'entries'; entries: Record<string, boolean | null> };
-
-function decisionOf(
-  entries: Record<string, boolean | null>,
-  cwd: string,
-): ProjectTrustDecision {
-  const value = entries[canonicalTrustPath(cwd)];
-  return value === true || value === false ? value : null;
-}
+  | { kind: 'entries'; entries: Record<string, StoredDecision | null> };
 
 function envFlag(raw: string | undefined): boolean {
   return raw === '1' || raw === 'true';
@@ -336,6 +425,7 @@ export function projectTrustReport(inputs: {
     configPath,
     present: presentFile(configPath),
     decision: inspected.decision,
+    changed: inspected.changed,
     envTrust,
     trusted: inspected.decision === true || envTrust,
     storePath: store.file,

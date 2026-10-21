@@ -12,7 +12,10 @@
 //     Optional entries restricted to one platform are left out (see
 //     dropPlatformEntries).
 // Then `npm pack` writes release/kubic-<version>.tgz, which must stay within
-// the size budget. scripts/pack-install-contract.mjs proves the tarball.
+// the size budget, and release/kubic-<version>.cdx.json beside it holds the
+// CycloneDX SBOM of the shipped production tree, which must list every
+// package the shrinkwrap pins. scripts/pack-install-contract.mjs proves the
+// tarball.
 //
 // Usage: node scripts/release-stage.mjs   (npm run release:stage)
 import { execFileSync } from 'node:child_process';
@@ -63,6 +66,7 @@ export const PACK_BUDGET_BYTES = 1.5 * 1024 * 1024;
 const COPIED = [
   'bin/kubic.js',
   'bin/node-guard.mjs',
+  'bin/env-proxy.mjs',
   'dist/kubic.js',
   'dist/kubic.js.map',
   'README.md',
@@ -181,6 +185,42 @@ export function packProblems(pack) {
   ];
 }
 
+// The SBOM file written beside the tarball.
+export function sbomFileName(manifest) {
+  return `${manifest.name}-${manifest.version}.cdx.json`;
+}
+
+// npm names the root component after the directory it ran in (release/), so
+// the root takes the package's own name; its bom-ref and purl already carry it.
+export function finishSbom(sbom, manifest) {
+  return {
+    ...sbom,
+    metadata: {
+      ...sbom.metadata,
+      component: { ...sbom.metadata.component, name: manifest.name },
+    },
+  };
+}
+
+// The SBOM must be CycloneDX and list every package the shrinkwrap pins.
+export function sbomProblems(sbom, shrinkwrap) {
+  if (sbom.bomFormat !== 'CycloneDX') return ['the SBOM is not CycloneDX'];
+  const listed = new Set(
+    (sbom.components ?? []).map((item) => `${item.name}@${item.version}`),
+  );
+  const problems = [];
+  for (const [path, entry] of Object.entries(shrinkwrap.packages ?? {})) {
+    if (path === '') continue;
+    const name =
+      entry.name ??
+      path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length);
+    if (!listed.has(`${name}@${entry.version}`)) {
+      problems.push(`the SBOM does not list ${name}@${entry.version}`);
+    }
+  }
+  return problems;
+}
+
 function readJson(file) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
@@ -235,14 +275,40 @@ function stage(root = REPO_ROOT) {
     npm(['pack', '--json', '--pack-destination', out], out),
   );
   problems.push(...packProblems(pack));
-  return { out, manifest, pack, problems };
+  // Resolved from the shrinkwrap, like the lockfile: no download.
+  const sbom = finishSbom(
+    JSON.parse(
+      npm(
+        [
+          'sbom',
+          '--sbom-format',
+          'cyclonedx',
+          '--sbom-type',
+          'application',
+          '--package-lock-only',
+          '--omit=dev',
+        ],
+        out,
+      ),
+    ),
+    manifest,
+  );
+  writeFileSync(
+    join(out, sbomFileName(manifest)),
+    `${JSON.stringify(sbom, null, 2)}\n`,
+  );
+  problems.push(...sbomProblems(sbom, shrinkwrap));
+  return { out, manifest, pack, sbom, problems };
 }
 
 if (import.meta.main) {
-  const { out, manifest, pack, problems } = stage();
+  const { out, manifest, pack, sbom, problems } = stage();
   for (const problem of problems) console.error(`release-stage: ${problem}`);
   if (problems.length > 0) process.exit(1);
   console.log(
     `staged ${manifest.name}@${manifest.version}: ${join(out, pack.filename)} (${pack.size} bytes packed, ${pack.unpackedSize} unpacked, ${pack.entryCount} files)`,
+  );
+  console.log(
+    `SBOM: ${join(out, sbomFileName(manifest))} (CycloneDX ${sbom.specVersion}, ${sbom.components.length} components)`,
   );
 }

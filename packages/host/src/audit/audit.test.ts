@@ -425,10 +425,10 @@ describe('syslog sink', () => {
     sink.write(record());
     expect(transport.lines).toHaveLength(1);
     const line = transport.lines[0] ?? '';
-    // local0 (16) × 8 + info (6) = 134; the record timestamp, host, app,
+    // local0 (16) × 8 + notice (5) = 133; the record timestamp, host, app,
     // acting pid, and the record as the MSG.
     expect(
-      line.startsWith('<134>1 2026-10-05T12:00:00.000Z web-1 kubic 1234 - - '),
+      line.startsWith('<133>1 2026-10-05T12:00:00.000Z web-1 kubic 1234 - - '),
     ).toBe(true);
     expect(JSON.parse(line.slice(line.indexOf('{')))).toMatchObject({
       who: 'ege@example.com',
@@ -453,18 +453,18 @@ describe('syslog sink', () => {
       appName: 'kubic-agent',
       hostname: 'web-1',
     }).write(record());
-    // authpriv (10) × 8 + info (6) = 86.
+    // authpriv (10) × 8 + notice (5) = 85.
     expect(
       a.lines[0]?.startsWith(
-        '<86>1 2026-10-05T12:00:00.000Z web-1 kubic-agent ',
+        '<85>1 2026-10-05T12:00:00.000Z web-1 kubic-agent ',
       ),
     ).toBe(true);
     const b = fakeTransport();
     createSyslogSink({ transport: b, facility: 19, hostname: 'web-1' }).write(
       record(),
     );
-    // 19 × 8 + 6 = 158.
-    expect(b.lines[0]?.startsWith('<158>1')).toBe(true);
+    // 19 × 8 + 5 = 157.
+    expect(b.lines[0]?.startsWith('<157>1')).toBe(true);
   });
 
   it('refuses an unknown facility by name', () => {

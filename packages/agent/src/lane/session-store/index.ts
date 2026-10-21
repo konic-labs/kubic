@@ -48,4 +48,5 @@ export {
   listSessions,
   SessionAttachError,
   sessionsTouchingWorkspace,
+  workspacePeers,
 } from './store.js';

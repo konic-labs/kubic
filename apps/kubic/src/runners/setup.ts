@@ -48,6 +48,7 @@ export function modelsRunner(io: ProdRunnerIo): ProdRunners['models'] {
       models: assembled.models,
       providers: assembled.providers,
       defaultedWindows: assembled.defaultedWindows,
+      fallbackProviders: assembled.fallbackProviders,
       // The configured pin is the default the view marks.
       ...(pin === undefined
         ? {}

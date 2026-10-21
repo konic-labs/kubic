@@ -34,3 +34,4 @@ export {
   buildConfiguredSinks,
   isSyslogTargetAvailable,
 } from './sinks.js';
+export { unixSyslogTransportProblem } from './syslog-transport.js';

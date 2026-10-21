@@ -566,3 +566,105 @@ describe('sweep attribution', () => {
     expect(entries[0]?.unattributed).toBe(true);
   });
 });
+
+// Another session in the same workspace: what it journaled is its own work,
+// left out of this run's sweep; what changes while it is live may be its
+// work, recorded as contested so undo never reverts it unasked.
+describe('reconciliation with other sessions in the workspace', () => {
+  function peers(
+    journaled: readonly string[],
+    live: readonly string[] = [],
+  ): {
+    journaledSince(since: number): ReadonlySet<string>;
+    live(): readonly string[];
+    asked: number[];
+  } {
+    const asked: number[] = [];
+    return {
+      journaledSince: (since) => {
+        asked.push(since);
+        return new Set(journaled);
+      },
+      live: () => live,
+      asked,
+    };
+  }
+
+  it('leaves out a path another session journaled during the run', () => {
+    const root = workspace();
+    const store = journalStore();
+    const other = peers([join(root, 'keep.txt')]);
+    const run = beginReconciliation({
+      store,
+      root,
+      runId: 'sess-a',
+      sessionId: 'sess-a',
+      now: () => NOW,
+      peers: other,
+    });
+    writeFileSync(join(root, 'keep.txt'), 'the other session wrote this\n');
+    writeFileSync(join(root, 'mine.txt'), 'this run wrote this\n');
+    expect(run.sweep()).toBe(1);
+    expect(store.entries().map((e) => e.path)).toEqual(['mine.txt']);
+    // The window starts when the run's part began.
+    expect(other.asked).toEqual([NOW]);
+  });
+
+  it('records a change found while another session is live as contested, and undo skips it unless forced', () => {
+    const repo = createGitSandbox({
+      prefix: 'journal-peers-',
+      injectProcessEnv: true,
+    });
+    writeFileSync(join(repo.path, 'tracked.ts'), 'v1\n');
+    repo.git(['add', 'tracked.ts']);
+    repo.git(['commit', '--no-verify', '-m', 'init']);
+    const store = journalStore();
+    const run = beginReconciliation({
+      store,
+      root: repo.path,
+      runId: 'sess-a',
+      sessionId: 'sess-a',
+      now: () => NOW,
+      peers: peers([], ['sess-b']),
+    });
+    writeFileSync(join(repo.path, 'tracked.ts'), 'work of the other session\n');
+    expect(run.sweep()).toBe(1);
+    const [entry] = store.entries();
+    expect(entry?.contested).toEqual(['sess-b']);
+    expect(renderDiff(diffEntries(store, {}))).toContain(
+      'contested by session sess-b',
+    );
+    const kept = applyUndo(
+      store,
+      planUndo(store, {}, repo.path),
+      repo.path,
+      {},
+    );
+    expect(kept.restored).toEqual([]);
+    expect(kept.skippedDetails[0]?.reason).toMatch(/^contested: 'tracked.ts'/);
+    expect(readFileSync(join(repo.path, 'tracked.ts'), 'utf8')).toBe(
+      'work of the other session\n',
+    );
+    const forced = applyUndo(store, planUndo(store, {}, repo.path), repo.path, {
+      force: true,
+    });
+    expect(forced.restored).toEqual(['tracked.ts']);
+    expect(readFileSync(join(repo.path, 'tracked.ts'), 'utf8')).toBe('v1\n');
+  });
+
+  it('records nothing as contested when no other session is live', () => {
+    const root = workspace();
+    const store = journalStore();
+    const run = beginReconciliation({
+      store,
+      root,
+      runId: 'sess-a',
+      sessionId: 'sess-a',
+      now: () => NOW,
+      peers: peers([]),
+    });
+    writeFileSync(join(root, 'new.txt'), 'mine\n');
+    run.sweep();
+    expect(store.entries()[0]?.contested).toBeUndefined();
+  });
+});

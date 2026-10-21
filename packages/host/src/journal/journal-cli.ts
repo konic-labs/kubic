@@ -330,7 +330,9 @@ function journalLog(run: JournalRun, request: JournalSelection): ExitCode {
       e.op === 'marker' && e.headFrom !== undefined && e.headTo !== undefined
         ? `reconciled head-moved ${formatHeadMove(e.headFrom, e.headTo)}`
         : e.unattributed === true
-          ? 'reconciled'
+          ? e.contested === undefined
+            ? 'reconciled'
+            : `reconciled, contested by session ${e.contested.join(', ')}`
           : '',
     ]);
     const table = renderTable(rows, LOG_COLUMNS, {

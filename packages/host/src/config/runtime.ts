@@ -30,12 +30,7 @@ import {
   isRecord,
 } from './checks.js';
 import type { ApprovalsConfig, ConfigLayer, KubicConfig } from './config.js';
-import {
-  checkSessionCompaction,
-  checkVerifyConfig,
-  mergeLayered,
-  VERIFY_COMMAND_KEYS,
-} from './config.js';
+import { checkSessionCompaction, mergeLayered } from './config.js';
 import { ConfigError } from './errors.js';
 import {
   envFlag,
@@ -50,6 +45,7 @@ import {
   loadLayers,
   programmaticSourceFor,
 } from './runtime-layers.js';
+import { runFrom, verifyFrom } from './runtime-run.js';
 import type {
   ConfigValueSource,
   ModelPinOverride,
@@ -63,7 +59,6 @@ import type {
   RuntimePermissions,
   RuntimeSystemPrompt,
   RuntimeThinking,
-  RuntimeVerify,
 } from './runtime-types.js';
 import { configKey } from './schema.js';
 import { resolveSystemPromptFile } from './system-prompt-file.js';
@@ -242,6 +237,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     // the lane boots and the `kubic config` report share one derivation.
     systemPromptFile: systemPromptFileFrom(inputs, config, loaded),
     verify,
+    run: runFrom(config),
     projectTrusted,
     overriddenAttempts: [
       ...merged.overriddenAttempts,
@@ -516,29 +512,6 @@ function checkRoleSettings(config: KubicConfig): void {
     checkRoleModelRef(role.model, name);
     checkThinkingLevel(role.thinking, `'roles.${name}': 'thinking'`);
   }
-}
-
-// Gate commands: re-validated for the programmatic
-// layers, which never pass through the TOML parser.
-function verifyFrom(config: KubicConfig): RuntimeVerify {
-  const verifyConfig =
-    config.verify === undefined
-      ? {}
-      : checkVerifyConfig(
-          config.verify as unknown as Record<string, unknown>,
-          'verify',
-        );
-  return {
-    commands: Object.fromEntries(
-      VERIFY_COMMAND_KEYS.flatMap((key) => {
-        const command = verifyConfig[key];
-        return command === undefined ? [] : [[key, command]];
-      }),
-    ),
-    ...(verifyConfig.timeoutMs === undefined
-      ? {}
-      : { timeoutMs: verifyConfig.timeoutMs }),
-  };
 }
 
 // [agent] systemPromptFile: the declaring layer's file

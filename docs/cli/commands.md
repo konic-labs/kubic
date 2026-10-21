@@ -80,7 +80,13 @@ exactly `kubic run -p "fix the authentication bug"`, headless
 (no alt-screen). Trailing flags pass
 through (`kubic "do x" --json`). A **single-word** token has no whitespace
 to tell it from a typo'd command, so it stays an unknown command (exit 2)
-with the hint above. Kubic runs in-process with your user authority: no
+with the hint above. A token that reads exactly as a command — every word
+the command name, one of its subcommands or an option, as in
+`kubic "sessions list"` from a script or an alias — is refused the same way
+(`error: quoted command 'sessions list'`, exit 2, with the unquoted command
+and the prompt form as hints), so it never starts a model run; a prompt that
+only starts with a command word (`kubic "commit the staged changes"`) still
+runs. Kubic runs in-process with your user authority: no
 isolation, no containment — approvals plus the journal are the controls.
 
 ## Commands by page

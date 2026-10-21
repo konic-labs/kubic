@@ -69,6 +69,10 @@ tests = "npm test"
 typecheck = "npm run typecheck"
 timeoutMs = 600000
 
+[run]
+timeoutMs = 300000
+maxTurns = 50
+
 [policy]
 allowed_models = ["local/*"]
 allowed_providers = ["local"]

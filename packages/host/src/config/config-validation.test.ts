@@ -443,6 +443,52 @@ describe('[verify] section', () => {
   });
 });
 
+describe('[run] section', () => {
+  it('parses the headless run bounds into the runtime config', () => {
+    expect(
+      parseTomlConfig('[run]\ntimeoutMs = 600000\nmaxTurns = 40\n').run,
+    ).toEqual({ timeoutMs: 600000, maxTurns: 40 });
+    const runtime = loadRuntime(
+      fakeBridge({ '/repo/.kubic/config.toml': '[run]\nmaxTurns = 12\n' }),
+      { projectTrusted: true },
+    );
+    expect(runtime.run).toEqual({ maxTurns: 12 });
+    expect(loadRuntime(fakeBridge({})).run).toEqual({});
+  });
+
+  it('refuses an unknown key and a bad bound by name', () => {
+    expect(() => parseTomlConfig('[run]\nretries = 1\n')).toThrow(
+      "'run': unknown key 'retries'",
+    );
+    for (const bad of ['0', '-5', '1.5', '"10"']) {
+      expect(() => parseTomlConfig(`[run]\ntimeoutMs = ${bad}\n`)).toThrow(
+        /'run': 'timeoutMs' must be a positive integer/,
+      );
+    }
+    expect(() => parseTomlConfig('[run]\ntimeoutMs = 2147483648\n')).toThrow(
+      /'run': 'timeoutMs'/,
+    );
+    for (const bad of ['0', '-1', '2.5', '"3"']) {
+      expect(() => parseTomlConfig(`[run]\nmaxTurns = ${bad}\n`)).toThrow(
+        /'run': 'maxTurns' must be a positive integer/,
+      );
+    }
+  });
+
+  it('re-validates a programmatic layer, which never passes the TOML parser', () => {
+    expect(() =>
+      loadRuntimeConfig({
+        bridge: fakeBridge({}),
+        home: '/home/u',
+        cwd: '/repo',
+        projectRoot: '/repo',
+        env: {},
+        session: { run: { maxTurns: 0 } },
+      }),
+    ).toThrow(/'run': 'maxTurns' must be a positive integer/);
+  });
+});
+
 describe('checkRoleModelRef', () => {
   it.each(['llama', '/x', 'x/', ''])(
     'refuses %j with the provider/id message',

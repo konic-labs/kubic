@@ -20,6 +20,8 @@ export interface ConfigDoctorInput {
   projectTrust:
     | {
         decision: boolean | null;
+        // A grant whose project files changed since it was given.
+        changed?: boolean;
         envTrust: boolean;
         storePath: string;
         // The store exists but could not be read or
@@ -69,6 +71,9 @@ function projectTrustDetail(input: ConfigDoctorInput): string {
   }
   if (trust.decision === false) {
     return `project layer not trusted (declined in ${trust.storePath}; run 'kubic trust' to accept)`;
+  }
+  if (trust.changed === true) {
+    return `project layer not trusted (its files changed since the grant in ${trust.storePath}; review them, then run 'kubic trust')`;
   }
   return "project layer not trusted (no decision recorded; run 'kubic trust' to accept, or set KUBIC_TRUST_PROJECT=1)";
 }

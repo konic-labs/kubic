@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
+import { projectTrustFingerprint } from './trust-fingerprint.js';
 import {
   canonicalTrustPath,
   ProjectTrustStore,
@@ -126,9 +127,10 @@ describe('project trust store', () => {
     mkdirSync(join(home, '.kubic'), { recursive: true });
     writeFileSync(path, '{"__proto__": true, "/repo": false}');
     const store = new ProjectTrustStore(path);
+    // A bare `true` is a grant recorded before fingerprints: changed.
     expect(store.entries()).toEqual([
       { path: '/repo', decision: false },
-      { path: '__proto__', decision: true },
+      { path: '__proto__', decision: true, changed: true },
     ]);
     store.set('/other', true);
     const text = readFileSync(path, 'utf8');
@@ -196,9 +198,10 @@ describe('project trust store', () => {
     // the released writer must read that content after the wait and keep it.
     mkdirSync(join(home, '.kubic'), { recursive: true });
     const lock = `${store.file}.lock`;
+    const key = canonicalTrustPath(other);
     writeFileSync(
       store.file,
-      `${JSON.stringify({ [canonicalTrustPath(other)]: true }, null, 2)}\n`,
+      `${JSON.stringify({ [key]: { trusted: true, fingerprint: projectTrustFingerprint(key, home) } }, null, 2)}\n`,
     );
     const held = openSync(lock, 'wx');
     // The release must come from another thread: the waiting set() blocks
@@ -309,4 +312,158 @@ describe('trust store permissions', () => {
       expect(statSync(elsewhere).mode & 0o777).toBe(0o755);
     },
   );
+});
+
+// A grant covers the content it was given for: the project's trust-relevant
+// files. A change to any of them makes the project untrusted again until the
+// user re-confirms it; Kubic's own runtime state and unrelated files do not.
+describe('content-bound grants', () => {
+  function project(): string {
+    const root = tempDir();
+    mkdirSync(join(root, '.kubic'), { recursive: true });
+    writeFileSync(
+      join(root, '.kubic', 'config.toml'),
+      '[model]\nthinking = "low"\n',
+    );
+    return root;
+  }
+
+  it('stays trusted while the project is unchanged and goes stale when its config changes', () => {
+    const home = tempDir();
+    const root = project();
+    const store = storeFor(home);
+    store.set(root, true);
+    expect(storeFor(home).get(root)).toBe(true);
+    writeFileSync(
+      join(root, '.kubic', 'config.toml'),
+      '[approvals]\nautoApprove = ["destructive-shell"]\n',
+    );
+    const fresh = storeFor(home);
+    expect(fresh.get(root)).toBe(null);
+    expect(fresh.inspect(root)).toMatchObject({
+      decision: null,
+      changed: true,
+    });
+    fresh.set(root, true);
+    expect(storeFor(home).get(root)).toBe(true);
+  });
+
+  it.each([
+    [
+      'a new role document',
+      (root: string) => {
+        mkdirSync(join(root, '.kubic', 'roles'), { recursive: true });
+        writeFileSync(join(root, '.kubic', 'roles', 'r.md'), '# role\n');
+      },
+    ],
+    [
+      'a root models.json',
+      (root: string) => {
+        writeFileSync(join(root, 'models.json'), '{"providers":[]}');
+      },
+    ],
+    [
+      'a project skill',
+      (root: string) => {
+        mkdirSync(join(root, '.agents', 'skills', 's'), { recursive: true });
+        writeFileSync(
+          join(root, '.agents', 'skills', 's', 'SKILL.md'),
+          '---\nname: s\n---\n',
+        );
+      },
+    ],
+    [
+      'a package-declared skill directory',
+      (root: string) => {
+        writeFileSync(
+          join(root, 'package.json'),
+          '{"skills":["tools/skills"]}',
+        );
+      },
+    ],
+    [
+      'the systemPromptFile the config names',
+      (root: string) => {
+        writeFileSync(join(root, 'docs-prompt.md'), 'be careful\n');
+      },
+    ],
+  ])('treats %s as a change', (_label, change) => {
+    const home = tempDir();
+    const root = project();
+    writeFileSync(
+      join(root, '.kubic', 'config.toml'),
+      '[agent]\nsystemPromptFile = "../docs-prompt.md"\n',
+    );
+    writeFileSync(join(root, 'docs-prompt.md'), 'be kind\n');
+    storeFor(home).set(root, true);
+    change(root);
+    expect(storeFor(home).get(root)).toBe(null);
+  });
+
+  it.each([
+    [
+      'the audit ledger',
+      (root: string) => {
+        mkdirSync(join(root, '.kubic', 'audit'), { recursive: true });
+        writeFileSync(join(root, '.kubic', 'audit', 'audit.jsonl'), '{}\n');
+      },
+    ],
+    [
+      'a dependency bump in package.json',
+      (root: string) => {
+        writeFileSync(
+          join(root, 'package.json'),
+          '{"dependencies":{"x":"2.0.0"}}',
+        );
+      },
+    ],
+    [
+      'an ordinary source file',
+      (root: string) => {
+        writeFileSync(join(root, 'index.ts'), 'export {};\n');
+      },
+    ],
+  ])('ignores %s', (_label, change) => {
+    const home = tempDir();
+    const root = project();
+    writeFileSync(join(root, 'package.json'), '{"dependencies":{"x":"1.0.0"}}');
+    storeFor(home).set(root, true);
+    change(root);
+    expect(storeFor(home).get(root)).toBe(true);
+  });
+
+  it('reads a grant recorded before fingerprints as changed', () => {
+    const home = tempDir();
+    const root = project();
+    mkdirSync(join(home, '.kubic'), { recursive: true });
+    writeFileSync(
+      projectTrustStorePath(home),
+      `${JSON.stringify({ [canonicalTrustPath(root)]: true })}\n`,
+    );
+    const store = storeFor(home);
+    expect(store.get(root)).toBe(null);
+    expect(store.inspect(root).changed).toBe(true);
+    expect(store.entries()).toEqual([
+      { path: canonicalTrustPath(root), decision: true, changed: true },
+    ]);
+  });
+
+  it('reports a changed project as untrusted unless KUBIC_TRUST_PROJECT=1', () => {
+    const home = tempDir();
+    const root = project();
+    storeFor(home).set(root, true);
+    writeFileSync(
+      join(root, '.kubic', 'config.toml'),
+      '[model]\nthinking = "high"\n',
+    );
+    expect(projectTrustReport({ home, cwd: root })).toMatchObject({
+      decision: null,
+      changed: true,
+      trusted: false,
+    });
+    expect(
+      projectTrustReport({ home, cwd: root, env: { KUBIC_TRUST_PROJECT: '1' } })
+        .trusted,
+    ).toBe(true);
+  });
 });

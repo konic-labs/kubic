@@ -51,7 +51,9 @@ accepts, returns and bounds is on the [tools page](../cli/tools.md).
   one storage per process and does no cross-process locking, so every open
   happens with `lock.json` held (an `O_EXCL` create). A lock is stale only
   when its holder process is gone or its recorded start time moved (a
-  reused pid); age alone never makes it stale, a lost takeover race is a
+  reused pid; the start time is read from `/proc` on Linux and from `ps` on
+  macOS, and elsewhere only the pid is checked); age alone never makes it
+  stale, a lost takeover race is a
   `SessionLockError`, and a release removes only a lock this process
   owns. A harness takes the storage with `session.adopt()`, so a racing
   `release()` cannot close it underneath. Local filesystems only.

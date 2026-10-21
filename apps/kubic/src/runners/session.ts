@@ -26,6 +26,7 @@ import {
   runtimeStreamTuning,
   runtimeSystemPromptSection,
   sessionRetentionDays,
+  withRunBounds,
 } from '../config/projections.js';
 import { runHeadlessPrompt } from '../run/command.js';
 import type { HeadlessRunDeps } from '../run/options.js';
@@ -195,7 +196,7 @@ export function runRunner(io: ProdRunnerIo): ProdRunners['run'] {
   const { out, debug } = io;
   return (options, cliConfig) => {
     noteOverriddenModelPins(io, cliConfig);
-    return runRunCommand(options, {
+    return runRunCommand(withRunBounds(options, cliConfig), {
       ...presentation(out, debug, options.json === true),
       run: (prompt, options) =>
         runHeadlessPrompt(prompt, options, prodRunDeps(cliConfig)),

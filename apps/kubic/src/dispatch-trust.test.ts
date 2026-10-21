@@ -198,8 +198,9 @@ describe('prod wiring deps shapes', () => {
   }
 
   it('eval --task drives the live suite runner', async () => {
-    // The built-in suite's fixture runs through the lane with the faux
-    // provider, so --task produces a scored record rather than a refusal.
+    // The given task runs through the lane on the built-in suite's fixture
+    // with the faux provider: a scripted task that writes the fix the suite
+    // verifies produces a scored record rather than a refusal.
     vi.stubEnv('KUBIC_PROVIDER', 'faux');
     const workspace = mkdtempSync(join(tmpdir(), 'kubic-dispatch-eval-'));
     try {
@@ -208,7 +209,7 @@ describe('prod wiring deps shapes', () => {
       const code = (
         await runners.eval(
           {
-            task: 'do it',
+            task: 'faux:tool write {"path":"src/fix.ts","content":"export const fixed = 1;\\n"}',
             suite: 'swe-bench-mini',
             worktree: workspace,
             size: 'smoke',

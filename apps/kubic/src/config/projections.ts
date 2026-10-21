@@ -1,7 +1,7 @@
 // The loaded configuration projected onto what each command consumes: the
-// run and lane deps (`kubic run`, `kubic tui`, `kubic replay`), the approval
-// and installed-policy deps, the skills and role layers, the request tuning,
-// compaction and the retention bounds.
+// run and lane deps (`kubic run`, `kubic tui`, `kubic replay`), the headless
+// run bounds, the approval and installed-policy deps, the skills and role
+// layers, the request tuning, compaction and the retention bounds.
 
 import type { LaneCompactionOptions } from '@kubic/agent/lane/boot';
 import type { PermissionClasses } from '@kubic/agent/permissions';
@@ -20,6 +20,7 @@ import type {
 } from '@kubic/host/config';
 import { CONFIG_LAYERS, checkModelStreamTuning } from '@kubic/host/config';
 import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles';
+import type { RunCommandOptions } from '@kubic/host/run';
 import type { CliConfigResult } from './load.js';
 import { projectTrustFor } from './load.js';
 
@@ -39,6 +40,25 @@ export function runtimeApprovalDeps(result: CliConfigResult): ApprovalConfig {
     autoApprove: [...policy.autoApprove],
     requireJustification: policy.requireJustification,
     sessionScoped: policy.sessionScoped,
+  };
+}
+
+// The `[run]` bounds a headless run takes where its flags set none: a
+// `--timeout` / `--max-turns` always wins, and a refused config adds nothing.
+export function withRunBounds(
+  options: RunCommandOptions,
+  result: CliConfigResult,
+): RunCommandOptions {
+  const run = result.runtime?.run;
+  if (run === undefined) return options;
+  return {
+    ...options,
+    ...(options.timeoutMs === undefined && run.timeoutMs !== undefined
+      ? { timeoutMs: run.timeoutMs }
+      : {}),
+    ...(options.maxTurns === undefined && run.maxTurns !== undefined
+      ? { maxTurns: run.maxTurns }
+      : {}),
   };
 }
 

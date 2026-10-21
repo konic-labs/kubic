@@ -50,13 +50,17 @@ describe('eval suites exact shape', () => {
     ).toEqual(['terminal-live']);
   });
 
-  it('gives every executable suite a fixture with a prompt, files and a gate command', () => {
+  it('gives every executable suite a task, a faux script, files and a gate command', () => {
     for (const suite of EVAL_SUITES) {
       if (suite.stub) {
         expect(suite.fixture, suite.id).toBeUndefined();
         continue;
       }
-      expect(suite.fixture?.prompt, suite.id).toMatch(/faux:tool /);
+      // A real model reads the plain-language task; the faux provider runs
+      // the script.
+      expect(suite.fixture?.task, suite.id).not.toMatch(/faux:/);
+      expect(suite.fixture?.task.length ?? 0, suite.id).toBeGreaterThan(20);
+      expect(suite.fixture?.fauxPrompt, suite.id).toMatch(/faux:tool /);
       expect(suite.fixture?.files, suite.id).toBeDefined();
       expect(
         Object.values(suite.fixture?.verify ?? {}).some(
@@ -110,12 +114,13 @@ describe('findSuite', () => {
     expect(findSuite('swe-bench-mini')).toEqual({
       id: 'swe-bench-mini',
       category: 'swe',
-      title: 'SWE mini (faux)',
+      title: 'SWE mini',
       stub: false,
       description:
         'Minimal coding-task signal: the fix file lands and the gate passes.',
       fixture: {
-        prompt:
+        task: 'Create the file src/fix.ts exporting a constant named `fixed` set to `true`.',
+        fauxPrompt:
           'faux:tool write {"path":"src/fix.ts","content":"export const fixed = true;\\n"}',
         files: {},
         verify: { tests: 'test -f src/fix.ts' },

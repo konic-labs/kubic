@@ -70,7 +70,7 @@ export function statePermissionCheck(
       ...base,
       status: 'pass',
       reason: 'ok',
-      detail: `session, journal and trust state is private (0700 directories, 0600 files) or absent${scope}`,
+      detail: `session, journal, audit and trust state is private (0700 directories, 0600 files) or absent${scope}`,
     };
   }
   const named = probe.loose
@@ -89,8 +89,8 @@ export function statePermissionCheck(
     reason: 'ok',
     detail:
       `${named}${more}${scope} — every local user can read session ` +
-      'transcripts and journaled file content; chmod 700 a directory and ' +
-      '600 a file to close it',
+      'transcripts, journaled file content and audit records; chmod 700 a ' +
+      'directory and 600 a file to close it',
   };
 }
 

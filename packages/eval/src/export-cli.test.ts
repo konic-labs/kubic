@@ -171,6 +171,36 @@ describe('export command', () => {
     }
   });
 
+  it('redacts secrets a tool read before any record is written', async () => {
+    const exported: TrajectoryExport = {
+      ...passing(),
+      actions: [{ seq: 1, tool: 'read', args: { path: 'settings.txt' } }],
+      observations: [
+        {
+          seq: 2,
+          actionSeq: 1,
+          output:
+            'aws_access_key_id = AKIAABCDEFGHIJKLMNOP\nDATABASE_URL=postgres://admin:SuperSecretPw123@db.prod:5432/app\npassword: hunter2-value',
+          truncated: false,
+          bytesOriginal: 120,
+        },
+      ],
+    };
+    const o = out();
+    const exit = (
+      await runExportCommand(
+        { trajectory: 't.json', type: 'tooluse' },
+        { readFile: files({ 't.json': exported }), out: o.write, err: o.err },
+      )
+    ).exitCode;
+    expect(exit).toBe(0);
+    const text = o.lines.join('\n');
+    expect(text).not.toContain('AKIAABCDEFGHIJKLMNOP');
+    expect(text).not.toContain('SuperSecretPw123');
+    expect(text).not.toContain('hunter2-value');
+    expect(text).toContain('postgres://[REDACTED]@db.prod:5432/app');
+  });
+
   it('exports a DPO record from --trajectory (chosen) + --against (rejected)', async () => {
     const o = out();
     const exit = (

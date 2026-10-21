@@ -311,6 +311,9 @@ function journalEntryOf(
     toolCallId: input.toolCallId,
     timestamp: input.timestamp,
     ...(input.unattributed === true ? { unattributed: true } : {}),
+    ...(input.contested === undefined || input.contested.length === 0
+      ? {}
+      : { contested: [...input.contested] }),
     ...(input.turn === undefined ? {} : { turn: input.turn }),
     // The intercepting tool's name — carried like `turn` so
     // pre-schema index lines (no such key) keep reading as before.

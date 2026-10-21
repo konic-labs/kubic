@@ -37,6 +37,9 @@ export interface ModelsCommandDeps extends CliIo {
   // The configured model pin (`provider/id`), marked as the
   // default in the terminal view. Absent: the selection chain's own pick.
   defaultModel?: string;
+  // The providers the implicit pick may use, in preference order (from
+  // assembleModels), so the marked default is the model a run would take.
+  fallbackProviders?: readonly string[];
 }
 
 // The parsed `kubic models` invocation (commander owns the argv:
@@ -123,11 +126,15 @@ export function contextRoomProbeOf(
 export function providerProbesOf(assembled: AssembledModels): ProviderProbe[] {
   return assembled.models
     .getProviders()
-    .filter(
-      (provider) => assembled.providers.get(provider.id)?.usable !== false,
-    )
+    .filter((provider) => {
+      const info = assembled.providers.get(provider.id);
+      return info?.usable !== false || info.unusable !== undefined;
+    })
     .map((provider) => {
       const info = assembled.providers.get(provider.id);
+      if (info?.unusable !== undefined) {
+        return { id: provider.id, reachable: false, warning: info.unusable };
+      }
       const count = assembled.models.getModels(provider.id).length;
       const from =
         info === undefined
@@ -147,12 +154,17 @@ export function providerProbesOf(assembled: AssembledModels): ProviderProbe[] {
 }
 
 // The default the terminal view marks: the configured pin, else the model
-// the selection chain would pick with no pin (first usable provider).
+// the selection chain would pick with no pin.
 function defaultOf(deps: ModelsCommandDeps): { defaultModel?: string } {
   if (deps.defaultModel !== undefined)
     return { defaultModel: deps.defaultModel };
   try {
-    const picked = selectModel(deps.models, undefined);
+    const picked = selectModel(
+      deps.models,
+      undefined,
+      undefined,
+      deps.fallbackProviders,
+    );
     return { defaultModel: `${picked.provider}/${picked.id}` };
   } catch {
     return {};

@@ -14,7 +14,8 @@ import {
   detectColorLevel,
   themeFor,
 } from '@kubic/core/cli/theme';
-import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { isUnixSocket } from '@kubic/exec/syslog-logger';
+import { unixSyslogTransportProblem } from '@kubic/host/audit';
 import type { CliConfigResult } from '../config/load.js';
 import { runtimeModelPinNotes } from '../config/model-selection.js';
 import type { DispatchRunners } from '../dispatch.js';
@@ -79,16 +80,12 @@ export function stderrTheme(): CliTheme {
 export const PLAIN = createCliTheme('none');
 
 // Audit-sink reachability probes: the real platform — a
-// unix syslog socket must exist; UDP needs a creatable dgram socket
-// (connectionless, so delivery stays best-effort past this point).
+// unix syslog target must be a socket the system logger can reach; UDP needs
+// a creatable dgram socket (connectionless, so delivery stays best-effort
+// past this point).
 export const auditProbes = {
-  socketExists: (path: string): boolean => {
-    try {
-      return createNodeFileBridge('/').exists(path);
-    } catch {
-      return false;
-    }
-  },
+  socketExists: isUnixSocket,
+  unixTransportProblem: unixSyslogTransportProblem,
   udpAvailable: (): boolean => {
     try {
       createSocket('udp4').close();

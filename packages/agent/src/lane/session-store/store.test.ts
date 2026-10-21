@@ -45,6 +45,7 @@ import {
   listSessions,
   SessionAttachError,
   sessionsTouchingWorkspace,
+  workspacePeers,
 } from './store.js';
 
 const openSessions: SessionHandle[] = [];
@@ -237,6 +238,13 @@ describe('pi-durable session storage', () => {
     expect(
       await sessionsTouchingWorkspace(store, '/work/pkg', BACKGROUND_CONTEXT),
     ).toEqual([]);
+    // The synchronous peer read the end-of-run sweep uses: the same match,
+    // the asking session left out.
+    expect(workspacePeers(store, '/work', 'another-session')).toEqual([
+      { id: session.id, dir: join(root, session.id) },
+    ]);
+    expect(workspacePeers(store, '/work', session.id)).toEqual([]);
+    expect(workspacePeers(store, '/work/pkg', 'another-session')).toEqual([]);
   });
 
   it('attach restores the root conversation, its entries and the kubic.session doc', async () => {

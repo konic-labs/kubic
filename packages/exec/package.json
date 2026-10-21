@@ -41,6 +41,10 @@
       "source": "./src/secret-runner.ts",
       "default": "./src/secret-runner.ts"
     },
+    "./syslog-logger": {
+      "source": "./src/syslog-logger.ts",
+      "default": "./src/syslog-logger.ts"
+    },
     "./stdin": {
       "source": "./src/stdin.ts",
       "default": "./src/stdin.ts"

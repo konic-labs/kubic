@@ -99,6 +99,14 @@ function rig(
 }
 
 describe('kubic setup', () => {
+  it("preselects the provider's suggested model when no model is current", async () => {
+    const r = rig(['haiku', 'high'], {
+      providers: [{ ...ANTHROPIC, suggested: 'haiku' }],
+    });
+    expect((await runSetupCommand({}, r.deps)).exitCode).toBe(0);
+    expect(r.asked[0]).toBe('Default model [sonnet,haiku] haiku');
+  });
+
   it('one detected provider: model and thinking, then saves [model]', async () => {
     const r = rig(['sonnet', 'high']);
     expect((await runSetupCommand({}, r.deps)).exitCode).toBe(0);

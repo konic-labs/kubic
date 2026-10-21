@@ -55,6 +55,7 @@ export const REQUIRED_FILES = [
   'npm-shrinkwrap.json',
   'bin/kubic.js',
   'bin/node-guard.mjs',
+  'bin/env-proxy.mjs',
   'dist/kubic.js',
 ];
 

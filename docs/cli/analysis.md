@@ -70,7 +70,7 @@ a skipped stub, which names the tier it would run at).
 | Flag | Meaning |
 | --- | --- |
 | `--suite <id>` | **Required.** A built-in suite id — `swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover`, `review-diff` or `agentic-live` — or a **category alias** (`swe`, `repo-mod`, `bugfix`, `refactor`, `testgen`, `review`, `agentic`); `kubic eval` scores one record, so a category with more than one suite exits 2 (`ambiguous-suite`). `terminal-live` is a stub and refuses with exit 2. An unknown selector exits 2. |
-| `--task <prompt>` | Runs the suite's fixture through the real lane and scores the trajectory it writes: the fixture's prompt is the run, its gate command(s) decide the verdict, and the record carries the eval fields. Needs a reachable model (`--model`, default `faux/echo`) and `--worktree`; the suite's fixture is materialized in a temp directory (or a fresh checkout, with `--workspace worktree`). |
+| `--task <prompt>` | Runs `<prompt>` through the real lane against the suite's fixture files and scores the trajectory it writes: the suite's gate command(s) decide the verdict, and the record carries the eval fields. Each suite also carries its own task — plain language for a real model, a scripted one for the faux provider, which cannot read prose — that `kubic benchmark` runs. Needs a reachable model (`--model`, default `faux/echo`) and `--worktree`; the suite's fixture is materialized in a temp directory (or a fresh checkout, with `--workspace worktree`). |
 | `--trajectory <file>` | Scores an existing trajectory export file, without re-running anything: the same file form `replay` and `export` take. `-` reads the export from stdin; a value starting with `{`/`[` is the pre inline-JSON form and still works. Fully live: exits 0 with the record, or 1 when the gates fail it. An unreadable file exits 2 (`trajectory-unreadable`), a file that is not JSON or not a valid export exits 2 (`trajectory-malformed`). |
 | `--worktree <path>` | The worktree the run executes in (`--workspace worktree` needs it clean). With `--task`, a record without it is refused with exit 2. With `--trajectory` it is read from `provenance.worktree`; a different value exits 2 (`provenance-mismatch`). |
 | `--size <smoke\|standard\|extended>` | The record's size class (how much was run) — an implementation-side label, not a tier. Published on every record; a missing or unknown size exits 2 on both paths. |
@@ -106,8 +106,10 @@ code is:
   `terminal-live`, `stub-suite`)
 
 The flags are the same as `kubic eval` without `--task` and
-`--trajectory`; each matrix row runs `benchmark:<suite-id>` as its task.
-`--json` prints `{ok, exitCode, results}`.
+`--trajectory`. Each matrix row runs its suite's own task: the
+plain-language task for a real `--model`, so the matrix scores the model,
+and the scripted task for the faux provider (the default), so it stays
+deterministic in CI. `--json` prints `{ok, exitCode, results}`.
 
 ## `kubic replay ([--] <trajectory.json> | --session <id>) [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
 
@@ -218,6 +220,13 @@ never produces a training record. A DPO record carries both sides'
 validation. `grpo` refuses with exit 2 when its candidates answer
 different prompts or tasks. Stripped provenance or failure labels also
 refuse with exit 2.
+
+Every record is redacted before it is written, in single-file and batch
+mode alike: provider key shapes, PEM blocks, URL userinfo
+(`postgres://[REDACTED]@db:5432`), authorization values and the values of
+secret-named assignments (`password: [REDACTED]`) — a dataset leaves the
+machine, so the redaction over-redacts on purpose (a code sample's
+`password: string` field is redacted too).
 
 Text mode prints the canonical record JSON. `--json` wraps it in
 `{ok, exitCode, type, record}`, or `{…, excluded}` for an excluded pair.
@@ -357,7 +366,9 @@ secret-shaped values and listed-secret inventory values become
 main checkout: from a subdirectory or from a linked worktree, every writer
 and `kubic audit` resolve the same file (the parent of git's common dir;
 outside git, the current directory). The shipped runtime ignore rules cover
-this file.
+this file. Each record is appended and fsynced; a new ledger is created
+`0600` in a `0700` directory, and `kubic doctor`'s `state:permissions`
+check names a looser one.
 
 - `kubic run` and `kubic tui` append one record per resolved approval ask,
   approved or denied, with `posture` `approvals` or `full-access`. An

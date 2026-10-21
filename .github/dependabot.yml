@@ -1,0 +1,28 @@
+# Weekly update proposals for the pinned npm dependencies and for the actions
+# the workflows use. Updates keep the exact pins (`npm run check:pins`). The Pi
+# packages move as one group: they ship as a set, and a partial bump would
+# leave two copies of a package in the tree.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    groups:
+      pi:
+        patterns:
+          - '@earendil-works/*'
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope

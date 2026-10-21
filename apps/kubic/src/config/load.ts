@@ -156,6 +156,7 @@ export function loadCliConfig(options: CliConfigOptions = {}): CliConfigResult {
       env,
       ...(cli === undefined ? {} : { cli }),
       projectTrusted: trusted,
+      projectTrustChanged: stored.changed,
     });
     return { runtime, error: undefined, ignoreSplit, projectRoot, trust };
   } catch (error) {
@@ -244,7 +245,12 @@ export async function resolveInteractiveProjectTrust(
   // `KUBIC_*` variable it names (`KUBIC_API_KEY` when it names none), so a
   // "yes" lets the repository choose where a key you have set is sent — and
   // the project skills the model is told to follow.
-  const message = `Trust project ${report.key}? This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions, journal retention and which paths the journal records; its [verify] commands run as shell commands after each run), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills, its project role documents and its [agent] systemPromptFile (instructions the model follows).`;
+  // A grant covers the content it was given for: a project whose files
+  // changed since is asked again, and the question says why.
+  const lead = report.changed
+    ? `Project ${report.key} changed since you trusted it. Trust it again?`
+    : `Trust project ${report.key}?`;
+  const message = `${lead} This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions, journal retention and which paths the journal records; its [verify] commands run as shell commands after each run), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills, its project role documents and its [agent] systemPromptFile (instructions the model follows).`;
   if (deps.ask !== undefined) {
     for (;;) {
       const answer = await deps.ask({

@@ -270,6 +270,59 @@ describe('journal CLI undo staleness', () => {
   });
 });
 
+// A sweep entry recorded while another session was live may be that
+// session's work: undo skips it by name, and log says so.
+describe('journal CLI contested entries', () => {
+  function seedContested(): { journalDir: string; root: string } {
+    const journalDir = tempDir('j-');
+    const root = tempDir('ws-');
+    writeFileSync(join(root, 'shared.txt'), 'v2\n');
+    new FileJournalStore(journalDir).append({
+      path: 'shared.txt',
+      op: 'write',
+      before: 'v1\n',
+      after: 'v2\n',
+      bytesDelta: 0,
+      sessionId: 's1',
+      source: 'sweep',
+      toolCallId: null,
+      timestamp: 1700000000000,
+      unattributed: true,
+      contested: ['s2'],
+    });
+    return { journalDir, root };
+  }
+
+  it('skips a contested step with its kind under --json, disk untouched', async () => {
+    const { journalDir, root } = seedContested();
+    const lines: string[] = [];
+    const code = (
+      await runJournalCommand(
+        { command: 'undo', json: true },
+        { journalDir, root, out: (l) => lines.push(l) },
+      )
+    ).exitCode;
+    expect(code).toBe(1);
+    const report = JSON.parse(lines.join('\n')) as {
+      skipped: Array<{ path: string; kind: string; reason: string }>;
+    };
+    expect(report.skipped).toEqual([
+      expect.objectContaining({ path: 'shared.txt', kind: 'contested' }),
+    ]);
+    expect(readFileSync(join(root, 'shared.txt'), 'utf8')).toBe('v2\n');
+  });
+
+  it('names the session in the log note', async () => {
+    const { journalDir, root } = seedContested();
+    const lines: string[] = [];
+    await runJournalCommand(
+      { command: 'log' },
+      { journalDir, root, out: (l) => lines.push(l) },
+    );
+    expect(lines.join('\n')).toContain('reconciled, contested by session s2');
+  });
+});
+
 // Blob integrity: a torn delta blob must print the corrupt
 // marker and exit 0 — a readable journal is worth more than a crash.
 describe('journal CLI corrupt content', () => {

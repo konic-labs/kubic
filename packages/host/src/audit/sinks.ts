@@ -16,7 +16,7 @@ import {
   parseSyslogTarget,
 } from './audit.js';
 import type { auditSinkSnapshot, ConfiguredAuditSink } from './ledger.js';
-import { probeMessage } from './ledger.js';
+import { appendAuditLine, probeMessage } from './ledger.js';
 import {
   createUdpSyslogTransport,
   createUnixSyslogTransport,
@@ -32,8 +32,10 @@ export interface BuiltAuditSinks {
 
 // Build the process's configured sinks from parsed `[[audit]]` tables.
 // `syslogTransport` injects the syslog wire for tests — prod builds real
-// transports from the target (unix socket path, defaulting per platform, or
-// `host[:port]` UDP defaulting to 514).
+// transports from the target (a unix socket path, defaulting per platform and
+// reached through the system logger, or `host[:port]` UDP defaulting to 514).
+// A transport's asynchronous delivery failures land on the sink's own
+// failure list, which the ledger notes and doctor reports.
 export function buildConfiguredSinks(
   tables: readonly AuditTableConfig[],
   overrides: { syslogTransport?: SyslogTransport } = {},
@@ -55,15 +57,17 @@ export function buildConfiguredSinks(
         problems.push(`${source}: ${probeMessage(error)}`);
         return;
       }
-      let transport = overrides.syslogTransport;
-      if (transport === undefined) {
-        transport =
-          target.kind === 'unix'
-            ? createUnixSyslogTransport(target.path)
-            : createUdpSyslogTransport(target.host, target.port);
-      }
+      const failures: string[] = [];
+      const onError = (message: string): void => {
+        failures.push(message);
+      };
       let sink: AuditSink;
       try {
+        const transport =
+          overrides.syslogTransport ??
+          (target.kind === 'unix'
+            ? createUnixSyslogTransport(target.path, { onError })
+            : createUdpSyslogTransport(target.host, target.port, { onError }));
         sink = createSyslogSink({
           transport,
           facility: table.facility,
@@ -72,7 +76,7 @@ export function buildConfiguredSinks(
         problems.push(`${source}: ${probeMessage(error)}`);
         return;
       }
-      sinks.push({ sink, level, source, failures: [], stderrNoted: false });
+      sinks.push({ sink, level, source, failures, stderrNoted: false });
       return;
     }
     if (table.sink === 'file') {
@@ -111,8 +115,9 @@ export function buildConfiguredSinks(
 }
 
 // A `[[audit]] file` sink: one validated record per line at
-// the EXACT target path (unlike the repo ledger, which owns its filename).
-// Fail-open dirs like the repo ledger: the parent is created when missing.
+// the EXACT target path (unlike the repo ledger, which owns its filename),
+// appended durably and created private like the repo ledger: the parent is
+// created when missing.
 function createTargetFileSink(target: string): AuditSink {
   const bridge = createNodeFileBridge(dirname(target));
   const file = basename(target);
@@ -120,20 +125,22 @@ function createTargetFileSink(target: string): AuditSink {
     name: `file:${target}`,
     kind: 'file',
     write: (record: OrgAuditRecord): void => {
-      if (!bridge.exists('.')) bridge.createDir('.', true);
-      bridge.appendFile(file, `${JSON.stringify(record)}\n`);
+      appendAuditLine(bridge, file, record);
     },
   };
 }
 
 export interface AuditSinkProbes {
+  /** Whether the path is a unix domain socket. */
   socketExists(path: string): boolean;
   udpAvailable(): boolean;
+  /** Why the system logger cannot reach the socket; undefined when it can. */
+  unixTransportProblem(path: string): string | undefined;
 }
 
-// One syslog target's reachability: unix sockets must exist,
-// UDP needs a creatable socket (connectionless — delivery stays
-// best-effort). Garbage targets fail closed.
+// One syslog target's reachability: a unix target must be a socket the
+// system logger can reach, UDP needs a creatable socket (connectionless —
+// delivery stays best-effort). Garbage targets fail closed.
 export function isSyslogTargetAvailable(
   target: string | undefined,
   probes: AuditSinkProbes,
@@ -144,7 +151,12 @@ export function isSyslogTargetAvailable(
   } catch {
     return false;
   }
-  if (parsed.kind === 'unix') return probes.socketExists(parsed.path);
+  if (parsed.kind === 'unix') {
+    return (
+      probes.socketExists(parsed.path) &&
+      probes.unixTransportProblem(parsed.path) === undefined
+    );
+  }
   return probes.udpAvailable();
 }
 
@@ -215,7 +227,17 @@ export function auditSinksDoctorChecks(
             label,
             status: 'fail' as const,
             reason: 'sink-unreachable' as const,
-            detail: `${source} syslog socket missing: ${target.path} (${level})`,
+            detail: `${source} syslog socket missing (or not a socket): ${target.path} (${level})`,
+          };
+        }
+        const problem = probes.unixTransportProblem(target.path);
+        if (problem !== undefined) {
+          return {
+            id,
+            label,
+            status: 'fail' as const,
+            reason: 'sink-unreachable' as const,
+            detail: `${source} ${problem} (${level})`,
           };
         }
         return {
@@ -223,7 +245,7 @@ export function auditSinksDoctorChecks(
           label,
           status: 'pass' as const,
           reason: 'ok' as const,
-          detail: `${source} syslog unix:${target.path} (${level})`,
+          detail: `${source} syslog unix:${target.path} through the system logger (${level})`,
         };
       }
       if (!probes.udpAvailable()) {

@@ -9,6 +9,8 @@
 //   [gates]
 //   tests = "npm test"
 
+import { win32 } from 'node:path';
+
 type SuiteGates = Partial<
   Record<'tests' | 'build' | 'lint' | 'typecheck', string>
 >;
@@ -96,11 +98,14 @@ function filesOf(value: unknown, path: string): Record<string, string> {
   }
   const files: Record<string, string> = {};
   for (const [name, content] of Object.entries(value)) {
+    // Relative on either system: a `\` separates on Windows, and a drive
+    // path is absolute there.
     if (
       typeof content !== 'string' ||
       name === '' ||
-      name.startsWith('/') ||
-      name.split('/').includes('..')
+      win32.isAbsolute(name) ||
+      /^[A-Za-z]:/.test(name) ||
+      name.split(/[\\/]/).includes('..')
     ) {
       throw new SuiteFileError(
         `suite ${path}: files.${JSON.stringify(name)} must be a relative path inside the workspace with string content`,

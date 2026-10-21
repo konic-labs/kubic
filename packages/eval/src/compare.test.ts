@@ -53,13 +53,18 @@ describe('suiteFromRecord', () => {
         's',
       ),
     ).toThrow('unknown key(s) prompt');
-    expect(() =>
-      suiteFromRecord(
-        { task: 't', gates: { tests: 'x' }, files: { '../evil': 'x' } },
-        's.toml',
-        's',
-      ),
-    ).toThrow('must be a relative path inside the workspace');
+    // Escaping by either separator, or absolute on either system.
+    for (const name of ['../evil', 'a\\..\\..\\evil', '/etc/x', 'C:\\x']) {
+      expect(
+        () =>
+          suiteFromRecord(
+            { task: 't', gates: { tests: 'x' }, files: { [name]: 'x' } },
+            's.toml',
+            's',
+          ),
+        name,
+      ).toThrow('must be a relative path inside the workspace');
+    }
   });
 });
 

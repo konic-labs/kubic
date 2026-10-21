@@ -69,6 +69,10 @@
       "source": "./src/tls-fetch.ts",
       "default": "./src/tls-fetch.ts"
     },
+    "./windows-shell": {
+      "source": "./src/windows-shell.ts",
+      "default": "./src/windows-shell.ts"
+    },
     "./test-support/env-fakes": {
       "source": "./src/test-support/env-fakes.ts",
       "default": "./src/test-support/env-fakes.ts"

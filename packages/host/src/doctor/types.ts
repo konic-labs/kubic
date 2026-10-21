@@ -114,6 +114,8 @@ export interface DoctorDeps extends CliIo {
   // The project's AGENTS.md files, as a run here would load them. Same
   // contract as probeSkills.
   probeInstructions?: () => DoctorCheck[];
+  // On Windows, the POSIX bash the bash tool runs through, by name.
+  windowsBash?: () => string | undefined;
   // The bash sandbox: its mode and the mechanism this machine offers.
   probeSandbox?: () => DoctorCheck[];
   // Enterprise policy: the checks `enterpriseDoctorChecks`

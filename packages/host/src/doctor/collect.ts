@@ -56,7 +56,9 @@ export function collectDoctorChecks(
   const probed = captureCoreProbes(deps, checks);
   checks.push(...policyProbeChecks(deps, probed.configured));
   checks.push(...sessionProbeChecks(deps));
-  checks.push(platformCheck(deps.platform ?? process.platform));
+  checks.push(
+    platformCheck(deps.platform ?? process.platform, deps.windowsBash?.()),
+  );
   // License identity: reported on every run, never skipped
   // implicitly — --skip license:kubic remains available like any check.
   checks.push(licenseCheck());

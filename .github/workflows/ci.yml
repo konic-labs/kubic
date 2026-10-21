@@ -53,6 +53,23 @@ jobs:
       - run: npm run build
       - run: npm run test:binary
 
+  # Windows: the built binary runs a faux `kubic run` whose bash tool call goes
+  # through Git Bash, then `kubic log` and `kubic doctor`
+  # (scripts/windows-smoke.mjs). The suite itself runs on Linux.
+  windows:
+    name: windows smoke (node 22)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: node scripts/windows-smoke.mjs
+
   # The npm package a user installs: staged from the root build with its
   # shrinkwrap, packed, installed into an empty prefix and run, then installed
   # through a loopback registry that honours the shrinkwrap

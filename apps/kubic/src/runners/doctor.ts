@@ -13,6 +13,7 @@ import { EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { scanStateModes } from '@kubic/exec/lock-file';
 import { detectSandbox } from '@kubic/exec/sandbox';
+import { windowsBash } from '@kubic/exec/windows-shell';
 import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
   AUDIT_LEDGER_FILE,
@@ -280,7 +281,11 @@ function projectChecks(
   cliConfig: CliConfigResult,
 ): Pick<
   DoctorDeps,
-  'probeRoles' | 'probeSkills' | 'probeInstructions' | 'probeSandbox'
+  | 'probeRoles'
+  | 'probeSkills'
+  | 'probeInstructions'
+  | 'probeSandbox'
+  | 'windowsBash'
 > {
   const enterprisePolicy = runtimePolicy(cliConfig);
   const roleLayers = runtimeLaneDeps(cliConfig).roles?.layers;
@@ -334,6 +339,9 @@ function projectChecks(
         ...runtimeSkillsDeps(cliConfig),
         ...installedPolicyClasses(cliConfig),
       }),
+    // On Windows, the POSIX bash the bash tool runs through.
+    windowsBash: () =>
+      process.platform === 'win32' ? windowsBash()?.kind : undefined,
     // The bash sandbox: the configured mode and what this machine offers.
     probeSandbox: () => [
       sandboxDoctorCheck(

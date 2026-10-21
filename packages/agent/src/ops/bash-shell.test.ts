@@ -505,15 +505,19 @@ describe('bash shell resolution', () => {
 });
 
 // No approval detector reads cmd's `del`, `move` or `rmdir`, so on Windows
-// the tool refuses to run instead of running commands nothing can see.
+// the tool runs through a POSIX bash, and refuses when there is none.
 describe('bash on Windows', () => {
   const platform = process.platform;
   afterEach(() => {
     Object.defineProperty(process, 'platform', { value: platform });
+    vi.unstubAllEnvs();
   });
 
-  it('refuses by name and spawns nothing', async () => {
+  it('refuses by name, and spawns nothing, without a POSIX bash', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubEnv('KUBIC_BASH', '');
+    vi.stubEnv('ProgramFiles', '/nonexistent-program-files');
+    vi.stubEnv('SystemRoot', '/nonexistent-windows');
     const { env, calls } = recordingEnv({});
     const out = await (await import('./registry.js')).callOperation(
       'bash',
@@ -524,7 +528,22 @@ describe('bash on Windows', () => {
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.error.code).toBe('tool_failed');
-    expect(out.error.message).toMatch(/^bash is not supported on Windows/);
+    expect(out.error.message).toMatch(
+      /^bash needs a POSIX shell on Windows: .*Git for Windows \(Git Bash\) or WSL/,
+    );
     expect(calls).toEqual([]);
+  });
+
+  it('runs the command through the POSIX bash it finds', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.stubEnv('KUBIC_BASH', '/bin/bash');
+    const { env, calls } = recordingEnv({});
+    await (await import('./registry.js')).callOperation(
+      'bash',
+      { command: 'echo hi' },
+      inv('inv-win32-bash'),
+      ctxFor(env),
+    );
+    expect(calls[0]).toBe('/bin/bash -c echo hi');
   });
 });

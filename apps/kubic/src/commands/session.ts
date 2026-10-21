@@ -153,6 +153,10 @@ function registerRun(program: Command, ctx: CommandContext): void {
       'enable full access (no approval asks) for THIS session only — recorded in posture.json and the audit ledger, never in config',
     )
     .option(
+      '--pre-approvals <file>',
+      'a signed pre-approval file: what this job may run without an ask (checked against [approvals] preApprovalKey; or KUBIC_PRE_APPROVALS)',
+    )
+    .option(
       '--tools <a,b,...>',
       'narrow the tool set to these tools (comma-separated, repeatable; intersected with the permission classes and any --role set)',
       collectTools(),
@@ -226,6 +230,9 @@ function registerRun(program: Command, ctx: CommandContext): void {
             ...(opts.dangerouslySkipApprovals === true
               ? { dangerouslySkipApprovals: true }
               : {}),
+            ...(opts.preApprovals === undefined
+              ? {}
+              : { preApprovals: opts.preApprovals }),
             ...(selection.tools.length === 0 ? {} : { tools: selection.tools }),
             ...(selection.noTools ? { noTools: true } : {}),
           },

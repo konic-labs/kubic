@@ -97,6 +97,7 @@ export class ApprovalService {
       !(
         stamped.approved &&
         (stamped.by === ALLOW_ONCE ||
+          stamped.once === true ||
           stamped.by === ALLOW_TURN_EDITS ||
           stamped.edited !== undefined)
       )

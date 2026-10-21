@@ -49,9 +49,11 @@ import type {
   RunReconciliation,
 } from '@kubic/exec/journal';
 import type {
+  ApprovalBrokerTarget,
   ApprovalConfig,
   InstalledPolicy,
   installPolicy,
+  PreApprovals,
 } from '@kubic/host/approvals';
 import type { AdminHook, RuntimeThinking } from '@kubic/host/config';
 import type { ProjectInstructions } from '@kubic/host/instructions';
@@ -124,6 +126,10 @@ export interface SessionBootConfig {
   sessionTeam?: string;
   // The `[[hooks]]` the lane runs around each tool call.
   hooks?: readonly AdminHook[];
+  // The approval broker that answers asks when no user is attached.
+  approvalBroker?: ApprovalBrokerTarget;
+  // A verified pre-approval file the policy grants from.
+  preApprovals?: PreApprovals;
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.

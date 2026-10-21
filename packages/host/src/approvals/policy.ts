@@ -36,6 +36,9 @@ export interface ApprovalPolicy {
   requireJustification: boolean;
 }
 
+/** How long an ask waits for an answer when `maxPendingMs` is not set. */
+export const DEFAULT_MAX_PENDING_MS = 60_000;
+
 export class PolicyValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -64,7 +67,7 @@ export function validatePolicy(input: unknown): ApprovalPolicy {
       'autoApprove must be an explicit string array',
     );
   }
-  const maxPendingMs = record.maxPendingMs ?? 60_000;
+  const maxPendingMs = record.maxPendingMs ?? DEFAULT_MAX_PENDING_MS;
   if (typeof maxPendingMs !== 'number' || !(maxPendingMs > 0)) {
     throw new PolicyValidationError('maxPendingMs must be a positive number');
   }
@@ -92,6 +95,9 @@ export type ApprovalVerdict =
   | {
       approved: true;
       by: string;
+      // This call only: approved and audited, never latched or persisted
+      // (a broker's allow-once, which names who answered in `by`).
+      once?: true;
       justified?: boolean;
       // The operator rewrote the command before allowing it; the
       // rewritten call is judged again from the start.

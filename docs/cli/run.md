@@ -4,7 +4,7 @@
 > happened. `kubic attach` and `kubic resume` reopen a session. Back to the
 > [command index](commands.md).
 
-## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--thinking <level>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--debug] [--autonomous] [--json] [--dangerously-skip-approvals]`
+## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--thinking <level>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--debug] [--autonomous] [--json] [--dangerously-skip-approvals] [--pre-approvals <file>]`
 
 Non-interactive run: no alt-screen, no prompt, consumable output.
 
@@ -23,6 +23,7 @@ Non-interactive run: no alt-screen, no prompt, consumable output.
 | `--autonomous` | Run to completion without stopping for input: the mode is recorded on the run's session (`autonomous`, else `interactive` — off by default, never assumed), a `run:start` row naming the mode lands in the audit ledger, and the result and `--json` envelope carry `mode` (the `status` already names the stop condition that ended the run). Combines freely with `--dangerously-skip-approvals` — the combination is legitimate for a batch run on a throwaway checkout, and the session plus the ledger name it. |
 | `--debug` | Emit lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same debug-class vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. A retry backoff and a compaction are named too: `[lane] retry attempt <n> after error: <message>` when the harness schedules a retry of a transient model error and `[lane] retry attempt <n> settled` when it lands, `[lane] compaction started (<reason>)` / `[lane] compaction finished (<reason>)` around an automatic or manual compaction — the wait is never silent. Off by default; stdout stays consumable. |
 | `--dangerously-skip-approvals` | Full access for **this run's session only**: challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. Each challenged call the posture waives is recorded under its own capability (`trigger:<capability>`, posture `full-access`), one record per capability; an untriggered call is neither audited nor marked challenged. A later `kubic run --session <id>` on that session warns again on stderr. |
+| `--pre-approvals <file>` | A signed pre-approval file: the capabilities, tools and command patterns this job may run without an ask, checked against `[approvals] preApprovalKey` before the run starts (`KUBIC_PRE_APPROVALS` names the file when the flag is absent). An unsigned, altered, expired or malformed file — or one with no key configured to check it — exits 2 before a session exists. Each call it grants is recorded as approved by `pre-approval:<job>`. See [Headless approvals](enterprise.md#headless-approvals). |
 | `--tools <a,b,...>` | Narrow the run's tool set to these tools — comma-separated and repeatable (`--tools read,ls --tools grep`). The selection can only **narrow**: it is intersected with the permission classes, any `--role` set and the enterprise tool gate. An unknown name is refused by name; a tool the classes forbid (`--tools write` under `filesystem = "read"`) is refused with the reason — both exit 2 before any lane boots. |
 | `--no-tools` | The empty tool set (a chat-only run). Mutually exclusive with `--tools` — both at once exits 2 naming both. |
 | `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, `mode` — the mode the run resolved (`autonomous` with `--autonomous`, else `interactive`) —, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the failure code with its retry remedy and strategy) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed), so a script can read it as the last stdout line. |
@@ -169,7 +170,9 @@ credential path raises the credential trigger), filesystem
 `full` as `workspace-write`, git `full` as `workspace`.
 
 A destructive or network-raising call needs an approval. `kubic run` has
-no TTY to ask on and no approval card (the card is the TUI's), so a
+no TTY to ask on and no approval card (the card is the TUI's): unless an
+`[approvals] broker` answers it or a `--pre-approvals` file grants it (see
+[Headless approvals](enterprise.md#headless-approvals)), a
 challenged call is **refused rather than executed**, and the run ends `approval_denied`
 (exit 4) with the refusal named on the `error:` line. Both labels map to
 exit 4 — the `status` string is the honest half: `approval_denied` for a

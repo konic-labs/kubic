@@ -32,6 +32,7 @@ import {
 import type { ApprovalsConfig, ConfigLayer, KubicConfig } from './config.js';
 import { checkSessionCompaction } from './config.js';
 import { ConfigError } from './errors.js';
+import { headlessApprovalsOf } from './headless-approvals.js';
 import { adminHooksOf } from './hooks-config.js';
 import { mergeLayered } from './layer-merge.js';
 import { checkProjectRestriction } from './project-restriction.js';
@@ -202,13 +203,20 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   );
   const pin = modelPinFrom(inputs, envModel, config, loaded, frozen, thinking);
   const envRouteRaw = env[RUNTIME_ENV_OVERRIDES.approvalsRoute];
-  const approvals = approvalsFrom(
-    config,
-    loaded.sources,
-    envRouteRaw === undefined || frozen('approvals.route')
-      ? undefined
-      : parseEnvRoute(envRouteRaw, RUNTIME_ENV_OVERRIDES.approvalsRoute),
-  );
+  const approvals = {
+    ...approvalsFrom(
+      config,
+      loaded.sources,
+      envRouteRaw === undefined || frozen('approvals.route')
+        ? undefined
+        : parseEnvRoute(envRouteRaw, RUNTIME_ENV_OVERRIDES.approvalsRoute),
+    ),
+    ...headlessApprovalsOf(
+      loaded.perLayer,
+      config.approvals ?? {},
+      loaded.paths.project,
+    ),
+  };
   const { journal, retentionEnvApplies } = journalFrom(
     env,
     config,

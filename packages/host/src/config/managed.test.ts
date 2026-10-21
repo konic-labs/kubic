@@ -174,10 +174,10 @@ describe('signed managed config', () => {
     const dir = managedDir(config, { publicPem: rsa.publicPem });
     writeFileSync(join(dir, 'config.toml.sig'), 'AAAA\n');
     expect(refusal(() => load(dir))).toContain(
-      'is a rsa key — a managed policy is signed with Ed25519',
+      'is a rsa key — signatures are checked with Ed25519',
     );
     expect(() => signManagedText(rsa.privatePem, config)).toThrow(
-      'a rsa key cannot sign a managed policy',
+      'a rsa key cannot sign — use an Ed25519 key',
     );
   });
 

@@ -326,6 +326,89 @@ enterprise policy ([policy] project_policy = "restricted"))`). A project may
 still narrow: a stricter permission class, `route = "deny"`, a smaller tool
 set. The default is `"open"`.
 
+## Headless approvals
+
+`kubic run` has no terminal to ask on. Two sources let a run in CI or
+automation get an approval instead of a refusal:
+
+```toml
+[approvals]
+broker = "https://approvals.example.com/kubic"
+brokerTokenEnv = "KUBIC_BROKER_TOKEN"
+maxPendingMs = 600000
+preApprovalKey = "/etc/kubic/approvals.pub"
+```
+
+### The approval broker
+
+With `broker` set, each challenged call is posted to the broker as one ask,
+and the run waits for a person's answer, at most `maxPendingMs`. An ask
+nobody answered in time is denied, and the run ends `approval_timed_out`
+(exit 4). The bearer token comes from the variable `brokerTokenEnv` names; a
+run whose variable is unset is refused before it starts. The broker URL is
+https, or plain http to this machine only. A Slack, Teams or GitHub-check
+bridge implements this protocol on its side:
+
+```
+POST <broker>   {"kind": "kubic.approval", "version": 1, "id": "…",
+                 "sessionId": "…", "workspace": "/repo", "tool": "bash",
+                 "capability": "destructive-shell",
+                 "summary": "bash: rm -rf build", "command": "rm -rf build",
+                 "deadline": "2026-10-21T12:10:00.000Z"}
+answer          {"decision": "allow-once" | "allow-session" | "deny" | "pending",
+                 "by": "alice", "reason": "…", "poll": "/asks/…"}
+GET <poll>      the same answer, polled every two seconds until it is not
+                "pending"
+```
+
+`poll` is resolved against the broker URL, must stay on its origin, and
+defaults to `<broker>/<id>`. The ask carries what the TUI's approval card
+shows, the summary and the redacted command, never the raw arguments.
+`allow-once` approves this call only; `allow-session` approves the same
+operation for the rest of the session; `deny` refuses it, and the model reads
+`denied by <by> through the approval broker: <reason>`. Every answer is
+recorded in the audit ledger like a TUI answer, with `broker:<by>` as the
+approver. A broker that cannot take the ask (an error status, a malformed
+answer) denies the call, named. A poll that fails is retried until the bound
+passes.
+
+### Pre-approval files
+
+A job can carry its own list of what it may run, signed by the organization:
+
+```json
+{
+  "version": 1,
+  "job": "nightly-deps",
+  "reason": "the nightly dependency refresh",
+  "expires": "2026-11-01T00:00:00Z",
+  "grants": [
+    {"capability": "install", "tools": ["bash"], "commands": ["npm ci", "npm install *"]},
+    {"capability": "network", "tools": ["bash"], "commands": ["npm ci"]}
+  ]
+}
+```
+
+`kubic run --pre-approvals job.json` (or `KUBIC_PRE_APPROVALS=job.json`)
+verifies the file against `<file>.sig` and `preApprovalKey` before the run
+starts: an unsigned file, a file changed after it was signed or signed with
+another key, an expired file and an unknown key are refused (exit 2). A grant
+approves its capability for the tools it names (any tool when `tools` is
+absent) and, when it lists `commands`, only for a command that matches one of
+them. A `*` stands for any text without a shell operator (`;`, `&`, `|`, a
+backtick, `$`, `<`, `>`, a parenthesis or a newline), so `npm install *`
+never covers `npm install x; curl …`. The file is checked on every call and
+never latched; `kubic-state-write` always asks and no file grants it. Each
+granted call is recorded as approved by `pre-approval:<job>`.
+
+Sign the file like a managed policy, with
+`kubic policy sign --key <private.pem> job.json` or OpenSSL (see
+[Signed managed files](#signed-managed-files)). `broker`, `brokerTokenEnv`
+and `preApprovalKey` are read from the enterprise, product and global layers
+only: a project config setting any of them is refused, because a repository
+must not route a run's asks to a broker of its own or bless its own
+pre-approvals.
+
 ## Admin hooks
 
 ```toml

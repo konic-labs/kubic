@@ -22,13 +22,7 @@
 // Reads go through the injected bridge; the cache is written through the exec
 // bridge's locked tmp+rename.
 
-import {
-  createPrivateKey,
-  createPublicKey,
-  type KeyObject,
-  sign as signBytes,
-  verify as verifyBytes,
-} from 'node:crypto';
+import type { KeyObject } from 'node:crypto';
 import { dirname, join, posix, win32 } from 'node:path';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import {
@@ -36,6 +30,12 @@ import {
   updateFileLocked,
 } from '@kubic/exec/file-bridge';
 import { tightenStateDir } from '@kubic/exec/lock-file';
+import {
+  ed25519PublicKey,
+  SignatureError,
+  signatureMatches,
+  signText,
+} from '../signing/index.js';
 import { safeExists } from './bridge-reads.js';
 import { parseLayerConfig } from './config.js';
 import { ConfigError } from './errors.js';
@@ -83,34 +83,14 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// A key that cannot verify is a config refusal, named.
 function publicKeyFrom(pem: string, path: string): KeyObject {
-  let key: KeyObject;
   try {
-    key = createPublicKey(pem);
+    return ed25519PublicKey(pem, path);
   } catch (error) {
-    throw new ConfigError(
-      `${path} is not a public key in PEM form: ${message(error)}`,
-    );
-  }
-  if (key.asymmetricKeyType !== 'ed25519') {
-    throw new ConfigError(
-      `${path} is a ${key.asymmetricKeyType ?? 'non-asymmetric'} key — a managed policy is signed with Ed25519`,
-    );
-  }
-  return key;
-}
-
-function signatureMatches(
-  key: KeyObject,
-  text: string,
-  signature: string,
-): boolean {
-  const bytes = Buffer.from(signature.trim(), 'base64');
-  if (bytes.byteLength !== 64) return false;
-  try {
-    return verifyBytes(null, Buffer.from(text, 'utf8'), key, bytes);
-  } catch {
-    return false;
+    throw error instanceof SignatureError
+      ? new ConfigError(error.message)
+      : error;
   }
 }
 
@@ -152,18 +132,13 @@ export function verifyManagedText(
  * `kubic policy sign` writes beside a managed file.
  */
 export function signManagedText(pem: string, text: string): string {
-  let key: KeyObject;
   try {
-    key = createPrivateKey(pem);
+    return signText(pem, text);
   } catch (error) {
-    throw new ConfigError(`not a private key in PEM form: ${message(error)}`);
+    throw error instanceof SignatureError
+      ? new ConfigError(error.message)
+      : error;
   }
-  if (key.asymmetricKeyType !== 'ed25519') {
-    throw new ConfigError(
-      `a ${key.asymmetricKeyType ?? 'non-asymmetric'} key cannot sign a managed policy — use an Ed25519 key`,
-    );
-  }
-  return signBytes(null, Buffer.from(text, 'utf8'), key).toString('base64');
 }
 
 // --- The remote policy -------------------------------------------------------

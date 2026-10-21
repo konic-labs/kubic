@@ -63,6 +63,8 @@ export function createRunBoot(state: RunState, guard: RunGuard): SessionBoot {
       projectProvidersRefusal: deps.projectProvidersRefusal,
       sessionTeam: deps.sessionTeam,
       hooks: deps.hooks,
+      approvalBroker: deps.approvalBroker,
+      preApprovals: deps.preApprovals,
       modelPolicy: deps.modelPolicy,
       trustProject: deps.trustProject,
       skills: deps.skills,

@@ -18,6 +18,7 @@ import type {
 import { NO_ANSWER_SURFACE_REASON } from './installed-policy.js';
 import type { Capability } from './policy.js';
 import { ALLOW_TURN_EDITS, ALWAYS_ASK, KUBIC_STATE_WRITE } from './policy.js';
+import { preApprovalFor } from './pre-approvals.js';
 import { approvalPreview } from './preview.js';
 import {
   approvalKey,
@@ -208,6 +209,26 @@ async function decideCapability(
       call.toolName,
       capability,
       { approved: true, by: ALLOW_TURN_EDITS },
+      false,
+    );
+    return undefined;
+  }
+  // A signed pre-approval file grants exactly what it lists: checked on
+  // every call, never latched, never for an always-ask capability.
+  const preApproved =
+    d.input.preApprovals === undefined
+      ? undefined
+      : preApprovalFor(
+          d.input.preApprovals,
+          call.toolName,
+          capability,
+          call.args,
+        );
+  if (preApproved !== undefined) {
+    d.recorder.audit(
+      call.toolName,
+      capability,
+      { approved: true, by: preApproved },
       false,
     );
     return undefined;

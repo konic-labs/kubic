@@ -10,6 +10,7 @@ import type {
   KubicConfig,
   VERIFY_COMMAND_KEYS,
 } from './config.js';
+import type { RuntimeHeadlessApprovals } from './headless-approvals.js';
 import type { AdminHook } from './hooks-config.js';
 import type { ManagedReport } from './managed.js';
 import type { ProjectRestriction } from './project-restriction.js';
@@ -48,7 +49,7 @@ export interface ModelPinOverride {
   pinned: string;
 }
 
-export interface RuntimeApprovals {
+export interface RuntimeApprovals extends RuntimeHeadlessApprovals {
   policy: ReturnType<typeof validatePolicy>;
   source: ConfigValueSource;
 }

@@ -122,6 +122,9 @@ export interface RunCommandOptions {
   readonly json?: boolean;
   // Session-scoped full access for this run's session.
   readonly dangerouslySkipApprovals?: boolean;
+  // `--pre-approvals <file>`: a signed pre-approval file (the runner
+  // verifies it before the run starts).
+  readonly preApprovals?: string;
   // Explicit autonomous mode (off by default).
   readonly autonomous?: boolean;
   // `--tools <a,b>` / `--no-tools`.

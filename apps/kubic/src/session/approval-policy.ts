@@ -4,7 +4,12 @@
 import { join } from 'node:path';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import type { ExecutionEnv } from '@kubic/exec/env';
-import { enableSessionFullAccess, installPolicy } from '@kubic/host/approvals';
+import {
+  DEFAULT_MAX_PENDING_MS,
+  enableSessionFullAccess,
+  installPolicy,
+  webhookApprovalBroker,
+} from '@kubic/host/approvals';
 import { resolveRunBaseRevision } from '@kubic/host/audit';
 import { effectiveRoleClasses } from '@kubic/host/roles';
 import type { SessionBoot } from './bootstrap.js';
@@ -86,7 +91,23 @@ export async function installBootPolicy(
       model: () => boot.liveModelRef,
       thinking: () => boot.liveThinkingRef,
       base,
-      // The answer seat, when a user is attached to collect verdicts.
-      ...(request.answer === undefined ? {} : { answer: request.answer }),
+      // A verified pre-approval file grants what it lists, headless too.
+      ...(config.preApprovals === undefined
+        ? {}
+        : { preApprovals: config.preApprovals }),
+      // The answer seat: the user attached to collect verdicts, else the
+      // approval broker a run without a terminal asks.
+      ...(request.answer !== undefined
+        ? { answer: request.answer }
+        : config.approvalBroker === undefined
+          ? {}
+          : {
+              answer: webhookApprovalBroker(config.approvalBroker, {
+                sessionId: id,
+                workspace: env.cwd,
+                maxPendingMs:
+                  config.approvals?.maxPendingMs ?? DEFAULT_MAX_PENDING_MS,
+              }),
+            }),
     });
 }

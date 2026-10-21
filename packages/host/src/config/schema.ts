@@ -348,11 +348,43 @@ export const CONFIG_SECTIONS = [
         },
         example: 'false',
       },
+      {
+        name: 'broker',
+        check: 'string',
+        runtime: {
+          effect:
+            'kubic run posts each approval ask to this broker and waits for its answer within maxPendingMs',
+        },
+      },
+      {
+        name: 'brokerTokenEnv',
+        check: 'string',
+        runtime: {
+          effect: 'the variable holding the bearer token sent to the broker',
+        },
+      },
+      {
+        name: 'preApprovalKey',
+        check: 'string',
+        runtime: {
+          effect:
+            'the Ed25519 public key a kubic run --pre-approvals file must be signed with',
+        },
+      },
     ],
     docs: [
       {
         keys: ['approvals.route'],
         text: "Approval routing (`ask-user` \\| `deny`), installed by `kubic run`, `kubic tui`, `kubic replay` and reported by doctor's `policy:installed` line. `deny` refuses every challenged call with `denied by policy route` (exit 4) and never opens the TUI overlay — `autoApprove` entries never apply under it (the lane denies them too, and doctor fails `policy:approvals` for the combination). `KUBIC_APPROVALS_ROUTE` overrides it.",
+      },
+      {
+        keys: [
+          'approvals.broker',
+          'approvals.brokerTokenEnv',
+          'approvals.preApprovalKey',
+        ],
+        label: '`approvals.broker`, `brokerTokenEnv`, `preApprovalKey`',
+        text: 'Headless approvals for `kubic run`: `broker` is an https URL (plain http only to this machine) each challenged call is posted to as one ask, answered by a person within `maxPendingMs` or denied; `brokerTokenEnv` names the variable whose value is sent as a bearer token; `preApprovalKey` is the Ed25519 public key (PEM) a `--pre-approvals` file must be signed with. Read from the enterprise, product and global layers only: a project config setting any of them is refused. See [Headless approvals](enterprise.md#headless-approvals).',
       },
       {
         keys: [

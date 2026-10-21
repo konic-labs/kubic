@@ -8,7 +8,12 @@ import type { Context, MutableModels } from '@kubic/agent/pi-boundary';
 import type { StreamTuningTables } from '@kubic/agent/stream-options';
 import type { ExecutionEnv } from '@kubic/exec/env';
 import type { JournalRetention } from '@kubic/exec/journal';
-import type { ApprovalConfig, InstalledPolicy } from '@kubic/host/approvals';
+import type {
+  ApprovalBrokerTarget,
+  ApprovalConfig,
+  InstalledPolicy,
+  PreApprovals,
+} from '@kubic/host/approvals';
 import type {
   AdminHook,
   RuntimeThinking,
@@ -136,6 +141,11 @@ export interface HeadlessRunDeps {
   sessionTeam?: string;
   // The `[[hooks]]` the run's tool calls and its end go through. Absent: none.
   hooks?: readonly AdminHook[];
+  // `[approvals] broker`: the run's answer seat. Absent: a challenged call
+  // is refused at once.
+  approvalBroker?: ApprovalBrokerTarget;
+  // A verified `--pre-approvals` file. Absent: none.
+  preApprovals?: PreApprovals;
   // `[telemetry]`: where the run's spans and metrics go. Absent: nowhere.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy from the same

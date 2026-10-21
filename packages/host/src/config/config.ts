@@ -68,6 +68,9 @@ export interface ApprovalsConfig {
   autoApprove?: string[];
   sessionScoped?: boolean;
   requireJustification?: boolean;
+  broker?: string;
+  brokerTokenEnv?: string;
+  preApprovalKey?: string;
 }
 
 // Permission classes as a config section: the values are

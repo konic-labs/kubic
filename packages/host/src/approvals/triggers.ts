@@ -107,11 +107,15 @@ export interface TriggerContext {
 // Package installs and fetch-and-run launchers: every one can
 // run arbitrary lifecycle or downloaded code. npm/pnpm/yarn/bun installs,
 // npm ci/exec/x, npx/bunx/uvx, pnpm/yarn dlx, a bare `yarn` (which
-// installs), pip/pipx/uv, gem, composer, brew, apt, cargo and go.
+// installs), pip/pipx/uv, poetry, pdm, pipenv, conda/mamba, gem, bundle,
+// composer, brew, port, apt, yum, dnf, apk, zypper, pacman, snap, deno,
+// cargo and go.
 const INSTALL =
-  /(^|[|;&\s(])(npm\s+(i|install|add|clean-install|ci|exec|x)|pnpm\s+(i|install|add|dlx)|yarn(\s+(add|install|dlx|global\s+add)|(?=\s*($|[|;&)])))|bun\s+(i|install|add)|npx|bunx|uvx|pip(3)?\s+install|pipx\s+(install|run)|uv\s+(add|pip\s+install|tool\s+install)|gem\s+install|composer\s+(require|install)|brew\s+install|apt(-get)?\s+install|cargo\s+(install|add)|go\s+install)\b/i;
+  /(^|[|;&\s(])(npm\s+(i|install|add|clean-install|ci|exec|x)|pnpm\s+(i|install|add|dlx)|yarn(\s+(add|install|dlx|global\s+add)|(?=\s*($|[|;&)])))|bun\s+(i|install|add)|npx|bunx|uvx|pip(3)?\s+install|pipx\s+(install|run)|uv\s+(add|sync|pip\s+install|tool\s+install)|poetry\s+(add|install)|pdm\s+(add|install)|pipenv\s+install|(conda|mamba|micromamba)\s+(install|create)|gem\s+install|bundle\s+(install|add)|composer\s+(require|install)|brew\s+install|port\s+install|apt(-get)?\s+install|(yum|dnf|zypper)\s+(install|in)|apk\s+add|pacman\s+-S[a-zA-Z]*|snap\s+install|deno\s+(install|add)|cargo\s+(install|add)|go\s+install)\b/i;
+// Changes to running infrastructure: cluster objects, releases, stacks and
+// platform deploys.
 const DEPLOY =
-  /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout)|docker\s+push|terraform\s+apply|gh\s+release\s+create)\b/i;
+  /(^|[|;&\s])(kubectl\s+(apply|create|delete|rollout|patch|replace|scale|edit|set|label|annotate|drain|cordon|uncordon|taint|expose|autoscale)|helm\s+(install|upgrade|rollback|uninstall)|(terraform|tofu)\s+(apply|destroy|import)|pulumi\s+(up|destroy|refresh)|docker\s+push|gh\s+release\s+create|(fly|flyctl)\s+deploy|vercel\s+(deploy|--prod)|netlify\s+deploy|wrangler\s+(deploy|publish)|firebase\s+deploy|(serverless|sls|cdk|sam)\s+deploy|railway\s+up|supabase\s+(db\s+push|functions\s+deploy)|gcloud\s+(app|run|functions)\s+deploy|az\s+(webapp|functionapp)\s+(deploy|up))\b/i;
 // Privilege escalation is a capability event on its own:
 // `sudo systemctl restart …` is dangerous-shaped whatever verb follows.
 // Word-boundary, anywhere in the raw command — quoted context included,

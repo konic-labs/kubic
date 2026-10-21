@@ -1,6 +1,7 @@
 // Literal-pattern detector for destructive shell commands.
 import { isAbsolute, resolve } from 'node:path';
 import { commandLead, commandWord, MAX_LEAD_WORDS } from './command-words.js';
+import { infraDestructive } from './infra.js';
 
 const SENSITIVE_PATH = /(\.ssh\/|\.gnupg?\/|\/etc\/|passwd$|\.key$|\.pem$)/i;
 
@@ -111,8 +112,12 @@ const WHOLE_COMMAND_PATTERNS = [
 // further tokens: `dd … of=/dev/`, `git clean … -f`, `chmod|chown … -R`,
 // `find … -delete`, `git … push … --force|-f|+refspec`, `git … reset …
 // --hard`, `git … commit … --amend`, `git … checkout … (-- | . | -f |
-// --force)` and `git … restore … (--worktree | -W)`. A regex per shape with
-// `[^|;&\n\r]*` gaps would
+// --force)` and `git … restore … (--worktree | -W)` — and the git commands
+// that lose history or refs the journal never sees (its sweep skips `.git/`):
+// a forced branch delete or move, a dropped or cleared stash, an expired
+// reflog, a pruning gc, a deleted ref or tag, a history filter, a reset to
+// another commit, a forced branch (re)create and a removed worktree. A regex
+// per shape with `[^|;&\n\r]*` gaps would
 // backtrack polynomially: `git push ` repeated 2000 times took 13 s and `git
 // restore --staged ` repeated 2000 times 50 s, before every bash call.
 //
@@ -137,7 +142,32 @@ const SEGMENT_CHAINS: ReadonlyArray<readonly RegExp[]> = [
   [/\bgit\b/gi, /\scommit\b/gi, /\s--amend\b/gi],
   [/\bgit\b/gi, /\scheckout\b/gi, /\s(--(\s|$)|\.(\s|$)|-f\b|--force\b)/gi],
   [/\bgit\b/gi, /\srestore\b/gi, /\s(--worktree|-W)\b/gi],
+  // Case matters for these flags: `-D` forces what `-d` refuses.
+  [/\bgit\b/gi, /\sbranch\b/gi, /\s(-[a-zA-Z]*[Df][a-zA-Z]*|--force)(?=\s|$)/g],
+  [/\bgit\b/gi, /\sstash\b/gi, /\s(drop|clear)\b/gi],
+  [/\bgit\b/gi, /\sreflog\b/gi, /\s(expire|delete)\b/gi],
+  [/\bgit\b/gi, /\sgc\b/gi, /\s--prune\b/gi],
+  [/\bgit\b/gi, /\sprune\b/gi],
+  [/\bgit\b/gi, /\s(update-ref|tag)\b/gi, /\s(-d|--delete)\b/gi],
+  [/\bgit\b/gi, /\sfilter-(branch|repo)\b/gi],
+  [
+    /\bgit\b/gi,
+    /\sreset\b/gi,
+    /\s(--soft|--mixed|--keep|--merge)\b|\s(HEAD|@)[~^]|\sORIG_HEAD\b|\s[0-9a-f]{7,40}(?=\s|$)/gi,
+  ],
+  [/\bgit\b/gi, /\scheckout\b/gi, /\s-B(?=\s|$)/g],
+  [
+    /\bgit\b/gi,
+    /\sswitch\b/gi,
+    /\s(-C|--force-create|--discard-changes|-f|--force)(?=\s|$)/g,
+  ],
+  [/\bgit\b/gi, /\sworktree\b/gi, /\sremove\b/gi],
 ];
+// A rebase rewrites the commits it replays, unless it is the step that ends
+// (or inspects) a rebase already under way.
+const REBASE_VERB = /\srebase\b/gi;
+const REBASE_CONTROL =
+  /\s--(abort|quit|continue|skip|edit-todo|show-current-patch)\b/i;
 const GIT_HEAD = /\bgit\b/gi;
 const RESTORE_VERB = /\srestore\b/gi;
 const STAGED_ONLY = /\s(--staged|-S)\b/gi;
@@ -177,11 +207,24 @@ function unstagedRestore(segment: string): boolean {
   return STAGED_ONLY.exec(segment) === null;
 }
 
+function rebaseRewrites(segment: string): boolean {
+  GIT_HEAD.lastIndex = 0;
+  const git = GIT_HEAD.exec(segment);
+  if (git === null) return false;
+  REBASE_VERB.lastIndex = git.index + git[0].length;
+  const rebase = REBASE_VERB.exec(segment);
+  return (
+    rebase !== null &&
+    !REBASE_CONTROL.test(segment.slice(rebase.index + rebase[0].length))
+  );
+}
+
 function segmentDestructive(segment: string): boolean {
   if (!SEGMENT_HEAD.test(segment)) return false;
   return (
     SEGMENT_CHAINS.some((chain) => chainMatches(segment, chain)) ||
-    unstagedRestore(segment)
+    unstagedRestore(segment) ||
+    rebaseRewrites(segment)
   );
 }
 
@@ -204,6 +247,7 @@ export function defaultIsDestructive(
   if (rmBlocked(command, workspace)) return true;
   return (
     WHOLE_COMMAND_PATTERNS.some((pattern) => pattern.test(command)) ||
-    anySegmentDestructive(command)
+    anySegmentDestructive(command) ||
+    infraDestructive(command)
   );
 }

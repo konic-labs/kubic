@@ -1,7 +1,7 @@
 // Enterprise policy engine (TOML surface, precedence). Enterprise is the
 // highest non-overridable layer: a lower layer can never unset or narrow an
 // enterprise denial, and anything not explicitly allowed is denied
-// (deny-by-default is the implicit 8th level below agent). Read-only wrt
+// (deny-by-default is the implicit level below agent). Read-only wrt
 // agents/policy, roles resolver, ScopedToken, doctor: no logic is duplicated
 // from them and none is modified here — this module owns only the enterprise
 // overlay and its evaluation. Faux-only, zero network; no node:fs (FileBridge
@@ -11,7 +11,6 @@ export const POLICY_LAYERS = [
   'product',
   'global',
   'project',
-  'workspace',
   'session',
   'agent',
 ] as const;

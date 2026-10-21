@@ -101,7 +101,7 @@ invocations: `npx kubic --version` (the `bin` entry, no install needed),
 `node dist/kubic.js --version` (the bundled build output directly).
 
 On a fresh clone with no provider configured, `./bin/kubic.js doctor` exits 6 and
-prints `doctor: 16 pass, 6 warn, 1 fail, 0 skip`. Its one failure is
+prints `doctor: 17 pass, 6 warn, 1 fail, 0 skip`. Its one failure is
 `FAIL limit:provider-availability (provider-down)`; the six warnings are the five
 honest limits and the detection-only policy note. See
 [`docs/cli/doctor-and-debug.md`](docs/cli/doctor-and-debug.md). With a provider key

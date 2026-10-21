@@ -18,7 +18,7 @@ There is exactly one trust zone — the user's own authority. See
 
 ## Package map
 
-Eight packages plus the composition root:
+Seven packages plus the composition root:
 
 | Directory | Role |
 | --- | --- |

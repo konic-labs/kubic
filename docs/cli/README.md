@@ -45,7 +45,7 @@ output. All command examples below assume the built binary (`./bin/kubic.js
 - [models.md](models.md) — `kubic models`, `setup`, `models.json` and provider keys
 - [analysis.md](analysis.md) — `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy`, `audit`
 - [exit-codes.md](exit-codes.md) — exit-code table
-- [tools.md](tools.md) — the fifteen tools the model calls: argument contract and result shapes
+- [tools.md](tools.md) — the eighteen tools the model calls: argument contract and result shapes
 - [configuration.md](configuration.md) — config layers, keys and `kubic config`
 - [enterprise.md](enterprise.md) — the managed policy layer
 - [trust.md](trust.md) — `kubic trust` and the project-trust store

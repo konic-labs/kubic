@@ -213,6 +213,11 @@ interface PolicyConfig {
   maxDailyCostUsd?: number;
 }
 
+// `[tls]`: the certificate store model and collector traffic trusts.
+interface TlsConfig {
+  systemCa?: boolean;
+}
+
 // `[cost]`: the team new sessions are billed to.
 interface CostConfig {
   team?: string;
@@ -265,6 +270,7 @@ export interface KubicConfig {
   run?: RunConfig;
   telemetry?: TelemetryConfig;
   cost?: CostConfig;
+  tls?: TlsConfig;
   managed?: ManagedConfig;
   policy?: PolicyConfig;
   hooks?: HookTableConfig[];
@@ -287,6 +293,7 @@ interface SectionTypes {
   run: RunConfig;
   telemetry: TelemetryConfig;
   cost: CostConfig;
+  tls: TlsConfig;
   managed: ManagedConfig;
   policy: PolicyConfig;
   hooks: HookTableConfig;
@@ -316,6 +323,7 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   run: true,
   telemetry: true,
   cost: true,
+  tls: true,
   managed: true,
   policy: true,
   hooks: true,

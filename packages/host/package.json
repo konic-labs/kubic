@@ -53,6 +53,10 @@
       "source": "./src/models/index.ts",
       "default": "./src/models/index.ts"
     },
+    "./net": {
+      "source": "./src/net/index.ts",
+      "default": "./src/net/index.ts"
+    },
     "./policy": {
       "source": "./src/policy/index.ts",
       "default": "./src/policy/index.ts"

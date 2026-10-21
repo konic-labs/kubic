@@ -53,6 +53,10 @@
       "source": "./src/stdin.ts",
       "default": "./src/stdin.ts"
     },
+    "./tls-fetch": {
+      "source": "./src/tls-fetch.ts",
+      "default": "./src/tls-fetch.ts"
+    },
     "./test-support/env-fakes": {
       "source": "./src/test-support/env-fakes.ts",
       "default": "./src/test-support/env-fakes.ts"
@@ -60,6 +64,10 @@
     "./test-support/fake-env": {
       "source": "./src/test-support/fake-env.ts",
       "default": "./src/test-support/fake-env.ts"
+    },
+    "./test-support/tls-certs": {
+      "source": "./src/test-support/tls-certs.ts",
+      "default": "./src/test-support/tls-certs.ts"
     },
     "./test-support/git-sandbox": {
       "source": "./src/test-support/git-sandbox.ts",

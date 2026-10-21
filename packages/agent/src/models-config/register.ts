@@ -2,6 +2,7 @@
 // provider key at request time.
 
 import type { SecretRef } from '@kubic/core/secret-refs';
+import { createTlsFetch } from '@kubic/exec/tls-fetch';
 import type { ApiKeyAuth, MutableModels } from '../pi-boundary.js';
 import {
   createProvider,
@@ -313,8 +314,48 @@ export function registerCustomProviders(
           ? openAICompletionsApiLazy()
           : openAIResponsesApiLazy(),
     });
-    models.setProvider(provider);
+    models.setProvider(
+      spec.tls === undefined
+        ? provider
+        : withFetch(provider, tlsFetchFor(spec.id, spec.tls)),
+    );
     names.push(spec.id);
   }
   return names;
+}
+
+type CustomProvider = ReturnType<typeof createProvider>;
+
+function tlsFetchFor(
+  id: string,
+  tls: NonNullable<CustomProviderSpec['tls']>,
+): typeof fetch {
+  try {
+    return createTlsFetch(tls);
+  } catch (error) {
+    throw new ModelsJsonError(
+      `provider '${id}': ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+// The provider with every request sent through `fetchImpl` (a gateway's
+// mutual TLS); everything else is the provider's own.
+function withFetch(
+  provider: CustomProvider,
+  fetchImpl: typeof fetch,
+): CustomProvider {
+  const wrapped = Object.create(provider) as CustomProvider;
+  return Object.assign(wrapped, {
+    stream: ((model, context, options) =>
+      provider.stream(model, context, {
+        ...options,
+        fetch: fetchImpl,
+      } as typeof options)) as CustomProvider['stream'],
+    streamSimple: ((model, context, options) =>
+      provider.streamSimple(model, context, {
+        ...options,
+        fetch: fetchImpl,
+      })) as CustomProvider['streamSimple'],
+  });
 }

@@ -1,6 +1,7 @@
 // Parsing models.json: every provider and model validated, refused by name
 // when malformed.
 
+import { isAbsolute } from 'node:path';
 import type { SecretRef } from '@kubic/core/secret-refs';
 import { parseSecretRef, SecretRefError } from '@kubic/core/secret-refs';
 import type {
@@ -215,6 +216,40 @@ function parseModel(raw: unknown, providerId: string): CustomModelSpec {
   };
 }
 
+const TLS_KEYS = new Set(['cert', 'key', 'ca']);
+
+// `tls`: the client certificate and key (both required) and an optional CA,
+// each an absolute path — the file's own directory is not a root to resolve
+// against.
+function parseTls(raw: unknown, id: string): CustomProviderSpec['tls'] {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    throw new ModelsJsonError(
+      `provider '${id}': tls must be an object with cert, key and an optional ca`,
+    );
+  }
+  const unknown = Object.keys(raw).filter((key) => !TLS_KEYS.has(key));
+  if (unknown.length > 0) {
+    throw new ModelsJsonError(
+      `provider '${id}': tls has unknown key(s): ${unknown.join(', ')}`,
+    );
+  }
+  const path = (name: 'cert' | 'key' | 'ca'): string | undefined => {
+    const value = raw[name];
+    if (value === undefined && name === 'ca') return undefined;
+    if (typeof value !== 'string' || !isAbsolute(value)) {
+      throw new ModelsJsonError(
+        `provider '${id}': tls.${name} must be an absolute path to a PEM file`,
+      );
+    }
+    return value;
+  };
+  const cert = path('cert') as string;
+  const key = path('key') as string;
+  const ca = path('ca');
+  return { cert, key, ...(ca === undefined ? {} : { ca }) };
+}
+
 function parseProvider(raw: unknown): CustomProviderSpec {
   if (!isRecord(raw)) throw new ModelsJsonError('provider must be an object');
   const id = reqString(raw, 'id', 'provider');
@@ -336,12 +371,14 @@ function parseProvider(raw: unknown): CustomProviderSpec {
       headerRefs = { ...headerRefs, [key]: ref };
     }
   }
+  const tls = parseTls(raw.tls, id);
   return {
     id,
     ...(typeof raw.name === 'string' && raw.name !== ''
       ? { name: raw.name }
       : {}),
     baseUrl,
+    ...(tls === undefined ? {} : { tls }),
     ...(typeof apiKeyEnv === 'string' ? { apiKeyEnv } : {}),
     ...(typeof apiKey === 'string' ? { apiKey } : {}),
     ...(apiKeyRef === undefined ? {} : { apiKeyRef }),

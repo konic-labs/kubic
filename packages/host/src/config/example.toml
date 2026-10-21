@@ -82,6 +82,9 @@ content = false
 [cost]
 team = "platform"
 
+[tls]
+systemCa = true
+
 [managed]
 url = "https://policy.example.com/kubic/config.toml"
 refreshHours = 24

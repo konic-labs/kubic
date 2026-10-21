@@ -326,6 +326,48 @@ enterprise policy ([policy] project_policy = "restricted"))`). A project may
 still narrow: a stricter permission class, `route = "deny"`, a smaller tool
 set. The default is `"open"`.
 
+## Corporate networks
+
+Three settings make Kubic work behind TLS inspection and LLM gateways:
+
+- **The system certificate store.** `[tls] systemCa = true` (or
+  `KUBIC_SYSTEM_CA=1` for one invocation) trusts the operating system's
+  certificate store beside Node's bundled roots: the macOS keychain, the
+  Windows store, the Linux system bundle. A TLS-inspecting proxy whose root
+  your device management installed is then trusted for model traffic, the
+  approval broker and the audit and telemetry collectors, without
+  `NODE_EXTRA_CA_CERTS`. It is applied when a command starts; a Node that
+  cannot add the store while running says so on stderr, and
+  `NODE_OPTIONS=--use-system-ca` does the same from the start.
+- **Gateway headers.** A `models.json` provider's `headers` ride every
+  request: a literal value, or a `$VAR` / `!command` resolved per request
+  (see [models](models.md)).
+- **Client certificates.** A `models.json` provider's `tls` names the client
+  certificate and key its requests present, and optionally the CA its
+  gateway's certificate chains to:
+
+```json
+{
+  "providers": {
+    "gateway": {
+      "baseUrl": "https://llm-gateway.corp.example/v1",
+      "api": "openai-completions",
+      "apiKey": "$KUBIC_GATEWAY_API_KEY",
+      "headers": {"x-portkey-config": "team-a"},
+      "tls": {
+        "cert": "/etc/kubic/client.pem",
+        "key": "/etc/kubic/client.key",
+        "ca": "/etc/kubic/gateway-ca.pem"
+      },
+      "models": [{"id": "gpt-5", "contextWindow": 400000}]
+    }
+  }
+}
+```
+
+Proxy variables (`HTTPS_PROXY`, `NO_PROXY`) are honoured as described in
+[Proxies](models.md#proxies).
+
 ## Headless approvals
 
 `kubic run` has no terminal to ask on. Two sources let a run in CI or

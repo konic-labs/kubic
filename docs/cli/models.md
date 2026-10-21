@@ -165,7 +165,8 @@ of entries with their own `id` is accepted as an alias):
 | `api` | `openai-completions` or `openai-responses` (required). |
 | `apiKey` | A literal key (e.g. `not-needed` for a keyless local server), an allowlisted `$VAR` (same allowlist as `apiKeyEnv`), or a `!command` resolved per request. Escaped `\$` / `\!` stay literal. Not together with `apiKeyEnv`. |
 | `apiKeyEnv` | The env variable holding the key (allowlist above; default `KUBIC_API_KEY`). |
-| `name`, `headers` | Display name; per-request headers (non-empty strings). Literal values ride every request statically; `$VAR` (allowlisted) and `!command` values resolve per request through the key auth instead and never reach the wire verbatim. |
+| `name`, `headers` | Display name; per-request headers (non-empty strings). Literal values ride every request statically; `$VAR` (allowlisted) and `!command` values resolve per request through the key auth instead and never reach the wire verbatim. A gateway (LiteLLM, Portkey, Azure API Management) that routes or authorizes on a header of its own takes it here. |
+| `tls` | Mutual TLS for a gateway that demands a client certificate: `{"cert": "/etc/kubic/client.pem", "key": "/etc/kubic/client.key", "ca": "/etc/kubic/gateway-ca.pem"}` — absolute PEM paths; `ca` (optional) is trusted beside the default roots for this provider. The provider's requests present the certificate; a file that cannot be read refuses the models.json by name. See [Corporate networks](enterprise.md#corporate-networks). |
 | `models` | Non-empty list of models (ids unique per provider). |
 
 | Model key | Meaning |

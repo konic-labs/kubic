@@ -827,6 +827,28 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'tls',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'systemCa',
+        check: 'boolean',
+        runtime: {
+          effect:
+            "trust the operating system's certificate store, beside Node's bundled roots, for model, broker and collector traffic",
+        },
+        example: 'true',
+      },
+    ],
+    docs: [
+      {
+        keys: ['tls.systemCa'],
+        text: "`true` makes Kubic trust the operating system's certificate store (the macOS keychain, the Windows store, the Linux system bundle) beside Node's bundled roots, so a provider behind a TLS-inspecting proxy whose corporate root the device management installed works without `NODE_EXTRA_CA_CERTS`. `KUBIC_SYSTEM_CA=1` turns it on for one invocation. Applied when the command starts; a Node without the API says so on stderr. See [Corporate networks](enterprise.md#corporate-networks).",
+      },
+    ],
+  },
+  {
     name: 'managed',
     shape: 'table',
     omitEmpty: true,

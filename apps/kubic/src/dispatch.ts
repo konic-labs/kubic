@@ -50,6 +50,7 @@ import { registerSessionCommands } from './commands/session.js';
 import { registerSetupCommands } from './commands/setup.js';
 import type { CliConfigResult } from './config/load.js';
 import { CONFIG_CONSUMING_COMMANDS, configRefusalExit } from './config/load.js';
+import { applySystemCertificates } from './system-ca.js';
 
 // The supported command names, read off the help's command groups so the
 // routing table and the listing can never drift apart (program.test.ts also
@@ -477,6 +478,7 @@ export async function dispatchCommand(
   const refusalExit = stopOnRefusedConfig(cliConfig, command, args, deps);
   if (refusalExit !== undefined) return refusalExit;
   installAuditSinks(cliConfig, deps.err ?? deps.out);
+  applySystemCertificates(cliConfig, process.env, deps.err ?? deps.out);
   // `.kubic/` runtime state must never
   // reach a user repo's commit path. Before either mode that creates it,
   // ship the runtime ignore rules into the repo-local exclude file

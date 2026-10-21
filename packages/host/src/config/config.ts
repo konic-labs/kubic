@@ -215,6 +215,13 @@ interface CostConfig {
   team?: string;
 }
 
+// `[telemetry]`: the OpenTelemetry export.
+export interface TelemetryConfig {
+  enabled?: boolean;
+  endpoint?: string;
+  content?: boolean;
+}
+
 // `[[audit]]` (parsed here; built in audit/sinks.ts).
 export interface AuditTableConfig {
   sink: string;
@@ -245,6 +252,7 @@ export interface KubicConfig {
   session?: SessionConfig;
   verify?: VerifyConfig;
   run?: RunConfig;
+  telemetry?: TelemetryConfig;
   cost?: CostConfig;
   managed?: ManagedConfig;
   policy?: PolicyConfig;
@@ -265,6 +273,7 @@ interface SectionTypes {
   session: SessionConfig;
   verify: VerifyConfig;
   run: RunConfig;
+  telemetry: TelemetryConfig;
   cost: CostConfig;
   managed: ManagedConfig;
   policy: PolicyConfig;
@@ -292,6 +301,7 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   session: true,
   verify: true,
   run: true,
+  telemetry: true,
   cost: true,
   managed: true,
   policy: true,

@@ -504,14 +504,14 @@ describe('runtime config load', () => {
   it('fails closed on unknown keys with the offending layer named', () => {
     try {
       load(
-        { [GLOBAL]: '[telemetry]\nenabled = true\n' },
+        { [GLOBAL]: '[plugins]\nenabled = true\n' },
         { projectTrusted: true },
       );
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(ConfigError);
       expect((error as Error).message).toMatch(
-        /layer 'global'.*unknown section '\[telemetry\]'/,
+        /layer 'global'.*unknown section '\[plugins\]'/,
       );
     }
   });

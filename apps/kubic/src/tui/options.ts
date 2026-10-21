@@ -23,6 +23,7 @@ import type {
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink } from '@kubic/host/run';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
 import type { ColorLevel } from '@kubic/tui/theme';
 import type { TuiWorkspace } from '@kubic/tui/tui-app';
 import type { Terminal } from '@kubic/tui/tui-boundary';
@@ -204,6 +205,8 @@ export interface TuiRunOptions {
   projectProvidersRefusal?: string;
   // `[cost] team`, as `kubic run` records it.
   sessionTeam?: string;
+  // `[telemetry]`: where each settled turn's spans and metrics go.
+  telemetry?: TelemetryTarget;
   // The `[session]` compaction policy — the same
   // projection `kubic run` threads, so the interactive lane compacts under
   // config, not the lane defaults. Absent means the own defaults.

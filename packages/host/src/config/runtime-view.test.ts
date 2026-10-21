@@ -523,7 +523,7 @@ describe('effective config view', () => {
       RUNTIME_KEY_EFFECTS.roles,
     );
     expect(keyEffectFor('agent.name')).toBe(RUNTIME_KEY_EFFECTS['agent.name']);
-    expect(keyEffectFor('telemetry.endpoint')).toBeUndefined();
+    expect(keyEffectFor('plugins.endpoint')).toBeUndefined();
   });
 
   it('renders the disposition on every effective value', () => {

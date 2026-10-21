@@ -31,7 +31,7 @@ import {
   type InstalledPolicy,
   type SessionFullAccessGrant,
 } from '@kubic/host/approvals';
-import { TurnSpans } from '@kubic/host/run';
+import { type SettledTurnSpans, TurnSpans } from '@kubic/host/run';
 import {
   readSessionUsage,
   type SessionSummary,
@@ -39,6 +39,11 @@ import {
   summarizeProjectSessions,
 } from '@kubic/host/sessions';
 import { describeSkillSkips, offeredSkillNames } from '@kubic/host/skills';
+import {
+  approvalCounts,
+  exportRunTelemetry,
+  type TelemetryTarget,
+} from '@kubic/host/telemetry';
 import type { StatusUsageRow } from '@kubic/tui/status-bar';
 import { type BootRefusal, SessionBoot } from '../session/bootstrap.js';
 import { bootedLoop, contextLimitsOf, liveModelOf } from './lane-loop.js';
@@ -261,7 +266,7 @@ async function describeBoot(
     // The injected sink, threaded to the turn runner
     // for its fault and token lines (absent in prod — no --debug flag).
     debug: options.debug,
-    turnSpans: turnSpans(boot, id),
+    turnSpans: turnSpans(boot, id, options.telemetry, notices),
     thinking: thinking ?? 'off',
     // The resolved set travels on the boot so `/scoped-models` can report
     // it.
@@ -360,10 +365,15 @@ async function abortPendingTurn(
 // Per-turn spans next to the headless artifact — the
 // session's spans.jsonl carries one run span per TUI turn plus its
 // tool spans. Best-effort: telemetry never fails a turn or a boot.
-function turnSpans(boot: SessionBoot, id: string): TuiLaneBoot['turnSpans'] {
+function turnSpans(
+  boot: SessionBoot,
+  id: string,
+  telemetry: TelemetryTarget | undefined,
+  notices: BootNotices,
+): TuiLaneBoot['turnSpans'] {
   return {
     turns: new TurnSpans(id),
-    write: (artifact: string): void => {
+    write: (artifact, turn): void => {
       try {
         boot.bridge.appendFile(join(id, 'spans.jsonl'), artifact, {
           mode: 0o600,
@@ -371,8 +381,42 @@ function turnSpans(boot: SessionBoot, id: string): TuiLaneBoot['turnSpans'] {
       } catch {
         // A failed artifact write is not a turn failure.
       }
+      if (telemetry !== undefined && turn !== undefined) {
+        void exportTurn(telemetry, boot, id, turn, notices);
+      }
     },
   };
+}
+
+// One settled turn to the OpenTelemetry collector; a collector that does not
+// answer is a transcript warning, never a turn failure.
+async function exportTurn(
+  target: TelemetryTarget,
+  boot: SessionBoot,
+  id: string,
+  turn: SettledTurnSpans,
+  notices: BootNotices,
+): Promise<void> {
+  const [provider, ...model] = boot.liveModelRef.split('/');
+  const failed = turn.spans.some(
+    (span) => span.parentId === null && span.error !== undefined,
+  );
+  const failures = await exportRunTelemetry(target, {
+    sessionId: id,
+    status: failed ? 'failed' : 'completed',
+    ...(provider === undefined || model.length === 0
+      ? {}
+      : { model: { provider, id: model.join('/') } }),
+    spans: turn.spans,
+    usage: turn.usage,
+    toolErrors: turn.toolErrors,
+    approvals: approvalCounts(id, boot.env?.cwd, turn.startedAt),
+    startedAt: turn.startedAt,
+    endedAt: Date.now(),
+  });
+  for (const failure of failures) {
+    notices.transcript.push(`warning: telemetry: not exported: ${failure}`);
+  }
 }
 
 // `/resume` and the palette list THIS boot's sessions store, and `/fork`

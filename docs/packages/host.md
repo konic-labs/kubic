@@ -29,6 +29,7 @@ exist only for tests are tagged `@internal`.
 | `git/` | `kubic git` (status, log, stage, commit) over the agent's git operations |
 | `instructions/` | The project's `AGENTS.md` files a run adds to its prompt, under per-directory trust |
 | `journal/` | `kubic diff`, `undo`, `log`, `status` and `journal prune` |
+| `net/` | Posting JSON to a collector over https (plain http only to this machine), for the audit sinks and the telemetry export |
 | `models/` | The model catalogue (built-ins plus `models.json`), provider probes, the `faux` testing provider, key hints and `kubic models` |
 | `policy/` | The enterprise policy: layer validation, resolution, the tool, model and provider gates, its doctor checks and `kubic policy` |
 | `presentation/` | Folds lane events and approval facts into the `KubicPresentationState` the TUI renders |
@@ -38,6 +39,7 @@ exist only for tests are tagged `@internal`.
 | `secret-refs/` | Request-time secret references (`$ENV_VAR`, `!command`), the model key resolver and redaction of resolved secrets |
 | `sessions/` | `kubic sessions` and pruning, read-only session access for listings and cost, per-session summaries and usage |
 | `skills/` | The skills boot the lane runs, and `kubic skills` |
+| `telemetry/` | The OpenTelemetry export of runs and tui turns: OTLP/HTTP traces and metrics, and where they go (`[telemetry]` over the `OTEL_*` variables) |
 | `test-support/` | Test-only fixtures; the dependency lint keeps them out of production code |
 
 `config/` and `approvals/` stay folders rather than packages: `config/`

@@ -12,14 +12,14 @@ describe('doctor config section', () => {
   it('fails closed with the named reason when the config was refused', () => {
     const probe = configDoctorProbe(
       buildConfigDoctorInput({
-        error: "layer 'global': unknown section '[telemetry]'",
+        error: "layer 'global': unknown section '[plugins]'",
         ignoreSplitMissing: [],
         ignoreSplitApplicable: true,
       }),
     );
     expect(probe.id).toBe(CONFIG_DOCTOR_ID);
     expect(probe.ok).toBe(false);
-    expect(probe.detail).toMatch(/unknown section '\[telemetry\]'/);
+    expect(probe.detail).toMatch(/unknown section '\[plugins\]'/);
     expect(probe.detail).toMatch(/no defaults applied/);
   });
 
@@ -75,7 +75,7 @@ describe('doctor config section', () => {
             disposition: 'consumed',
           },
           {
-            key: 'telemetry.endpoint',
+            key: 'plugins.endpoint',
             value: '"https://x"',
             layer: 'project',
             disposition: 'unknown',
@@ -88,7 +88,7 @@ describe('doctor config section', () => {
     );
     expect(probe.ok).toBe(false);
     expect(probe.detail).toMatch(/no effect row/);
-    expect(probe.detail).toMatch(/telemetry\.endpoint/);
+    expect(probe.detail).toMatch(/plugins\.endpoint/);
     // The row that explains its key is never named.
     expect(probe.detail).not.toMatch(/model\.provider/);
   });

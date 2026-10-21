@@ -17,6 +17,7 @@ import type {
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink, RunProgressSink } from '@kubic/host/run';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
 
 export interface HeadlessRunOptions {
   sessionId?: string;
@@ -132,6 +133,8 @@ export interface HeadlessRunDeps {
   spend?: SpendCaps;
   // `[cost] team`: recorded on the session this run creates.
   sessionTeam?: string;
+  // `[telemetry]`: where the run's spans and metrics go. Absent: nowhere.
+  telemetry?: TelemetryTarget;
   // The `[session]` compaction policy from the same
   // config load — the boot hands it to the settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent

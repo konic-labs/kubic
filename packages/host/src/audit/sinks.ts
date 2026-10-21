@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { AuditTableConfig } from '../config/index.js';
+import { checkCollectorUrl, postJson } from '../net/index.js';
 import type {
   AuditSink,
   OrgAuditRecord,
@@ -18,12 +19,7 @@ import {
   syslogLineFormat,
 } from './audit.js';
 import { appendChainedAuditLine } from './chain.js';
-import {
-  checkCollectorUrl,
-  deliverSyslogStream,
-  otlpLogsBody,
-  postJson,
-} from './collectors.js';
+import { deliverSyslogStream, otlpLogsBody } from './collectors.js';
 import type { auditSinkSnapshot, ConfiguredAuditSink } from './ledger.js';
 import { probeMessage } from './ledger.js';
 import { createSpooledSink, type SpooledSink } from './spool.js';

@@ -729,6 +729,48 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'telemetry',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'enabled',
+        check: 'boolean',
+        default: 'false',
+        runtime: {
+          effect:
+            'sends each run and each settled tui turn to an OpenTelemetry collector as OTLP/HTTP traces and metrics',
+        },
+        example: 'true',
+      },
+      {
+        name: 'endpoint',
+        check: 'string',
+        runtime: {
+          effect:
+            'the OTLP/HTTP base URL; absent: OTEL_EXPORTER_OTLP_ENDPOINT, else http://localhost:4318',
+        },
+        example: '"http://localhost:4318"',
+      },
+      {
+        name: 'content',
+        check: 'boolean',
+        default: 'false',
+        runtime: {
+          effect:
+            'adds the prompt and the final answer (secret shapes redacted) to the run span',
+        },
+        example: 'false',
+      },
+    ],
+    docs: [
+      {
+        keys: ['telemetry.enabled', 'telemetry.endpoint', 'telemetry.content'],
+        text: 'OpenTelemetry export, off by default. With `enabled = true`, every `kubic run` and every settled `kubic tui` turn is sent to an OTLP/HTTP collector: the spans (`kubic.agent.run`, the lane phases, `pi.tool.execute` per tool call) with the GenAI attributes — model, input and output tokens, cost — and the metrics `gen_ai.client.token.usage`, `kubic.cost`, `kubic.tool.errors` and `kubic.approvals`. The standard variables apply: `OTEL_EXPORTER_OTLP_ENDPOINT` (when `endpoint` is unset), `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` and `OTEL_SDK_DISABLED`. No prompt, argument or output leaves unless `content = true`. See [OpenTelemetry](enterprise.md#opentelemetry).',
+      },
+    ],
+  },
+  {
     name: 'cost',
     shape: 'table',
     omitEmpty: true,

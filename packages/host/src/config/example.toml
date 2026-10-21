@@ -74,6 +74,11 @@ timeoutMs = 600000
 timeoutMs = 300000
 maxTurns = 50
 
+[telemetry]
+enabled = true
+endpoint = "http://localhost:4318"
+content = false
+
 [cost]
 team = "platform"
 

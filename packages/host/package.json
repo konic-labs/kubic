@@ -81,6 +81,10 @@
       "source": "./src/skills/index.ts",
       "default": "./src/skills/index.ts"
     },
+    "./telemetry": {
+      "source": "./src/telemetry/index.ts",
+      "default": "./src/telemetry/index.ts"
+    },
     "./test-support/audit-fixtures": {
       "source": "./src/test-support/audit-fixtures.ts",
       "default": "./src/test-support/audit-fixtures.ts"

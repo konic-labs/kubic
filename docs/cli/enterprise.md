@@ -168,6 +168,48 @@ managed config: /etc/kubic/config.toml (signature verified)
 remote policy: https://policy.example.com/kubic/config.toml (fetched 2026-10-21T09:00:00.000Z, signature verified; cached at /Users/you/.kubic/managed/policy.toml)
 ```
 
+## OpenTelemetry
+
+```toml
+[telemetry]
+enabled = true
+endpoint = "https://otel.example.com:4318"
+```
+
+With `enabled = true`, Kubic sends every `kubic run` — and every settled
+`kubic tui` turn — to an OpenTelemetry collector over OTLP/HTTP (JSON), once,
+when it settles:
+
+- **Traces.** One trace per run: the `kubic.agent.run` span, the lane phases
+  under it (`kubic.lane.accept`, `kubic.lane.drive`) and one
+  `pi.tool.execute` span per tool call, with its error status. The run span
+  carries the GenAI attributes — `gen_ai.provider.name`,
+  `gen_ai.request.model`, `gen_ai.usage.input_tokens`,
+  `gen_ai.usage.output_tokens` — and `kubic.cost.usd`, `kubic.run.status`,
+  `kubic.session.id`, the cache counters, the tool errors and the approval
+  asks; a tool span carries `gen_ai.tool.name`.
+- **Metrics.** Delta sums for the run: `gen_ai.client.token.usage` by
+  `gen_ai.token.type` (`input`, `output`, `cache_read`, `cache_write`),
+  `kubic.cost` (USD), `kubic.tool.errors` and `kubic.approvals` by
+  `kubic.approval.outcome` (`approved`, `denied`).
+
+The standard variables apply: `OTEL_EXPORTER_OTLP_ENDPOINT` (when `endpoint`
+is unset; the default is `http://localhost:4318`), the per-signal
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_HEADERS` (`key=value` pairs, for a collector's API key),
+`OTEL_SERVICE_NAME` (default `kubic`) and `OTEL_SDK_DISABLED=true`, which
+turns the export off again. Headers are refused over plain http to another
+host, so a key never travels unencrypted; the command then runs without
+telemetry and says why.
+
+**No content leaves by default**: the spans and metrics carry names,
+timing, the model, token counts and cost — never a prompt, a tool argument
+or an output. `content = true` adds the prompt and the final answer to the
+run span, secret shapes redacted. A collector that does not answer within
+three seconds costs the run a `telemetry: not exported: …` warning and
+nothing else; nothing is retried or spooled (the audit sinks are the
+delivery-guaranteed channel).
+
 ## Data loss prevention
 
 ```toml

@@ -9,6 +9,7 @@ import { themeFor } from '@kubic/core/cli/theme';
 import { dataProtectionOf } from '@kubic/host/policy';
 import { runRunCommand } from '@kubic/host/run';
 import { runSessionsCommand } from '@kubic/host/sessions';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
 import type { CliConfigResult } from '../config/load.js';
 import { projectTrustFor } from '../config/load.js';
 import {
@@ -27,6 +28,7 @@ import {
   runtimeSpendDeps,
   runtimeStreamTuning,
   runtimeSystemPromptSection,
+  runtimeTelemetryDeps,
   sessionRetentionDays,
   withRunBounds,
 } from '../config/projections.js';
@@ -206,10 +208,14 @@ export function runRunner(io: ProdRunnerIo): ProdRunners['run'] {
   const { out, debug } = io;
   return (options, cliConfig) => {
     noteOverriddenModelPins(io, cliConfig);
+    const telemetry = telemetryFor(io, cliConfig);
     return runRunCommand(withRunBounds(options, cliConfig), {
       ...presentation(out, debug, options.json === true),
       run: (prompt, options) =>
-        runHeadlessPrompt(prompt, options, prodRunDeps(cliConfig)),
+        runHeadlessPrompt(prompt, options, {
+          ...prodRunDeps(cliConfig),
+          ...telemetry,
+        }),
       // Live progress only when the whole run is on an
       // interactive colour terminal (stdout AND stderr) and not --json;
       // a redirected stdout keeps the plain lines scripts read.
@@ -233,7 +239,25 @@ export function tuiRunner(io: ProdRunnerIo): ProdRunners['tui'] {
     noteOverriddenModelPins(io, cliConfig);
     return runTuiCommand(
       options,
-      tuiDepsWithDefaults(prodTuiDeps(io, cliConfig)),
+      tuiDepsWithDefaults({
+        ...prodTuiDeps(io, cliConfig),
+        ...telemetryFor(io, cliConfig),
+      }),
     );
   };
+}
+
+// The OpenTelemetry target a run or a tui session exports to; a target that
+// cannot be used is named once on stderr and the command runs without it.
+function telemetryFor(
+  io: ProdRunnerIo,
+  cliConfig: CliConfigResult,
+): { telemetry?: TelemetryTarget } {
+  const resolved = runtimeTelemetryDeps(cliConfig, process.env, io.version?.());
+  if (resolved.problem !== undefined) {
+    io.debug(`warning: telemetry is off: ${resolved.problem}`);
+  }
+  return resolved.telemetry === undefined
+    ? {}
+    : { telemetry: resolved.telemetry };
 }

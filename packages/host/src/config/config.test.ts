@@ -176,7 +176,7 @@ describe('canonical TOML example', () => {
   });
 
   it('rejects unknown sections', () => {
-    expect(() => parseTomlConfig('[telemetry]\nenabled = true\n')).toThrow(
+    expect(() => parseTomlConfig('[plugins]\nenabled = true\n')).toThrow(
       ConfigError,
     );
   });

@@ -8,6 +8,7 @@ import type { JournalRetention } from '@kubic/exec/journal';
 import type { ApprovalConfig, InstalledPolicy } from '@kubic/host/approvals';
 import type { SpendCaps } from '@kubic/host/config';
 import type { EffectivePolicy } from '@kubic/host/policy';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
 import { ProcessTerminal } from '@kubic/tui/tui-boundary';
 import type { runtimeLaneDeps } from '../config/projections.js';
 import { readTuiWorkspace } from '../tui-workspace.js';
@@ -33,6 +34,8 @@ export type TuiDepsInput = {
 // never be silently dropped here, because the forwarding table in
 // tuiBootOptions must name every key of this type.
 type TuiConfigProjection = {
+  // `[telemetry]`: where each settled turn goes, as for `kubic run`.
+  telemetry?: TelemetryTarget;
   // Config projections: the TUI installs the same policy
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
@@ -129,6 +132,7 @@ export function tuiBootOptions(
     projectProvidersRefusal: provided.projectProvidersRefusal,
     // `[cost] team`, as `kubic run` records it.
     sessionTeam: provided.sessionTeam,
+    telemetry: provided.telemetry,
     // `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,

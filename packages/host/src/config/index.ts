@@ -6,6 +6,7 @@ export type {
   AuditTableConfig,
   ConfigLayer,
   KubicConfig,
+  TelemetryConfig,
 } from './config.js';
 export {
   CONFIG_LAYERS,

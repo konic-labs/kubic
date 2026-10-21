@@ -191,13 +191,13 @@ describe('kubic config', () => {
       {},
       {
         load: () => {
-          throw new Error("layer 'global': unknown section '[telemetry]'");
+          throw new Error("layer 'global': unknown section '[plugins]'");
         },
         out,
       },
     ).exitCode;
     expect(code).toBe(EXIT_FAILED);
-    expect(lines.join('\n')).toMatch(/unknown section '\[telemetry\]'/);
+    expect(lines.join('\n')).toMatch(/unknown section '\[plugins\]'/);
   });
 
   it('redacts secret-shaped material from a load failure', () => {

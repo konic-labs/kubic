@@ -30,6 +30,16 @@ export interface RunCapture {
   // the debug channel, the session writes, the result and the trajectory are
   // scrubbed of. Empty until a models.json key is used.
   liveSecrets: () => string[];
+  // This run's own spend and tool errors, from its lane events: what the
+  // OpenTelemetry export reports (a resumed session's earlier runs excluded).
+  tally: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    costUsd: number;
+    toolErrors: number;
+  };
 }
 
 // The live lane model and the approval posture the lane was installed with
@@ -80,6 +90,14 @@ export class RunState {
       entries: [],
       interrupted: false,
       liveSecrets: () => [],
+      tally: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        costUsd: 0,
+        toolErrors: 0,
+      },
     };
     this.report = {};
     this.base = gitHeadOf(deps.env?.cwd ?? process.cwd());

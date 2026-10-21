@@ -25,6 +25,8 @@ import type { ProjectInstructions } from '@kubic/host/instructions';
 import { loadProjectInstructions } from '@kubic/host/instructions';
 import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles';
 import type { RunCommandOptions } from '@kubic/host/run';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
+import { resolveTelemetryTarget } from '@kubic/host/telemetry';
 import type { CliConfigResult } from './load.js';
 import { projectModelsDeps, projectTrustFor } from './load.js';
 
@@ -444,4 +446,22 @@ export function runtimeSpendDeps(result: CliConfigResult): {
     (caps.run === undefined && caps.daily === undefined)
     ? {}
     : { spend: caps };
+}
+
+// The `[telemetry]` export target over the `OTEL_*` variables: nothing when
+// telemetry is off, and the reason when it cannot be used.
+export function runtimeTelemetryDeps(
+  result: CliConfigResult,
+  env: Readonly<Record<string, string | undefined>>,
+  version?: string,
+): { telemetry?: TelemetryTarget; problem?: string } {
+  const target = resolveTelemetryTarget(
+    result.runtime?.config.telemetry,
+    env,
+    version,
+  );
+  if (target === undefined) return {};
+  return 'problem' in target
+    ? { problem: target.problem }
+    : { telemetry: target };
 }

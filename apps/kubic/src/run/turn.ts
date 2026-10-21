@@ -96,6 +96,7 @@ function onLaneEvent(
     return;
   }
   if (event.type === 'tool-end') {
+    if (event.isError) state.capture.tally.toolErrors += 1;
     state.options.progress?.toolEnd({
       toolCallId: event.toolCallId,
       toolName: event.toolName,
@@ -105,7 +106,14 @@ function onLaneEvent(
     return;
   }
   if (event.type !== 'usage') return;
-  guard.countTurn(event.row.usage.cost?.total ?? 0);
+  const usage = event.row.usage;
+  const tally = state.capture.tally;
+  tally.input += usage.input;
+  tally.output += usage.output;
+  tally.cacheRead += usage.cacheRead;
+  tally.cacheWrite += usage.cacheWrite;
+  tally.costUsd += usage.cost?.total ?? 0;
+  guard.countTurn(usage.cost?.total ?? 0);
 }
 
 // A turn a dead process left open would refuse this

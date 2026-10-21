@@ -20,6 +20,7 @@ import {
 } from '@kubic/host/run';
 import { matchableSecrets, redactSecretValues } from '@kubic/host/secret-refs';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
+import { approvalCounts, exportRunTelemetry } from '@kubic/host/telemetry';
 import type { RunReport, RunState } from './state.js';
 import { persistRunTrajectory } from './trajectory.js';
 
@@ -74,12 +75,50 @@ export async function finishRun(
         interrupted: capture.interrupted,
       },
     });
+    await exportTelemetry(state, settled, cwd);
     return { ...settled, trajectoryRef: path };
   } catch (error) {
     state.sinks.warn(
       `trajectory not written for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
     );
+    await exportTelemetry(state, settled, cwd);
     return settled;
+  }
+}
+
+// The run to the OpenTelemetry collector, when `[telemetry]` names one: its
+// spans and its own tally, with the approval asks it wrote to the ledger. A
+// collector that does not answer is a warning, never a change to the result.
+async function exportTelemetry(
+  state: RunState,
+  settled: HeadlessRunResult,
+  cwd: string | undefined,
+): Promise<void> {
+  const target = state.deps.telemetry;
+  if (target === undefined) return;
+  const { capture } = state;
+  const tally = capture.tally;
+  const failures = await exportRunTelemetry(target, {
+    sessionId: settled.sessionId,
+    status: settled.terminus,
+    ...(capture.model === undefined ? {} : { model: capture.model }),
+    spans: state.spans.trace(),
+    usage: {
+      input: tally.input,
+      output: tally.output,
+      cacheRead: tally.cacheRead,
+      cacheWrite: tally.cacheWrite,
+      costUsd: tally.costUsd,
+    },
+    toolErrors: tally.toolErrors,
+    approvals: approvalCounts(settled.sessionId, cwd, capture.startedAt),
+    startedAt: capture.startedAt,
+    endedAt: Date.now(),
+    prompt: state.prompt,
+    answer: settled.summary,
+  });
+  for (const failure of failures) {
+    state.sinks.warn(`telemetry: not exported: ${failure}`);
   }
 }
 

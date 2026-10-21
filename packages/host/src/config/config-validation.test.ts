@@ -330,7 +330,7 @@ describe('layered load hardening', () => {
 
   it('wraps unknown-section violations with the offending layer', () => {
     const bridge = fakeBridge({
-      '/home/u/.kubic/config.toml': '[telemetry]\nenabled = true\n',
+      '/home/u/.kubic/config.toml': '[plugins]\nenabled = true\n',
     });
     expect(() => loadRuntime(bridge)).toThrow(/layer 'global'/);
   });

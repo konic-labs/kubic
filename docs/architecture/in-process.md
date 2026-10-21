@@ -54,7 +54,8 @@ no second process.
   `kubic.policy` (the permission interceptors), `kubic.spans` (timing) and
   finally `kubic` (the operation tools plus the prompt).
 - **One prompt section, byte-stable.** The assembled prompt (role, `cwd:`,
-  `tools:`, `meta:`, then the appended skill/role context blocks) is
+  `tools:`, `meta:`, then the appended context blocks: the
+  `systemPromptFile` text, the project's `AGENTS.md` files and the skills) is
   installed as a single untagged `kubic` section. The harness stores
   sections as positional `pi.system` entries and re-sends only what
   changed, so an unchanged lane's second turn commits no new system entry

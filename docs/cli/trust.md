@@ -19,14 +19,15 @@ error: project-local config refused pre-trust: <path>/.kubic/config.toml — run
 ```
 
 The same gate covers the project `models.json`, ancestor project skills,
-and the project role documents, so a repository cannot point
-a provider — and your API key — at its own URL, nor inject lane instructions,
-either. The flip side is what a grant means: **one `yes` covers all four**.
-A trusted project's `models.json` may name any `*_API_KEY` (or `KUBIC_*`)
-variable as its provider's key, and that key — the real one, if you have it
-set — is sent to the provider URL the file names; trusted project skills
-and role documents are instructions the model follows. Grant trust only to
-a repository whose `models.json`, skills and roles you would run yourself.
+the project role documents and the project's `AGENTS.md` files, so a
+repository cannot point a provider — and your API key — at its own URL, nor
+inject lane instructions, either. The flip side is what a grant means:
+**one `yes` covers all five**. A trusted project's `models.json` may name
+any `*_API_KEY` (or `KUBIC_*`) variable as its provider's key, and that key
+— the real one, if you have it set — is sent to the provider URL the file
+names; trusted project skills, role documents and `AGENTS.md` files are
+instructions the model follows. Grant trust only to a repository whose
+`models.json`, skills, roles and `AGENTS.md` you would run yourself.
 Those consumers resolve their files by walking up to the repository
 root, so the decision is checked against **the directory the file lives
 in**: a grant for `/repo` covers `/repo`'s committed `models.json` and
@@ -47,7 +48,7 @@ refusal comes back, and `--list` prints every recorded decision. **One
 grant covers the whole project tree**, not only `config.toml`: the
 committed `.kubic/config.toml`, the project `models.json` (its provider
 URLs are sent the key of any `*_API_KEY` or `KUBIC_*` variable it names,
-`KUBIC_API_KEY` when it names none) and the
+`KUBIC_API_KEY` when it names none), the project's `AGENTS.md` and the
 project skills. The help, the interactive prompt and the grant output all
 say so. **A grant covers the content it was given for**: once any of the
 project's trust-relevant files changes — a pulled commit, a checked-out
@@ -71,7 +72,7 @@ project config is waiting there:
 $ kubic trust
 trusted project /Users/you/src/app (store: /Users/you/.kubic/trust.json)
 project config /Users/you/src/app/.kubic/config.toml will load
-this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills
+this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its AGENTS.md and its project skills
 it covers these files as they are now: a change to any of them makes the project untrusted until you run 'kubic trust' again
 ```
 
@@ -84,6 +85,9 @@ lets take effect.
   anything else there — except the runtime state Kubic writes itself
   (`audit/`, `journal/`, `sessions/`);
 - a root `models.json`;
+- a root `AGENTS.md` (an `AGENTS.md` in a subdirectory belongs to that
+  directory's own grant, as its skills do — see
+  [Project instructions](configuration.md#project-instructions-agentsmd));
 - the project skills: `.pi/skills/`, `.agents/skills/`, and the skill
   directories `package.json` declares (its `skills` and `pi.skills` lists —
   never the rest of the file, so a dependency bump does not ask again);
@@ -133,7 +137,7 @@ Decisions live in one user-owned file, `~/.kubic/trust.json`:
   never applies to a parent or a sibling directory: trusting `/a` does not
   trust `/a-sibling`, and a grant for `/a/b` never unlocks files committed
   at `/a`. Ancestor-resolving consumers (the project `models.json`, project
-  skills) check the store for the directory they resolved, so a grant for
+  skills, `AGENTS.md`) check the store for the directory they resolved, so a grant for
   `/a` still applies to `/a`'s own files from any subdirectory.
 - **Writes are atomic**: a locked read → tmp+rename update, keys sorted,
   so two concurrent grants cannot lose one another.
@@ -160,8 +164,8 @@ key:
                  commands run as shell commands after each run; its models.json
                  names provider URLs that are sent the key of any *_API_KEY or
                  KUBIC_* variable it names (KUBIC_API_KEY by default); its
-                 project skills, role documents and [agent] systemPromptFile are
-                 instructions the model follows.
+                 project skills, role documents, AGENTS.md and [agent]
+                 systemPromptFile are instructions the model follows.
                  y  yes   n  not now   v  view file
 ```
 

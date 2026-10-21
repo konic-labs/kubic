@@ -30,6 +30,7 @@
 export { discoverSkills } from './discover.js';
 
 export { gateSkills } from './gate.js';
+export { projectChain } from './paths.js';
 export {
   expandSkillInvocation,
   formatSkillsForSystemPrompt,

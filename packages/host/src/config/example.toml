@@ -16,6 +16,7 @@ name = "kubic"
 # additionally requires trust and containment in the project root; a missing
 # or unreadable file is a named ConfigError, never a silent skip.
 systemPromptFile = "SYSTEM.md"
+projectInstructions = true
 
 [model]
 provider = "local"

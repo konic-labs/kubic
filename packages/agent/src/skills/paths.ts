@@ -71,7 +71,10 @@ function ancestorsOf(cwd: string): string[] {
 // ancestor (itself included) holding a `.git` entry. Probed through the
 // injected bridge (I/O confinement: no node:fs here); an unreadable path
 // reads as "no marker", never fatal.
-function findRepoRoot(bridge: FileBridge, cwd: string): string | undefined {
+function findRepoRoot(
+  bridge: Pick<FileBridge, 'exists'>,
+  cwd: string,
+): string | undefined {
   for (const ancestor of ancestorsOf(cwd)) {
     let hasMarker = false;
     try {
@@ -89,7 +92,10 @@ function findRepoRoot(bridge: FileBridge, cwd: string): string | undefined {
 // repository. Trusting one repo must not trust instructions from a parent
 // directory, a shared /tmp, or $HOME, and a package.json above the root
 // contributes nothing (it is never walked to).
-export function projectChain(bridge: FileBridge, cwd: string): string[] {
+export function projectChain(
+  bridge: Pick<FileBridge, 'exists'>,
+  cwd: string,
+): string[] {
   const root = findRepoRoot(bridge, cwd);
   if (root === undefined) return [cwd.replace(/\/*$/, '') || '/'];
   if (root === '/') return ancestorsOf(cwd).reverse();

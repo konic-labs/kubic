@@ -214,7 +214,7 @@ A refused config prints
 ## Shape (canonical sections)
 
 <!-- generated:config-sections -->
-- `[agent]`: `name`, `systemPromptFile`
+- `[agent]`: `name`, `systemPromptFile`, `projectInstructions`
 - `[model]`: `provider`, `id`, `thinking`, `timeoutMs`, `maxRetries`, `maxRetryDelayMs`, `cacheRetention`, `escalate`, `maxEscalations`
 - `[approvals]`: `route`, `maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification`
 - `[permissions]`: `filesystem`, `shell`, `network`, `git`, `credentials`
@@ -268,6 +268,7 @@ quietly stop configuring anything.
 | --- | --- |
 | `agent.name` | The lane's agent id: journal entries are attributed to it. Unset ⇒ `root`, unchanged. |
 | `agent.systemPromptFile` | Prompt augmentation: a path whose contents are read at load and appended to the assembled system prompt — ahead of the skills block — for `kubic run`, `kubic tui` and the live tiers of `kubic replay`. A leading `~/` expands to the home directory; a relative path resolves against the declaring config file's directory, so the shipped example's `SYSTEM.md` travels with `example.toml`. Global-layer paths are always allowed; a project-layer path applies only when the project is trusted (an untrusted project's file is refused pre-trust with the trust message, before it is read) and must resolve inside the project root — a trusted path outside it, or a symlink whose target lies outside it, is refused by name. A missing or unreadable file is a named `ConfigError`, never a silent skip. `kubic config` reports the effective (resolved) path; the contents never render. |
+| `agent.projectInstructions` | Project instructions: `kubic run` and `kubic tui` read one `AGENTS.md` per directory from the repository root down to the working directory (the working directory alone outside a repository) and append them to the system prompt, outermost first, after the `systemPromptFile` and ahead of the skills block. A file loads only when its directory is trusted (see [Project instructions](#project-instructions-agentsmd)); each one reaches the prompt up to 32 KiB, and a longer one is cut with a notice. `false` turns the search off; an enterprise `false` holds against every lower layer. |
 | `model.provider`, `model.id` | Selects the provider/model for `kubic run` and `kubic tui` (`selectModel`); `--model` and `KUBIC_MODEL` beat it as the `cli`/`env` layers of the config load, and a frozen enterprise `[model]` beats all of them (announced on stderr). |
 | `model.escalate`, `model.maxEscalations`, `roles.<name>.escalate` | The escalation ladder: `escalate` lists the rungs as concrete `provider/id` refs in climbing order (wildcards refused per entry at load); a role's `escalate` wins outright for runs as that role, even an empty list (which freezes every `/model` switch — opting out of climbing, not of the gate). `maxEscalations` bounds the climbs per run, unset meaning the ladder length. Climbs are one-way (a down-step or off-ladder target is refused by name with the live model untouched) and recorded: `/model <ref>` climbs the ladder silently, `/escalate <ref> [reason]` climbs naming why, and three consecutive tool-failure turns climb one rung automatically — once per run, never back (`kubic run` settles one turn per invocation, so the automatic trigger lives on the `kubic tui` lane). Every climb appends an `escalation: <from> → <to> (<reason>)` transcript row and lands on the trajectory's `model.escalations` (per-model usage already attributes the spend each side of the move). |
 | `model.thinking` | The file-layer thinking default. The lane boots with the winner of `--thinking` > `KUBIC_MODEL_THINKING` > session record > role default > this key, clamped to the effective model's supported levels (a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite); the applied level is committed to the session and recorded in `trajectory.json`. A level the vocabulary does not know is refused by name at load. |
@@ -336,6 +337,33 @@ resolved (absolute) list with its layer.
 The user discovery roots are `~/.pi/agent/skills` and `~/.agents/skills`
 (Pi-compatible) plus `~/.kubic/skills`: the Kubic-native root
 is read last, so it wins a same-name conflict with a Pi-carried skill.
+
+### Project instructions (`AGENTS.md`)
+
+Kubic follows the cross-agent `AGENTS.md` convention. `kubic run` and
+`kubic tui` read one `AGENTS.md` per directory, from the repository root
+(the nearest ancestor holding `.git`) down to the working directory — the
+working directory alone outside a repository — and append them to the system
+prompt as one `<project_instructions>` section, outermost first, so the file
+nearest the work comes last. The section sits after the
+`[agent] systemPromptFile` text and ahead of the skills block.
+
+- **Trust.** A file loads only when its directory is trusted, exactly like
+  the project skills: a grant for `/repo` covers `/repo/AGENTS.md` from any
+  subdirectory, and `/repo/pkg/AGENTS.md` needs a grant for `/repo/pkg`
+  (`kubic trust /repo/pkg`). The grant's fingerprint covers the root
+  `AGENTS.md`, so an edited file asks again (see
+  [What a grant covers](trust.md#what-a-grant-covers)). A file from an
+  untrusted directory is left out and named on stderr (`kubic run`) or in
+  the boot notices (`kubic tui`).
+- **Size.** Each file reaches the prompt up to 32 KiB. A longer one is cut on
+  a character boundary, the prompt says it was cut, and the run names it.
+- **Reporting.** `kubic config` prints a `project instructions:` line (and
+  an `instructions` object under `--json`) naming every file a run from the
+  current directory would load or leave out; `kubic doctor` reports the same
+  as its `instructions` check, a warning when a file is cut or left out.
+- **Off switch.** `[agent] projectInstructions = false` turns the search off;
+  set in the enterprise layer, it holds against every lower layer.
 
 ### Gate verification (`[verify]`)
 

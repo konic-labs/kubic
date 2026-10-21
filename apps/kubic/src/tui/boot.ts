@@ -183,6 +183,7 @@ function tuiSessionBoot(
       journalRetention: options.journalRetention,
       reconcileOutOfScope: options.reconcileOutOfScope,
       systemPromptSection: options.systemPromptSection,
+      projectInstructions: options.projectInstructions,
       modelPolicy: options.modelPolicy,
       trustProject: options.trustProject,
       skills: options.skills,
@@ -202,6 +203,8 @@ function tuiSessionBoot(
       // No debug footer on the alt-screen: loader lines are dropped (the
       // block itself is observable).
       skillsLog: () => undefined,
+      instructionsNotice: (line) =>
+        notices.warnings.push(`project instructions: ${line}`),
     },
   );
 }

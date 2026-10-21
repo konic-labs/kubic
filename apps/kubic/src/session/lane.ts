@@ -17,17 +17,19 @@ import { resolveRoleThinking } from '../config/model-selection.js';
 import type { BootRefusal, SessionBoot } from './bootstrap.js';
 
 // The lane's appended prompt sections: the `[agent] systemPromptFile` text
-// first (the user's own instructions), the skills block second (discovered
-// context). Undefined when neither is set, so the lane assembles its prompt
-// unchanged — the cache-stable prefix is never rewritten by an empty
-// composition.
+// first (the user's own instructions), the project's AGENTS.md files second,
+// the skills block last (discovered context). Undefined when none is set, so
+// the lane assembles its prompt unchanged — the cache-stable prefix is never
+// rewritten by an empty composition.
 /** @internal */
 export function composePromptSections(
   systemPromptSection: string | undefined,
+  instructionsBlock: string | undefined,
   skillsBlock: string | undefined,
 ): string[] | undefined {
   const sections = [
     ...(systemPromptSection === undefined ? [] : [systemPromptSection]),
+    ...(instructionsBlock === undefined ? [] : [instructionsBlock]),
     ...(skillsBlock === undefined ? [] : [skillsBlock]),
   ];
   return sections.length === 0 ? undefined : sections;
@@ -99,6 +101,7 @@ export async function bootSessionLane(
   );
   const sections = composePromptSections(
     config.systemPromptSection,
+    boot.instructions?.block,
     skills?.block,
   );
   const contributions = [...installed.contributions];

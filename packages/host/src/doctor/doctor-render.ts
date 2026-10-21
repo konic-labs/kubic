@@ -57,7 +57,13 @@ export function doctorGroup(id: string): Group {
   ) {
     return 'runtime';
   }
-  if (id.startsWith('session:') || id.startsWith('journal:')) return 'project';
+  if (
+    id.startsWith('session:') ||
+    id.startsWith('journal:') ||
+    id === 'instructions'
+  ) {
+    return 'project';
+  }
   if (id.startsWith('policy:') || id.startsWith('audit:')) return 'policy';
   if (id.startsWith('limit:')) return 'limits';
   if (id === 'skills' || id.startsWith('skill:')) return 'skills';
@@ -136,6 +142,13 @@ export function doctorShort(check: DoctorCheck): string {
     case 'skills': {
       const loaded = match(detail, /^(\d+) loaded/u);
       return loaded === undefined ? 'skills' : `skills ${loaded} loaded`;
+    }
+    case 'instructions': {
+      if (check.status === 'skip') return 'AGENTS.md off';
+      const loaded = match(detail, /^(\d+) loaded/u);
+      const head =
+        loaded === undefined ? 'no AGENTS.md' : `AGENTS.md ${loaded} loaded`;
+      return check.status === 'warn' ? `${head} — some cut or left out` : head;
     }
   }
   if (id.startsWith('role:') && id !== 'role:documents') return suffix;

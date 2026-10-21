@@ -59,6 +59,7 @@ export function createRunBoot(state: RunState, guard: RunGuard): SessionBoot {
       journalRetention: deps.journalRetention,
       reconcileOutOfScope: deps.reconcileOutOfScope,
       systemPromptSection: deps.systemPromptSection,
+      projectInstructions: deps.projectInstructions,
       modelPolicy: deps.modelPolicy,
       trustProject: deps.trustProject,
       skills: deps.skills,
@@ -73,6 +74,8 @@ export function createRunBoot(state: RunState, guard: RunGuard): SessionBoot {
       // the debug channel — so a typo cannot read as loaded.
       skillsWarn: sinks.warn,
       skillsLog: (line) => sinks.debug?.(`skills: ${line}`),
+      instructionsNotice: (line) =>
+        sinks.notice(`project instructions: ${line}`),
     },
   );
 }

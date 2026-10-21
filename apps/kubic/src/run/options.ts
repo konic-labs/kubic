@@ -118,6 +118,9 @@ export interface HeadlessRunDeps {
   // load — the boot composes them ahead of the skills block. Absent means
   // the lane assembles its prompt unchanged.
   systemPromptSection?: string;
+  // `[agent] projectInstructions = false` turns the AGENTS.md search off.
+  // Absent means on.
+  projectInstructions?: boolean;
   // The `[session]` compaction policy from the same
   // config load — the boot hands it to the settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent

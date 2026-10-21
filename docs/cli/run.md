@@ -27,6 +27,12 @@ Non-interactive run: no alt-screen, no prompt, consumable output.
 | `--no-tools` | The empty tool set (a chat-only run). Mutually exclusive with `--tools` — both at once exits 2 naming both. |
 | `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, `mode` — the mode the run resolved (`autonomous` with `--autonomous`, else `interactive`) —, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the failure code with its retry remedy and strategy) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed), so a script can read it as the last stdout line. |
 
+**Project instructions.** The trusted `AGENTS.md` files from the repository
+root down to the cwd are appended to the prompt; a file that is cut at 32 KiB
+or left out because its directory is untrusted is named on stderr
+(`project instructions: … not loaded: …`). See
+[Project instructions](configuration.md#project-instructions-agentsmd).
+
 **Skill paths the `read` tool may open.** Every skill
 advertised in the `<skills>` block names its absolute `<filePath>`. Paths
 outside the workspace are normally re-rooted under it, so one narrow,

@@ -41,6 +41,8 @@ interface AgentConfig {
   // the home directory); the project layer additionally requires trust
   // and containment in the project root, enforced at load.
   systemPromptFile?: string;
+  // Whether the trusted project's AGENTS.md files reach the prompt.
+  projectInstructions?: boolean;
 }
 
 export interface ModelConfig {

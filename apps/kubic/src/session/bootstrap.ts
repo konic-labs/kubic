@@ -54,6 +54,11 @@ import type {
   installPolicy,
 } from '@kubic/host/approvals';
 import type { RuntimeThinking } from '@kubic/host/config';
+import type { ProjectInstructions } from '@kubic/host/instructions';
+import {
+  loadProjectInstructions,
+  projectInstructionsNotices,
+} from '@kubic/host/instructions';
 import type { AssembledModels } from '@kubic/host/models';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles';
@@ -110,6 +115,8 @@ export interface SessionBootConfig {
   reconcileOutOfScope?: readonly string[];
   // [agent] systemPromptFile contents, composed ahead of the skills block.
   systemPromptSection?: string;
+  // `[agent] projectInstructions`: false skips the AGENTS.md search.
+  projectInstructions?: boolean;
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.
@@ -175,6 +182,8 @@ export interface SessionBootSinks {
   // An unresolvable explicit --skill.
   skillsWarn: (line: string) => void;
   skillsLog: (line: string) => void;
+  // A cut or skipped AGENTS.md.
+  instructionsNotice?: (line: string) => void;
 }
 
 export interface BootRole {
@@ -239,6 +248,7 @@ export class SessionBoot {
   journal: FileJournalStore | undefined;
   reconciliation: RunReconciliation | undefined;
   skills: ReturnType<typeof bootSkills> | undefined;
+  instructions: ProjectInstructions | undefined;
   lane: Lane | undefined;
   // The model the booted lane runs.
   liveModel: { provider: string; id: string } | undefined;
@@ -346,6 +356,7 @@ export class SessionBoot {
     beginBootJournal(this, env);
     await probeBootOverlap(this, env);
     this.bootRunSkills();
+    this.bootRunInstructions();
     const skills = this.request.onSkillsBooted?.(this);
     if (skills !== undefined) return skills;
     if (this.request.cancelled?.() === true) return { kind: 'cancelled' };
@@ -383,6 +394,25 @@ export class SessionBoot {
       warn: sinks.skillsWarn,
       log: sinks.skillsLog,
     });
+  }
+
+  // Project instructions: the trusted AGENTS.md files from the repository
+  // root down to the workspace, appended to the prompt after the
+  // systemPromptFile. A cut or untrusted file is named, never fatal.
+  private bootRunInstructions(): void {
+    const { config, sinks } = this;
+    const envTrusted =
+      process.env.KUBIC_TRUST_PROJECT === '1' ||
+      process.env.KUBIC_TRUST_PROJECT === 'true';
+    this.instructions = loadProjectInstructions({
+      bridge: this.bridge,
+      cwd: this.env?.cwd ?? process.cwd(),
+      trustProject: config.trustProject ?? (() => envTrusted),
+      enabled: config.projectInstructions !== false,
+    });
+    for (const line of projectInstructionsNotices(this.instructions)) {
+      sinks.instructionsNotice?.(line);
+    }
   }
 
   requireInstalled(): InstalledPolicy {

@@ -9,6 +9,7 @@ import type {
   ModelStreamTuning,
   StreamTuningTables,
 } from '@kubic/agent/stream-options';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { JournalRetention } from '@kubic/exec/journal';
 import type { ApprovalConfig } from '@kubic/host/approvals';
 import type {
@@ -19,6 +20,8 @@ import type {
   RuntimeVerify,
 } from '@kubic/host/config';
 import { CONFIG_LAYERS, checkModelStreamTuning } from '@kubic/host/config';
+import type { ProjectInstructions } from '@kubic/host/instructions';
+import { loadProjectInstructions } from '@kubic/host/instructions';
 import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles';
 import type { RunCommandOptions } from '@kubic/host/run';
 import type { CliConfigResult } from './load.js';
@@ -141,6 +144,8 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   /** The merged `[model]` ladder — the lane climbs
    * the role's own rungs first when the role names any. */
   escalate?: RuntimeEscalation;
+  /** `[agent] projectInstructions = false`: no AGENTS.md is read. */
+  projectInstructions?: boolean;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -166,6 +171,9 @@ export function runtimeLaneDeps(result: CliConfigResult): {
     ...(runtime.thinking === undefined
       ? {}
       : { thinking: { ...runtime.thinking } }),
+    ...(runtime.config.agent?.projectInstructions === false
+      ? { projectInstructions: false }
+      : {}),
     // No ladder, no field: escalation stays opt-in — the
     // lane climbs nothing it was never configured with.
     ...(runtime.escalate === undefined
@@ -400,4 +408,19 @@ export function installedPolicyClasses(result: CliConfigResult): {
 } {
   const { classes } = installedPolicyDeps(result);
   return classes === undefined ? {} : { classes };
+}
+
+// The AGENTS.md files a run from `cwd` would load: the search the lane boot
+// runs, under the same per-path trust check and `[agent] projectInstructions`
+// switch — what `kubic config` and `kubic doctor` report.
+export function runtimeProjectInstructions(
+  result: CliConfigResult,
+  cwd: string,
+): ProjectInstructions {
+  return loadProjectInstructions({
+    bridge: createNodeFileBridge(cwd),
+    cwd,
+    trustProject: projectTrustFor(result),
+    enabled: result.runtime?.config.agent?.projectInstructions !== false,
+  });
 }

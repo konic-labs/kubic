@@ -141,6 +141,49 @@ describe('kubic config', () => {
     expect(Array.isArray(view.values)).toBe(true);
   });
 
+  it('reports the AGENTS.md files a run here would load, and the ones it would leave out', () => {
+    const instructions = {
+      block: '<project_instructions/>',
+      loaded: [{ path: '/repo/AGENTS.md', bytes: 40_000, truncated: true }],
+      skipped: [
+        { path: '/repo/pkg/AGENTS.md', reason: 'the directory is not trusted' },
+      ],
+      enabled: true,
+    };
+    const human = collect();
+    runConfigCommand(
+      {},
+      { load: runtime, out: human.out, instructions: () => instructions },
+    );
+    expect(human.lines.at(-1)).toBe(
+      'project instructions: 1 AGENTS.md loaded: /repo/AGENTS.md (cut); /repo/pkg/AGENTS.md not loaded (the directory is not trusted)',
+    );
+    const machine = collect();
+    runConfigCommand(
+      { json: true },
+      { load: runtime, out: machine.out, instructions: () => instructions },
+    );
+    expect(JSON.parse(machine.lines.join('\n')).instructions).toEqual({
+      enabled: true,
+      loaded: [{ path: '/repo/AGENTS.md', bytes: 40_000, truncated: true }],
+      skipped: [
+        { path: '/repo/pkg/AGENTS.md', reason: 'the directory is not trusted' },
+      ],
+    });
+    const off = collect();
+    runConfigCommand(
+      {},
+      {
+        load: runtime,
+        out: off.out,
+        instructions: () => ({ ...instructions, enabled: false }),
+      },
+    );
+    expect(off.lines.at(-1)).toBe(
+      'project instructions: off ([agent] projectInstructions = false)',
+    );
+  });
+
   it('fails closed with the named reason, never a silent default', () => {
     const { lines, out } = collect();
     const code = runConfigCommand(

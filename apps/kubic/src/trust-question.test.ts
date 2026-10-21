@@ -42,7 +42,7 @@ describe('the trust question', () => {
       'any *_API_KEY or KUBIC_* variable it names (KUBIC_API_KEY by default)',
     );
     expect(body).toContain(
-      'project skills, role documents and [agent] systemPromptFile are instructions the model follows',
+      'project skills, role documents, AGENTS.md and [agent] systemPromptFile are instructions the model follows',
     );
     expect(lines.at(-1)?.trim()).toBe('y  yes   n  not now   v  view file');
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(100);

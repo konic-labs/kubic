@@ -32,6 +32,7 @@ import {
   listFullAccessSessions,
   runDoctorCommand,
 } from '@kubic/host/doctor';
+import { projectInstructionsDoctorCheck } from '@kubic/host/instructions';
 import type { AssembledModels } from '@kubic/host/models';
 import {
   assembleModels,
@@ -57,6 +58,7 @@ import {
   installedPolicyDeps,
   runtimeCompactionDeps,
   runtimeLaneDeps,
+  runtimeProjectInstructions,
   runtimeSkillsDeps,
 } from '../config/projections.js';
 import type { ProdRunnerIo, ProdRunners } from './shared.js';
@@ -265,10 +267,11 @@ function policyChecks(
   };
 }
 
-// The project's role documents and skills, judged as a run would see them.
+// The project's role documents, skills and AGENTS.md files, judged as a run
+// would see them.
 function projectChecks(
   cliConfig: CliConfigResult,
-): Pick<DoctorDeps, 'probeRoles' | 'probeSkills'> {
+): Pick<DoctorDeps, 'probeRoles' | 'probeSkills' | 'probeInstructions'> {
   const enterprisePolicy = runtimePolicy(cliConfig);
   const roleLayers = runtimeLaneDeps(cliConfig).roles?.layers;
   return {
@@ -321,6 +324,11 @@ function projectChecks(
         ...runtimeSkillsDeps(cliConfig),
         ...installedPolicyClasses(cliConfig),
       }),
+    probeInstructions: () => [
+      projectInstructionsDoctorCheck(
+        runtimeProjectInstructions(cliConfig, process.cwd()),
+      ),
+    ],
   };
 }
 

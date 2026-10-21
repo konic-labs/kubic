@@ -23,6 +23,7 @@ import { runtimeModelPin, runtimePolicy } from '../config/model-selection.js';
 import {
   installedPolicyClasses,
   runtimeLaneDeps,
+  runtimeProjectInstructions,
   runtimeSkillsDeps,
 } from '../config/projections.js';
 import { prodSetupDeps } from '../setup-prod.js';
@@ -165,5 +166,7 @@ export function configRunner(io: ProdRunnerIo): ProdRunners['config'] {
     runConfigCommand(options, {
       ...presentation(out, debug, options.json === true),
       load: kubicConfigLoader(cliConfig),
+      // The AGENTS.md search the lane boot runs, from this cwd.
+      instructions: () => runtimeProjectInstructions(cliConfig, process.cwd()),
     });
 }

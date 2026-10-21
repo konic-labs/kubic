@@ -120,6 +120,8 @@ export function tuiBootOptions(
     compaction: provided.compaction,
     // The `[agent] systemPromptFile` text `kubic run` threads.
     systemPromptSection: provided.systemPromptSection,
+    // `[agent] projectInstructions`, as `kubic run` reads it.
+    projectInstructions: provided.projectInstructions,
     // `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,

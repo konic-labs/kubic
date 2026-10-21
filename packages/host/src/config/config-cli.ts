@@ -17,6 +17,7 @@ import {
 import { formatJson } from '@kubic/core/cli/output';
 import { redactSecretShapes } from '@kubic/core/secret-shapes';
 import { type CliIo, diagnosticsOf } from '../cli/index.js';
+import type { ProjectInstructions } from '../instructions/index.js';
 import type { RuntimeConfig } from './runtime-types.js';
 import { effectiveConfigView, renderEffectiveConfig } from './runtime-view.js';
 
@@ -24,6 +25,38 @@ export interface ConfigCommandDeps extends CliIo {
   // One load, injected by the composition root: the CLI never re-derives
   // paths, trust, or env overrides of its own.
   load: () => RuntimeConfig;
+  // The AGENTS.md files a run here would load (the composition root runs the
+  // same search the lane boot runs). Absent: not reported.
+  instructions?: () => ProjectInstructions;
+}
+
+// The project instructions as `kubic config` reports them.
+function instructionsReport(instructions: ProjectInstructions): {
+  enabled: boolean;
+  loaded: Array<{ path: string; bytes: number; truncated: boolean }>;
+  skipped: Array<{ path: string; reason: string }>;
+} {
+  return {
+    enabled: instructions.enabled,
+    loaded: instructions.loaded.map((file) => ({ ...file })),
+    skipped: instructions.skipped.map((file) => ({ ...file })),
+  };
+}
+
+function instructionsLine(instructions: ProjectInstructions): string {
+  if (!instructions.enabled) {
+    return 'project instructions: off ([agent] projectInstructions = false)';
+  }
+  const loaded =
+    instructions.loaded.length === 0
+      ? 'no AGENTS.md loaded'
+      : `${instructions.loaded.length} AGENTS.md loaded: ${instructions.loaded
+          .map((file) => (file.truncated ? `${file.path} (cut)` : file.path))
+          .join(', ')}`;
+  const skipped = instructions.skipped.map(
+    (file) => `${file.path} not loaded (${file.reason})`,
+  );
+  return `project instructions: ${[loaded, ...skipped].join('; ')}`;
 }
 
 export interface ConfigCommandOptions {
@@ -48,10 +81,18 @@ export function runConfigCommand(
     return { exitCode: EXIT_FAILED };
   }
   const view = effectiveConfigView(runtime);
+  const instructions = deps.instructions?.();
   if (options.json === true) {
-    deps.out(formatJson(view));
+    deps.out(
+      formatJson(
+        instructions === undefined
+          ? view
+          : { ...view, instructions: instructionsReport(instructions) },
+      ),
+    );
     return { exitCode: EXIT_OK };
   }
   for (const line of renderEffectiveConfig(view)) deps.out(line);
+  if (instructions !== undefined) deps.out(instructionsLine(instructions));
   return { exitCode: EXIT_OK };
 }

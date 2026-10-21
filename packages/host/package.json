@@ -37,6 +37,10 @@
       "source": "./src/git/index.ts",
       "default": "./src/git/index.ts"
     },
+    "./instructions": {
+      "source": "./src/instructions/index.ts",
+      "default": "./src/instructions/index.ts"
+    },
     "./journal": {
       "source": "./src/journal/index.ts",
       "default": "./src/journal/index.ts"

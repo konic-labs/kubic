@@ -27,6 +27,7 @@ exist only for tests are tagged `@internal`.
 | `cost/` | `kubic cost`: per-session cost rows, the prompt-cache hit rate and the usage a headless run reports |
 | `doctor/` | `kubic doctor`: the checks in report order, the grouped summary, the honest-limit checks and the no-isolation notice |
 | `git/` | `kubic git` (status, log, stage, commit) over the agent's git operations |
+| `instructions/` | The project's `AGENTS.md` files a run adds to its prompt, under per-directory trust |
 | `journal/` | `kubic diff`, `undo`, `log`, `status` and `journal prune` |
 | `models/` | The model catalogue (built-ins plus `models.json`), provider probes, the `faux` testing provider, key hints and `kubic models` |
 | `policy/` | The enterprise policy: layer validation, resolution, the tool, model and provider gates, its doctor checks and `kubic policy` |

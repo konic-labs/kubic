@@ -184,6 +184,18 @@ function policyProbeChecks(
       ),
     );
   }
+  if (deps.probeInstructions !== undefined) {
+    checks.push(
+      ...probeOr(deps.probeInstructions, (error) =>
+        failedProbe(
+          'instructions',
+          'project instructions',
+          'policy-mismatch',
+          error,
+        ),
+      ),
+    );
+  }
   // Enterprise policy: the composition root builds it from the SAME
   // effective `[policy]` resolution `kubic policy` reports
   // (enterpriseDoctorChecks), and only when a `[policy]` section is actually

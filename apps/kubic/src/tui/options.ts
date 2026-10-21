@@ -191,6 +191,8 @@ export interface TuiRunOptions {
   // `kubic run` threads, so the interactive lane assembles the same
   // prompt. Absent means the lane assembles its prompt unchanged.
   systemPromptSection?: string;
+  // `[agent] projectInstructions = false`, as `kubic run` reads it.
+  projectInstructions?: boolean;
   // The `[session]` compaction policy — the same
   // projection `kubic run` threads, so the interactive lane compacts under
   // config, not the lane defaults. Absent means the own defaults.

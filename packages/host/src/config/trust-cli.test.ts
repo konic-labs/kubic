@@ -53,7 +53,7 @@ describe('kubic trust command', () => {
     const granted = harness(store, project);
     expect(runTrustCommand({}, granted.deps).exitCode).toBe(0);
     expect(granted.lines).toContain(
-      "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills",
+      "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its AGENTS.md and its project skills",
     );
     const revoked = harness(store, project);
     expect(runTrustCommand({ revoke: true }, revoked.deps).exitCode).toBe(0);

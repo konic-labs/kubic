@@ -162,6 +162,16 @@ export const CONFIG_SECTIONS = [
           'or unreadable file is a named ConfigError, never a silent skip.',
         ],
       },
+      {
+        name: 'projectInstructions',
+        check: 'boolean',
+        default: 'true',
+        runtime: {
+          effect:
+            "the trusted project's AGENTS.md files the run and tui lanes append to the system prompt (after the systemPromptFile, ahead of the skills block)",
+        },
+        example: 'true',
+      },
     ],
     docs: [
       {
@@ -171,6 +181,10 @@ export const CONFIG_SECTIONS = [
       {
         keys: ['agent.systemPromptFile'],
         text: "Prompt augmentation: a path whose contents are read at load and appended to the assembled system prompt — ahead of the skills block — for `kubic run`, `kubic tui` and the live tiers of `kubic replay`. A leading `~/` expands to the home directory; a relative path resolves against the declaring config file's directory, so the shipped example's `SYSTEM.md` travels with `example.toml`. Global-layer paths are always allowed; a project-layer path applies only when the project is trusted (an untrusted project's file is refused pre-trust with the trust message, before it is read) and must resolve inside the project root — a trusted path outside it, or a symlink whose target lies outside it, is refused by name. A missing or unreadable file is a named `ConfigError`, never a silent skip. `kubic config` reports the effective (resolved) path; the contents never render.",
+      },
+      {
+        keys: ['agent.projectInstructions'],
+        text: 'Project instructions: `kubic run` and `kubic tui` read one `AGENTS.md` per directory from the repository root down to the working directory (the working directory alone outside a repository) and append them to the system prompt, outermost first, after the `systemPromptFile` and ahead of the skills block. A file loads only when its directory is trusted (see [Project instructions](#project-instructions-agentsmd)); each one reaches the prompt up to 32 KiB, and a longer one is cut with a notice. `false` turns the search off; an enterprise `false` holds against every lower layer.',
       },
     ],
   },

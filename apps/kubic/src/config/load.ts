@@ -250,7 +250,7 @@ export async function resolveInteractiveProjectTrust(
   const lead = report.changed
     ? `Project ${report.key} changed since you trusted it. Trust it again?`
     : `Trust project ${report.key}?`;
-  const message = `${lead} This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions, journal retention and which paths the journal records; its [verify] commands run as shell commands after each run), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills, its project role documents and its [agent] systemPromptFile (instructions the model follows).`;
+  const message = `${lead} This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions, journal retention and which paths the journal records; its [verify] commands run as shell commands after each run), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills, its project role documents, its AGENTS.md and its [agent] systemPromptFile (instructions the model follows).`;
   if (deps.ask !== undefined) {
     for (;;) {
       const answer = await deps.ask({

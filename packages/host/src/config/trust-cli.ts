@@ -117,7 +117,7 @@ export function runTrustCommand(
     );
     // The grant is per project tree, not per file: say what else it unlocks.
     deps.out(
-      "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills",
+      "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its AGENTS.md and its project skills",
     );
     deps.out(
       "it covers these files as they are now: a change to any of them makes the project untrusted until you run 'kubic trust' again",

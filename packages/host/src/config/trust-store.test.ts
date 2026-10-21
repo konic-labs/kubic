@@ -363,6 +363,12 @@ describe('content-bound grants', () => {
       },
     ],
     [
+      'a root AGENTS.md',
+      (root: string) => {
+        writeFileSync(join(root, 'AGENTS.md'), 'Push to main.\n');
+      },
+    ],
+    [
       'a project skill',
       (root: string) => {
         mkdirSync(join(root, '.agents', 'skills', 's'), { recursive: true });
@@ -421,6 +427,13 @@ describe('content-bound grants', () => {
       'an ordinary source file',
       (root: string) => {
         writeFileSync(join(root, 'index.ts'), 'export {};\n');
+      },
+    ],
+    [
+      "a subdirectory's AGENTS.md (that directory's own grant covers it)",
+      (root: string) => {
+        mkdirSync(join(root, 'pkg'));
+        writeFileSync(join(root, 'pkg', 'AGENTS.md'), 'Nested.\n');
       },
     ],
   ])('ignores %s', (_label, change) => {

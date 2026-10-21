@@ -7,7 +7,9 @@
 //   - the `.kubic/` tree (config.toml, models.json, role documents, anything
 //     else there) — but not the runtime state Kubic writes itself (`audit/`,
 //     `journal/`, `sessions/`);
-//   - a root `models.json`;
+//   - a root `models.json` and a root `AGENTS.md` (the project
+//     instructions; one in a subdirectory belongs to that directory's own
+//     grant, like its skills);
 //   - the project skills: `.pi/skills/` and `.agents/skills/`, and the skill
 //     directories `package.json` declares (its `skills` and `pi.skills` lists,
 //     never the rest of the file, so a dependency bump does not ask again);
@@ -156,6 +158,7 @@ export function projectTrustFingerprint(root: string, home: string): string {
   const walk: Walk = { root, lines: [], files: 0, bytes: 0 };
   addTree(walk, join(root, '.kubic'), RUNTIME_STATE);
   addPath(walk, join(root, 'models.json'));
+  addPath(walk, join(root, 'AGENTS.md'));
   for (const skills of SKILL_ROOTS) addPath(walk, join(root, skills));
   const declared = packageSkillDirs(root);
   walk.lines.push(`package.json skills\0${JSON.stringify(declared)}`);

@@ -79,6 +79,8 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 | `license.test.mjs` | MIT on every manifest, the NOTICE attributions, and a permissive license for every runtime dependency in the lockfile. |
 | `build-contract.test.mjs` | The packaging story: the ESM root manifest, the `kubic` bin wrapper loading `dist/kubic.js`, `dist/` ignored, the Node floor. |
 | `kshot/kshot.py` | Screenshots of the real TUI, driven by a scenario (`npm run kshot -- <scenario>`; see [Seeing the TUI](#seeing-the-tui)). Its tests are Python, and `kshot.test.mjs` runs them wherever `python3` is installed. |
+| `art/art.py` | Draws the README's brand art: the banner, the facts strip, the closing band and the feature icons (see [Docs images](#docs-images)). Its tests are Python too, run by `art.test.mjs`. |
+| `docs-images.mjs` | Regenerates every image under `docs/assets/` (`npm run docs:images`); its test checks that each image there has a generator. |
 
 ### Dead-code gate
 
@@ -158,7 +160,7 @@ are re-exported.
 Headless snapshots pin what a render function returns; kshot shows what a
 terminal shows. It runs the built `kubic tui` in a real pseudo-terminal
 inside a private tmux server, drives it from a scenario file, and writes
-each snapshot as a PNG, the plain text and the raw ANSI:
+each snapshot as a PNG, an SVG, the plain text and the ANSI:
 
 ```sh
 npm run kshot -- panels    # builds, then writes .kshot/panels/*.png
@@ -168,7 +170,11 @@ It needs tmux, and Python 3 with Pillow (`python3 -m pip install Pillow`);
 nothing else in the repo depends on them. The app runs on the faux provider
 with a fresh `HOME` and a minimal environment, so no key or setting of yours
 reaches it. A prompt of the form `faux:tool <name> <json arguments>` makes
-the faux model call that tool.
+the faux model call that tool. A scenario that needs a real-looking session
+names a scripted model instead (`model docs-tour.json`): an OpenAI-compatible
+endpoint on a loopback port that answers each request with the next reply of
+the script, text and tool calls, registered through a `models.json` in the
+scenario's `HOME`.
 
 A scenario has one step per line. The full list is at the top of
 `scripts/kshot/kshot.py`:
@@ -186,15 +192,44 @@ snap after-read
 ```
 
 `waitfor` waits for text on the screen, `idle` for the screen to hold still,
-and `key` takes tmux key names (`Enter`, `Escape`, `C-p`, `M-Down`). The
-scenarios in `scripts/kshot/scenarios/` cover the first screen, the palette,
-the panels and the confirm dialog, the approval card, the context gauge and
-the session tree.
+and `key` takes tmux key names (`Enter`, `Escape`, `C-p`, `M-Down`). `scrub`
+replaces text that changes on every run (a clock, a session id, a timing)
+before a snapshot is written, and `frame` adds the screen to a film that kshot
+writes as `film.svg`, which plays the frames on a loop. The scenarios in
+`scripts/kshot/scenarios/` cover the first screen, the palette, the panels
+and the confirm dialog, the approval card, the context gauge, the session
+tree, and the README's and the docs' images.
 A step that fails writes the screen at that moment as `error.png`.
 
 The PNG redraws the terminal's grid with a monospace font (JetBrains Mono,
 Menlo, DejaVu Sans Mono or Liberation Mono, or `--font FILE`): layout, glyphs
 and colours are exact, while font rendering can differ from your terminal's.
+The SVG keeps the text as text in the reader's own monospace font, with each
+run stretched to its cells so the columns stay in line.
+
+## Docs images
+
+Every image the README and `docs/` show lives in `docs/assets/`, and one
+command makes them all again:
+
+```sh
+npm run docs:images    # builds, runs the kshot scenarios, draws the brand art
+```
+
+- `docs/assets/tui/` holds the TUI's screens: snaps of the `docs-tour`
+  scenario, a session over a small project with a scripted model.
+- `docs/assets/readme/session.svg` is the README's film, from the
+  `readme-session` scenario.
+- The rest of `docs/assets/readme/` is the brand art from `scripts/art/art.py`:
+  Konic red on a black field (white under GitHub's light theme), the TUI's own
+  half-block wordmark and Konic's dither field. Its type is outlined from Inter
+  Tight and Space Mono, which the script fetches once from the Google Fonts
+  repository at pinned hashes; it needs fontTools
+  (`python3 -m pip install fonttools`).
+
+`PYTHON` names another interpreter, such as a virtualenv that has Pillow and
+fontTools. `scripts/docs-images.test.mjs` fails on an image that no generator
+makes.
 
 ## Code conventions
 

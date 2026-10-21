@@ -1,4 +1,4 @@
-"""kshot's scenario, colour and screen parsing, and its font choice.
+"""kshot's scenario, colour and screen parsing, its scrubs and its font choice.
 
 These run without tmux or Pillow (scripts/kshot.test.mjs runs them in
 `npm run check`): drawing the PNG is covered by running a scenario.
@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 import kshot
+import model
 
 
 class ScenarioTest(unittest.TestCase):
@@ -40,6 +41,15 @@ class ScenarioTest(unittest.TestCase):
             'type hi\nstart x\n': 'line 1: type needs the app',
             'start x\nstart y\n': 'line 2: the app is already started',
             'start x\nsize 80 24\n': 'line 2: size must come before start',
+            'start x\nmodel m.json\n': 'line 2: model must come before start',
+            'model a.json\nmodel b.json\nstart x\n':
+                'line 2: the scenario already has a model',
+            'start x\nframe soon\n': 'line 2: frame takes how long',
+            'start x\nframe 0\n': 'line 2: frame takes how long',
+            'frame 100\nstart x\n': 'line 1: frame needs the app',
+            'scrub 12:34\nstart x\n': 'line 1: scrub takes REGEX => TEXT',
+            'scrub ( => x\nstart x\n': "line 1: scrub: '(' is not a regex",
+            'start x\nsnap film\n': "line 2: the snap name 'film' is kept",
             'sh true\n': 'the scenario never starts the app',
         }
         for text, message in cases.items():
@@ -71,9 +81,25 @@ class ScenarioTest(unittest.TestCase):
 
     def test_every_shipped_scenario_parses(self):
         for name in os.listdir(kshot.SCENARIOS):
+            if not name.endswith('.kshot'):
+                continue
             with self.subTest(name=name):
                 with open(os.path.join(kshot.SCENARIOS, name)) as handle:
                     self.assertTrue(kshot.parse_scenario(handle.read()))
+
+    def test_every_shipped_model_script_loads(self):
+        for name in os.listdir(kshot.SCENARIOS):
+            if not name.endswith('.json'):
+                continue
+            with self.subTest(name=name):
+                with open(os.path.join(kshot.SCENARIOS, name)) as handle:
+                    self.assertTrue(model.load_script(handle.read())['replies'])
+
+    def test_a_scrub_keeps_its_regex_and_its_text(self):
+        steps = kshot.parse_scenario('scrub \\d\\d:\\d\\d => 09:41\nstart x\n')
+        pattern, text = kshot.parse_scrub(steps[0][2])
+        self.assertTrue(pattern.search('at 05:04'))
+        self.assertEqual(text, '09:41')
 
 
 class ColourTest(unittest.TestCase):
@@ -127,6 +153,37 @@ class ScreenTest(unittest.TestCase):
         text = 'é \x1b]8;;https://example.com\x07link\x1b]8;;\x07'
         row = kshot.parse_screen(text, 8, 1)[0]
         self.assertEqual(''.join(cell[0] for cell in row[:6]), 'e link')
+
+    def test_a_scrub_overwrites_in_place_and_keeps_the_styles(self):
+        grid = kshot.parse_screen(
+            '\x1b[2msession 01a1…00f4\x1b[0m │ 05:04', 30, 1)
+        kshot.scrub_grid(grid, [
+            kshot.parse_scrub(r'\w{4}…\w{4} => 0193…a7c2'),
+            kshot.parse_scrub(r'(\d\d):\d\d => \1:41'),
+            kshot.parse_scrub('session => id'),
+        ])
+        self.assertEqual(kshot.grid_text(grid), '     id 0193…a7c2 │ 05:41\n')
+        self.assertTrue(grid[0][10][1].dim)
+        self.assertFalse(grid[0][22][1].dim)
+
+    def test_a_longer_scrub_keeps_its_end(self):
+        grid = kshot.parse_screen('read · 1ms', 12, 1)
+        kshot.scrub_grid(grid, [kshot.parse_scrub(r'\b\d+ms\b => 12ms')])
+        self.assertEqual(kshot.grid_text(grid), 'read · 2ms\n')
+
+    def test_a_grid_written_back_as_ansi_reads_the_same(self):
+        grid = kshot.parse_screen(
+            '\x1b[1;38;2;255;0;77mKUBIC\x1b[0m a张b \x1b[7;48;5;196mx', 12, 2)
+        again = kshot.parse_screen(kshot.grid_ansi(grid).rstrip('\n'), 12, 2)
+        self.assertEqual(kshot.grid_text(again), kshot.grid_text(grid))
+        for row, other in zip(grid, again):
+            for cell, copy in zip(row, other):
+                if cell is None:
+                    self.assertIsNone(copy)
+                    continue
+                for name in kshot.Style.__slots__:
+                    self.assertEqual(getattr(cell[1], name),
+                                     getattr(copy[1], name), name)
 
 
 class FontTest(unittest.TestCase):

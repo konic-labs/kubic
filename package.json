@@ -34,7 +34,8 @@
     "check:pins": "node scripts/check-pinned-deps.mjs",
     "check:gates": "node --test \"scripts/*.test.mjs\"",
     "docs:check": "node scripts/check-docs-links.mjs && node scripts/gen-config-docs.mjs --check",
-    "docs:config": "node scripts/gen-config-docs.mjs"
+    "docs:config": "node scripts/gen-config-docs.mjs",
+    "docs:images": "node scripts/docs-images.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

@@ -1,0 +1,52 @@
+# The screenshots in docs/: the first screen, a finished turn, the diff and
+# journal panels, an approval card, the session tree and the palette, over
+# the same small project and scripted model as the README's film.
+size 100 32
+model docs-tour.json
+sh sh $REPO/scripts/kshot/scenarios/acme-web.sh $KHOME/code/acme-web
+scrub \d\d:\d\d:\d\d => 09:41:07
+scrub \b\d\d:\d\d\b => 09:41
+scrub [0-9a-z]{4}…[0-9a-z]{4} => 0193…a7c2
+scrub turn \d+(\.\d+)?s => turn 4.6s
+scrub \b\d+ms\b => 12ms
+scrub Working · \d+:\d\d => Working · 0:02
+scrub [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] => ⠏
+start sh -c 'cd $KHOME/code/acme-web && exec node $REPO/bin/kubic.js tui'
+waitfor PREFLIGHT
+idle
+snap first-screen
+type make slugify handle accents, then run the tests
+key Enter
+waitfor review diff 20000
+idle 600
+snap session
+key C-o
+idle
+snap diff-panel
+key C-r
+idle
+snap journal-panel
+key Escape
+idle
+type clear the build output
+key Enter
+waitfor APPROVAL 15000
+idle 900
+snap approval-card
+key Escape
+waitfor stays as it is 15000
+idle 600
+type what does slugify return for an empty title?
+key Enter
+waitfor returns '' 15000
+idle 600
+type /tree
+key Enter
+waitfor Session tree
+idle
+snap session-tree
+key Escape
+idle
+key C-p
+idle
+snap palette

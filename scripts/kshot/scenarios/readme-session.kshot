@@ -1,0 +1,50 @@
+# The README's film: a scripted model fixes a slugify bug in a small
+# project (read, edit, run the test), then the diff panel and /undo.
+size 100 32
+model readme-session.json
+sh sh $REPO/scripts/kshot/scenarios/acme-web.sh $KHOME/code/acme-web
+scrub \d\d:\d\d:\d\d => 09:41:07
+scrub \b\d\d:\d\d\b => 09:41
+scrub [0-9a-z]{4}…[0-9a-z]{4} => 0193…a7c2
+scrub turn \d+(\.\d+)?s => turn 4.6s
+scrub \b\d+ms\b => 12ms
+scrub Working · \d+:\d\d => Working · 0:02
+scrub [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] => ⠏
+start sh -c 'cd $KHOME/code/acme-web && exec node $REPO/bin/kubic.js tui'
+waitfor PREFLIGHT
+idle
+frame 2200
+type make slugify
+frame 140
+key Space
+type handle accents,
+frame 140
+key Space
+type then run the tests
+idle
+frame 900
+key Enter
+waitfor 6 lines 15000
+frame 1100
+waitfor normalize 15000
+wait 150
+frame 1300
+waitfor 2 passed 15000
+frame 1100
+waitfor review diff 20000
+idle 600
+frame 3200
+snap answered
+key C-o
+idle
+frame 3200
+snap diff
+key Escape
+idle
+type /undo
+frame 700
+key Enter
+waitfor restored
+idle 600
+frame 2600
+snap undone

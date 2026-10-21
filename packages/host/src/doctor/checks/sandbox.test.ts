@@ -23,4 +23,16 @@ describe('sandboxDoctorCheck', () => {
       status: 'warn',
     });
   });
+
+  it('says why an installed sandbox cannot start', () => {
+    expect(
+      sandboxDoctorCheck(
+        'auto',
+        undefined,
+        'bubblewrap cannot start a sandbox here (it needs unprivileged user namespaces): bwrap: setting up uid map: Permission denied',
+      ).detail,
+    ).toBe(
+      'auto, but bubblewrap cannot start a sandbox here (it needs unprivileged user namespaces): bwrap: setting up uid map: Permission denied: bash commands run unconfined',
+    );
+  });
 });

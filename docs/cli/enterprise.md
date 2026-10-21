@@ -349,7 +349,8 @@ Only clients that honour the proxy variables use it (curl, git, npm, pip
 and most others do). With `[sandbox]` on macOS the proxy's port is the one
 connection a sandboxed command can open, so a client that ignores the
 variables reaches nothing; under bubblewrap on Linux the network stays
-shared so the proxy is reachable, and the variables are the control.
+shared so the proxy is reachable, and the variables are the control (local
+sockets stay closed).
 Loopback (`localhost`, `127.0.0.1`) is left out of the proxy (`NO_PROXY`).
 Kubic's own model traffic goes to its provider directly, not through the
 proxy. `kubic doctor` passes `policy:enterprise-network` when the proxy
@@ -375,24 +376,40 @@ sandbox a command:
   (read from the enterprise, product and global layers only), or anywhere
   under `filesystem = "full"`;
 - opens no network connection — interpreters included — unless the network
-  class is `full`;
+  class is `full`. Local (Unix) sockets count as connections, so a command
+  cannot reach a service outside the sandbox through one: the Docker daemon,
+  an SSH or GPG agent, the session bus, a terminal multiplexer. Seatbelt
+  rules them network; under bubblewrap a seccomp filter refuses to create
+  one (on x86-64 and arm64), while a socket pair between a command and its
+  own children still works;
 - cannot read the credential paths: `~/.ssh`, `~/.aws`, `~/.azure`,
   `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.gnupg`, `~/.netrc`,
   `~/.git-credentials`, `~/.config/gh`, `~/.npmrc`, `~/.pypirc`,
   `~/.cargo/credentials.toml`, `~/.terraform.d/credentials.tfrc.json` and
-  `~/.pi`.
+  `~/.pi`;
+- on macOS, cannot reach the keychain, where `kubic keys` keeps provider
+  keys.
 
 Approvals stay: a call the approval ask approved for `network` runs with the
-network, and one approved for `credentials` can read the credential paths —
-exactly that call, nothing else. `kubic doctor` reports the sandbox in use as
-`sandbox`, or why bash runs unconfined.
+network, local sockets included (under the egress proxy, an approval opens
+nothing more), and one approved for `credentials` can read the credential
+paths and the keychain — exactly that call, nothing else. A
+keychain read (`security find-generic-password`, `secret-tool lookup`) asks
+for `credentials`. `kubic doctor` reports the sandbox in use as `sandbox`, or
+why bash runs unconfined.
 
 What the sandbox does not cover, stated plainly: only the bash tool's
 commands are wrapped. Kubic's own process, its file tools (`write`, `edit`,
 which the lexical confinement and the approvals guard), the git tools, the
 gate commands, admin hooks and MCP servers run with your authority. On Linux
 the sandbox needs bubblewrap and unprivileged user namespaces; Landlock is
-not used, so a Linux machine without bubblewrap has no sandbox. A command
+not used, so a Linux machine without bubblewrap has no sandbox. Kubic checks
+that bubblewrap can start before using it: where unprivileged user
+namespaces are restricted (AppArmor on Ubuntu 24.04 and later), `auto` runs
+unconfined and `required` refuses, and `kubic doctor` shows bubblewrap's own
+error — allow it with an AppArmor profile for `bwrap`. With the network open
+under bubblewrap, local sockets open with it, the session bus and the Secret
+Service on it included. A command
 that needs to write outside the allowed paths (a global package cache) fails
 inside the sandbox until `writable` names the path.
 

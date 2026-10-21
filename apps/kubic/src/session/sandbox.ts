@@ -1,8 +1,8 @@
 // The boot's sandbox step: under `[sandbox] mode = "auto"` or `"required"`,
 // the bash tool's commands run in this machine's OS sandbox, from the
 // installed permission classes; each approved call gets the access it was
-// approved for. Without a sandbox, `required` refuses the boot and `auto`
-// says so once and runs unconfined.
+// approved for. Without a sandbox that starts, `required` refuses the boot
+// and `auto` says why once and runs unconfined.
 
 import { homedir } from 'node:os';
 import { effectiveNetworkLevel } from '@kubic/agent/permissions';
@@ -22,16 +22,15 @@ export function bootSandbox(
   const config = boot.config.sandbox;
   if (config === undefined || config.mode === 'off') return env;
   const found = detectSandbox();
-  if (found === undefined) {
+  if (found.kind === undefined) {
     if (config.mode === 'required') {
       return {
         kind: 'failed',
-        message:
-          'sandbox: [sandbox] mode = "required", but this machine has no sandbox (Seatbelt on macOS, bubblewrap on Linux)',
+        message: `sandbox: [sandbox] mode = "required", but ${found.unavailable}`,
       };
     }
     boot.sinks.warn(
-      'sandbox: [sandbox] mode = "auto", but this machine has no sandbox: bash commands run unconfined',
+      `sandbox: [sandbox] mode = "auto", but ${found.unavailable}: bash commands run unconfined`,
     );
     return env;
   }

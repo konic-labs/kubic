@@ -1,7 +1,7 @@
-// `[sandbox]` on `kubic run` (macOS, Seatbelt): a bash command opens no
-// connection, while a call the approval approved for `network` gets exactly
-// the network; the workspace stays writable. Faux provider, a loopback
-// server as the far end.
+// `[sandbox]` on `kubic run` (Seatbelt on macOS, bubblewrap on Linux): a
+// bash command opens no connection, while a call the approval approved for
+// `network` gets exactly the network; the workspace stays writable. Faux
+// provider, a loopback server as the far end.
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -62,7 +62,7 @@ async function bashRun(command: string, deps: Partial<HeadlessRunDeps> = {}) {
   return { result, workspace, output: seen.join('\n') };
 }
 
-describe.skipIf(detectSandbox()?.kind !== 'seatbelt')(
+describe.skipIf(detectSandbox().kind === undefined)(
   'kubic run with [sandbox] mode = "auto"',
   () => {
     it('writes in the workspace and opens no connection', async () => {
@@ -71,7 +71,9 @@ describe.skipIf(detectSandbox()?.kind !== 'seatbelt')(
       );
       expect(run.result.terminus).toBe('completed');
       expect(existsSync(join(run.workspace, 'made.txt'))).toBe(true);
-      expect(run.output).toContain('net:EPERM');
+      // Seatbelt refuses the connection; bubblewrap's own network namespace
+      // has nothing listening.
+      expect(run.output).toMatch(/net:(EPERM|ECONNREFUSED)/);
     });
 
     it('gives a call approved for network exactly the network', async () => {

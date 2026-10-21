@@ -18,6 +18,7 @@ import {
   type SandboxPolicy,
   seatbeltProfile,
 } from './sandbox.js';
+import { unixSocketFilter } from './seccomp-filter.js';
 
 let server: Server | undefined;
 
@@ -63,6 +64,20 @@ describe('seatbeltProfile', () => {
       '(allow file-write*)\n',
     );
   });
+
+  it('keeps the keychain closed unless the call was approved for credentials', () => {
+    const keychain =
+      '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))';
+    const profile = seatbeltProfile(POLICY);
+    // After the blanket mach-lookup allow, so it wins.
+    expect(profile.indexOf(keychain)).toBeGreaterThan(
+      profile.indexOf('(allow mach-lookup)'),
+    );
+    expect(seatbeltProfile(POLICY, { network: true })).toContain(keychain);
+    expect(seatbeltProfile(POLICY, { credentials: true })).not.toContain(
+      keychain,
+    );
+  });
 });
 
 describe('bubblewrapArgs', () => {
@@ -73,9 +88,10 @@ describe('bubblewrapArgs', () => {
       'bash',
       ['-c', 'true'],
     );
-    expect(args.slice(0, 6)).toEqual([
+    expect(args.slice(0, 7)).toEqual([
       '--die-with-parent',
       '--new-session',
+      '--unshare-pid',
       '--ro-bind',
       '/',
       '/',
@@ -87,6 +103,110 @@ describe('bubblewrapArgs', () => {
       '--unshare-net',
     );
   });
+
+  it('loads the Unix-socket filter from fd 3 unless the network is open', () => {
+    const closed = bubblewrapArgs(POLICY, {}, 'bash', []);
+    expect(closed.join(' ')).toContain('--seccomp 3');
+    // The egress proxy shares the network, but local sockets stay closed,
+    // an approved call's included.
+    expect(
+      bubblewrapArgs({ ...POLICY, proxyPort: 8080 }, {}, 'bash', []),
+    ).toContain('--seccomp');
+    expect(
+      bubblewrapArgs(
+        { ...POLICY, proxyPort: 8080 },
+        { network: true },
+        'bash',
+        [],
+      ),
+    ).toContain('--seccomp');
+    expect(bubblewrapArgs(POLICY, { network: true }, 'bash', [])).not.toContain(
+      '--seccomp',
+    );
+    expect(
+      bubblewrapArgs({ ...POLICY, network: true }, {}, 'bash', []),
+    ).not.toContain('--seccomp');
+  });
+});
+
+describe('BashSandbox', () => {
+  const sandbox = (grants: SandboxGrants) =>
+    new BashSandbox({
+      kind: 'bubblewrap',
+      binary: '/usr/bin/bwrap',
+      policy: () => POLICY,
+      grants: () => grants,
+    });
+
+  it('hands bubblewrap the filter it loads, while the network is closed', () => {
+    const closed = sandbox({}).wrap('bash', ['-c', 'true'], 'call-1');
+    expect(closed.cmd).toBe('/usr/bin/bwrap');
+    expect(closed.seccomp?.length).toBeGreaterThan(0);
+    expect(
+      sandbox({ network: true }).wrap('bash', [], 'call-1').seccomp,
+    ).toBeUndefined();
+  });
+});
+
+describe('NodeShell under bubblewrap', () => {
+  it("writes the seccomp filter to the wrapped command's fd 3", async () => {
+    // A stand-in bwrap that ignores its flags and counts what fd 3 carries.
+    const fake = join(tempDir('sandbox-fake-bwrap-'), 'bwrap');
+    writeFileSync(fake, '#!/bin/sh\nwc -c <&3\n', { mode: 0o755 });
+    const workspace = tempDir('sandbox-fd3-ws-');
+    const shell = new NodeShell(workspace, {
+      sandbox: new BashSandbox({
+        kind: 'bubblewrap',
+        binary: fake,
+        policy: () => ({ ...POLICY, workspace }),
+      }),
+    });
+    const result = await shell
+      .spawn('/bin/bash', ['-c', 'true'], {
+        provenance: {
+          sessionId: 's',
+          agentId: 'root',
+          toolCallId: 'call-1',
+          turnId: 1,
+          operation: 'bash',
+        },
+      })
+      .wait();
+    expect(result.stdout.trim()).toBe(String(unixSocketFilter()?.length));
+  });
+});
+
+describe('detectSandbox', () => {
+  it('offers the sandbox this machine has when it can start one', () => {
+    expect(detectSandbox('darwin', {}, () => undefined)).toEqual({
+      kind: 'seatbelt',
+      binary: '/usr/bin/sandbox-exec',
+    });
+  });
+
+  it('says why when the sandbox is there but cannot start', () => {
+    const bin = tempDir('sandbox-detect-bin-');
+    writeFileSync(join(bin, 'bwrap'), '');
+    const found = detectSandbox(
+      'linux',
+      { PATH: bin },
+      () => 'bwrap: setting up uid map: Permission denied',
+    );
+    expect(found.kind).toBeUndefined();
+    expect(found).toMatchObject({
+      unavailable:
+        'bubblewrap cannot start a sandbox here (it needs unprivileged user namespaces): bwrap: setting up uid map: Permission denied',
+    });
+  });
+
+  it('says so when the machine has none', () => {
+    expect(detectSandbox('linux', { PATH: '' }, () => undefined)).toEqual({
+      kind: undefined,
+      unavailable:
+        'this machine has no sandbox (Seatbelt on macOS, bubblewrap on Linux)',
+    });
+    expect(detectSandbox('win32', {}, () => undefined).kind).toBeUndefined();
+  });
 });
 
 // Runs `command` through the sandbox the way the bash tool does.
@@ -96,7 +216,7 @@ async function sandboxed(
   grants: SandboxGrants = {},
 ): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   const found = detectSandbox();
-  if (found === undefined) throw new Error('no sandbox');
+  if (found.kind === undefined) throw new Error(found.unavailable);
   const shell = new NodeShell(policy.workspace, {
     sandbox: new BashSandbox({
       kind: found.kind,
@@ -123,8 +243,8 @@ async function sandboxed(
   };
 }
 
-describe.skipIf(detectSandbox()?.kind !== 'seatbelt')(
-  'Seatbelt, for real',
+describe.skipIf(detectSandbox().kind === undefined)(
+  'the OS sandbox, for real',
   () => {
     function policyFor(): {
       policy: SandboxPolicy;
@@ -181,6 +301,23 @@ describe.skipIf(detectSandbox()?.kind !== 'seatbelt')(
       const { port } = (server as Server).address() as AddressInfo;
       const { policy } = policyFor();
       const probe = `${process.execPath} -e "require('net').connect(${port},'127.0.0.1').on('data',d=>{process.stdout.write(String(d));process.exit(0)}).on('error',e=>{console.log(e.code);process.exit(3)})"`;
+      const refused = await sandboxed(policy, probe);
+      expect(refused.exitCode).toBe(3);
+      // Seatbelt refuses the connection; bubblewrap's own network namespace
+      // has nothing listening.
+      expect(refused.stdout).toMatch(/EPERM|ECONNREFUSED/);
+      const approved = await sandboxed(policy, probe, { network: true });
+      expect(approved.stdout).toContain('hello');
+    });
+
+    it('reaches no local socket outside the sandbox unless approved', async () => {
+      const socket = join(tempDir('sandbox-sock-'), 's.sock');
+      server = createServer((connection) => connection.end('hello\n'));
+      await new Promise<void>((resolve) =>
+        (server as Server).listen(socket, resolve),
+      );
+      const { policy } = policyFor();
+      const probe = `${process.execPath} -e "require('net').connect('${socket}').on('data',d=>{process.stdout.write(String(d));process.exit(0)}).on('error',e=>{console.log(e.code);process.exit(3)})"`;
       const refused = await sandboxed(policy, probe);
       expect(refused.exitCode).toBe(3);
       expect(refused.stdout).toContain('EPERM');

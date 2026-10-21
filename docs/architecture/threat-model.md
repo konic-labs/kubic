@@ -35,8 +35,9 @@ and Kubic's own control plane; in a run without a terminal a challenged call
 is refused unless a broker, a pre-approval file or `autoApprove` answers it.
 The change journal records every write and `kubic undo` reverts it. Admin
 hooks can refuse calls by the organization's own rules. With `[sandbox]`, the
-bash tool's commands cannot write outside the workspace, open connections or
-read the credential paths, beyond what an approved call was approved for.
+bash tool's commands cannot write outside the workspace, open connections
+(local sockets included) or read the credential paths and the macOS
+keychain, beyond what an approved call was approved for.
 With the egress proxy, they reach only the allowed domains.
 
 **A malicious repository**. Its configuration, model providers, roles,

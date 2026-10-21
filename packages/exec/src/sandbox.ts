@@ -4,21 +4,32 @@
 //
 // - writes: the workspace, the temporary directories and the configured
 //   extra paths (anywhere under `filesystem = "full"`);
-// - network: none unless the class is `full`;
-// - the credential paths (~/.ssh, ~/.aws, …) unreadable.
+// - network: none unless the class is `full`, local (Unix) sockets included —
+//   Seatbelt rules them network, and under bubblewrap a seccomp filter
+//   refuses them;
+// - the credential paths (~/.ssh, ~/.aws, …) unreadable, and the macOS
+//   keychain closed.
 //
 // A call the approval ask approved runs with exactly the extra access it was
 // approved for: the network for a `network` approval, the credential paths
-// for a `credentials` one. Only the bash tool's commands are wrapped; Kubic's
-// own process and the other spawns (git probes, gate commands) are not.
+// and the keychain for a `credentials` one. Only the bash tool's commands are
+// wrapped; Kubic's own process and the other spawns (git probes, gate
+// commands) are not.
 //
 // Lives in exec: only packages/exec spawns processes and reads the disk.
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { unixSocketFilter } from './seccomp-filter.js';
 
 export type SandboxKind = 'seatbelt' | 'bubblewrap';
+
+/** The sandbox this machine offers, or why it offers none. */
+export type SandboxDetection =
+  | { readonly kind: SandboxKind; readonly binary: string }
+  | { readonly kind: undefined; readonly unavailable: string };
 
 export interface SandboxPolicy {
   readonly workspace: string;
@@ -81,10 +92,48 @@ function onPath(binary: string, env: NodeJS.ProcessEnv): string | undefined {
   return undefined;
 }
 
-/** The sandbox this machine offers, or undefined. */
-export function detectSandbox(
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
+// The flags every bubblewrap sandbox starts with: a new session (no
+// terminal injection), its own PID namespace (which mounting /proc needs),
+// and gone with Kubic.
+const BWRAP_BASE = ['--die-with-parent', '--new-session', '--unshare-pid'];
+
+/**
+ * Why `binary` cannot start a sandbox on this machine — bubblewrap without
+ * unprivileged user namespaces, Seatbelt inside another sandbox — or
+ * undefined when it can.
+ */
+function startFailure(kind: SandboxKind, binary: string): string | undefined {
+  const args =
+    kind === 'seatbelt'
+      ? ['-p', '(version 1)(allow default)', '/usr/bin/true']
+      : [
+          ...BWRAP_BASE,
+          '--ro-bind',
+          '/',
+          '/',
+          '--dev',
+          '/dev',
+          '--proc',
+          '/proc',
+          '--unshare-net',
+          '--',
+          'true',
+        ];
+  const result = spawnSync(binary, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'ignore', 'pipe'],
+    timeout: 10_000,
+  });
+  if (result.status === 0) return undefined;
+  return (
+    result.stderr?.trim().split('\n')[0] ||
+    (result.error?.message ?? `exit ${result.status ?? result.signal}`)
+  );
+}
+
+function installedSandbox(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
 ): { readonly kind: SandboxKind; readonly binary: string } | undefined {
   if (platform === 'darwin' && existsSync(SANDBOX_EXEC)) {
     return { kind: 'seatbelt', binary: SANDBOX_EXEC };
@@ -96,9 +145,42 @@ export function detectSandbox(
   return undefined;
 }
 
+/** The sandbox this machine offers, or why it offers none. */
+export function detectSandbox(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  probe: (
+    kind: SandboxKind,
+    binary: string,
+  ) => string | undefined = startFailure,
+): SandboxDetection {
+  const found = installedSandbox(platform, env);
+  if (found === undefined) {
+    return {
+      kind: undefined,
+      unavailable:
+        'this machine has no sandbox (Seatbelt on macOS, bubblewrap on Linux)',
+    };
+  }
+  const failure = probe(found.kind, found.binary);
+  if (failure === undefined) return found;
+  return {
+    kind: undefined,
+    unavailable:
+      found.kind === 'bubblewrap'
+        ? `bubblewrap cannot start a sandbox here (it needs unprivileged user namespaces): ${failure}`
+        : `Seatbelt cannot start a sandbox here: ${failure}`,
+  };
+}
+
 function temporaryDirs(): string[] {
   return [...new Set([real(tmpdir()), real('/tmp')])];
 }
+
+// The keychain services: the file keychains' (SecurityServer) and the data
+// protection keychain's (securityd).
+const KEYCHAIN_CLOSED =
+  '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))';
 
 // SBPL string literal.
 function quoted(path: string): string {
@@ -137,6 +219,8 @@ export function seatbeltProfile(
     '(allow process-info* (target same-sandbox))',
     '(allow sysctl-read)',
     '(allow mach-lookup)',
+    // The keychain is a credential store reached over Mach, not a path.
+    ...(grants.credentials === true ? [] : [KEYCHAIN_CLOSED]),
     '(allow ipc-posix-shm)',
     '(allow iokit-open)',
     '(allow file-ioctl (regex #"^/dev/tty"))',
@@ -150,6 +234,24 @@ export function seatbeltProfile(
     '',
   ].join('\n');
 }
+
+// The seccomp filter a bubblewrap command loads: the Unix-socket one unless
+// the network is open — by the class or by its call's approval — and no
+// egress proxy stands in for it (as under Seatbelt, where the proxy's port is
+// then the one connection).
+function socketFilter(
+  policy: SandboxPolicy,
+  grants: SandboxGrants,
+): Uint8Array | undefined {
+  const open =
+    policy.proxyPort === undefined &&
+    (policy.network || grants.network === true);
+  return open ? undefined : unixSocketFilter();
+}
+
+// The fd bubblewrap reads the filter from: `BashSandbox.wrap` returns it as
+// `seccomp`, and the shell writes it to the spawned command's fd 3.
+const SECCOMP_FD = '3';
 
 /**
  * The bubblewrap arguments that run `cmd args` sandboxed.
@@ -173,8 +275,7 @@ export function bubblewrapArgs(
     .filter((path) => existsSync(path))
     .flatMap((path) => ['--bind', path, path]);
   return [
-    '--die-with-parent',
-    '--new-session',
+    ...BWRAP_BASE,
     ...(policy.writeAnywhere ? ['--bind', '/', '/'] : ['--ro-bind', '/', '/']),
     '--dev',
     '/dev',
@@ -196,6 +297,9 @@ export function bubblewrapArgs(
     policy.proxyPort !== undefined
       ? []
       : ['--unshare-net']),
+    ...(socketFilter(policy, grants) === undefined
+      ? []
+      : ['--seccomp', SECCOMP_FD]),
     '--chdir',
     policy.workspace,
     '--',
@@ -227,12 +331,19 @@ export class BashSandbox {
     this.grants = options.grants ?? (() => ({}));
   }
 
-  /** The command to spawn instead of `cmd args`. */
+  /**
+   * The command to spawn instead of `cmd args`, and the seccomp filter to
+   * write to its fd 3, which bubblewrap loads from there.
+   */
   wrap(
     cmd: string,
     args: readonly string[],
     toolCallId: string,
-  ): { readonly cmd: string; readonly args: string[] } {
+  ): {
+    readonly cmd: string;
+    readonly args: string[];
+    readonly seccomp?: Uint8Array;
+  } {
     const policy = this.policy();
     if (policy === undefined) return { cmd, args: [...args] };
     const grants = this.grants(toolCallId);
@@ -242,9 +353,11 @@ export class BashSandbox {
         args: ['-p', seatbeltProfile(policy, grants), cmd, ...args],
       };
     }
+    const seccomp = socketFilter(policy, grants);
     return {
       cmd: this.binary,
       args: bubblewrapArgs(policy, grants, cmd, args),
+      ...(seccomp === undefined ? {} : { seccomp }),
     };
   }
 }

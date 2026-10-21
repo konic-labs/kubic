@@ -3,6 +3,7 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
+import type { Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import type { BashSandbox } from '../sandbox.js';
 import type {
@@ -194,11 +195,11 @@ export class NodeShell implements Shell {
     // The bash tool's commands run inside the sandbox; every other spawn
     // (git probes, gate commands) runs as is.
     const sandbox = this.options.sandbox;
-    const wrapped =
+    const wrapped: ReturnType<BashSandbox['wrap']> =
       sandbox !== undefined && options.provenance?.operation === 'bash'
         ? sandbox.wrap(command, commandArgs, options.provenance.toolCallId)
         : { cmd: command, args: commandArgs };
-    const { cmd, args } = wrapped;
+    const { cmd, args, seccomp } = wrapped;
     // Detached process group: kill() signals the whole group so spawned
     // grandchildren die too (leak cleanup) — no orphans.
     // Stdin is 'ignore' — a stdin reader (cat, read -p, a
@@ -210,8 +211,19 @@ export class NodeShell implements Shell {
       detached: groups,
       // An explicit allowlisted env, never the inherited one.
       env: { ...toolSpawnEnv(), ...this.options.toolEnv },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // The sandbox's seccomp filter goes in on fd 3, where bubblewrap reads
+      // it before the command starts.
+      stdio:
+        seccomp === undefined
+          ? ['ignore', 'pipe', 'pipe']
+          : ['ignore', 'pipe', 'pipe', 'pipe'],
     });
+    if (seccomp !== undefined) {
+      const filter = child.stdio[3] as Writable | null;
+      // A sandbox that fails to start never reads it: its exit says why.
+      filter?.on('error', () => {});
+      filter?.end(seccomp);
+    }
     const run = new ShellRun(child, options, groups);
     return {
       pid: child.pid,

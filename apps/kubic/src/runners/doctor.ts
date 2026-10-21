@@ -343,12 +343,16 @@ function projectChecks(
     windowsBash: () =>
       process.platform === 'win32' ? windowsBash()?.kind : undefined,
     // The bash sandbox: the configured mode and what this machine offers.
-    probeSandbox: () => [
-      sandboxDoctorCheck(
-        cliConfig.runtime?.sandbox.mode ?? 'off',
-        detectSandbox()?.kind,
-      ),
-    ],
+    probeSandbox: () => {
+      const found = detectSandbox();
+      return [
+        sandboxDoctorCheck(
+          cliConfig.runtime?.sandbox.mode ?? 'off',
+          found.kind,
+          found.kind === undefined ? found.unavailable : undefined,
+        ),
+      ];
+    },
     probeInstructions: () => [
       projectInstructionsDoctorCheck(
         runtimeProjectInstructions(cliConfig, process.cwd()),

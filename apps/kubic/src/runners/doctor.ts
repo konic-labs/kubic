@@ -123,19 +123,23 @@ export function doctorRunner(io: ProdRunnerIo): ProdRunners['doctor'] {
   };
 }
 
-// The providers, the models on the fallback window, and the room a
-// compaction leaves.
+// The providers, the models on the fallback window, the keys sent over plain
+// http, and the room a compaction leaves.
 function modelChecks(
   assembled: AssembledModels,
   cliConfig: CliConfigResult,
 ): Pick<
   DoctorDeps,
-  'probeProviders' | 'probeModelWindows' | 'probeContextRoom'
+  | 'probeProviders'
+  | 'probeModelWindows'
+  | 'probePlaintextKeys'
+  | 'probeContextRoom'
 > {
   return {
     probeProviders: () => providerProbesOf(assembled),
     // Models on the fallback window: one warning each, naming the key.
     probeModelWindows: () => assembled.defaultedWindows,
+    probePlaintextKeys: () => assembled.plaintextKeys,
     // The room a compaction leaves for the models the user can configure,
     // from the configured keys the lane boots with (absent: the defaults)
     // and the default model the configuration pins.

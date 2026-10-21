@@ -6,6 +6,7 @@ import {
 } from './checks/environment.js';
 import {
   modelWindowChecks,
+  plaintextKeyChecks,
   probeMessage,
   providerChecks,
   roomChecks,
@@ -48,6 +49,7 @@ export function collectDoctorChecks(
   // the probes (a second call would double-bill expensive probes and let
   // a flaky probe answer differently twice).
   checks.push(...modelWindowChecks(deps.probeModelWindows?.() ?? []));
+  checks.push(...plaintextKeyChecks(deps.probePlaintextKeys?.() ?? []));
   if (deps.probeContextRoom !== undefined) {
     checks.push(...roomChecks(deps.probeContextRoom()));
   }

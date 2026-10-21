@@ -12,6 +12,7 @@ import type {
   DoctorReason,
   DoctorStatus,
   ModelWindowProbe,
+  PlaintextKeyProbe,
   ProviderProbe,
   RoomModel,
 } from '../types.js';
@@ -55,6 +56,20 @@ export function modelWindowChecks(
     status: 'warn' as DoctorStatus,
     reason: 'window-default' as DoctorReason,
     detail: `window ${probe.contextWindow} is the default: set "contextWindow" for ${probe.model} in models.json (the gauge and compaction use it)`,
+  }));
+}
+
+// A key sent over plain http is readable by anyone on the path: a warning
+// per provider, never a failure (the user may know the network).
+export function plaintextKeyChecks(
+  probes: readonly PlaintextKeyProbe[],
+): DoctorCheck[] {
+  return probes.map((probe) => ({
+    id: `models-transport:${probe.provider}`,
+    label: `provider ${probe.provider} transport`,
+    status: 'warn' as DoctorStatus,
+    reason: 'plaintext-key' as DoctorReason,
+    detail: `models.json sends this provider's API key over plain http to ${probe.host}: use an https baseUrl`,
   }));
 }
 

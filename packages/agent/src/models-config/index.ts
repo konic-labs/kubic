@@ -12,6 +12,7 @@ export {
   registerCustomProviders,
 } from './register.js';
 
+export type { CustomProviderSpec } from './schema.js';
 export {
   DEFAULT_CONTEXT_WINDOW,
   isThinkingLevel,

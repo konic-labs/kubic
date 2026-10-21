@@ -4,7 +4,10 @@
 
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import type { RegisterCustomProvidersOptions } from '@kubic/agent/models-config';
+import type {
+  CustomProviderSpec,
+  RegisterCustomProvidersOptions,
+} from '@kubic/agent/models-config';
 import {
   DEFAULT_CONTEXT_WINDOW,
   parseModelsJson,
@@ -63,6 +66,43 @@ interface CustomModelRef {
   readonly model: string;
 }
 
+// A models.json provider whose key would travel unencrypted: a plain-http
+// base URL to a host other than this machine.
+interface PlaintextKey {
+  readonly provider: string;
+  readonly host: string;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/gu, '');
+  return (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    /^127(\.\d{1,3}){3}$/u.test(host) ||
+    host === '::1'
+  );
+}
+
+// The host a provider would send its key to in clear text: an `http:` base
+// URL off this machine, with a key or a secret header. Local model servers
+// (localhost, 127.0.0.0/8, ::1) are not flagged.
+function plaintextKeyHost(spec: CustomProviderSpec): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(spec.baseUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'http:' || isLoopbackHost(url.hostname)) {
+    return undefined;
+  }
+  const keyed =
+    spec.apiKeyEnv !== undefined ||
+    spec.apiKey !== undefined ||
+    Object.keys(spec.headerRefs ?? {}).length > 0;
+  return keyed ? url.host : undefined;
+}
+
 // Removes the entries of one provider id, in place: a later file that defines
 // the provider replaces what an earlier file recorded for it.
 function dropProvider(
@@ -85,6 +125,8 @@ export interface AssembledModels {
   readonly defaultedWindows: readonly DefaultedWindow[];
   // The models the loaded models.json files define.
   readonly customModels: readonly CustomModelRef[];
+  // The loaded providers that would send their key over plain http.
+  readonly plaintextKeys: readonly PlaintextKey[];
   // The providers the implicit first-available pick may use, preferred
   // first: the testing provider, models.json customs, then built-ins whose
   // auth is configured. A keyless built-in is never on this list.
@@ -199,6 +241,7 @@ export async function assembleModels(
   const customs: string[] = [];
   const defaultedWindows: DefaultedWindow[] = [];
   const customModels: CustomModelRef[] = [];
+  const plaintextKeys: PlaintextKey[] = [];
   if (fauxProviderActive(env)) {
     registerFauxProvider(models);
     providers.set(FAUX_PROVIDER_ID, { origin: 'testing', usable: true });
@@ -246,6 +289,14 @@ export async function assembleModels(
         // for it, so a fallback an earlier file left cannot survive.
         dropProvider(defaultedWindows, spec.id);
         dropProvider(customModels, spec.id);
+        dropProvider(plaintextKeys, spec.id);
+        const clear = plaintextKeyHost(spec);
+        if (clear !== undefined) {
+          plaintextKeys.push({ provider: spec.id, host: clear });
+          notes.push(
+            `models.json: provider '${spec.id}' sends its API key over plain http to ${clear} — use an https baseUrl`,
+          );
+        }
         for (const model of spec.models) {
           customModels.push({ provider: spec.id, model: model.id });
           if (model.contextWindow !== undefined) continue;
@@ -316,6 +367,7 @@ export async function assembleModels(
     sources,
     defaultedWindows,
     customModels,
+    plaintextKeys,
     fallbackProviders,
   };
 }

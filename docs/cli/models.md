@@ -147,7 +147,7 @@ of entries with their own `id` is accepted as an alias):
 
 | Provider key | Meaning |
 | --- | --- |
-| `baseUrl` | `http(s)` endpoint (required). |
+| `baseUrl` | `http(s)` endpoint (required). A plain `http:` URL to a host other than this machine (`localhost`, `127.0.0.0/8` and `::1` are exempt), on a provider with a key or a secret header, sends that key in clear text: the load receipt says so (`models.json: provider '<id>' sends its API key over plain http to <host>`) and `kubic doctor` warns (`models-transport:<id>`). |
 | `api` | `openai-completions` or `openai-responses` (required). |
 | `apiKey` | A literal key (e.g. `not-needed` for a keyless local server), an allowlisted `$VAR` (same allowlist as `apiKeyEnv`), or a `!command` resolved per request. Escaped `\$` / `\!` stay literal. Not together with `apiKeyEnv`. |
 | `apiKeyEnv` | The env variable holding the key (allowlist above; default `KUBIC_API_KEY`). |

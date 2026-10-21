@@ -37,6 +37,7 @@ import {
 import type { ModelEscalationEvent } from '@kubic/agent/prompts';
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import { providerKeyHints } from '@kubic/host/models';
+import { dataProtectionOf } from '@kubic/host/policy';
 import {
   AUTO_ESCALATION_TOOL_FAILURES,
   createAutoEscalation,
@@ -501,6 +502,9 @@ async function recordTuiTurn(
   }
   persistRunTrajectory({
     sessionsRoot: inputs.root,
+    ...(dataProtectionOf(options.modelPolicy) === undefined
+      ? {}
+      : { redact: true }),
     sessionId: inputs.id,
     agentId: options.agentId ?? 'root',
     role: options.role ?? DEFAULT_RUN_ROLE,

@@ -8,6 +8,7 @@ import { resolveStreamOptions } from '@kubic/agent/stream-options';
 import type { ExecutionEnv } from '@kubic/exec/env';
 import type { RuntimeThinking } from '@kubic/host/config';
 import {
+  dataProtectionOf,
   hasModelPolicy,
   hasToolPolicy,
   isModelAllowed,
@@ -157,7 +158,19 @@ export async function bootSessionLane(
       // spans after policy (a blocked call never opens one).
       policy: {
         classes: installed.classes,
-        interceptors: installed.interceptors,
+        interceptors: {
+          ...installed.interceptors,
+          // `data_policy = "redact-model"`: tool output is scanned before
+          // the model reads it, and each redaction is named.
+          ...(dataProtectionOf(policy) === 'redact-model'
+            ? {
+                redactToolOutput: (tool: string, found: number) =>
+                  sinks.dlpNotice?.(
+                    `data policy: ${found} secret value(s) redacted from the ${tool} tool's output before the model read it`,
+                  ),
+              }
+            : {}),
+        },
         ...(contributions.length === 0 ? {} : { contributions }),
         ...(request.spanHooks === undefined
           ? {}

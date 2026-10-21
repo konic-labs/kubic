@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { isFancy } from '@kubic/core/cli/kit';
 import { promptConfirm } from '@kubic/core/cli/prompt';
 import { themeFor } from '@kubic/core/cli/theme';
+import { dataProtectionOf } from '@kubic/host/policy';
 import { runRunCommand } from '@kubic/host/run';
 import { runSessionsCommand } from '@kubic/host/sessions';
 import type { CliConfigResult } from '../config/load.js';
@@ -181,6 +182,10 @@ export function sessionsRunner(io: ProdRunnerIo): ProdRunners['sessions'] {
     return runSessionsCommand(invocation, {
       ...view,
       ...(retentionDays === undefined ? {} : { retentionDays }),
+      // `data_policy` redaction reaches the raw transcript attach prints.
+      ...(dataProtectionOf(runtimePolicy(cliConfig)) === undefined
+        ? {}
+        : { scanTranscript: true }),
       // A prune with neither --yes nor --dry-run asks on a TTY; off a
       // TTY it stays the documented dry run.
       ...(view.interactive

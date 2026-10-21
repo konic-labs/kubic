@@ -61,8 +61,9 @@ import {
 } from '@kubic/host/instructions';
 import type { AssembledModels } from '@kubic/host/models';
 import type { EffectivePolicy } from '@kubic/host/policy';
+import { dataProtectionOf } from '@kubic/host/policy';
 import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles';
-import { redactBridgeWrites } from '@kubic/host/secret-refs';
+import { redactBridgeWrites, scanBridgeWrites } from '@kubic/host/secret-refs';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { bootSkills } from '@kubic/host/skills';
 import { installBootPolicy } from './approval-policy.js';
@@ -188,6 +189,8 @@ export interface SessionBootSinks {
   skillsLog: (line: string) => void;
   // A cut or skipped AGENTS.md.
   instructionsNotice?: (line: string) => void;
+  // A tool result the data policy redacted before the model read it.
+  dlpNotice?: (line: string) => void;
 }
 
 export interface BootRole {
@@ -268,6 +271,8 @@ export class SessionBoot {
   thinkingLevel: string | undefined;
   // Every provider key the request-time resolver has handed out so far.
   liveSecrets: () => string[] = () => [];
+  // The secret values `data_policy` kept out of what the session stored.
+  secretsKeptOut = 0;
   private tornDown = false;
 
   constructor(
@@ -279,9 +284,17 @@ export class SessionBoot {
     this.config = config;
     this.sinks = sinks;
     this.root = config.sessionsRoot ?? defaultSessionsRoot();
-    this.bridge = redactBridgeWrites(createNodeFileBridge(this.root), () =>
+    const scrubbed = redactBridgeWrites(createNodeFileBridge(this.root), () =>
       this.liveSecrets(),
     );
+    // `data_policy = "redact"` (or `redact-model`): every text the session
+    // stores is scanned for secrets, the journal excepted.
+    this.bridge =
+      dataProtectionOf(config.modelPolicy) === undefined
+        ? scrubbed
+        : scanBridgeWrites(scrubbed, (found) => {
+            this.secretsKeptOut += found;
+          });
   }
 
   get id(): string {

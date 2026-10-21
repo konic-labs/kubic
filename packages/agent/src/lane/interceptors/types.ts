@@ -19,6 +19,10 @@ export interface PolicyInterceptorOptions {
   // The type lives here (not in host) because the agent cannot import
   // host; the host adapts its ApprovalService to it.
   approve?: (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
+  // Data loss prevention before the model: present, every tool result is
+  // scanned for secrets after the tool runs and before the model reads it,
+  // and this hears each result that had values redacted.
+  redactToolOutput?: (toolName: string, found: number) => void;
 }
 
 export interface ApprovalCall {

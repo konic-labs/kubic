@@ -866,9 +866,10 @@ export const CONFIG_SECTIONS = [
         field: 'dataPolicy',
         check: 'string',
         runtime: {
-          kept: 'carried and reported; no local mechanism can promise a provider-side training policy, so it is never claimed as enforced',
+          effect:
+            '"redact" scans secrets out of what sessions store and out of raw transcript output; "redact-model" also scans tool output before the model reads it; any other value is carried and reported, never claimed as enforced',
         },
-        example: '"no-external-training"',
+        example: '"redact"',
       },
       {
         name: 'logging_policy',
@@ -940,8 +941,12 @@ export const CONFIG_SECTIONS = [
         text: 'What a repository may set for itself: `"open"` (the default) or `"restricted"`. Set in a layer above the project (enterprise, product or global; the first that sets it wins), `"restricted"` refuses a project config that sets `[approvals] autoApprove`, widens a `[permissions]` class past the layers above (or the defaults), or declares `[verify]` commands — the load names every such key, before anything runs — and keeps the project `models.json` providers out of the catalog (`kubic models` and `kubic doctor` name the file). A project may still narrow. See [Restricting project configuration](enterprise.md#restricting-project-configuration).',
       },
       {
-        keys: ['policy.data_policy', 'policy.logging_policy'],
-        text: 'Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced.',
+        keys: ['policy.data_policy'],
+        text: 'Data loss prevention. `"redact"` runs the secret scanner (PEM private keys, key shapes, random-looking secret-named assignments, URL passwords, Basic credentials) over everything a session stores — its transcript, the run trajectory and the spans; the change journal keeps file content verbatim so `kubic undo` still restores it — and over the raw transcript `kubic sessions attach` prints. `"redact-model"` also scans each tool result before the model reads it and names every redaction. Any other value (`no-external-training`, …) is carried and reported, never claimed as enforced: no local mechanism can promise a provider-side policy. `kubic doctor` reports it as `policy:data`. See [Data loss prevention](enterprise.md#data-loss-prevention).',
+      },
+      {
+        keys: ['policy.logging_policy'],
+        text: 'Parsed and carried (for example `full-audit`); no local mechanism is selected by it, so it is reported, never claimed as enforced.',
       },
     ],
   },

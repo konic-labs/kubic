@@ -78,6 +78,7 @@ export function createRunBoot(state: RunState, guard: RunGuard): SessionBoot {
       skillsLog: (line) => sinks.debug?.(`skills: ${line}`),
       instructionsNotice: (line) =>
         sinks.notice(`project instructions: ${line}`),
+      dlpNotice: (line) => sinks.notice(line),
     },
   );
 }

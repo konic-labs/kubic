@@ -23,7 +23,7 @@ allowed_domains = ["registry.npmjs.org", "github.com"]
 
 filesystem_policy = "workspace-only"
 
-data_policy = "no-external-training"
+data_policy = "redact-model"
 logging_policy = "full-audit"
 
 project_policy = "restricted"
@@ -56,10 +56,12 @@ them:
   network guard is the `[permissions] network` class, a lexical detector.
 - `filesystem_policy` — `"workspace-only"` is the engine's
   `workspace-write`; the engine level names are accepted too.
-- `data_policy`, `logging_policy` — parsed into the effective policy and
-  listed by `kubic config`; each one's enforcement status is the key-effect
-  row above, never a claim. `kubic doctor` does not report these two, nor
-  `filesystem_policy`.
+- `data_policy` — `"redact"` and `"redact-model"` are enforced; any other
+  value is carried and reported. See
+  [Data loss prevention](#data-loss-prevention).
+- `logging_policy` — parsed into the effective policy and listed by
+  `kubic config`; its enforcement status is the key-effect row above, never
+  a claim. `kubic doctor` does not report it, nor `filesystem_policy`.
 - `project_policy` — `"restricted"` bounds what a repository may set for
   itself; see [Restricting project configuration](#restricting-project-configuration).
 - `[[audit]]` — repeatable sink tables (`sink`, `level`, optional `target`
@@ -165,6 +167,44 @@ set by the enterprise and product layers (no lower layer or override changes the
 managed config: /etc/kubic/config.toml (signature verified)
 remote policy: https://policy.example.com/kubic/config.toml (fetched 2026-10-21T09:00:00.000Z, signature verified; cached at /Users/you/.kubic/managed/policy.toml)
 ```
+
+## Data loss prevention
+
+```toml
+[policy]
+data_policy = "redact-model"
+```
+
+A secret a tool reads — a key in a config file, a token in a test fixture,
+a private key — reaches the model's context and the session store unless a
+policy says otherwise. `data_policy` says otherwise:
+
+- `"redact"` runs the secret scanner over everything a session stores: its
+  transcript, the run trajectory and the spans. A secret a tool read is
+  stored as `[redacted-secret]`, a resumed session never sees it again, and
+  `kubic run` names the count when it ends (`data policy: 2 secret value(s)
+  kept out of what the session stored`). The raw transcript
+  `kubic sessions attach` prints (`--json` included) is scanned the same
+  way. The change journal is left verbatim — it holds the file content
+  `kubic undo` puts back, and an undo must restore a file as it was.
+- `"redact-model"` does all of that and also scans each tool result after
+  the tool runs and before the model reads it, so the model never sees the
+  value; each redaction is named (on stderr for `kubic run`, in the
+  transcript for `kubic tui`).
+
+The scanner finds PEM private-key blocks, the key shapes Kubic redacts
+everywhere (sk- keys, AWS access key ids, GitHub and Slack tokens, bearer
+tokens), secret-named assignments whose value looks random
+(`AWS_SECRET_ACCESS_KEY=…`, `"client_secret": "…"` — but not
+`password: string`), passwords in URLs and Basic credentials. It is a
+pattern scanner, not a guarantee: a secret with no recognizable name or
+shape passes through. `kubic sessions export` and `kubic export` redact
+whatever the policy says.
+
+Any other `data_policy` value (`"no-external-training"`, …) is carried and
+reported, never enforced — no local mechanism can promise what a provider
+does with a request. `kubic doctor` reports the value as `policy:data`: a
+pass naming what is enforced, or a warning that it is not.
 
 ## Spend caps
 

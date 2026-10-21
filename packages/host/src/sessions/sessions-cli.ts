@@ -32,6 +32,7 @@ import {
 } from '@kubic/core/cli/exit-codes';
 import { formatJson } from '@kubic/core/cli/output';
 import { renderTable } from '@kubic/core/cli/table';
+import { scanSecrets } from '@kubic/core/secret-scan';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { stripUnsafeCharacters } from '@kubic/exec/runtime-exclude';
 import {
@@ -58,6 +59,9 @@ export interface SessionsCommandDeps extends CliIo {
   retentionDays?: number;
   // Clock seam for boundary-exact age tests; real runs use Date.now().
   now?: () => number;
+  // `data_policy` redaction: the transcript `attach` prints — its readable
+  // lines and its raw `--json` entries — is scanned for secrets first.
+  scanTranscript?: boolean;
   // Interactive confirmation for a `prune` that passed neither --yes nor
   // --dry-run (TTY only — the root wires @clack/prompts there, never under
   // a pipe). Absent means the documented default: a dry run. Resolves null
@@ -375,7 +379,7 @@ export async function runSessionsCommand(
         lines.push(invocation.ids === true ? `#${entry.id} ${line}` : line);
       }
       for (const line of lines.slice(Math.max(0, lines.length - tail))) {
-        deps.out(line);
+        deps.out(deps.scanTranscript === true ? scanSecrets(line).text : line);
       }
     } finally {
       await session.release(BACKGROUND_CONTEXT);

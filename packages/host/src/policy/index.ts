@@ -4,6 +4,7 @@
 export { enterpriseDoctorChecks } from './doctor-checks.js';
 export {
   assertToolGrantable,
+  dataProtectionOf,
   hasModelPolicy,
   hasToolPolicy,
   isModelAllowed,

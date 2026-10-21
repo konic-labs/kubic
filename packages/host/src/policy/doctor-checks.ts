@@ -82,6 +82,7 @@ export function enterpriseDoctorChecks(
           reason: 'policy-mismatch',
           detail: `network_policy is not enforced: mode ${mode}${domains > 0 ? ` with ${domains} allowed domain(s)` : ''} is parsed, but no proxy or socket-level control applies it — the [permissions] network class is a lexical bash detector`,
         };
+  const dataCheck = dataPolicyCheck(policy.data.policy);
   const failed = [sinksCheck, networkCheck].filter(
     (check) => check.status === 'fail',
   ).length;
@@ -101,5 +102,36 @@ export function enterpriseDoctorChecks(
           reason: 'policy-mismatch',
           detail: `${failed} unenforceable enterprise policy item(s)`,
         };
-  return [sinksCheck, networkCheck, enforceability];
+  return [
+    sinksCheck,
+    networkCheck,
+    ...(dataCheck === undefined ? [] : [dataCheck]),
+    enforceability,
+  ];
+}
+
+// `data_policy`: what the value enforces, or that it enforces nothing.
+function dataPolicyCheck(
+  value: string | undefined,
+): import('../doctor/index.js').DoctorCheck | undefined {
+  if (value === undefined) return undefined;
+  const base = { id: 'policy:data', label: 'policy data' } as const;
+  if (value === 'redact' || value === 'redact-model') {
+    return {
+      ...base,
+      status: 'pass',
+      reason: 'ok',
+      detail: `data_policy ${value}: secrets are scanned out of everything a session stores (its transcript, trajectory and spans; the journal keeps file content for undo) and out of the raw transcript sessions attach prints${
+        value === 'redact-model'
+          ? ', and out of tool output before the model reads it'
+          : ''
+      }`,
+    };
+  }
+  return {
+    ...base,
+    status: 'warn',
+    reason: 'policy-mismatch',
+    detail: `data_policy ${JSON.stringify(value)} is carried and reported, not enforced: Kubic enforces "redact" and "redact-model"`,
+  };
 }

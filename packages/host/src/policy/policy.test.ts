@@ -411,6 +411,38 @@ describe('enterprise doctor checks', () => {
   });
 });
 
+describe('enterprise data_policy check', () => {
+  it('passes for the values Kubic enforces and warns for the rest', async () => {
+    const mod = await import('./index.js');
+    const check = (policy: string) =>
+      mod
+        .enterpriseDoctorChecks(
+          mod.resolveEffectivePolicy([
+            { layer: 'enterprise', policy: { data: { policy } } },
+          ]).policy,
+          { syslogAvailable: true },
+        )
+        .find((entry) => entry.id === 'policy:data');
+    expect(check('redact-model')).toMatchObject({ status: 'pass' });
+    expect(check('redact-model')?.detail).toContain(
+      'out of tool output before the model reads it',
+    );
+    expect(check('redact')).toMatchObject({ status: 'pass' });
+    expect(check('no-external-training')).toMatchObject({
+      status: 'warn',
+      detail:
+        'data_policy "no-external-training" is carried and reported, not enforced: Kubic enforces "redact" and "redact-model"',
+    });
+    expect(
+      mod
+        .enterpriseDoctorChecks(mod.resolveEffectivePolicy([]).policy, {
+          syslogAvailable: true,
+        })
+        .some((entry) => entry.id === 'policy:data'),
+    ).toBe(false);
+  });
+});
+
 describe('secret-shape case transforms', () => {
   it('redactSecretShapes replaces uppercase SK- material', async () => {
     const shapes = await import('@kubic/core/secret-shapes');

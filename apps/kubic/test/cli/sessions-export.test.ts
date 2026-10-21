@@ -68,7 +68,7 @@ async function recordedSession(): Promise<{
   return { root, workspace, id: result.sessionId };
 }
 
-function cli(root: string) {
+function cli(root: string, scanTranscript = false) {
   const out: string[] = [];
   const err: string[] = [];
   return {
@@ -79,6 +79,7 @@ function cli(root: string) {
         sessionsRoot: root,
         out: (line) => out.push(line),
         logger: createLineLogger((line: string) => err.push(line)),
+        ...(scanTranscript ? { scanTranscript: true } : {}),
       }).then((result) => result.exitCode),
   };
 }
@@ -127,6 +128,17 @@ describe('kubic sessions export', () => {
     expect(html).toContain('<td>config.env</td><td>create</td>');
     expect(html).not.toMatch(/<script|https?:\/\//);
     expectNoSecret(html);
+  });
+
+  it('scans the raw transcript attach prints when the data policy asks', async () => {
+    const { root, id } = await recordedSession();
+    const raw = cli(root);
+    expect(await raw.run({ command: 'attach', id, json: true })).toBe(0);
+    expect(raw.out.join('\n')).toContain(KEY);
+    const scanned = cli(root, true);
+    expect(await scanned.run({ command: 'attach', id, json: true })).toBe(0);
+    expect(scanned.out.join('\n')).not.toContain(KEY);
+    expect(scanned.out.join('\n')).toContain('[redacted-secret]');
   });
 
   it('refuses a session a live run holds, and an unknown one', async () => {

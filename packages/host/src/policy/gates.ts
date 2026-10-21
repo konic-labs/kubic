@@ -151,3 +151,16 @@ export function isModelAllowed(
   }
   return true;
 }
+
+// `[policy] data_policy`: the values Kubic enforces. `redact` scans secrets
+// out of everything a session persists and out of raw transcript output;
+// `redact-model` also scans tool output before the model reads it. Any other
+// value is carried and reported, never enforced.
+export type DataProtection = 'redact' | 'redact-model';
+
+export function dataProtectionOf(
+  policy: EffectivePolicy | undefined,
+): DataProtection | undefined {
+  const value = policy?.data.policy;
+  return value === 'redact' || value === 'redact-model' ? value : undefined;
+}

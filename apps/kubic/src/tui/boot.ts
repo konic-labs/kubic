@@ -207,6 +207,8 @@ function tuiSessionBoot(
       skillsLog: () => undefined,
       instructionsNotice: (line) =>
         notices.warnings.push(`project instructions: ${line}`),
+      // A redaction mid-session lands in the transcript the loop drains.
+      dlpNotice: (line) => notices.transcript.push(line),
     },
   );
 }

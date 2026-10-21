@@ -10,6 +10,7 @@ import {
   verifyCommandAudit,
 } from '@kubic/host/audit';
 import { readSessionRunUsage } from '@kubic/host/cost';
+import { dataProtectionOf } from '@kubic/host/policy';
 import {
   type GateObserver,
   type HeadlessRunResult,
@@ -49,6 +50,9 @@ export async function finishRun(
   try {
     const path = persistRunTrajectory({
       sessionsRoot,
+      ...(dataProtectionOf(deps.modelPolicy) === undefined
+        ? {}
+        : { redact: true }),
       sessionId,
       agentId: resolveRunAgentId(deps.agentId),
       role: capture.role ?? DEFAULT_RUN_ROLE,

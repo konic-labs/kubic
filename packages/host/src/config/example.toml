@@ -85,6 +85,10 @@ team = "platform"
 [providers.azure-openai-responses]
 region = "westeurope"
 
+[sandbox]
+mode = "auto"
+writable = ["~/.npm", "~/.cache"]
+
 [mcp.github]
 command = "/opt/mcp/github-mcp-server"
 args = ["stdio"]

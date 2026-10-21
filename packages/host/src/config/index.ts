@@ -43,6 +43,7 @@ export {
   effectiveConfigView,
   /** @internal */ renderEffectiveConfig,
 } from './runtime-view.js';
+export type { RuntimeSandbox } from './sandbox-config.js';
 export type { ConfigKey } from './schema.js';
 export { CONFIG_SECTIONS } from './schema.js';
 export type {

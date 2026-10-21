@@ -4,6 +4,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
 import { StringDecoder } from 'node:string_decoder';
+import type { BashSandbox } from '../sandbox.js';
 import type {
   ProcessHandle,
   ProcessSnapshot,
@@ -171,12 +172,26 @@ class OutputAccumulator {
 
 export class NodeShell implements Shell {
   readonly cwd: string;
+  // The bash tool's OS sandbox, when one is configured.
+  readonly sandbox: BashSandbox | undefined;
 
-  constructor(cwd: string) {
+  constructor(cwd: string, sandbox?: BashSandbox) {
     this.cwd = cwd;
+    this.sandbox = sandbox;
   }
 
-  spawn(cmd: string, args: string[], options: SpawnOptions): ProcessHandle {
+  spawn(
+    command: string,
+    commandArgs: string[],
+    options: SpawnOptions,
+  ): ProcessHandle {
+    // The bash tool's commands run inside the sandbox; every other spawn
+    // (git probes, gate commands) runs as is.
+    const wrapped =
+      this.sandbox !== undefined && options.provenance?.operation === 'bash'
+        ? this.sandbox.wrap(command, commandArgs, options.provenance.toolCallId)
+        : { cmd: command, args: commandArgs };
+    const { cmd, args } = wrapped;
     // Detached process group: kill() signals the whole group so spawned
     // grandchildren die too (leak cleanup) — no orphans.
     // Stdin is 'ignore' — a stdin reader (cat, read -p, a

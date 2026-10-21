@@ -216,6 +216,9 @@ export interface InstalledPolicy {
   // stops applying. And whether one applies right now (the status line).
   endTurn?: () => void;
   editsApprovedThisTurn?: () => boolean;
+  // The capabilities a call was approved for, by its call id: the bash
+  // sandbox widens exactly that call.
+  grantsFor?: (toolCallId: string) => readonly string[];
 }
 
 export function installedPolicyPosture(

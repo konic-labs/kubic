@@ -184,6 +184,13 @@ function policyProbeChecks(
       ),
     );
   }
+  if (deps.probeSandbox !== undefined) {
+    checks.push(
+      ...probeOr(deps.probeSandbox, (error) =>
+        failedProbe('sandbox', 'bash sandbox', 'policy-mismatch', error),
+      ),
+    );
+  }
   if (deps.probeInstructions !== undefined) {
     checks.push(
       ...probeOr(deps.probeInstructions, (error) =>

@@ -39,6 +39,7 @@ export function installPolicy(input: PolicyInput): InstalledPolicy {
   const posture = installedPolicyPosture(input, bootPosture);
   const service = approvalServiceFor(input, posture, store);
   const recorder = decisionRecorder(input);
+  const grants = new Map<string, string[]>();
   const guardPosture = postureGuard(input, store, bootPosture, recorder);
   const decider: Decider = {
     input,
@@ -48,6 +49,13 @@ export function installPolicy(input: PolicyInput): InstalledPolicy {
     guardPosture,
     controlPlane: controlPlaneRoots(input),
     turnEdits: false,
+    grant: (toolCallId, capabilities) => {
+      grants.set(toolCallId, [...capabilities]);
+      // Bounded like the stand-downs: the oldest grant goes first.
+      if (grants.size > GRANTS_KEPT) {
+        grants.delete(grants.keys().next().value as string);
+      }
+    },
   };
   const ask: ApprovalAsk = (call) => judge(decider, call, 0);
   return {
@@ -78,8 +86,11 @@ export function installPolicy(input: PolicyInput): InstalledPolicy {
       decider.turnEdits = false;
     },
     editsApprovedThisTurn: () => decider.turnEdits,
+    grantsFor: (toolCallId) => grants.get(toolCallId) ?? [],
   };
 }
+
+const GRANTS_KEPT = 512;
 
 function approvalServiceFor(
   input: PolicyInput,

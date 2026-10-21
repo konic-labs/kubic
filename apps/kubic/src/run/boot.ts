@@ -69,6 +69,7 @@ export function createRunBoot(state: RunState, guard: RunGuard): SessionBoot {
       modelFallback: deps.modelFallback,
       oidc: deps.oidc,
       mcp: deps.mcp,
+      sandbox: deps.sandbox,
       modelPolicy: deps.modelPolicy,
       trustProject: deps.trustProject,
       skills: deps.skills,

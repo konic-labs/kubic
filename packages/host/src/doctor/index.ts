@@ -2,6 +2,7 @@
 // disclosures (no isolation, detection-only classes) and full-access session
 // reporting.
 
+export { sandboxDoctorCheck } from './checks/sandbox.js';
 export { /** @internal */ collectDoctorChecks } from './collect.js';
 export type { DoctorCommandOptions } from './command.js';
 export { runDoctorCommand } from './command.js';

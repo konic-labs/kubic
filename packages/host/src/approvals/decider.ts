@@ -66,6 +66,8 @@ export interface Decider {
   guardPosture: () => void;
   controlPlane: ControlPlaneRoots;
   turnEdits: boolean;
+  // Records the capabilities an approved call was granted.
+  grant?: (toolCallId: string, capabilities: readonly string[]) => void;
 }
 
 // The operator approved this turn's edits at once (`A`): an
@@ -127,6 +129,7 @@ export async function judge(
     if (capabilities.length === 0) {
       // An untriggered call waived nothing, so it is not challenged and no
       // guard needs standing down.
+      if (detected.length > 0) d.grant?.(call.toolCallId, detected);
       return { approved: true, challenged: detected.length > 0 };
     }
   }
@@ -135,6 +138,7 @@ export async function judge(
     const refused = await decideCapability(d, call, capability, edits);
     if (refused !== undefined) return refused;
   }
+  d.grant?.(call.toolCallId, capabilities);
   return { approved: true, challenged: true };
 }
 

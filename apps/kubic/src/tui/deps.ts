@@ -140,6 +140,7 @@ export function tuiBootOptions(
     modelFallback: provided.modelFallback,
     oidc: provided.oidc,
     mcp: provided.mcp,
+    sandbox: provided.sandbox,
     telemetry: provided.telemetry,
     // `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.

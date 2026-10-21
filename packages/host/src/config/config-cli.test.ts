@@ -49,6 +49,7 @@ function runtime(): RuntimeConfig {
     hooks: [],
     providerRegions: {},
     mcp: [],
+    sandbox: { mode: 'off', writable: [] },
     projectTrusted: true,
     overriddenAttempts: [],
     modelPinOverrides: [],

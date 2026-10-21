@@ -12,6 +12,7 @@ import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import { EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { scanStateModes } from '@kubic/exec/lock-file';
+import { detectSandbox } from '@kubic/exec/sandbox';
 import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
   AUDIT_LEDGER_FILE,
@@ -31,6 +32,7 @@ import {
   describeFullAccessSession,
   listFullAccessSessions,
   runDoctorCommand,
+  sandboxDoctorCheck,
 } from '@kubic/host/doctor';
 import { projectInstructionsDoctorCheck } from '@kubic/host/instructions';
 import type { AssembledModels } from '@kubic/host/models';
@@ -276,7 +278,10 @@ function policyChecks(
 // would see them.
 function projectChecks(
   cliConfig: CliConfigResult,
-): Pick<DoctorDeps, 'probeRoles' | 'probeSkills' | 'probeInstructions'> {
+): Pick<
+  DoctorDeps,
+  'probeRoles' | 'probeSkills' | 'probeInstructions' | 'probeSandbox'
+> {
   const enterprisePolicy = runtimePolicy(cliConfig);
   const roleLayers = runtimeLaneDeps(cliConfig).roles?.layers;
   return {
@@ -329,6 +334,13 @@ function projectChecks(
         ...runtimeSkillsDeps(cliConfig),
         ...installedPolicyClasses(cliConfig),
       }),
+    // The bash sandbox: the configured mode and what this machine offers.
+    probeSandbox: () => [
+      sandboxDoctorCheck(
+        cliConfig.runtime?.sandbox.mode ?? 'off',
+        detectSandbox()?.kind,
+      ),
+    ],
     probeInstructions: () => [
       projectInstructionsDoctorCheck(
         runtimeProjectInstructions(cliConfig, process.cwd()),

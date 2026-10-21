@@ -326,6 +326,47 @@ enterprise policy ([policy] project_policy = "restricted"))`). A project may
 still narrow: a stricter permission class, `route = "deny"`, a smaller tool
 set. The default is `"open"`.
 
+## The bash sandbox
+
+```toml
+[sandbox]
+mode = "auto"                    # off (default) | auto | required
+writable = ["~/.npm", "~/.cache"]
+```
+
+With `mode = "auto"`, each command the bash tool runs is wrapped in the
+operating system's sandbox when the machine has one: Seatbelt
+(`sandbox-exec`) on macOS, bubblewrap (`bwrap`) on Linux. `"required"`
+refuses to start `kubic run` or `kubic tui` without one; `"off"`, the
+default, runs bash commands as your user. The strictest mode any layer sets
+wins, so a repository can tighten it but never loosen it. Inside the
+sandbox a command:
+
+- writes only to the workspace, the temporary directories and `writable`
+  (read from the enterprise, product and global layers only), or anywhere
+  under `filesystem = "full"`;
+- opens no network connection — interpreters included — unless the network
+  class is `full`;
+- cannot read the credential paths: `~/.ssh`, `~/.aws`, `~/.azure`,
+  `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.gnupg`, `~/.netrc`,
+  `~/.git-credentials`, `~/.config/gh`, `~/.npmrc`, `~/.pypirc`,
+  `~/.cargo/credentials.toml`, `~/.terraform.d/credentials.tfrc.json` and
+  `~/.pi`.
+
+Approvals stay: a call the approval ask approved for `network` runs with the
+network, and one approved for `credentials` can read the credential paths —
+exactly that call, nothing else. `kubic doctor` reports the sandbox in use as
+`sandbox`, or why bash runs unconfined.
+
+What the sandbox does not cover, stated plainly: only the bash tool's
+commands are wrapped. Kubic's own process, its file tools (`write`, `edit`,
+which the lexical confinement and the approvals guard), the git tools, the
+gate commands, admin hooks and MCP servers run with your authority. On Linux
+the sandbox needs bubblewrap and unprivileged user namespaces; Landlock is
+not used, so a Linux machine without bubblewrap has no sandbox. A command
+that needs to write outside the allowed paths (a global package cache) fails
+inside the sandbox until `writable` names the path.
+
 ## MCP servers
 
 ```toml

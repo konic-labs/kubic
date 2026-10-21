@@ -17,6 +17,7 @@ import type {
   ProjectTrustCheck,
   RuntimeConfig,
   RuntimeEscalation,
+  RuntimeSandbox,
   RuntimeThinking,
   RuntimeVerify,
   SpendCaps,
@@ -166,6 +167,8 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   oidc?: RuntimeOidc;
   /** `[mcp.<name>]`: the MCP servers the organization allowlists. */
   mcp?: readonly McpServerSpec[];
+  /** `[sandbox]`: the bash tool's OS sandbox. */
+  sandbox?: RuntimeSandbox;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -207,6 +210,7 @@ export function runtimeLaneDeps(result: CliConfigResult): {
       : { modelFallback: runtime.modelFallback }),
     ...(runtime.oidc === undefined ? {} : { oidc: runtime.oidc }),
     ...(runtime.mcp.length === 0 ? {} : { mcp: runtime.mcp }),
+    ...(runtime.sandbox.mode === 'off' ? {} : { sandbox: runtime.sandbox }),
     // No ladder, no field: escalation stays opt-in — the
     // lane climbs nothing it was never configured with.
     ...(runtime.escalate === undefined

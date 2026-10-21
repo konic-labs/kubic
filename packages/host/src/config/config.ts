@@ -216,6 +216,12 @@ interface PolicyConfig {
   maxDailyCostUsd?: number;
 }
 
+// `[sandbox]`: the bash tool's OS sandbox.
+interface SandboxConfig {
+  mode?: string;
+  writable?: string[];
+}
+
 // `[mcp.<name>]`: one MCP server the organization allowlists.
 interface McpTableConfig {
   command?: string;
@@ -304,6 +310,7 @@ export interface KubicConfig {
   providers?: Record<string, ProviderFacts>;
   oidc?: OidcConfig;
   mcp?: Record<string, McpTableConfig>;
+  sandbox?: SandboxConfig;
   managed?: ManagedConfig;
   policy?: PolicyConfig;
   hooks?: HookTableConfig[];
@@ -330,6 +337,7 @@ interface SectionTypes {
   providers: ProviderFacts;
   oidc: OidcConfig;
   mcp: McpTableConfig;
+  sandbox: SandboxConfig;
   managed: ManagedConfig;
   policy: PolicyConfig;
   hooks: HookTableConfig;
@@ -363,6 +371,7 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   providers: true,
   oidc: true,
   mcp: true,
+  sandbox: true,
   managed: true,
   policy: true,
   hooks: true,

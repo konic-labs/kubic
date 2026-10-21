@@ -49,6 +49,10 @@
       "source": "./src/runtime-exclude.ts",
       "default": "./src/runtime-exclude.ts"
     },
+    "./sandbox": {
+      "source": "./src/sandbox.ts",
+      "default": "./src/sandbox.ts"
+    },
     "./secret-runner": {
       "source": "./src/secret-runner.ts",
       "default": "./src/secret-runner.ts"

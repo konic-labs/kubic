@@ -16,6 +16,7 @@ import type {
 } from '@kubic/host/approvals';
 import type {
   AdminHook,
+  RuntimeSandbox,
   RuntimeThinking,
   RuntimeVerify,
   SpendCaps,
@@ -156,6 +157,8 @@ export interface HeadlessRunDeps {
   oidc?: RuntimeOidc;
   // `[mcp.<name>]`: the MCP servers the organization allowlists.
   mcp?: readonly McpServerSpec[];
+  // `[sandbox]`: the bash tool's OS sandbox.
+  sandbox?: RuntimeSandbox;
   // `[telemetry]`: where the run's spans and metrics go. Absent: nowhere.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy from the same

@@ -18,6 +18,7 @@ import type {
 import type {
   AdminHook,
   RuntimeEscalation,
+  RuntimeSandbox,
   RuntimeThinking,
   SpendCaps,
 } from '@kubic/host/config';
@@ -218,6 +219,8 @@ export interface TuiRunOptions {
   oidc?: RuntimeOidc;
   // `[mcp.<name>]`, as `kubic run` reads it.
   mcp?: readonly McpServerSpec[];
+  // `[sandbox]`, as `kubic run` reads it.
+  sandbox?: RuntimeSandbox;
   // `[telemetry]`: where each settled turn's spans and metrics go.
   telemetry?: TelemetryTarget;
   // The `[session]` compaction policy — the same

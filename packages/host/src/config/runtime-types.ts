@@ -16,6 +16,7 @@ import type { RuntimeHeadlessApprovals } from './headless-approvals.js';
 import type { AdminHook } from './hooks-config.js';
 import type { ManagedReport } from './managed.js';
 import type { ProjectRestriction } from './project-restriction.js';
+import type { RuntimeSandbox } from './sandbox-config.js';
 import type { SpendCaps } from './spend-caps.js';
 
 // Where an effective value came from: one of the six config layers, the
@@ -210,6 +211,8 @@ export interface RuntimeConfig {
   oidc?: RuntimeOidc;
   // `[mcp.<name>]`: the MCP servers the organization allowlists.
   mcp: McpServerSpec[];
+  // `[sandbox]`: the bash tool's OS sandbox.
+  sandbox: RuntimeSandbox;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
   // in `overriddenAttempts`); empty when nothing was overridden — the same pin

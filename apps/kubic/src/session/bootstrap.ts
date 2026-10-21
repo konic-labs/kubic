@@ -55,7 +55,11 @@ import type {
   installPolicy,
   PreApprovals,
 } from '@kubic/host/approvals';
-import type { AdminHook, RuntimeThinking } from '@kubic/host/config';
+import type {
+  AdminHook,
+  RuntimeSandbox,
+  RuntimeThinking,
+} from '@kubic/host/config';
 import type { RuntimeOidc } from '@kubic/host/credentials';
 import type { ProjectInstructions } from '@kubic/host/instructions';
 import {
@@ -78,6 +82,7 @@ import { beginBootJournal, probeBootOverlap } from './journal.js';
 import { bootSessionLane } from './lane.js';
 import { connectBootMcp } from './mcp.js';
 import { resolveBootRole } from './role.js';
+import { bootSandbox } from './sandbox.js';
 
 // Why a boot stopped before the lane ran. Each front end maps these to its
 // own output: an exit code and stderr for `kubic run`, an error the TUI
@@ -144,6 +149,8 @@ export interface SessionBootConfig {
   oidc?: RuntimeOidc;
   // `[mcp.<name>]`: the MCP servers the organization allowlists.
   mcp?: readonly McpServerSpec[];
+  // `[sandbox]`: the bash tool's OS sandbox.
+  sandbox?: RuntimeSandbox;
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.
@@ -285,6 +292,8 @@ export class SessionBoot {
   readonly fallbacks: ModelFallback[] = [];
   // The allowlisted MCP servers this boot reached.
   readonly mcp: McpConnection[] = [];
+  // The OS sandbox the bash tool's commands run in, when one does.
+  sandboxKind: 'seatbelt' | 'bubblewrap' | undefined;
   lane: Lane | undefined;
   // The model the booted lane runs.
   liveModel: { provider: string; id: string } | undefined;
@@ -396,9 +405,12 @@ export class SessionBoot {
     this.role = role;
     const catalog = await assembleBootCatalog(this);
     if (catalog !== undefined) return catalog;
-    const env = this.config.env ?? new NodeExecutionEnv(process.cwd());
+    const unsandboxed = this.config.env ?? new NodeExecutionEnv(process.cwd());
+    this.env = unsandboxed;
+    await installBootPolicy(this, unsandboxed);
+    const env = bootSandbox(this, unsandboxed);
+    if ('kind' in env) return env;
     this.env = env;
-    await installBootPolicy(this, env);
     this.request.onPolicyInstalled?.(this);
     beginBootJournal(this, env);
     await probeBootOverlap(this, env);

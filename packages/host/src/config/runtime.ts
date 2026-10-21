@@ -65,6 +65,7 @@ import type {
   RuntimeSystemPrompt,
   RuntimeThinking,
 } from './runtime-types.js';
+import { sandboxOf } from './sandbox-config.js';
 import { spendCapsOf } from './spend-caps.js';
 import { resolveSystemPromptFile } from './system-prompt-file.js';
 
@@ -218,6 +219,7 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
       : { modelFallback: [...config.model.fallback] }),
     ...(oidc === undefined ? {} : { oidc }),
     mcp: mcpServersOf(loaded.perLayer, loaded.paths.project),
+    sandbox: sandboxOf(loaded.perLayer, loaded.paths.project),
     overriddenAttempts: [
       ...merged.overriddenAttempts,
       ...pin.modelPinOverrides.map(

@@ -862,6 +862,37 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'sandbox',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'mode',
+        check: 'string',
+        runtime: {
+          effect:
+            "runs the bash tool's commands in the OS sandbox: off, auto (when available) or required; the strictest any layer sets wins",
+        },
+        example: '"auto"',
+      },
+      {
+        name: 'writable',
+        check: 'strings',
+        runtime: {
+          effect:
+            'paths a sandboxed command may write beside the workspace and the temporary directories',
+        },
+        example: '["~/.npm", "~/.cache"]',
+      },
+    ],
+    docs: [
+      {
+        keys: ['sandbox.mode', 'sandbox.writable'],
+        text: 'The bash tool\'s OS sandbox: `mode = "auto"` runs each bash command in Seatbelt (macOS) or bubblewrap (Linux) when the machine has it, `"required"` refuses to run without one, `"off"` (the default) does not sandbox. Inside it a command writes only to the workspace, the temporary directories and `writable` (anywhere under `filesystem = "full"`), opens no network connection unless `network = "full"`, and cannot read the credential paths (`~/.ssh`, `~/.aws`, …); a call the approval ask approved for `network` or `credentials` gets exactly that. The strictest mode any layer sets wins; `writable` is read from the enterprise, product and global layers only. `kubic doctor` reports the sandbox as `sandbox`. See [The bash sandbox](enterprise.md#the-bash-sandbox).',
+      },
+    ],
+  },
+  {
     name: 'mcp',
     shape: 'tables',
     runtime: {

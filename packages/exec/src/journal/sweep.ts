@@ -18,6 +18,16 @@ export interface ReconcileContext {
   sessionId: string;
   timestamp: number;
   /**
+   * Absolute paths other sessions journaled during this run: their
+   * changes, never this run's, so the sweep leaves them out.
+   */
+  foreign?: ReadonlySet<string>;
+  /**
+   * Other sessions live in this workspace at sweep time: a change found now
+   * may be theirs, so each entry is recorded as contested by them.
+   */
+  contestedBy?: readonly string[];
+  /**
    * Where this run's part of the journal begins (captured with
    * the boot baseline). Only entries appended after it define a path's
    * expected state; absent ⇒ the whole store is treated as this run.
@@ -213,6 +223,9 @@ interface SweepFind {
 }
 
 function record(sweep: Sweep, input: SweepFind): void {
+  // Another session journaled this path during the run: the change is that
+  // session's, and its own journal holds it.
+  if (sweep.ctx.foreign?.has(resolve(sweep.root, input.path)) === true) return;
   // The sweep's byte delta, computed when both sides are
   // known — a create grows from absent (0), a delete shrinks to it, and a
   // write is the difference. Unknown stays 0.
@@ -243,6 +256,9 @@ function record(sweep: Sweep, input: SweepFind): void {
     toolCallId: null,
     timestamp: ctx.timestamp,
     unattributed: true,
+    ...(ctx.contestedBy === undefined || ctx.contestedBy.length === 0
+      ? {}
+      : { contested: ctx.contestedBy }),
     ...(ctx.turn === undefined ? {} : { turn: ctx.turn }),
   });
   sweep.added++;

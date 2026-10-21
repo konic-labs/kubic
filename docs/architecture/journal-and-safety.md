@@ -82,7 +82,13 @@ file back from the object store — so a bash `rm`, `sed -i`, formatter or
 Only clean files qualify (restoring a committed version over uncommitted
 work would destroy it), and the pre-image must hash to the baseline digest
 — a mismatch, a binary file, or a pre-image above 4 MiB keeps the hash-only
-shape. Untracked files and non-repositories are unchanged. Changes the sweep
+shape. Untracked files and non-repositories are unchanged. Two sessions may run in one workspace at once, and each sweep compares
+against its own run's baseline, so the sweep reads the other sessions'
+journals first: a path another session journaled during this run is that
+session's change and is left out, and a change found while another session
+is live may be its work, so it is recorded as contested — `kubic log` and
+`kubic diff` name the session, and `kubic undo` skips it unless `--force`.
+Changes the sweep
 captures are bounded the same way: a changed file above 4 MiB — or one whose
 utf-8 decode would be lossy (binary content) — is recorded hash-only
 (`changed, N bytes`; `diff` shows a size-only line), never as a mangled or

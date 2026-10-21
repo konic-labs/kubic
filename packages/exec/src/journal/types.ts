@@ -80,6 +80,12 @@ export interface JournalEntryInput {
   timestamp: number;
   unattributed?: boolean;
   /**
+   * A sweep entry recorded while other sessions were live in the same
+   * workspace (their ids): the change may be theirs, so undo skips it
+   * unless forced.
+   */
+  contested?: readonly string[];
+  /**
    * The interactive turn the entry belongs to — 1 for
    * the session's first prompt in this process. Reconciliation sweep
    * entries carry the turn they swept; tool-journaled entries carry the
@@ -158,6 +164,8 @@ export interface JournalEntry {
   toolCallId: string | null;
   timestamp: number;
   unattributed?: boolean;
+  /** See JournalEntryInput.contested. */
+  contested?: readonly string[];
   /** See JournalEntryInput.turn. */
   turn?: number;
   /** See JournalEntryInput.toolName. */

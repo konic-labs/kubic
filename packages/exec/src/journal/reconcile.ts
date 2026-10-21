@@ -58,6 +58,20 @@ export interface RunReconciliationOptions {
   onNotice?: (detail: string) => void;
   /** Clock seam for deterministic entry timestamps. */
   now?: () => number;
+  /**
+   * The other sessions that share this workspace. Without it the sweep
+   * attributes every change it finds to this run.
+   */
+  peers?: ReconciliationPeers;
+}
+
+// The other sessions in the workspace, as the sweep needs them: what they
+// journaled since a moment, and which of them are live now.
+export interface ReconciliationPeers {
+  /** Absolute paths other sessions journaled at or after `since` (ms). */
+  journaledSince(since: number): ReadonlySet<string>;
+  /** Ids of the other sessions live in this workspace now. */
+  live(): readonly string[];
 }
 
 export interface RunReconciliation {
@@ -130,6 +144,9 @@ export function beginReconciliation(
   if (headBaseline !== null) saveHeadState(dir, options.runId, headBaseline);
   let turn: number | undefined;
   const now = options.now ?? Date.now;
+  // When this run's part began: another session's entry from then on is
+  // that session's change, not this run's.
+  let startedAt = now();
   const sweepOptions = (): BaselineOptions => ({
     ...baselineOptions,
     ...(gitBaseline === null ? {} : { gitBaseline }),
@@ -146,8 +163,10 @@ export function beginReconciliation(
       return headBaseline;
     },
     baselinePath: join(dir, `baseline-${options.runId}.json`),
-    sweep: () =>
-      reconcile(
+    sweep: () => {
+      const foreign = options.peers?.journaledSince(startedAt);
+      const contestedBy = options.peers?.live() ?? [];
+      return reconcile(
         options.store,
         baseline,
         options.root,
@@ -155,12 +174,16 @@ export function beginReconciliation(
           sessionId: options.sessionId,
           timestamp: now(),
           runStart,
+          ...(foreign === undefined || foreign.size === 0 ? {} : { foreign }),
+          ...(contestedBy.length === 0 ? {} : { contestedBy }),
           ...(turn === undefined ? {} : { turn }),
         },
         sweepOptions(),
-      ),
+      );
+    },
     rebaseline: (next: number) => {
       runStart = journalRunStart(options.store);
+      startedAt = now();
       baseline = captureBaseline(options.root, {
         ...baselineOptions,
         previous: baseline,

@@ -268,6 +268,25 @@ export function listSessions(
   );
 }
 
+// The other sessions recorded against `workspace`, read synchronously from
+// their listing headers — the end-of-run sweep that asks is synchronous. The
+// recorded workspace is `meta.workspace`, else the session's cwd.
+export function workspacePeers(
+  store: SessionStore,
+  workspace: string,
+  self: string,
+): Array<{ id: string; dir: string }> {
+  const peers: Array<{ id: string; dir: string }> = [];
+  for (const entry of listDirOrNothing(store.bridge, store.root)) {
+    if (!isSessionShaped(entry) || entry.name === self) continue;
+    const meta = readSessionHeader(store, entry.path);
+    if ((meta?.workspace ?? meta?.cwd) === workspace) {
+      peers.push({ id: entry.name, dir: sessionDirOf(store, entry.name) });
+    }
+  }
+  return peers;
+}
+
 // Repo-level overlap probe (blind spot): the ids of
 // every session recorded against `workspace`. Two different sessions on
 // one workspace are LEGAL (warning only, never a block) — but each run's

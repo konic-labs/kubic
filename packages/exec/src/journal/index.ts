@@ -16,7 +16,10 @@ export {
   unifiedHunks,
 } from './diff.js';
 export { HASH_CHUNK_BYTES, /** @internal */ sha256Hex } from './hash.js';
-export type { RunReconciliation } from './reconcile.js';
+export type {
+  ReconciliationPeers,
+  RunReconciliation,
+} from './reconcile.js';
 export { beginReconciliation } from './reconcile.js';
 export { /** @internal */ restoreEntry } from './restore.js';
 export {

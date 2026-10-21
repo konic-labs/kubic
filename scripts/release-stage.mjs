@@ -80,6 +80,8 @@ export function releaseManifest(root) {
     if (root[field] !== undefined) manifest[field] = root[field];
   }
   manifest.files = RELEASE_FILES;
+  // A publish from CI attaches the build's provenance attestation.
+  manifest.publishConfig = { access: 'public', provenance: true };
   return manifest;
 }
 

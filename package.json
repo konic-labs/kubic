@@ -24,6 +24,7 @@
     "kshot": "npm run build && python3 scripts/kshot/kshot.py",
     "release:stage": "node scripts/release-stage.mjs",
     "release:contract": "node scripts/pack-install-contract.mjs",
+    "release:sign": "node scripts/release-sign.mjs",
     "check": "npm run typecheck && npm run lint && npm run lint:deps && npm run lint:dead && npm run lint:dead:prod && npm run check:pins && npm run docs:check && npm run check:gates",
     "typecheck": "tsc --noEmit -p tsconfig.base.json",
     "lint": "biome ci .",

@@ -7,5 +7,6 @@ operator behaviour on the [CLI pages](../cli/README.md).
 - [overview.md](overview.md) — system overview and package map
 - [in-process.md](in-process.md) — the in-process runtime
 - [journal-and-safety.md](journal-and-safety.md) — change journal and approvals
+- [threat-model.md](threat-model.md) — assets, trust boundaries, adversaries and what is out of scope
 
 Back to the [docs index](../README.md).

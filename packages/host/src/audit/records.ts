@@ -131,7 +131,9 @@ export function isPrivilegedAuditWhat(what: string): boolean {
     // An admin hook is shell from the config that can refuse a call.
     what.startsWith('hook:') ||
     // A call to an allowlisted MCP server's tool.
-    what.startsWith('mcp:')
+    what.startsWith('mcp:') ||
+    // A connection through the egress proxy, allowed or refused.
+    what === 'network:egress'
   );
 }
 
@@ -262,6 +264,44 @@ export function mcpCallAudit(input: McpCallInput): AuditInput {
     posture: 'approvals',
     result: input.result,
     reason: input.reason,
+  };
+}
+
+// Audit record for one connection through the egress proxy: the host and
+// port, whether the allowlist let it through, and the bytes it carried.
+export interface EgressInput {
+  sessionId: string;
+  workspace: string;
+  host: string;
+  port: number;
+  allowed: boolean;
+  bytes: number;
+}
+
+export function egressAudit(input: EgressInput): AuditInput {
+  return {
+    who: 'agent:root',
+    what: 'network:egress',
+    agent: { session: input.sessionId || UNKNOWN, role: 'root' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    process: { pid: process.pid },
+    workspace: { path: input.workspace, base: UNKNOWN },
+    permission: {
+      permission: 'network:proxy',
+      approval: 'policy allowed_domains',
+    },
+    credential: { sentinel: 'none' },
+    network: {
+      host: input.host,
+      port: input.port,
+      decision: input.allowed ? 'allow' : 'deny',
+      bytes: input.bytes,
+    },
+    posture: 'approvals',
+    result: input.allowed ? 'ok' : 'deny',
+    reason: input.allowed
+      ? `${input.host} is an allowed domain`
+      : `${input.host} is not on [policy] allowed_domains`,
   };
 }
 

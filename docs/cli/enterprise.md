@@ -46,14 +46,14 @@ them:
   system prompt's `tools:` line and the active tool set are the same set;
   a tool named in `denied_tools` cannot be re-enabled by a project config,
   a role document or the model.
-- `network_policy` — `"proxy"` is carried as the engine's `allowlist`
-  mode; the engine names (`none`, `allowlist`, `full`) are accepted too.
-  Kubic has no proxy-mediated or socket-level enforcement, so the value is
-  **not enforced**: `kubic config` lists it (`kept`) instead of the section
-  being silently ignored, and `kubic doctor` fails
-  `policy:enterprise-network` for any configured value — `allowed_domains`
-  or not — and `policy:enterprise-enforceability` with it. The bash
-  network guard is the `[permissions] network` class, a lexical detector.
+- `network_policy` — `"proxy"` (the engine's `allowlist` mode) with
+  `allowed_domains` starts the egress proxy: see
+  [The egress proxy](#the-egress-proxy). The engine names (`none`,
+  `allowlist`, `full`) are accepted too. Any other configured value is
+  **not enforced**: `kubic config` lists it (`kept`), and `kubic doctor`
+  fails `policy:enterprise-network` for it and
+  `policy:enterprise-enforceability` with it. The bash network guard is the
+  `[permissions] network` class, a lexical detector.
 - `filesystem_policy` — `"workspace-only"` is the engine's
   `workspace-write`; the engine level names are accepted too.
 - `data_policy` — `"redact"` and `"redact-model"` are enforced; any other
@@ -325,6 +325,35 @@ line name the file (`models.json ignored: <path> (project, forbidden by the
 enterprise policy ([policy] project_policy = "restricted"))`). A project may
 still narrow: a stricter permission class, `route = "deny"`, a smaller tool
 set. The default is `"open"`.
+
+## The egress proxy
+
+```toml
+[policy]
+network_policy = "proxy"
+allowed_domains = ["github.com", "registry.npmjs.org", "*.pythonhosted.org"]
+```
+
+With `network_policy = "proxy"` and `allowed_domains`, each `kubic run` and
+`kubic tui` boot starts a local HTTP proxy on `127.0.0.1` and points the bash
+tool's environment at it (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and their
+lowercase forms). A request to a host off the list — a CONNECT tunnel or a
+plain HTTP request — is refused with 403; an allowed one goes through, never
+decrypted. Every connection is a `network:egress` row in the audit ledger
+with the host, the port, the decision and the bytes it carried. An entry
+like `github.com` covers the domain and its subdomains, `*.github.com` only
+the subdomains, and an IP matches itself. A proxy that cannot start refuses
+the run: the organization mandated it.
+
+Only clients that honour the proxy variables use it (curl, git, npm, pip
+and most others do). With `[sandbox]` on macOS the proxy's port is the one
+connection a sandboxed command can open, so a client that ignores the
+variables reaches nothing; under bubblewrap on Linux the network stays
+shared so the proxy is reachable, and the variables are the control.
+Loopback (`localhost`, `127.0.0.1`) is left out of the proxy (`NO_PROXY`).
+Kubic's own model traffic goes to its provider directly, not through the
+proxy. `kubic doctor` passes `policy:enterprise-network` when the proxy
+enforces the policy.
 
 ## The bash sandbox
 

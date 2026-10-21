@@ -27,6 +27,6 @@ export type {
   StatInfo,
 } from './contracts.js';
 export { /** @internal */ ROOT_PROVENANCE } from './contracts.js';
-export { NodeExecutionEnv, sandboxedEnv } from './node-env.js';
+export { configuredEnv, NodeExecutionEnv } from './node-env.js';
 
 export { toolSpawnEnv } from './tool-env.js';

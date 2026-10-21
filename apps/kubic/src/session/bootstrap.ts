@@ -68,6 +68,7 @@ import {
 } from '@kubic/host/instructions';
 import type { McpConnection, McpServerSpec } from '@kubic/host/mcp';
 import type { AssembledModels } from '@kubic/host/models';
+import type { EgressProxy } from '@kubic/host/net';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import { dataProtectionOf } from '@kubic/host/policy';
 import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles';
@@ -77,6 +78,7 @@ import { bootSkills } from '@kubic/host/skills';
 import type { RegionGate } from '../config/model-selection.js';
 import { installBootPolicy } from './approval-policy.js';
 import { assembleBootCatalog } from './catalog.js';
+import { bootEgressProxy } from './egress.js';
 import type { ModelFallback } from './fallback.js';
 import { beginBootJournal, probeBootOverlap } from './journal.js';
 import { bootSessionLane } from './lane.js';
@@ -294,6 +296,9 @@ export class SessionBoot {
   readonly mcp: McpConnection[] = [];
   // The OS sandbox the bash tool's commands run in, when one does.
   sandboxKind: 'seatbelt' | 'bubblewrap' | undefined;
+  // The egress proxy the bash tool's network goes through, when the policy
+  // mandates one.
+  egressProxy: EgressProxy | undefined;
   lane: Lane | undefined;
   // The model the booted lane runs.
   liveModel: { provider: string; id: string } | undefined;
@@ -408,7 +413,9 @@ export class SessionBoot {
     const unsandboxed = this.config.env ?? new NodeExecutionEnv(process.cwd());
     this.env = unsandboxed;
     await installBootPolicy(this, unsandboxed);
-    const env = bootSandbox(this, unsandboxed);
+    const proxied = await bootEgressProxy(this, unsandboxed);
+    if ('kind' in proxied) return proxied;
+    const env = bootSandbox(this, proxied);
     if ('kind' in env) return env;
     this.env = env;
     this.request.onPolicyInstalled?.(this);
@@ -525,6 +532,7 @@ export class SessionBoot {
       // Best-effort.
     }
     for (const connection of this.mcp) connection.close();
+    await this.egressProxy?.close().catch(() => undefined);
     // The harness owns the storage it adopted; closing it first means the
     // handle's release only gives the lock back.
     try {

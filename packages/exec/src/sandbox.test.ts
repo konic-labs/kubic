@@ -97,15 +97,14 @@ async function sandboxed(
 ): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   const found = detectSandbox();
   if (found === undefined) throw new Error('no sandbox');
-  const shell = new NodeShell(
-    policy.workspace,
-    new BashSandbox({
+  const shell = new NodeShell(policy.workspace, {
+    sandbox: new BashSandbox({
       kind: found.kind,
       binary: found.binary,
       policy: () => policy,
       grants: () => grants,
     }),
-  );
+  });
   const result = await shell
     .spawn('/bin/bash', ['-c', command], {
       provenance: {

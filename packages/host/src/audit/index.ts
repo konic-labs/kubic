@@ -28,6 +28,7 @@ export {
 export { createLedgerModelKeyResolver } from './model-key-audit.js';
 export {
   decisionAudit,
+  egressAudit,
   fullAccessDisabledAudit,
   fullAccessEnabledAudit,
   hookRunAudit,

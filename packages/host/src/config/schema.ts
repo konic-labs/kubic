@@ -1180,7 +1180,7 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['policy.network_policy', 'policy.allowed_domains'],
-        text: 'Parsed and resolved into the effective policy: `"proxy"` is carried as the engine\'s allowlist mode. **Not enforced:** Kubic has no proxy-mediated enforcement, so these keys protect nothing; `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` says so: any configured `network_policy` fails `policy:enterprise-network` as not enforced, and `policy:enterprise-enforceability` with it. The engine mode names (`none`, `allowlist`, `full`) are accepted too.',
+        text: '`"proxy"` (the engine\'s allowlist mode) with `allowed_domains` starts the egress proxy each `kubic run` and `kubic tui` boot: the bash tool\'s environment points at it, a host off the list is refused (403), and every connection is a `network:egress` audit row with its host, port, decision and bytes; under `[sandbox]` on macOS it is the only connection a command can open. Entries are domains (`github.com` covers its subdomains, `*.github.com` only the subdomains) or IPs. Any other configured value is parsed and reported, not enforced, and `kubic doctor` fails `policy:enterprise-network` for it. The engine mode names (`none`, `allowlist`, `full`) are accepted too. See [The egress proxy](enterprise.md#the-egress-proxy).',
       },
       {
         keys: ['policy.filesystem_policy'],

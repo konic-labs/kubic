@@ -31,6 +31,9 @@ export interface SandboxPolicy {
   readonly hidden: readonly string[];
   // The temporary directories a command may write; absent: this machine's.
   readonly temporary?: readonly string[];
+  // The egress proxy's port: the one connection a command may open,
+  // whatever the network class or a grant says.
+  readonly proxyPort?: number;
 }
 
 export interface SandboxGrants {
@@ -139,7 +142,11 @@ export function seatbeltProfile(
     '(allow file-ioctl (regex #"^/dev/tty"))',
     read,
     write,
-    ...(policy.network || grants.network === true ? ['(allow network*)'] : []),
+    ...(policy.proxyPort !== undefined
+      ? [`(allow network-outbound (remote ip "localhost:${policy.proxyPort}"))`]
+      : policy.network || grants.network === true
+        ? ['(allow network*)']
+        : []),
     '',
   ].join('\n');
 }
@@ -181,7 +188,14 @@ export function bubblewrapArgs(
         ? ['--tmpfs', path]
         : ['--ro-bind', '/dev/null', path],
     ),
-    ...(policy.network || grants.network === true ? [] : ['--unshare-net']),
+    // A separate network namespace cannot reach the egress proxy on the
+    // host's loopback: with a proxy, the network is shared and the proxy
+    // variables are the control.
+    ...(policy.network ||
+    grants.network === true ||
+    policy.proxyPort !== undefined
+      ? []
+      : ['--unshare-net']),
     '--chdir',
     policy.workspace,
     '--',

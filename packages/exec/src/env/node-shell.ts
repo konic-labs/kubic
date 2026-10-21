@@ -170,14 +170,20 @@ class OutputAccumulator {
   }
 }
 
+// What a run adds to the commands it spawns: the bash tool's OS sandbox,
+// and variables above the tool environment (the egress proxy's).
+export interface ShellOptions {
+  readonly sandbox?: BashSandbox;
+  readonly toolEnv?: Readonly<Record<string, string>>;
+}
+
 export class NodeShell implements Shell {
   readonly cwd: string;
-  // The bash tool's OS sandbox, when one is configured.
-  readonly sandbox: BashSandbox | undefined;
+  readonly options: ShellOptions;
 
-  constructor(cwd: string, sandbox?: BashSandbox) {
+  constructor(cwd: string, options: ShellOptions = {}) {
     this.cwd = cwd;
-    this.sandbox = sandbox;
+    this.options = options;
   }
 
   spawn(
@@ -187,9 +193,10 @@ export class NodeShell implements Shell {
   ): ProcessHandle {
     // The bash tool's commands run inside the sandbox; every other spawn
     // (git probes, gate commands) runs as is.
+    const sandbox = this.options.sandbox;
     const wrapped =
-      this.sandbox !== undefined && options.provenance?.operation === 'bash'
-        ? this.sandbox.wrap(command, commandArgs, options.provenance.toolCallId)
+      sandbox !== undefined && options.provenance?.operation === 'bash'
+        ? sandbox.wrap(command, commandArgs, options.provenance.toolCallId)
         : { cmd: command, args: commandArgs };
     const { cmd, args } = wrapped;
     // Detached process group: kill() signals the whole group so spawned
@@ -202,7 +209,7 @@ export class NodeShell implements Shell {
       cwd: this.cwd,
       detached: groups,
       // An explicit allowlisted env, never the inherited one.
-      env: toolSpawnEnv(),
+      env: { ...toolSpawnEnv(), ...this.options.toolEnv },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const run = new ShellRun(child, options, groups);

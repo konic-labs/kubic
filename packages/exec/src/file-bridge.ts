@@ -48,6 +48,14 @@ export interface BridgeFileInfo {
   mode?: number;
   size: number;
   mtimeMs: number;
+  /**
+   * Inode change time and inode number: with size and mtime they tell an
+   * unchanged file from a rewritten one (the baseline digest cache). Optional
+   * so existing fake bridges stay valid; absent means "unknown", and nothing
+   * is reused for such an entry.
+   */
+  ctimeMs?: number;
+  ino?: number;
 }
 
 interface BridgeLineReader {
@@ -161,6 +169,8 @@ function infoOf(abs: string): BridgeFileInfo {
     mode: stat.mode & 0o7777,
     size: stat.size,
     mtimeMs: stat.mtimeMs,
+    ctimeMs: stat.ctimeMs,
+    ino: stat.ino,
   };
 }
 

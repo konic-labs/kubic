@@ -64,6 +64,9 @@ export function beginBootJournal(boot: SessionBoot, env: ExecutionEnv): void {
       root: env.cwd,
       runId: id,
       sessionId: id,
+      // Beside the sessions, under a name no session id can take: a later
+      // run in this workspace reuses the digests of unchanged files.
+      baselineCacheDir: join(boot.root, '.baseline-cache'),
       // A very large file (or a bridge without ranged reads) is named on
       // the debug channel rather than silently costing its size at boot.
       onNotice: (detail: string) => boot.sinks.debug?.(`reconcile: ${detail}`),

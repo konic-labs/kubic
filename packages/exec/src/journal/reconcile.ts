@@ -25,6 +25,7 @@
 import { dirname, join } from 'node:path';
 import type { Baseline, BaselineOptions } from './baseline.js';
 import { captureBaseline, journalRunStart, saveBaseline } from './baseline.js';
+import { createBaselineCache } from './baseline-cache.js';
 import {
   captureGitBaseline,
   captureHeadState,
@@ -33,6 +34,7 @@ import {
   saveGitBaseline,
   saveHeadState,
 } from './git.js';
+import { sha256Hex } from './hash.js';
 import type { FileJournalStore } from './store.js';
 import { reconcile } from './sweep.js';
 
@@ -63,6 +65,12 @@ export interface RunReconciliationOptions {
    * attributes every change it finds to this run.
    */
   peers?: ReconciliationPeers;
+  /**
+   * Where the workspace's baseline digest cache lives (one file per
+   * workspace in it): a later run reuses the digests of unchanged files
+   * instead of reading the whole tree again. Absent: the cache lasts this run.
+   */
+  baselineCacheDir?: string;
 }
 
 // The other sessions in the workspace, as the sweep needs them: what they
@@ -119,7 +127,25 @@ export function beginReconciliation(
     );
   }
   const dir = dirname(options.store.indexPath);
-  const baselineOptions: BaselineOptions = {};
+  // One cache for the run's walks (boot, each turn, the sweep), seeded from
+  // the workspace's file. Its clock is always the wall clock: the racy rule
+  // compares file times, which the entry clock seam cannot fake.
+  const cache = createBaselineCache(
+    options.root,
+    options.baselineCacheDir === undefined
+      ? undefined
+      : join(
+          options.baselineCacheDir,
+          `${sha256Hex(options.root).slice(0, 32)}.json`,
+        ),
+  );
+  const cached = <T>(walk: () => T): T => {
+    cache.begin(Date.now());
+    const result = walk();
+    cache.commit();
+    return result;
+  };
+  const baselineOptions: BaselineOptions = { cache };
   if (options.outOfScope !== undefined) {
     baselineOptions.outOfScope = options.outOfScope;
   }
@@ -130,7 +156,7 @@ export function beginReconciliation(
   // state to entries this run appended — a resumed session shares the
   // journal with every earlier run.
   let runStart = journalRunStart(options.store);
-  let baseline = captureBaseline(options.root, baselineOptions);
+  let baseline = cached(() => captureBaseline(options.root, baselineOptions));
   saveBaseline(dir, options.runId, baseline);
   // Index blob OIDs for the files clean at boot — the sweep's
   // pre-images for bash-made changes. Fail-open (null outside git repos),
@@ -166,28 +192,32 @@ export function beginReconciliation(
     sweep: () => {
       const foreign = options.peers?.journaledSince(startedAt);
       const contestedBy = options.peers?.live() ?? [];
-      return reconcile(
-        options.store,
-        baseline,
-        options.root,
-        {
-          sessionId: options.sessionId,
-          timestamp: now(),
-          runStart,
-          ...(foreign === undefined || foreign.size === 0 ? {} : { foreign }),
-          ...(contestedBy.length === 0 ? {} : { contestedBy }),
-          ...(turn === undefined ? {} : { turn }),
-        },
-        sweepOptions(),
+      return cached(() =>
+        reconcile(
+          options.store,
+          baseline,
+          options.root,
+          {
+            sessionId: options.sessionId,
+            timestamp: now(),
+            runStart,
+            ...(foreign === undefined || foreign.size === 0 ? {} : { foreign }),
+            ...(contestedBy.length === 0 ? {} : { contestedBy }),
+            ...(turn === undefined ? {} : { turn }),
+          },
+          sweepOptions(),
+        ),
       );
     },
     rebaseline: (next: number) => {
       runStart = journalRunStart(options.store);
       startedAt = now();
-      baseline = captureBaseline(options.root, {
-        ...baselineOptions,
-        previous: baseline,
-      });
+      baseline = cached(() =>
+        captureBaseline(options.root, {
+          ...baselineOptions,
+          previous: baseline,
+        }),
+      );
       saveBaseline(dir, options.runId, baseline);
       gitBaseline = captureGitBaseline(options.root, baseline);
       if (gitBaseline !== null)

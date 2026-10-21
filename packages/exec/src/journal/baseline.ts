@@ -3,6 +3,7 @@ import type { FileBridge } from '../file-bridge.js';
 import { createNodeFileBridge } from '../file-bridge.js';
 import type { IgnoreRule } from '../ignore.js';
 import { isIgnored, parseIgnoreFile } from '../ignore.js';
+import type { BaselineCache } from './baseline-cache.js';
 import type { GitBaseline, GitCommand, HeadState } from './git.js';
 import { HASH_NOTICE_BYTES, sha256HexOfFile } from './hash.js';
 import type { FileJournalStore } from './store.js';
@@ -68,6 +69,11 @@ export interface BaselineOptions {
    * (fail-open) — no marker, no error.
    */
   headBaseline?: HeadState | null;
+  /**
+   * Digests of files a previous walk hashed, reused while a file is provably
+   * unchanged (baseline-cache.ts). Absent: every file is read.
+   */
+  cache?: BaselineCache;
 }
 
 // Out-of-scope paths: an entry excludes the path itself and
@@ -163,6 +169,12 @@ export function captureBaseline(
         // Skipped deliberately (biome's noUselessContinue fix deletes a bare
         // trailing `continue` together with this rationale — do not re-add it).
       } else {
+        const reused = options.cache?.reuse(relPath, info);
+        if (reused !== undefined) {
+          baseline[relPath] = reused;
+          options.cache?.record(relPath, info, reused);
+          continue;
+        }
         try {
           const abs = join(dir, info.name);
           if (info.size > HASH_NOTICE_BYTES) {
@@ -172,12 +184,14 @@ export function captureBaseline(
               `hashing a very large file: ${relPath} (${info.size} bytes) — boot reads its full apparent size`,
             );
           }
-          baseline[relPath] = sha256HexOfFile(
+          const digest = sha256HexOfFile(
             bridge,
             abs,
             info.size,
             options.onNotice,
           );
+          baseline[relPath] = digest;
+          options.cache?.record(relPath, info, digest);
         } catch (error) {
           // A real disappearance (ENOENT) leaves the path out of
           // the walk, and reconcile records the delete it is. Anything else —

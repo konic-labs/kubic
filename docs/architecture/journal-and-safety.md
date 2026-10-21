@@ -82,7 +82,17 @@ file back from the object store — so a bash `rm`, `sed -i`, formatter or
 Only clean files qualify (restoring a committed version over uncommitted
 work would destroy it), and the pre-image must hash to the baseline digest
 — a mismatch, a binary file, or a pre-image above 4 MiB keeps the hash-only
-shape. Untracked files and non-repositories are unchanged. Two sessions may run in one workspace at once, and each sweep compares
+shape. Untracked files and non-repositories are unchanged. The baseline walk is a metadata walk, but it hashes every file it visits,
+so a digest cache keeps it cheap: a file whose size, modification time,
+change time and inode all match the previous walk keeps its digest instead
+of being read again, within a run (each turn, the sweep) and across runs
+(one private file per workspace under the sessions root's
+`.baseline-cache/`, `0600` in `0700`). A file changed within two seconds of
+the walk that hashed it is read again (it is racily clean: its timestamps
+could not tell a later change), and a change that keeps the size and
+restores the modification time still moves the change time, so it is read
+again too. A missing, corrupt or foreign cache file only costs the reuse.
+Two sessions may run in one workspace at once, and each sweep compares
 against its own run's baseline, so the sweep reads the other sessions'
 journals first: a path another session journaled during this run is that
 session's change and is left out, and a change found while another session

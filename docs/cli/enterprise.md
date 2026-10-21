@@ -90,11 +90,13 @@ target = "/var/log/kubic.jsonl"
 - `sink`: `syslog` (one RFC 5424 line per record), `file` (one JSON line
   per record appended at the exact `target` path), or `memory`
   (process-scoped, for embedders and tests).
-- `level`: `privileged` keeps approval decisions (`tool:<name>`), the
-  seven privileged actions, and the full-access revoke
-  (`posture:approvals` — the disable half of a privileged posture change travels with its grant review), dropping
-  everything else; `all` keeps every
-  row. The repo ledger always keeps everything regardless of level.
+- `level`: `privileged` keeps approval decisions (`tool:<name>`), run
+  starts (`run:start`), posture changes — the full-access grant
+  (`posture:full-access`), its revoke (`posture:approvals`) and a refused
+  mid-session change to `posture.json` (`posture:changed-mid-session`) —
+  undo restores (`undo-restore`) and gate commands (`verify:<gate>`),
+  dropping everything else (the per-request credential rows); `all` keeps
+  every row. The repo ledger always keeps everything regardless of level.
 - `target` (syslog): a unix datagram socket path (bare `/dev/log` or
   `unix:/path`; the default is `/var/run/syslog` on macos and `/dev/log`
   elsewhere) or a `host[:port]` UDP destination (port 514 when absent).

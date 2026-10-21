@@ -34,6 +34,7 @@ import {
   decisionAudit,
   fullAccessEnabledAudit,
   isPrivilegedAuditWhat,
+  postureChangedAudit,
   runStartAudit,
   undoRestoreAudit,
 } from './records.js';
@@ -435,11 +436,13 @@ describe('configured sink fan-out', () => {
       // The revoke half of a privileged
       // posture change reaches privileged sinks too.
       'posture:approvals',
+      'posture:changed-mid-session',
       'undo-restore',
+      'verify:tests',
     ]) {
       expect(isPrivilegedAuditWhat(what)).toBe(true);
     }
-    for (const what of ['credential:openai', 'merge:kubic/w-1']) {
+    for (const what of ['credential:openai', 'credential:anthropic']) {
       expect(isPrivilegedAuditWhat(what)).toBe(false);
     }
   });
@@ -502,6 +505,28 @@ describe('configured sink fan-out', () => {
     // …but the repo ledger keeps everything.
     expect(readAuditLedger(dir)).toHaveLength(1);
     expect(errors).toEqual([]);
+  });
+
+  it('level=privileged keeps the refused mid-session posture change', () => {
+    const dir = auditLedgerDir(repo());
+    mkdirSync(dir, { recursive: true });
+    const fake = fakeLines();
+    setAuditSinks(
+      buildConfiguredSinks([{ sink: 'syslog', level: 'privileged' }], {
+        syslogTransport: fake,
+      }).sinks,
+    );
+    appendToLedger(
+      dir,
+      postureChangedAudit({
+        sessionId: 'sess-1',
+        workspace: '/repo',
+        bootFullAccess: false,
+        observedFullAccess: true,
+      }),
+    );
+    expect(fake.lines).toHaveLength(1);
+    expect(fake.lines[0]).toContain('"what":"posture:changed-mid-session"');
   });
 
   it('level=all keeps non-privileged records', () => {

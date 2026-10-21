@@ -69,7 +69,7 @@ describe('runBeforeToolHooks', () => {
   it('fails closed on a hook that times out, and audits it', async () => {
     const workspace = tempDir('hooks-run-');
     const refusal = await runBeforeToolHooks(
-      [hook('beforeTool', 'sleep 10', { timeoutMs: 150 })],
+      [hook('beforeTool', 'sleep 10; true', { timeoutMs: 150 })],
       CALL,
       { sessionId: 's-1', workspace },
     );

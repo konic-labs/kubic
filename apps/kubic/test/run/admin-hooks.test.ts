@@ -90,7 +90,7 @@ describe('kubic run with admin hooks', () => {
 
   it('fails closed on a before-tool hook that times out', async () => {
     const run = await readRun([
-      hook('beforeTool', 'sleep 10', { timeoutMs: 200 }),
+      hook('beforeTool', 'sleep 10; true', { timeoutMs: 200 }),
     ]);
     expect(run.model).toContain('did not answer within 200 ms');
     expect(run.model).not.toContain('notes-body-7f3a');

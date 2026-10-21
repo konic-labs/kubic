@@ -47,14 +47,27 @@ export function runHookCommand(
       clearTimeout(timer);
       resolve(run);
     };
+    // Its own process group, so a timeout kills what the shell started too:
+    // a `sh` that forks (dash does) would otherwise leave the child holding
+    // the pipes open past the bound.
+    const groups = process.platform !== 'win32';
     const child = spawn('/bin/sh', ['-c', command], {
       cwd: options.cwd,
+      detached: groups,
       env: { ...toolSpawnEnv(options.baseEnv ?? process.env), ...options.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      try {
+        if (groups && child.pid !== undefined)
+          process.kill(-child.pid, 'SIGKILL');
+        else child.kill('SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+      child.stdout.destroy();
+      child.stderr.destroy();
     }, options.timeoutMs);
     const keep = (current: string, chunk: unknown): string =>
       current.length >= MAX_OUTPUT_BYTES

@@ -44,7 +44,7 @@ describe('runHookCommand', () => {
 
   it('kills a hook that runs past its bound and says so', async () => {
     const started = Date.now();
-    const run = await runHookCommand('sleep 10', '', {
+    const run = await runHookCommand('sleep 10; true', '', {
       timeoutMs: 150,
       cwd: tempDir('hook-runner-'),
     });

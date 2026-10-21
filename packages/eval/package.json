@@ -9,6 +9,10 @@
       "source": "./src/cli.ts",
       "default": "./src/cli.ts"
     },
+    "./compare": {
+      "source": "./src/compare.ts",
+      "default": "./src/compare.ts"
+    },
     "./export-cli": {
       "source": "./src/export-cli.ts",
       "default": "./src/export-cli.ts"
@@ -28,6 +32,10 @@
     "./signals": {
       "source": "./src/signals.ts",
       "default": "./src/signals.ts"
+    },
+    "./suite-files": {
+      "source": "./src/suite-files.ts",
+      "default": "./src/suite-files.ts"
     },
     "./suites": {
       "source": "./src/suites.ts",

@@ -5,6 +5,7 @@ import type { KubicInboxItem } from '@kubic/agent/lane/events';
 import { EXIT_OK, type ExitCode } from '@kubic/core/cli/exit-codes';
 import type { LaneImagePart } from '@kubic/core/presentation';
 import type { FileBridge } from '@kubic/exec/file-bridge';
+import type { SpendWatch } from '@kubic/host/cost';
 import type { ApprovalSurface } from '@kubic/tui/approval-surface';
 import type { AttachmentImage } from '@kubic/tui/attachments';
 import type { KeyRegistry } from '@kubic/tui/keybindings';
@@ -104,6 +105,10 @@ export class TuiContext {
   // The theme `/theme` keeps for this session (`default` is the dark brand
   // palette's other name).
   activeTheme: string;
+  // The `[policy]` spend caps over this process's turns, and the stop a cap
+  // called for: once set, no prompt is sent again.
+  spend: SpendWatch | undefined;
+  spendStop: string | undefined;
 
   constructor(init: {
     deps: TuiRunDeps;

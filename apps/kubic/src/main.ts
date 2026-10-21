@@ -5,12 +5,10 @@
 // failures.
 
 import { homedir } from 'node:os';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { promptKey } from '@kubic/core/cli/prompt';
 import { themeFor } from '@kubic/core/cli/theme';
-import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { ensureRuntimeExcludeRules } from '@kubic/exec/runtime-exclude';
+import { refreshManagedPolicy } from '@kubic/host/config';
 import {
   loadCliConfig,
   resolveInteractiveProjectTrust,
@@ -20,41 +18,12 @@ import { exitProcessAfterFlush } from './exit.js';
 import { createProdRunners } from './prod-runners.js';
 import { prodFirstRunSetup } from './setup-prod.js';
 import {
-  TRUST_KEYS,
   trustFileLines,
+  trustKeys,
   trustQuestionLines,
+  trustReviewLines,
 } from './trust-question.js';
-
-// License identity: the version is the one in the manifest named kubic, the
-// repo root's package.json (apps/kubic is @kubic/cli, so the walk skips its
-// manifest). Walk up from this module to that manifest: the src layout and the
-// bundle (dist/kubic.js, which has no manifest of its own) both reach it. The
-// license half of the line is owned by core/license.ts.
-function cliVersion(): string {
-  // File access goes through the exec FileBridge (I/O confinement):
-  // the composition root never imports node:fs directly.
-  try {
-    let dir = dirname(fileURLToPath(import.meta.url));
-    for (let level = 0; level < 6; level++) {
-      try {
-        const pkg = JSON.parse(
-          createNodeFileBridge(dir).readTextFile('package.json'),
-        ) as { name?: unknown; version?: unknown };
-        if (pkg.name === 'kubic' && typeof pkg.version === 'string') {
-          return pkg.version;
-        }
-      } catch {
-        // No (or unreadable) manifest here — keep walking up.
-      }
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
-  } catch {
-    // Fall through to the default below.
-  }
-  return '0.0.0';
-}
+import { cliVersion } from './version.js';
 
 const out = (line: string) => console.log(line);
 const err = (line: string) => console.error(line);
@@ -96,14 +65,25 @@ try {
             ).join('\n'),
             interactive: true,
             nonInteractive: 'not-now',
-            choices: TRUST_KEYS,
+            choices: trustKeys(question.changed),
           }),
         show: (path) => {
           for (const line of trustFileLines(themeFor(process.stdout), path)) {
             out(line);
           }
         },
+        showChanges: (review) => {
+          for (const line of trustReviewLines(
+            themeFor(process.stdout),
+            review,
+          )) {
+            out(line);
+          }
+        },
       }),
+    // The organization's remote policy, refreshed when stale before a
+    // command that runs on the config loads it.
+    refreshManagedPolicy: () => refreshManagedPolicy({ home: homedir() }),
     runners: createProdRunners({
       out,
       debug: err,

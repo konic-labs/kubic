@@ -461,12 +461,12 @@ describe('analysis commands refuse multi-agent flags as usage errors', () => {
     }
   });
 
-  it('cost refuses --by agent with the usage exit, naming the three levels', async () => {
+  it('cost refuses --by agent with the usage exit, naming the levels', async () => {
     const run = await kubic(['cost', '--by', 'agent'], true);
     expect(run.code).toBe(2);
     expect(run.out).toEqual([]);
     expect(run.err.join('\n')).toMatch(
-      /^error: invalid --by "agent" \(use request\|session\|project\)$/m,
+      /^error: invalid --by "agent" \(use request\|session\|project\|user\|team\|model\|day\)$/m,
     );
   });
 });

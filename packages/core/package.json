@@ -61,6 +61,10 @@
       "source": "./src/secret-refs.ts",
       "default": "./src/secret-refs.ts"
     },
+    "./secret-scan": {
+      "source": "./src/secret-scan.ts",
+      "default": "./src/secret-scan.ts"
+    },
     "./secret-shapes": {
       "source": "./src/secret-shapes.ts",
       "default": "./src/secret-shapes.ts"

@@ -27,6 +27,7 @@ import {
   TRAJECTORY_FILE,
   writeRunTrajectory,
 } from '@kubic/host/run';
+import { scanBridgeWrites } from '@kubic/host/secret-refs';
 import type { TrajectoryEscalation } from '@kubic/trajectory/schema';
 
 // Recorded when the workspace is not a git checkout: the journal, not git,
@@ -41,6 +42,9 @@ const NO_MODEL = { provider: 'none', id: 'none' } as const;
 
 export interface PersistRunTrajectoryInput {
   sessionsRoot: string;
+  // `data_policy` redaction: the file is scanned for secrets as it is
+  // written. Absent: written as captured.
+  redact?: boolean;
   sessionId: string;
   agentId: string;
   role: string;
@@ -180,8 +184,9 @@ export function persistRunTrajectory(input: PersistRunTrajectoryInput): string {
       ? {}
       : { escalations: input.escalations }),
   });
+  const files = createNodeFileBridge(input.sessionsRoot);
   return writeRunTrajectory(
-    createNodeFileBridge(input.sessionsRoot),
+    input.redact === true ? scanBridgeWrites(files) : files,
     input.sessionId,
     exported,
   );

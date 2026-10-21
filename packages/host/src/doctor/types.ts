@@ -111,6 +111,13 @@ export interface DoctorDeps extends CliIo {
   // checks. Same contract as probeRoles: a throwing probe becomes one
   // failing check, returned checks pass through verbatim.
   probeSkills?: () => DoctorCheck[];
+  // The project's AGENTS.md files, as a run here would load them. Same
+  // contract as probeSkills.
+  probeInstructions?: () => DoctorCheck[];
+  // On Windows, the POSIX bash the bash tool runs through, by name.
+  windowsBash?: () => string | undefined;
+  // The bash sandbox: its mode and the mechanism this machine offers.
+  probeSandbox?: () => DoctorCheck[];
   // Enterprise policy: the checks `enterpriseDoctorChecks`
   // derives from the resolved `[policy]` section, built by the composition
   // root (host never imports the app). Absent — including when no `[policy]`

@@ -6,6 +6,7 @@ import { BACKGROUND_CONTEXT, type Context } from '@kubic/agent/pi-boundary';
 import { gitHeadOf } from '@kubic/exec/git-clean';
 import { type RunOutcome, RunSpans } from '@kubic/host/run';
 import type { SessionBoot } from '../session/bootstrap.js';
+import type { ModelFallback } from '../session/fallback.js';
 import type { HeadlessRunDeps, HeadlessRunOptions } from './options.js';
 import { type RunSinks, runSinks } from './output.js';
 
@@ -30,6 +31,16 @@ export interface RunCapture {
   // the debug channel, the session writes, the result and the trajectory are
   // scrubbed of. Empty until a models.json key is used.
   liveSecrets: () => string[];
+  // This run's own spend and tool errors, from its lane events: what the
+  // OpenTelemetry export reports (a resumed session's earlier runs excluded).
+  tally: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    costUsd: number;
+    toolErrors: number;
+  };
 }
 
 // The live lane model and the approval posture the lane was installed with
@@ -40,6 +51,8 @@ export interface RunReport {
   posture?: 'approvals' | 'full-access';
   // The run's mode, set from the session record once the session exists.
   mode?: RunMode;
+  // The moves along `[model] fallback`, the boot's and the run's.
+  fallbacks?: readonly ModelFallback[];
 }
 
 export class RunState {
@@ -80,6 +93,14 @@ export class RunState {
       entries: [],
       interrupted: false,
       liveSecrets: () => [],
+      tally: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        costUsd: 0,
+        toolErrors: 0,
+      },
     };
     this.report = {};
     this.base = gitHeadOf(deps.env?.cwd ?? process.cwd());

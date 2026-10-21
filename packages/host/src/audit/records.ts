@@ -127,7 +127,13 @@ export function isPrivilegedAuditWhat(what: string): boolean {
     what === 'undo-restore' ||
     // A gate command is arbitrary shell from the config, run outside the
     // approval interceptors: an action, not a decision.
-    what.startsWith('verify:')
+    what.startsWith('verify:') ||
+    // An admin hook is shell from the config that can refuse a call.
+    what.startsWith('hook:') ||
+    // A call to an allowlisted MCP server's tool.
+    what.startsWith('mcp:') ||
+    // A connection through the egress proxy, allowed or refused.
+    what === 'network:egress'
   );
 }
 
@@ -194,6 +200,108 @@ export function verifyCommandAudit(input: VerifyCommandInput): AuditInput {
     posture: 'approvals',
     result: input.verdict === 'pass' ? 'ok' : 'error',
     reason: `${input.baseline ? 'baseline ' : ''}${input.gate} gate ran sh -c ${JSON.stringify(input.command)}: ${input.verdict}`,
+  };
+}
+
+// Audit record for one admin hook run: its event, the command, and what came
+// of it — `ok` (allowed, or ran clean), `deny` (a before-tool hook refused the
+// call), `error` (failed or timed out).
+export interface HookRunInput {
+  sessionId: string;
+  workspace: string;
+  event: string;
+  command: string;
+  tool?: string;
+  result: 'ok' | 'deny' | 'error';
+  reason: string;
+}
+
+export function hookRunAudit(input: HookRunInput): AuditInput {
+  return {
+    who: 'config:hooks',
+    what: `hook:${input.event}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'hook' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    process: { pid: process.pid },
+    workspace: { path: input.workspace, base: UNKNOWN },
+    permission: {
+      permission: input.tool === undefined ? 'hook' : `hook:${input.tool}`,
+      approval: `sh -c ${JSON.stringify(input.command)}`,
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    posture: 'approvals',
+    result: input.result,
+    reason: input.reason,
+  };
+}
+
+// Audit record for one call to an allowlisted MCP server's tool: the server
+// and tool, and whether the call answered (`ok`) or failed (`error`).
+export interface McpCallInput {
+  sessionId: string;
+  workspace: string;
+  server: string;
+  tool: string;
+  result: 'ok' | 'error';
+  reason: string;
+}
+
+export function mcpCallAudit(input: McpCallInput): AuditInput {
+  return {
+    who: 'agent:root',
+    what: `mcp:${input.server}/${input.tool}`,
+    agent: { session: input.sessionId || UNKNOWN, role: 'root' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    process: { pid: process.pid },
+    workspace: { path: input.workspace, base: UNKNOWN },
+    permission: {
+      permission: `mcp:${input.server}`,
+      approval: 'allowlisted by the managed config',
+    },
+    credential: { sentinel: 'none' },
+    network: { ...NO_NETWORK },
+    posture: 'approvals',
+    result: input.result,
+    reason: input.reason,
+  };
+}
+
+// Audit record for one connection through the egress proxy: the host and
+// port, whether the allowlist let it through, and the bytes it carried.
+export interface EgressInput {
+  sessionId: string;
+  workspace: string;
+  host: string;
+  port: number;
+  allowed: boolean;
+  bytes: number;
+}
+
+export function egressAudit(input: EgressInput): AuditInput {
+  return {
+    who: 'agent:root',
+    what: 'network:egress',
+    agent: { session: input.sessionId || UNKNOWN, role: 'root' },
+    model: { provider: UNKNOWN, id: UNKNOWN, thinking: UNKNOWN },
+    process: { pid: process.pid },
+    workspace: { path: input.workspace, base: UNKNOWN },
+    permission: {
+      permission: 'network:proxy',
+      approval: 'policy allowed_domains',
+    },
+    credential: { sentinel: 'none' },
+    network: {
+      host: input.host,
+      port: input.port,
+      decision: input.allowed ? 'allow' : 'deny',
+      bytes: input.bytes,
+    },
+    posture: 'approvals',
+    result: input.allowed ? 'ok' : 'deny',
+    reason: input.allowed
+      ? `${input.host} is an allowed domain`
+      : `${input.host} is not on [policy] allowed_domains`,
   };
 }
 

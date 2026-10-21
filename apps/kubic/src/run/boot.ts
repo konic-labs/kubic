@@ -59,6 +59,17 @@ export function createRunBoot(state: RunState, guard: RunGuard): SessionBoot {
       journalRetention: deps.journalRetention,
       reconcileOutOfScope: deps.reconcileOutOfScope,
       systemPromptSection: deps.systemPromptSection,
+      projectInstructions: deps.projectInstructions,
+      projectProvidersRefusal: deps.projectProvidersRefusal,
+      sessionTeam: deps.sessionTeam,
+      hooks: deps.hooks,
+      approvalBroker: deps.approvalBroker,
+      preApprovals: deps.preApprovals,
+      providerRegions: deps.providerRegions,
+      modelFallback: deps.modelFallback,
+      oidc: deps.oidc,
+      mcp: deps.mcp,
+      sandbox: deps.sandbox,
       modelPolicy: deps.modelPolicy,
       trustProject: deps.trustProject,
       skills: deps.skills,
@@ -73,6 +84,9 @@ export function createRunBoot(state: RunState, guard: RunGuard): SessionBoot {
       // the debug channel — so a typo cannot read as loaded.
       skillsWarn: sinks.warn,
       skillsLog: (line) => sinks.debug?.(`skills: ${line}`),
+      instructionsNotice: (line) =>
+        sinks.notice(`project instructions: ${line}`),
+      dlpNotice: (line) => sinks.notice(line),
     },
   );
 }

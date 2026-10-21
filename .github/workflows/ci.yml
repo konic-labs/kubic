@@ -33,6 +33,18 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --no-audit --no-fund
+      # The bash sandbox's tests run bubblewrap for real. The runner's
+      # AppArmor restricts unprivileged user namespaces, which bubblewrap
+      # needs; the last line fails the job if it still cannot start, so those
+      # tests are never skipped here.
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends bubblewrap
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --dev /dev --proc /proc --unshare-net -- true
       # The static gates do not depend on the Node version: run them once,
       # first, so a typo fails in seconds, before the test suite.
       - if: matrix.node == '22'
@@ -52,6 +64,23 @@ jobs:
       # Hermetic: HOME is a temp dir, no provider, no network.
       - run: npm run build
       - run: npm run test:binary
+
+  # Windows: the built binary runs a faux `kubic run` whose bash tool call goes
+  # through Git Bash, then `kubic log` and `kubic doctor`
+  # (scripts/windows-smoke.mjs). The suite itself runs on Linux.
+  windows:
+    name: windows smoke (node 22)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: node scripts/windows-smoke.mjs
 
   # The npm package a user installs: staged from the root build with its
   # shrinkwrap, packed, installed into an empty prefix and run, then installed

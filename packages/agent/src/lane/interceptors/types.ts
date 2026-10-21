@@ -19,6 +19,30 @@ export interface PolicyInterceptorOptions {
   // The type lives here (not in host) because the agent cannot import
   // host; the host adapts its ApprovalService to it.
   approve?: (call: ApprovalCall) => Promise<ApprovalAskVerdict>;
+  // Data loss prevention before the model: present, every tool result is
+  // scanned for secrets after the tool runs and before the model reads it,
+  // and this hears each result that had values redacted.
+  redactToolOutput?: (toolName: string, found: number) => void;
+  // Admin hooks around each call (the host runs them; the agent cannot
+  // import it).
+  toolHooks?: ToolHookCalls;
+}
+
+export interface ToolHookCalls {
+  // Runs once the approval ask allowed the call, on the arguments that will
+  // run (an operator's edit included): a returned reason refuses the call,
+  // and a throw refuses it too.
+  before?: (call: {
+    toolName: string;
+    args: Record<string, unknown>;
+  }) => Promise<string | undefined>;
+  // Hears every result after the secret scan; it never changes the result.
+  after?: (call: {
+    toolName: string;
+    args: Record<string, unknown>;
+    isError: boolean;
+    output: string;
+  }) => Promise<void>;
 }
 
 export interface ApprovalCall {

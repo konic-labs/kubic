@@ -15,6 +15,17 @@ trusted, and anything the agent can reach, a mistaken or manipulated
 instruction can reach too. Kubic is a single trust zone, and these docs
 never imply otherwise.
 
+One opt-in narrows what the bash tool's commands can reach, and only
+those: with `[sandbox] mode = "auto"` or `"required"`, each command the
+bash tool runs is wrapped in the operating system's sandbox (Seatbelt on
+macOS, bubblewrap on Linux), so it writes only to the workspace and the
+temporary directories, opens no network connection unless the network
+class is `full`, and cannot read the credential paths — except what an
+approved call was approved for. Kubic's own process, its file tools and
+every other spawn keep the user's full authority; the sandbox is a limit on
+one tool, not isolation of the run. See
+[the bash sandbox](../cli/enterprise.md#the-bash-sandbox).
+
 This is announced, not buried: every process start announces it from one
 source (`packages/host/src/doctor/no-isolation-notice.ts`), so the two surfaces
 cannot drift apart. `kubic run` prints the three-line warning block on
@@ -54,7 +65,8 @@ no second process.
   `kubic.policy` (the permission interceptors), `kubic.spans` (timing) and
   finally `kubic` (the operation tools plus the prompt).
 - **One prompt section, byte-stable.** The assembled prompt (role, `cwd:`,
-  `tools:`, `meta:`, then the appended skill/role context blocks) is
+  `tools:`, `meta:`, then the appended context blocks: the
+  `systemPromptFile` text, the project's `AGENTS.md` files and the skills) is
   installed as a single untagged `kubic` section. The harness stores
   sections as positional `pi.system` entries and re-sends only what
   changed, so an unchanged lane's second turn commits no new system entry

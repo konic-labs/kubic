@@ -16,6 +16,7 @@
 // signal:* labels the score is built from.
 import { dirname, join } from 'node:path';
 import { ModelSelectError, parseModelFlag } from '@kubic/agent/model-select';
+import type { MutableModels } from '@kubic/agent/pi-boundary';
 import { EVAL_DEFAULT_MODEL, type EvalOptions } from '@kubic/eval/cli';
 import { EvalRunnerError, type SuiteRunOutcome } from '@kubic/eval/runner';
 import { computeSignals, gatesPass } from '@kubic/eval/signals';
@@ -27,7 +28,7 @@ import { assembleModels, FAUX_PROVIDER_ID } from '@kubic/host/models';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { parseTrajectoryExportJSON } from '@kubic/trajectory/schema';
 import type { CliConfigResult } from './config/load.js';
-import { projectTrustFor } from './config/load.js';
+import { projectModelsDeps, projectTrustFor } from './config/load.js';
 import { runtimePolicy } from './config/model-selection.js';
 import {
   runtimeLaneDeps,
@@ -57,12 +58,15 @@ function seedFixture(
   }
 }
 
-async function runFixture(
-  suite: EvalSuite,
+export async function runFixture(
+  suite: Pick<EvalSuite, 'id' | 'fixture'>,
   dir: string,
   options: EvalOptions,
   cliConfig: CliConfigResult,
   task: string | undefined,
+  // The catalogue to select the model from (tests); absent: the one
+  // assembled for the fixture workspace.
+  catalog?: MutableModels,
 ): Promise<SuiteRunOutcome> {
   const fixture = suite.fixture;
   if (fixture === undefined) {
@@ -76,12 +80,17 @@ async function runFixture(
   // The eval --model flag (default faux/echo) is the lane's model, resolved
   // against the catalog assembled for the fixture workspace.
   const selection = parseModelFlag(options.model ?? EVAL_DEFAULT_MODEL);
-  const assembled = await assembleModels(dir, process.env, {
-    projectTrust: projectTrustFor(cliConfig),
-  });
+  const models =
+    catalog ??
+    (
+      await assembleModels(dir, process.env, {
+        projectTrust: projectTrustFor(cliConfig),
+        ...projectModelsDeps(cliConfig),
+      })
+    ).models;
   if (
-    assembled.models.getProvider(selection.provider) === undefined ||
-    assembled.models.getModel(selection.provider, selection.id) === undefined
+    models.getProvider(selection.provider) === undefined ||
+    models.getModel(selection.provider, selection.id) === undefined
   ) {
     throw new ModelSelectError(
       `unknown model '${selection.id}' on provider '${selection.provider}' (--model)`,
@@ -90,7 +99,7 @@ async function runFixture(
   const enterprisePolicy = runtimePolicy(cliConfig);
   const deps: HeadlessRunDeps = {
     sessionsRoot: defaultSessionsRoot(),
-    models: assembled.models,
+    models,
     model: selection,
     env: new NodeExecutionEnv(dir),
     // The same config projections `kubic run` threads, then the suite's own

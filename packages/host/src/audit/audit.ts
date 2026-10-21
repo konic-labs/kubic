@@ -171,7 +171,10 @@ function resolveSyslogFacility(facility: string | number | undefined): number {
 
 export type SyslogTarget =
   | { kind: 'unix'; path: string }
-  | { kind: 'udp'; host: string; port: number };
+  | { kind: 'udp'; host: string; port: number }
+  // A stream collector: `tcp://host[:port]` (514) or `tls://host[:port]`
+  // (6514, RFC 5425). Delivered through the sink's spool.
+  | { kind: 'tcp' | 'tls'; host: string; port: number };
 
 // The platform's syslog socket: `/var/run/syslog` on macOS,
 // `/dev/log` elsewhere. No import needed — `process.platform` is global.
@@ -197,17 +200,36 @@ export function parseSyslogTarget(target: string | undefined): SyslogTarget {
     ? target.slice('unix:'.length)
     : target;
   if (rest.startsWith('/')) return { kind: 'unix', path: rest };
-  const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(target);
+  const stream = /^(tcp|tls):\/\/(.+)$/.exec(target);
+  if (stream !== null) {
+    const kind = stream[1] as 'tcp' | 'tls';
+    const endpoint = hostPort(stream[2] as string, kind === 'tls' ? 6514 : 514);
+    if (endpoint === undefined) {
+      throw new AuditSinkError(
+        `invalid syslog target ${JSON.stringify(target)}`,
+      );
+    }
+    return { kind, ...endpoint };
+  }
+  const endpoint = hostPort(target, 514);
+  if (endpoint === undefined) {
+    throw new AuditSinkError(`invalid syslog target ${JSON.stringify(target)}`);
+  }
+  return { kind: 'udp', ...endpoint };
+}
+
+// `host[:port]`, an IPv6 host in brackets; undefined when malformed.
+function hostPort(
+  text: string,
+  fallbackPort: number,
+): { host: string; port: number } | undefined {
+  const match = /^(\[[^\]]+\]|[^:/]+)(?::(\d+))?$/.exec(text);
   const host = match?.[1];
   const portText = match?.[2];
-  if (host === undefined || host === '') {
-    throw new AuditSinkError(`invalid syslog target ${JSON.stringify(target)}`);
-  }
-  const port = portText === undefined ? 514 : Number(portText);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new AuditSinkError(`invalid syslog target ${JSON.stringify(target)}`);
-  }
-  return { kind: 'udp', host, port };
+  if (host === undefined || host === '') return undefined;
+  const port = portText === undefined ? fallbackPort : Number(portText);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+  return { host, port };
 }
 
 // The injectable syslog transport: one RFC 5424 line per
@@ -234,20 +256,28 @@ export interface SyslogSinkOptions {
 // `deny`/`error`. The record arrives already redacted — redaction is the
 // ledger's job, not the wire's — so the MSG is the record JSON verbatim.
 export function createSyslogSink(options: SyslogSinkOptions): AuditSink {
-  const facility = resolveSyslogFacility(options.facility);
-  const appName = options.appName ?? 'kubic';
-  const host = options.hostname ?? hostname();
+  const format = syslogLineFormat(options);
   const name = `syslog:${options.facility ?? 'local0'}`;
   return {
     name,
     kind: 'syslog',
     write: (record: OrgAuditRecord): void => {
-      const severity = record.result === 'ok' ? 5 : 4;
-      const priority = facility * 8 + severity;
-      options.transport.send(
-        `<${priority}>1 ${record.when} ${host} ${appName} ${record.process.pid} - - ${JSON.stringify(record)}`,
-      );
+      options.transport.send(format(record));
     },
+  };
+}
+
+/** The RFC 5424 line of one record, for a facility, host and app name. */
+export function syslogLineFormat(
+  options: Omit<SyslogSinkOptions, 'transport'>,
+): (record: OrgAuditRecord) => string {
+  const facility = resolveSyslogFacility(options.facility);
+  const appName = options.appName ?? 'kubic';
+  const host = options.hostname ?? hostname();
+  return (record) => {
+    const severity = record.result === 'ok' ? 5 : 4;
+    const priority = facility * 8 + severity;
+    return `<${priority}>1 ${record.when} ${host} ${appName} ${record.process.pid} - - ${JSON.stringify(record)}`;
   };
 }
 

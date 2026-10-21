@@ -5,6 +5,7 @@
 // gate additionally refuses re-invocation under the same invocation id.
 
 import type { ProcessHandle, Provenance, ShellResult } from '@kubic/exec/env';
+import { windowsBash } from '@kubic/exec/windows-shell';
 import type { OpContext, Operation, ToolInvocation } from './types.js';
 import { OpError } from './types.js';
 
@@ -266,10 +267,11 @@ function shellFor(): BashResult['shell'] {
 }
 
 // Every approval detector reads POSIX shell: cmd's `del`, `move` and
-// `rmdir` would run with no capability raised, so the tool refuses to run
-// on Windows rather than run commands nothing can see.
+// `rmdir` would run with no capability raised, so on Windows the tool runs
+// its commands through a POSIX bash (Git Bash, else WSL) and refuses when
+// there is none, rather than run commands nothing can see.
 const WINDOWS_REFUSAL =
-  'bash is not supported on Windows: the approval detectors read POSIX shell commands only, so a cmd command would run with no approval coverage';
+  'bash needs a POSIX shell on Windows: the approval detectors read POSIX shell commands only — install Git for Windows (Git Bash) or WSL, or set KUBIC_BASH to a bash';
 
 export const bashOperation: Operation<BashArgs, BashResult> = {
   name: 'bash',
@@ -282,7 +284,9 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
   replay: 'never',
   validateArgs: validateBashArgs,
   execute: async (inv: ToolInvocation, args: BashArgs, ctx: OpContext) => {
-    if (process.platform === 'win32') {
+    const launcher =
+      process.platform === 'win32' ? windowsBash(process.env) : undefined;
+    if (process.platform === 'win32' && launcher === undefined) {
       throw new OpError('tool_failed', WINDOWS_REFUSAL);
     }
     const provenance: Provenance = {
@@ -300,13 +304,17 @@ export const bashOperation: Operation<BashArgs, BashResult> = {
     // The unregister fn of whichever handle is currently live.
     let untrack: (() => void) | undefined;
     const spawnShell = (shellName: string): ProcessHandle => {
-      const handle = ctx.env.shell.spawn(shellName, ['-c', args.command], {
-        provenance,
-        onUpdate: ctx.onUpdate,
-        checkpointKey: inv.invocationId,
-        checkpointStore: ctx.checkpointStore,
-        keepBackground: policy.keepBackground,
-      });
+      const handle = ctx.env.shell.spawn(
+        launcher?.command ?? shellName,
+        [...(launcher?.prefix ?? []), '-c', args.command],
+        {
+          provenance,
+          onUpdate: ctx.onUpdate,
+          checkpointKey: inv.invocationId,
+          checkpointStore: ctx.checkpointStore,
+          keepBackground: policy.keepBackground,
+        },
+      );
       // First attempt and any retry both land in the lane's kill registry so
       // timeout/abort kill whichever handle is live — and the settled one
       // leaves it again: the registry is reused for a whole session, so a

@@ -198,7 +198,7 @@ describe('runDoctorCommand', () => {
       'limit:no-injection-prevention',
       'limit:policy-offer',
       'limit:journal-not-backup',
-      'limit:no-third-party-mcp',
+      'limit:mcp-servers',
       'limit:provider-availability',
       'limit:deps-present',
       'policy:enforceability',

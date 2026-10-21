@@ -2,14 +2,13 @@
 import { describe, expect, it } from 'vitest';
 import { type BridgePick, fakeBridge } from '../test-support/config-bridge.js';
 import { checkRoleModelRef } from './checks.js';
+import { parseTomlConfig } from './config.js';
 import {
   checkGitignoreSplit,
   GITIGNORE_REQUIRED_ENTRIES,
-  mergeLayered,
-  parseTomlConfig,
-} from './config.js';
+} from './ignore-split.js';
+import { mergeLayered } from './layer-merge.js';
 import { loadRuntimeConfig } from './runtime.js';
-import { McpUnsupportedError } from './stances.js';
 
 // The live loader, given the composition root's inputs for this home and project.
 function loadRuntime(
@@ -316,22 +315,19 @@ describe('layered load hardening', () => {
     }
   });
 
-  it('wraps MCP violations with the offending layer', () => {
+  it('refuses an MCP server a layer below the managed config names', () => {
     const bridge = fakeBridge({
-      '/home/u/.kubic/config.toml': '[mcp]\nenabled = true\n',
+      '/home/u/.kubic/config.toml':
+        '[mcp.mine]\ncommand = "/usr/local/bin/mine"\nversion = "1"\n',
     });
-    try {
-      loadRuntime(bridge, { projectTrusted: true });
-      expect.unreachable();
-    } catch (error) {
-      expect(error).toBeInstanceOf(McpUnsupportedError);
-      expect((error as Error).message).toMatch(/layer 'global'/);
-    }
+    expect(() => loadRuntime(bridge, { projectTrusted: true })).toThrow(
+      "'[mcp.mine]' is read from the enterprise and product layers only",
+    );
   });
 
   it('wraps unknown-section violations with the offending layer', () => {
     const bridge = fakeBridge({
-      '/home/u/.kubic/config.toml': '[telemetry]\nenabled = true\n',
+      '/home/u/.kubic/config.toml': '[plugins]\nenabled = true\n',
     });
     expect(() => loadRuntime(bridge)).toThrow(/layer 'global'/);
   });

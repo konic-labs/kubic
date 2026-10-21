@@ -7,13 +7,15 @@ import { type BridgePick, fakeBridge } from '../test-support/config-bridge.js';
 import {
   CONFIG_LAYERS,
   type ConfigLayer,
-  checkGitignoreSplit,
   defaultLayerPaths,
-  GITIGNORE_REQUIRED_ENTRIES,
-  mergeLayered,
   parseTomlConfig,
 } from './config.js';
 import { ConfigError, ProjectUntrustedError } from './errors.js';
+import {
+  checkGitignoreSplit,
+  GITIGNORE_REQUIRED_ENTRIES,
+} from './ignore-split.js';
+import { mergeLayered } from './layer-merge.js';
 import { loadRuntimeConfig } from './runtime.js';
 
 // The canonical example, as the schema generates it (scripts/gen-config-docs.mjs).
@@ -167,14 +169,21 @@ describe('canonical TOML example', () => {
     expect(parsed.session?.store).toBe('jsonl');
   });
 
-  it('rejects mcp sections with the unsupported error', () => {
+  it('reads an MCP server table and refuses a key it does not know', () => {
+    const parsed = parseTomlConfig(
+      '[mcp.github]\ncommand = "/opt/mcp/github"\nversion = "1.0.0"\n',
+    );
+    expect(parsed.mcp?.github).toEqual({
+      command: '/opt/mcp/github',
+      version: '1.0.0',
+    });
     expect(() =>
-      parseTomlConfig(`${EXAMPLE_TOML}\n[mcp]\nenabled = true\n`),
-    ).toThrow(/unsupported/i);
+      parseTomlConfig('[mcp.github]\nversion = "1"\nenabled = true\n'),
+    ).toThrow(ConfigError);
   });
 
   it('rejects unknown sections', () => {
-    expect(() => parseTomlConfig('[telemetry]\nenabled = true\n')).toThrow(
+    expect(() => parseTomlConfig('[plugins]\nenabled = true\n')).toThrow(
       ConfigError,
     );
   });

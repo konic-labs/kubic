@@ -15,7 +15,6 @@
 // never imports node:fs. Zero network, zero real processes.
 
 import { validateClasses } from '@kubic/agent/permissions';
-import { validatePolicy } from '../approvals/index.js';
 import { findProjectRoot } from '../cli/index.js';
 import type { EffectivePolicy, PolicyInput } from '../policy/index.js';
 import {
@@ -29,9 +28,16 @@ import {
   checkThinkingLevel,
   isRecord,
 } from './checks.js';
-import type { ApprovalsConfig, ConfigLayer, KubicConfig } from './config.js';
-import { checkSessionCompaction, mergeLayered } from './config.js';
+import type { ConfigLayer, KubicConfig } from './config.js';
+import { checkSessionCompaction } from './config.js';
 import { ConfigError } from './errors.js';
+import { adminHooksOf } from './hooks-config.js';
+import { mergeLayered } from './layer-merge.js';
+import { mcpServersOf } from './mcp-config.js';
+import { oidcOf } from './oidc-config.js';
+import { checkProjectRestriction } from './project-restriction.js';
+import { providerRegionsOf } from './provider-regions.js';
+import { runtimeApprovalsOf } from './runtime-approvals.js';
 import {
   envFlag,
   parseEnvModel,
@@ -49,7 +55,6 @@ import { runFrom, verifyFrom } from './runtime-run.js';
 import type {
   ConfigValueSource,
   ModelPinOverride,
-  RuntimeApprovals,
   RuntimeCompaction,
   RuntimeConfig,
   RuntimeConfigInputs,
@@ -60,16 +65,13 @@ import type {
   RuntimeSystemPrompt,
   RuntimeThinking,
 } from './runtime-types.js';
-import { configKey } from './schema.js';
+import { sandboxOf } from './sandbox-config.js';
+import { spendCapsOf } from './spend-caps.js';
 import { resolveSystemPromptFile } from './system-prompt-file.js';
 
 // Days→ms is the only conversion journal retention needs: bounds are
 // ms, the config key is days.
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-const DEFAULT_APPROVALS_ROUTE = configKey('approvals', 'route').default as
-  | 'ask-user'
-  | 'deny';
 
 const PERMISSION_KEYS = [
   'filesystem',
@@ -127,44 +129,6 @@ function modelFrom(config: KubicConfig): RuntimeModelSelection | undefined {
   };
 }
 
-function approvalsFrom(
-  config: KubicConfig,
-  sources: Record<string, ConfigValueSource>,
-  routeOverride: 'ask-user' | 'deny' | undefined,
-): RuntimeApprovals {
-  const approvals: ApprovalsConfig = config.approvals ?? {};
-  // The host has exactly one store placement — per session
-  // (<session>/approvals.json). A shared, cross-session store is not
-  // implemented, so `sessionScoped = false` is refused by name rather than
-  // printed as an effective policy that no lane enforces.
-  if (approvals.sessionScoped === false) {
-    throw new ConfigError(
-      "'approvals': 'sessionScoped = false' is not supported — approval decisions are always stored per session (<session>/approvals.json); remove the key or set it to true",
-    );
-  }
-  const route = routeOverride ?? approvals.route ?? DEFAULT_APPROVALS_ROUTE;
-  const source: ConfigValueSource =
-    routeOverride !== undefined
-      ? 'env'
-      : (sources['approvals.route'] ?? 'defaults');
-  return {
-    policy: validatePolicy({
-      route,
-      autoApprove: approvals.autoApprove ?? [],
-      ...(approvals.maxPendingMs === undefined
-        ? {}
-        : { maxPendingMs: approvals.maxPendingMs }),
-      ...(approvals.sessionScoped === undefined
-        ? {}
-        : { sessionScoped: approvals.sessionScoped }),
-      ...(approvals.requireJustification === undefined
-        ? {}
-        : { requireJustification: approvals.requireJustification }),
-    }),
-    source,
-  };
-}
-
 export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   const env = inputs.env ?? {};
   const trustEnv = env[RUNTIME_ENV_OVERRIDES.trustProject];
@@ -174,6 +138,12 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   const config = merged.config;
   assertNoSecretRefs(config);
   const policy = effectivePolicyOf(loaded);
+  const projectRestriction = checkProjectRestriction(
+    loaded.perLayer,
+    loaded.paths.project,
+  );
+  const hooks = adminHooksOf(loaded.perLayer, loaded.paths.project);
+  const oidc = oidcOf(loaded.perLayer, config, loaded.paths.project);
   // Enterprise keys are frozen against every override — a lower file
   // layer, an env override, and a CLI flag included. Nothing un-sets them.
   const frozen = (key: string): boolean => loaded.sources[key] === 'enterprise';
@@ -193,9 +163,9 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
   );
   const pin = modelPinFrom(inputs, envModel, config, loaded, frozen, thinking);
   const envRouteRaw = env[RUNTIME_ENV_OVERRIDES.approvalsRoute];
-  const approvals = approvalsFrom(
+  const approvals = runtimeApprovalsOf(
     config,
-    loaded.sources,
+    loaded,
     envRouteRaw === undefined || frozen('approvals.route')
       ? undefined
       : parseEnvRoute(envRouteRaw, RUNTIME_ENV_OVERRIDES.approvalsRoute),
@@ -239,6 +209,17 @@ export function loadRuntimeConfig(inputs: RuntimeConfigInputs): RuntimeConfig {
     verify,
     run: runFrom(config),
     projectTrusted,
+    ...(projectRestriction === undefined ? {} : { projectRestriction }),
+    ...(loaded.managed === undefined ? {} : { managed: loaded.managed }),
+    spend: spendCapsOf(loaded.perLayer),
+    hooks,
+    providerRegions: providerRegionsOf(loaded.perLayer, loaded.paths.project),
+    ...(config.model?.fallback === undefined
+      ? {}
+      : { modelFallback: [...config.model.fallback] }),
+    ...(oidc === undefined ? {} : { oidc }),
+    mcp: mcpServersOf(loaded.perLayer, loaded.paths.project),
+    sandbox: sandboxOf(loaded.perLayer, loaded.paths.project),
     overriddenAttempts: [
       ...merged.overriddenAttempts,
       ...pin.modelPinOverrides.map(

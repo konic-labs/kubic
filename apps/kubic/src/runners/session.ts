@@ -3,11 +3,14 @@
 // real wiring tests go through, so a dropped projection fails a test.
 
 import { homedir } from 'node:os';
+import { EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { isFancy } from '@kubic/core/cli/kit';
 import { promptConfirm } from '@kubic/core/cli/prompt';
 import { themeFor } from '@kubic/core/cli/theme';
+import { dataProtectionOf } from '@kubic/host/policy';
 import { runRunCommand } from '@kubic/host/run';
 import { runSessionsCommand } from '@kubic/host/sessions';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
 import type { CliConfigResult } from '../config/load.js';
 import { projectTrustFor } from '../config/load.js';
 import {
@@ -23,12 +26,15 @@ import {
   runtimeLaneDeps,
   runtimeRunDeps,
   runtimeSkillsDeps,
+  runtimeSpendDeps,
   runtimeStreamTuning,
   runtimeSystemPromptSection,
+  runtimeTelemetryDeps,
   sessionRetentionDays,
   withRunBounds,
 } from '../config/projections.js';
 import { runHeadlessPrompt } from '../run/command.js';
+import { headlessApprovalDeps } from '../run/headless-approvals.js';
 import type { HeadlessRunDeps } from '../run/options.js';
 import { createRunProgress } from '../run/progress.js';
 import type { TuiDepsInput } from '../tui/deps.js';
@@ -78,6 +84,8 @@ export function prodRunDeps(cliConfig: CliConfigResult): HeadlessRunDeps {
     // load, loaded with source 'settings'. The lane falls back to the
     // prod home/cwd/trust around it (only this key is set).
     skills: { ...runtimeSkillsDeps(cliConfig) },
+    // The `[policy]` spend caps the run is held to.
+    ...runtimeSpendDeps(cliConfig),
   };
 }
 
@@ -158,6 +166,8 @@ export function prodTuiDeps(
     // The same settings-skills projection `kubic run`
     // threads — the interactive lane loads the config skills too.
     skills: { ...runtimeSkillsDeps(cliConfig) },
+    // The same `[policy]` spend caps.
+    ...runtimeSpendDeps(cliConfig),
   };
 }
 
@@ -176,6 +186,10 @@ export function sessionsRunner(io: ProdRunnerIo): ProdRunners['sessions'] {
     return runSessionsCommand(invocation, {
       ...view,
       ...(retentionDays === undefined ? {} : { retentionDays }),
+      // `data_policy` redaction reaches the raw transcript attach prints.
+      ...(dataProtectionOf(runtimePolicy(cliConfig)) === undefined
+        ? {}
+        : { scanTranscript: true }),
       // A prune with neither --yes nor --dry-run asks on a TTY; off a
       // TTY it stays the documented dry run.
       ...(view.interactive
@@ -196,10 +210,28 @@ export function runRunner(io: ProdRunnerIo): ProdRunners['run'] {
   const { out, debug } = io;
   return (options, cliConfig) => {
     noteOverriddenModelPins(io, cliConfig);
+    const telemetry = telemetryFor(io, cliConfig);
+    const view = presentation(out, debug, options.json === true);
+    // A pre-approval file that does not verify refuses the run before a
+    // session exists.
+    const approvals = headlessApprovalDeps(
+      options.preApprovals,
+      cliConfig,
+      process.env,
+      process.cwd(),
+    );
+    if ('refused' in approvals) {
+      view.logger.error(approvals.refused);
+      return Promise.resolve({ exitCode: EXIT_USAGE });
+    }
     return runRunCommand(withRunBounds(options, cliConfig), {
-      ...presentation(out, debug, options.json === true),
+      ...view,
       run: (prompt, options) =>
-        runHeadlessPrompt(prompt, options, prodRunDeps(cliConfig)),
+        runHeadlessPrompt(prompt, options, {
+          ...prodRunDeps(cliConfig),
+          ...telemetry,
+          ...approvals,
+        }),
       // Live progress only when the whole run is on an
       // interactive colour terminal (stdout AND stderr) and not --json;
       // a redirected stdout keeps the plain lines scripts read.
@@ -223,7 +255,25 @@ export function tuiRunner(io: ProdRunnerIo): ProdRunners['tui'] {
     noteOverriddenModelPins(io, cliConfig);
     return runTuiCommand(
       options,
-      tuiDepsWithDefaults(prodTuiDeps(io, cliConfig)),
+      tuiDepsWithDefaults({
+        ...prodTuiDeps(io, cliConfig),
+        ...telemetryFor(io, cliConfig),
+      }),
     );
   };
+}
+
+// The OpenTelemetry target a run or a tui session exports to; a target that
+// cannot be used is named once on stderr and the command runs without it.
+function telemetryFor(
+  io: ProdRunnerIo,
+  cliConfig: CliConfigResult,
+): { telemetry?: TelemetryTarget } {
+  const resolved = runtimeTelemetryDeps(cliConfig, process.env, io.version?.());
+  if (resolved.problem !== undefined) {
+    io.debug(`warning: telemetry is off: ${resolved.problem}`);
+  }
+  return resolved.telemetry === undefined
+    ? {}
+    : { telemetry: resolved.telemetry };
 }

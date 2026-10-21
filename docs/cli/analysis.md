@@ -82,7 +82,7 @@ a skipped stub, which names the tier it would run at).
 Text mode prints one `eval ok: suite …` line on stdout. A refusal prints
 `error: [<code>] <message>` on stderr.
 
-## `kubic benchmark [--suite <id>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
+## `kubic benchmark [--suite <id>] [--suite-file <path>]... [--models <a,b>] [--repeat <n>] [--worktree <path>] [--size <size>] [--model <id>] [--workspace inline|worktree] [--thinking <level>] [--json]`
 
 Runs the reproducible matrix: every suite, or a single one with
 `--suite`. The output is a `SUITE / CATEGORY / STATUS` table followed by
@@ -110,6 +110,48 @@ The flags are the same as `kubic eval` without `--task` and
 plain-language task for a real `--model`, so the matrix scores the model,
 and the scripted task for the faux provider (the default), so it stays
 deterministic in CI. `--json` prints `{ok, exitCode, results}`.
+
+### Your own suites: `--suite-file`
+
+```toml
+# .kubic/evals/health.toml
+title = "Add a health endpoint"
+task = """
+Add a GET /health route to src/server.ts that answers {"ok": true}, with a test.
+"""
+fixture = "fixtures/server"   # a directory beside this file, copied into the workspace
+timeoutMs = 600000
+
+[files]                       # more starting files, inline
+"notes.md" = "the service listens on PORT"
+
+[gates]
+tests = "npm test"
+typecheck = "npx tsc --noEmit"
+```
+
+`kubic benchmark --suite-file <path>` runs a team's own suites instead of the
+built-in matrix, to judge models on the team's work before adding them to
+`allowed_models`. A path is a suite file or a directory of `*.toml` suites,
+and the flag repeats. Each suite names its `task`, its starting files (a
+`fixture` directory beside the file and inline `[files]`) and at least one
+gate command (`tests`, `build`, `lint`, `typecheck`); `id` defaults to the
+file name, and `fauxTask` is the scripted task the testing provider runs
+instead of prose. An unknown key, a suite with no gate or a binary fixture
+file is refused by name (exit 2).
+
+Every suite runs on every model of `--models a,b` (else `--model`),
+`--repeat` times each (1 to 20, default 1), each run in a fresh temporary
+workspace through the real lane and scored from its trajectory by the gates.
+The report puts the models side by side — runs, passes, pass rate, cost per
+run, median latency and tokens per run — followed by each suite's passes per
+model; `--json` prints `{ok, exitCode, models, suites, runs}`. The command
+exits 0 when every run could be scored and 1 when one could not (an unknown
+model, a provider that never answered), named on stderr.
+
+A suite file inside a project's `.kubic/` is project configuration: its gates
+are commands the repository chose, so an untrusted project's suite file is
+refused before anything runs, like its config, models.json and skills.
 
 ## `kubic replay ([--] <trajectory.json> | --session <id>) [--tier recorded|deterministic|live] [--model <provider/id>] [--lockfile <path>] [--role-config <path>] [--worktree <path>] [--diff-against <other.json>] [--json]`
 
@@ -275,13 +317,13 @@ written (`export-failed`); 2 a usage error or an empty match
 manifest is written last, so a failed batch leaves a partial JSONL and no
 `<out>.manifest.json` — the missing manifest is the completeness marker.
 
-## `kubic cost [--session <id>] [--all] [--by <level>] [--json]`
+## `kubic cost [--session <id>] [--all] [--by <level>] [--format <f>] [--json]`
 
 Reads real usage out of the durable session store, scoped to the current
 project by default: only sessions touching the invoking workspace are
 reported, with `--all` for the machine-global total the command prints. The unit is the session: rows aggregate to the `--by` level
-(`request | session | project`, default `session`), one `GROUP / MODEL / IN
-/ OUT / CACHE-R / CACHE-W / COST` row each — a session that ran more than one
+(`request | session | project | user | team | model | day`, default
+`session`), one `GROUP / MODEL / IN / OUT / CACHE-R / CACHE-W / COST` row each — a session that ran more than one
 model reads as one row per model, with input, output and prefix-cache
 counters split out — followed by
 `task total $<sum> (<n> <level>)`. The total is exactly the sum of the
@@ -292,7 +334,15 @@ The numbers are the sessions' `pi.usage` documents, so they match what
 boots a lane. `--by request` lists one row per assistant entry that
 carries its response's usage (the model spend of that request — tools that
 report their own spend aggregate at the higher levels); `--by project`
-rolls each workspace to a single row. A session whose storage a live run
+rolls each workspace to a single row. `--by user` and `--by team` group on
+the OS user who ran each session and the team it is billed to
+(`[cost] team`, recorded when the session is created; older sessions read
+`(unknown)`), `--by model` sums each model across sessions, and `--by day`
+sums each request on the UTC day its response arrived. `--format csv` prints
+the same rows for a spreadsheet — the level, `model`, `input`, `output`,
+`cacheRead`, `cacheWrite` and `costUsd` (six decimals) — with a value a
+spreadsheet would run as a formula defused by a leading `'`; `--format json`
+is `--json`, and an unknown format exits 2. A session whose storage a live run
 owns is skipped, never opened (pi-durable: one process per storage), and
 reported as a zero row with `MODEL` `(locked)`; a session that cannot be
 read at all (a half-written directory) is `(unreadable)` the same way. A session that goes live *during* the read —
@@ -339,10 +389,32 @@ line to stderr. `kubic doctor` names the same set on its
 | `--tool <name>` | **Required.** The tool to query. A missing or whitespace-only name exits 2. |
 | `--json` | Prints `{"tool", "decision"}` instead of the text line, plus `unsupported` (`[{class, level, enforcedAs, reason}]`) when any installed level is unsupported. Exits 0. |
 
-## `kubic audit [--posture <p>] [--result <r>] [--session <id>] [--json]`
+The managed policy has three subcommands, described on the
+[enterprise page](enterprise.md#managed-configuration):
+
+| Subcommand | Meaning |
+| --- | --- |
+| `kubic policy explain [--json]` | The effective policy with the layer behind each value, and where the managed config came from. A refused config exits 1 with its reason. |
+| `kubic policy pull` | Fetch the organization's signed remote policy (`[managed] url`) now, verify it and cache it. Runs even while the config is refused (that is the case it repairs); exit 1 when the managed config names no remote policy, the server cannot be reached or the signature does not verify. |
+| `kubic policy sign --key <private.pem> <file>` | Write `<file>.sig`, the Ed25519 signature a managed file needs when its directory holds a `policy.pub`, and say whether that key accepts it. |
+
+## `kubic audit [--posture <p>] [--result <r>] [--session <id>] [--since <t>] [--until <t>] [--format <f>] [--json]`
 
 Queries the audit trail, matching each supplied filter exactly. `--session`
-reads one session's rows (`agent.session` is the session).
+reads one session's rows (`agent.session` is the session). `--since` and
+`--until` keep the records at or after, and before, a time: ISO 8601
+(`2026-10-01`, `2026-10-21T09:00:00Z`) or an age (`30m`, `24h`, `7d`, `2w`).
+`--format` picks the output: `table` (the default), `json` (as `--json`),
+`jsonl` (one record per line) or `csv` (a header and one row per record:
+`when`, `who`, `what`, `session`, `role`, `provider`, `model`, `posture`,
+`permission`, `approval`, `result`, `reason`, `workspace`; a value that a
+spreadsheet would run as a formula gets a leading `'`). An unknown time or
+format, or `--json` with another `--format`, exits 2.
+
+| Subcommand | Meaning |
+| --- | --- |
+| `kubic audit verify [--file <path>] [--json]` | Walk the ledger's hash chain and name the first line that does not hold: an edited line, a removed one, records removed from the end. Exit 0 intact, 1 broken or unreadable. `--file` checks a chained `[[audit]] file` target. See [A tamper-evident ledger](enterprise.md#a-tamper-evident-ledger). |
+| `kubic audit flush` | Deliver what the collector sinks hold in their spools now. Prints `<sink>: delivered <n>, <m> waiting` per collector; exit 1 while records still wait. |
 
 **Output.** Text mode prints a table with the columns `WHEN`, `POSTURE`,
 `RESULT`, `WHAT`, `PERMISSION`, `APPROVAL` and `REASON`. With no matching
@@ -366,9 +438,10 @@ secret-shaped values and listed-secret inventory values become
 main checkout: from a subdirectory or from a linked worktree, every writer
 and `kubic audit` resolve the same file (the parent of git's common dir;
 outside git, the current directory). The shipped runtime ignore rules cover
-this file. Each record is appended and fsynced; a new ledger is created
-`0600` in a `0700` directory, and `kubic doctor`'s `state:permissions`
-check names a looser one.
+this file. Each record is appended and fsynced, with a link to the record
+before it (`chain`, which `kubic audit` itself leaves out of what it
+prints); a new ledger is created `0600` in a `0700` directory, and
+`kubic doctor`'s `state:permissions` check names a looser one.
 
 - `kubic run` and `kubic tui` append one record per resolved approval ask,
   approved or denied, with `posture` `approvals` or `full-access`. An

@@ -19,6 +19,7 @@ import {
 } from '@kubic/agent/lane/transcript';
 import {
   awaitTurn,
+  runTurn as runLaneTurn,
   runTurnWithOverflowRecovery,
   type TurnOutcome,
   turnLaneRecord,
@@ -26,6 +27,7 @@ import {
 import type { InstalledPolicy } from '@kubic/host/approvals';
 import type { RetryRecord } from '@kubic/host/run';
 import type { SessionBoot } from '../session/bootstrap.js';
+import { fallBackLane, fallbackLadder } from '../session/fallback.js';
 import type { RunGuard } from './guard.js';
 import { type RunStop, retryRecord } from './outcome.js';
 import {
@@ -62,7 +64,15 @@ export async function runTurn(
       state.abandoned = true;
       return stopped;
     }
-    const { outcome, retry } = await driveTurn(state, lane, guard, resumed);
+    const driven = await driveTurn(state, lane, guard, resumed);
+    const outcome = await fallBackOnProviderFailure(
+      state,
+      boot,
+      lane,
+      guard,
+      driven.outcome,
+    );
+    const retry = driven.retry;
     state.capture.lane = turnLaneRecord(outcome);
     return await settledStop(
       state,
@@ -75,6 +85,56 @@ export async function runTurn(
   } finally {
     await detachEvents();
   }
+}
+
+// The failures a `[model] fallback` rung answers: the provider could not be
+// reached or refused the credentials, after the harness's own retries.
+const FALLBACK_REASONS: ReadonlySet<string> = new Set([
+  'provider_transient',
+  'provider_auth',
+]);
+
+// A turn whose model failed with a provider error runs again on the next
+// `[model] fallback` rung, until one answers or none is left. Each move is
+// named on stderr and recorded on the run.
+async function fallBackOnProviderFailure(
+  state: RunState,
+  boot: SessionBoot,
+  lane: Lane,
+  guard: RunGuard,
+  outcome: TurnOutcome,
+): Promise<TurnOutcome> {
+  const ladder = fallbackLadder(boot);
+  if (ladder === undefined) return outcome;
+  let current = outcome;
+  let moves = 0;
+  while (
+    current.kind === 'failed' &&
+    FALLBACK_REASONS.has(current.reason) &&
+    guard.stop === undefined
+  ) {
+    const to = await fallBackLane(
+      boot,
+      lane,
+      ladder,
+      current.error ?? current.reason,
+      guard.context,
+    );
+    if (to === undefined) break;
+    moves += 1;
+    state.report.model = to;
+    const slash = to.indexOf('/');
+    state.capture.model = {
+      provider: to.slice(0, slash),
+      id: to.slice(slash + 1),
+    };
+    current = await runLaneTurn(lane, state.effectivePrompt, {
+      requestId: `kubic-run:${randomUUID()}:fallback-${moves}`,
+      context: guard.context,
+      whenBusy: 'reject',
+    });
+  }
+  return current;
 }
 
 // A retry backoff and a compaction are named on the debug channel — tens of
@@ -96,6 +156,7 @@ function onLaneEvent(
     return;
   }
   if (event.type === 'tool-end') {
+    if (event.isError) state.capture.tally.toolErrors += 1;
     state.options.progress?.toolEnd({
       toolCallId: event.toolCallId,
       toolName: event.toolName,
@@ -105,7 +166,14 @@ function onLaneEvent(
     return;
   }
   if (event.type !== 'usage') return;
-  guard.countTurn();
+  const usage = event.row.usage;
+  const tally = state.capture.tally;
+  tally.input += usage.input;
+  tally.output += usage.output;
+  tally.cacheRead += usage.cacheRead;
+  tally.cacheWrite += usage.cacheWrite;
+  tally.costUsd += usage.cost?.total ?? 0;
+  guard.countTurn(usage.cost?.total ?? 0);
 }
 
 // A turn a dead process left open would refuse this

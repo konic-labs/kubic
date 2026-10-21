@@ -38,6 +38,8 @@ trajectory each run writes, and turns trajectories into datasets
 | `@kubic/eval/export-cli` | `kubic export`: describe one trajectory, or stream a dataset (`--dataset`) as JSONL with a manifest |
 | `@kubic/eval/runner` | Runs a suite's fixture through an injected lane runner, or scores a recorded trajectory |
 | `@kubic/eval/signals` | The gate signals, `regressionFree` and patch quality, computed from a parsed trajectory |
+| `@kubic/eval/suite-files` | A team's own suite from a TOML file: the task, the fixture it starts from and the gate commands that decide it |
+| `@kubic/eval/compare` | `kubic benchmark --suite-file --models`: the suites run against several models and reported side by side |
 | `@kubic/eval/suites` | The built-in suites, one per category (`swe`, `repo-mod`, `bugfix`, `refactor`, `testgen`, `review`, `terminal`, `agentic`) |
 | `@kubic/eval/rl/preference` | Preference pairs across a run boundary |
 | `@kubic/eval/rl/verifier` | The reference verifier: `pass` needs `signal:tests = pass` and no red gate, so verified runs feed rewards and pairs without hand-set labels |

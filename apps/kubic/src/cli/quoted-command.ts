@@ -12,9 +12,12 @@ import { COMMAND_GROUPS } from './root-help.js';
 // against the registered commander program, so the two cannot drift apart.
 /** @internal */
 export const SUBCOMMANDS: ReadonlyMap<string, readonly string[]> = new Map([
-  ['sessions', ['create', 'list', 'attach', 'fork', 'prune']],
+  ['sessions', ['create', 'list', 'attach', 'fork', 'export', 'prune']],
   ['journal', ['prune']],
   ['git', ['status', 'log', 'stage', 'commit']],
+  ['policy', ['explain', 'pull', 'sign']],
+  ['audit', ['verify', 'flush']],
+  ['keys', ['set', 'list', 'remove']],
 ]);
 
 const COMMANDS: ReadonlySet<string> = new Set(

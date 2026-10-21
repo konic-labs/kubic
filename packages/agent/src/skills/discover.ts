@@ -1,13 +1,14 @@
 // Discovering skills across the user, project, package, settings and
 // --skill roots, later sources shadowing earlier ones.
 
+import { isAbsolute, sep } from 'node:path';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import { parseSkillFile } from './frontmatter.js';
 import {
   basenameOf,
   dirnameOf,
   isWithinDir,
-  joinPosix,
+  joinPath,
   normalizeSkillPath,
   projectChain,
   resolveSkillPath,
@@ -53,12 +54,12 @@ function loadSkillDir(
   log?: (line: string) => void,
   note?: (skip: SkippedSkill) => void,
 ): LoadedSkill | undefined {
-  return loadSkillFile(bridge, joinPosix(dir, 'SKILL.md'), source, log, note);
+  return loadSkillFile(bridge, joinPath(dir, 'SKILL.md'), source, log, note);
 }
 
 // A --skill value is a directory, a SKILL.md file, or a bare name. Paths
-// anchor at the invoking cwd — never at '/' (joinPosix's
-// rooting turned './my-skill' into '/my-skill/SKILL.md') and never at the
+// anchor at the invoking cwd — never at the root (joinPath's
+// anchoring turned './my-skill' into '/my-skill/SKILL.md') and never at the
 // bridge's own root (which is the sessions root on `kubic run`). A bare
 // name resolves against the discovery roots first (first hit wins — the
 // shipped precedence): a top-level `<root>/<name>` in any root, then a
@@ -75,11 +76,11 @@ function loadExplicitSkill(
   if (value.endsWith('.md')) {
     return loadSkillFile(bridge, resolveSkillPath(cwd, value), 'cli', log);
   }
-  if (value.includes('/')) {
+  if (value.includes('/') || value.includes(sep)) {
     return loadSkillDir(bridge, resolveSkillPath(cwd, value), 'cli', log);
   }
   for (const root of roots) {
-    const hit = loadSkillDir(bridge, joinPosix(root, value), 'cli', log);
+    const hit = loadSkillDir(bridge, joinPath(root, value), 'cli', log);
     if (hit !== undefined) return hit;
   }
   for (const root of roots) {
@@ -88,7 +89,7 @@ function loadExplicitSkill(
     );
     if (nested !== undefined) return loadSkillDir(bridge, nested, 'cli', log);
   }
-  return loadSkillDir(bridge, joinPosix(cwd, value), 'cli', log);
+  return loadSkillDir(bridge, joinPath(cwd, value), 'cli', log);
 }
 
 // Recursive discovery, Pi-style — every SKILL.md-bearing
@@ -115,10 +116,10 @@ function listSkillDirs(bridge: FileBridge, root: string): string[] {
       if (entry.name.startsWith('.') || entry.name === 'node_modules') {
         continue;
       }
-      const full = joinPosix(dir, entry.name);
+      const full = joinPath(dir, entry.name);
       let hasSkill = false;
       try {
-        hasSkill = bridge.exists(joinPosix(full, 'SKILL.md'));
+        hasSkill = bridge.exists(joinPath(full, 'SKILL.md'));
       } catch {
         hasSkill = false;
       }
@@ -137,7 +138,7 @@ function readPackageSkillDirs(
 ): string[] {
   let raw: string;
   try {
-    raw = bridge.readTextFile(joinPosix(dir, 'package.json'));
+    raw = bridge.readTextFile(joinPath(dir, 'package.json'));
   } catch {
     return [];
   }
@@ -162,9 +163,7 @@ function readPackageSkillDirs(
   if (typeof pi === 'object' && pi !== null) {
     collect((pi as Record<string, unknown>).skills);
   }
-  return out.map((entry) =>
-    entry.startsWith('/') ? entry : joinPosix(dir, entry),
-  );
+  return out.map((entry) => (isAbsolute(entry) ? entry : joinPath(dir, entry)));
 }
 
 function confinedPackageDir(
@@ -180,7 +179,7 @@ function confinedPackageDir(
     // The confinement refusal is reported, not just logged.
     return {
       name: basenameOf(lexical),
-      filePath: joinPosix(lexical, 'SKILL.md'),
+      filePath: joinPath(lexical, 'SKILL.md'),
       source: 'package',
       status: 'excluded',
       reason,
@@ -197,7 +196,7 @@ function confinedPackageDir(
     log?.(`skill skipped (${reason})`);
     return {
       name: basenameOf(lexical),
-      filePath: joinPosix(lexical, 'SKILL.md'),
+      filePath: joinPath(lexical, 'SKILL.md'),
       source: 'package',
       status: 'error',
       reason,
@@ -208,7 +207,7 @@ function confinedPackageDir(
     log?.(`skill skipped (${reason})`);
     return {
       name: basenameOf(lexical),
-      filePath: joinPosix(lexical, 'SKILL.md'),
+      filePath: joinPath(lexical, 'SKILL.md'),
       source: 'package',
       status: 'excluded',
       reason,
@@ -249,9 +248,9 @@ export function discoverSkills(
     // a Pi-carried one — the tool-specific directory overrides the
     // portable fallback.
     const userRoots = [
-      joinPosix(homeDir, '.pi/agent/skills'),
-      joinPosix(homeDir, '.agents/skills'),
-      joinPosix(homeDir, '.kubic/skills'),
+      joinPath(homeDir, '.pi/agent/skills'),
+      joinPath(homeDir, '.agents/skills'),
+      joinPath(homeDir, '.kubic/skills'),
     ];
     // A user root is never relabelled 'project'. When the
     // repo root is $HOME itself (or $HOME is otherwise on the chain),
@@ -276,12 +275,12 @@ export function discoverSkills(
     for (const ancestor of chain) {
       if (!trustFor(ancestor)) {
         for (const rootName of ['.pi/skills', '.agents/skills']) {
-          const root = joinPosix(ancestor, rootName);
+          const root = joinPath(ancestor, rootName);
           if (userRootSet.has(root)) continue;
           for (const dir of listSkillDirs(bridge, root)) {
             note({
               name: basenameOf(dir),
-              filePath: joinPosix(dir, 'SKILL.md'),
+              filePath: joinPath(dir, 'SKILL.md'),
               source: 'project',
               status: 'excluded',
               reason: `project skills excluded (untrusted project root ${ancestor})`,
@@ -292,7 +291,7 @@ export function discoverSkills(
       }
       anyTrusted = true;
       for (const rootName of ['.pi/skills', '.agents/skills']) {
-        const root = joinPosix(ancestor, rootName);
+        const root = joinPath(ancestor, rootName);
         if (userRootSet.has(root)) continue;
         roots.push(root);
         for (const dir of listSkillDirs(bridge, root)) {

@@ -7,7 +7,9 @@
 //   - the `.kubic/` tree (config.toml, models.json, role documents, anything
 //     else there) — but not the runtime state Kubic writes itself (`audit/`,
 //     `journal/`, `sessions/`);
-//   - a root `models.json`;
+//   - a root `models.json` and a root `AGENTS.md` (the project
+//     instructions; one in a subdirectory belongs to that directory's own
+//     grant, like its skills);
 //   - the project skills: `.pi/skills/` and `.agents/skills/`, and the skill
 //     directories `package.json` declares (its `skills` and `pi.skills` lists,
 //     never the rest of the file, so a dependency bump does not ask again);
@@ -27,14 +29,47 @@ const RUNTIME_STATE = new Set(['audit', 'journal', 'sessions']);
 const SKILL_ROOTS = ['.pi/skills', '.agents/skills'];
 const MAX_FILES = 4096;
 const MAX_CONTENT_BYTES = 32 * 1024 * 1024;
+// The content a walk keeps for the grant's snapshot (trust-review.ts): text
+// files up to this size, and no more than the total.
+const KEPT_FILE_BYTES = 64 * 1024;
+const KEPT_TOTAL_BYTES = 1024 * 1024;
 
 const BRIDGE = createNodeFileBridge('/');
+
+// One file the fingerprint covers: its project-relative name, what the
+// fingerprint recorded for it (a digest, or `size:<n>` past the walk's bounds,
+// `unreadable`, `dangling`, `link:<target>`), and its text when the walk kept
+// it.
+export interface TrustedFile {
+  readonly name: string;
+  readonly digest: string;
+  readonly text?: string;
+}
 
 interface Walk {
   readonly root: string;
   readonly lines: string[];
-  files: number;
+  readonly files: TrustedFile[];
+  count: number;
   bytes: number;
+  kept: number;
+}
+
+function record(walk: Walk, name: string, digest: string, text?: string): void {
+  walk.lines.push(`${name}\0${digest}`);
+  walk.files.push(
+    text === undefined ? { name, digest } : { name, digest, text },
+  );
+}
+
+// The content as text, when it is text: valid UTF-8 without NUL bytes.
+function textOf(content: Uint8Array): string | undefined {
+  if (content.includes(0)) return undefined;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(content);
+  } catch {
+    return undefined;
+  }
 }
 
 function sha256(data: Uint8Array | string): string {
@@ -49,20 +84,31 @@ function inside(root: string, path: string): boolean {
   );
 }
 
+function nameOf(walk: Walk, path: string): string {
+  return relative(walk.root, path).split(sep).join('/');
+}
+
 function addFile(walk: Walk, path: string, size: number): void {
-  const name = relative(walk.root, path).split(sep).join('/');
-  walk.files += 1;
-  if (walk.files > MAX_FILES || walk.bytes + size > MAX_CONTENT_BYTES) {
-    walk.lines.push(`${name}\0size:${size}`);
+  const name = nameOf(walk, path);
+  walk.count += 1;
+  if (walk.count > MAX_FILES || walk.bytes + size > MAX_CONTENT_BYTES) {
+    record(walk, name, `size:${size}`);
     return;
   }
+  let content: Uint8Array;
   try {
-    const content = BRIDGE.readBinaryFile(path);
-    walk.bytes += content.byteLength;
-    walk.lines.push(`${name}\0${sha256(content)}`);
+    content = BRIDGE.readBinaryFile(path);
   } catch {
-    walk.lines.push(`${name}\0unreadable`);
+    record(walk, name, 'unreadable');
+    return;
   }
+  walk.bytes += content.byteLength;
+  const keep =
+    content.byteLength <= KEPT_FILE_BYTES &&
+    walk.kept + content.byteLength <= KEPT_TOTAL_BYTES;
+  const text = keep ? textOf(content) : undefined;
+  if (text !== undefined) walk.kept += content.byteLength;
+  record(walk, name, sha256(content), text);
 }
 
 // Every regular file under `dir`, links to files followed (the loaders read
@@ -82,7 +128,7 @@ function addTree(walk: Walk, dir: string, skip?: ReadonlySet<string>): void {
       try {
         target = BRIDGE.realPath?.(path) ?? path;
       } catch {
-        walk.lines.push(`${relative(walk.root, path)}\0dangling`);
+        record(walk, nameOf(walk, path), 'dangling');
         continue;
       }
       let info: ReturnType<typeof BRIDGE.fileInfo>;
@@ -92,7 +138,7 @@ function addTree(walk: Walk, dir: string, skip?: ReadonlySet<string>): void {
         continue;
       }
       if (info.isDirectory) {
-        walk.lines.push(`${relative(walk.root, path)}\0link:${target}`);
+        record(walk, nameOf(walk, path), `link:${target}`);
       } else if (info.isFile !== false) {
         // Named by the link, read through it.
         addFile(walk, path, info.size);
@@ -151,14 +197,38 @@ function systemPromptFile(root: string, home: string): string | undefined {
   return resolve(dirname(configPath), file);
 }
 
-/** The digest of every file a trust grant for `root` lets take effect. */
+/**
+ * The digest of every file a trust grant for `root` lets take effect.
+ * @internal
+ */
 export function projectTrustFingerprint(root: string, home: string): string {
-  const walk: Walk = { root, lines: [], files: 0, bytes: 0 };
+  return projectTrustWalk(root, home).fingerprint;
+}
+
+/** The fingerprint with the files it covers (and their text, within bounds). */
+export function projectTrustWalk(
+  root: string,
+  home: string,
+): { fingerprint: string; files: readonly TrustedFile[] } {
+  const walk: Walk = {
+    root,
+    lines: [],
+    files: [],
+    count: 0,
+    bytes: 0,
+    kept: 0,
+  };
   addTree(walk, join(root, '.kubic'), RUNTIME_STATE);
   addPath(walk, join(root, 'models.json'));
+  addPath(walk, join(root, 'AGENTS.md'));
   for (const skills of SKILL_ROOTS) addPath(walk, join(root, skills));
   const declared = packageSkillDirs(root);
-  walk.lines.push(`package.json skills\0${JSON.stringify(declared)}`);
+  record(
+    walk,
+    'package.json skills',
+    JSON.stringify(declared),
+    `${JSON.stringify(declared, null, 2)}\n`,
+  );
   for (const entry of declared) {
     const dir = resolve(root, entry);
     if (inside(root, dir)) addPath(walk, dir);
@@ -167,5 +237,8 @@ export function projectTrustFingerprint(root: string, home: string): string {
   if (prompt !== undefined && inside(root, prompt)) {
     if (!inside(join(root, '.kubic'), prompt)) addPath(walk, prompt);
   }
-  return `sha256:${sha256(walk.lines.join('\n'))}`;
+  return {
+    fingerprint: `sha256:${sha256(walk.lines.join('\n'))}`,
+    files: walk.files,
+  };
 }

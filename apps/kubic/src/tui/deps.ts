@@ -6,7 +6,9 @@ import type { PermissionClasses } from '@kubic/agent/permissions';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import type { JournalRetention } from '@kubic/exec/journal';
 import type { ApprovalConfig, InstalledPolicy } from '@kubic/host/approvals';
+import type { SpendCaps } from '@kubic/host/config';
 import type { EffectivePolicy } from '@kubic/host/policy';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
 import { ProcessTerminal } from '@kubic/tui/tui-boundary';
 import type { runtimeLaneDeps } from '../config/projections.js';
 import { readTuiWorkspace } from '../tui-workspace.js';
@@ -23,6 +25,8 @@ export type TuiDepsInput = {
   // state — invocation facts, forwarded by name below.
   version?: string;
   projectTrust?: 'loaded' | 'untrusted';
+  // The `[policy]` spend caps, as `kubic run` is held to them.
+  spend?: SpendCaps;
 } & TuiConfigProjection;
 
 // The config projections `kubic tui` consumes. The lane half is
@@ -30,6 +34,8 @@ export type TuiDepsInput = {
 // never be silently dropped here, because the forwarding table in
 // tuiBootOptions must name every key of this type.
 type TuiConfigProjection = {
+  // `[telemetry]`: where each settled turn goes, as for `kubic run`.
+  telemetry?: TelemetryTarget;
   // Config projections: the TUI installs the same policy
   // the headless runner does. Absent means the documented safe default.
   classes?: PermissionClasses;
@@ -120,6 +126,22 @@ export function tuiBootOptions(
     compaction: provided.compaction,
     // The `[agent] systemPromptFile` text `kubic run` threads.
     systemPromptSection: provided.systemPromptSection,
+    // `[agent] projectInstructions`, as `kubic run` reads it.
+    projectInstructions: provided.projectInstructions,
+    // The project models.json refusal, as `kubic run` reads it.
+    projectProvidersRefusal: provided.projectProvidersRefusal,
+    // `[cost] team`, as `kubic run` records it.
+    sessionTeam: provided.sessionTeam,
+    // The `[[hooks]]`, as `kubic run` runs them.
+    hooks: provided.hooks,
+    // The region declarations and the fallback chain, as `kubic run` reads
+    // them.
+    providerRegions: provided.providerRegions,
+    modelFallback: provided.modelFallback,
+    oidc: provided.oidc,
+    mcp: provided.mcp,
+    sandbox: provided.sandbox,
+    telemetry: provided.telemetry,
     // `[agent].name` (journal and reconciliation attribution)
     // and the `[roles.<name>]` layers `--role` merges under the document.
     agentId: provided.agentId,
@@ -181,6 +203,9 @@ export function tuiDepsWithDefaults(
     ...(provided.projectTrust === undefined
       ? {}
       : { projectTrust: provided.projectTrust }),
+    ...(provided.spend === undefined
+      ? {}
+      : { spend: { caps: provided.spend } }),
     // The header's workspace facts and clock.
     readWorkspace: () =>
       readTuiWorkspace(

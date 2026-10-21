@@ -24,7 +24,51 @@ export const registerSetupCommands: CommandRegistrar = (program, ctx) => {
   registerSetup(program, ctx);
   registerConfig(program, ctx);
   registerTrust(program, ctx);
+  registerKeys(program, ctx);
 };
+
+// `kubic keys`: provider keys in the operating system's keychain, read
+// whenever their variable is not set.
+function registerKeys(program: Command, ctx: CommandContext): void {
+  const keys = program
+    .command('keys')
+    .description(
+      "keep provider keys in the operating system's keychain instead of the environment",
+    )
+    .addHelpText(
+      'after',
+      examples([
+        'kubic keys set anthropic',
+        'printf %s "$KEY" | kubic keys set KUBIC_GATEWAY_API_KEY',
+        'kubic keys list',
+        'kubic keys remove anthropic',
+      ]),
+    );
+  keys
+    .command('set')
+    .description(
+      'store a key: typed without echo on a terminal, else read from standard input',
+    )
+    .argument('<provider|VARIABLE>', 'a provider id or the variable name')
+    .action(async (target) => {
+      ctx.finish(await ctx.runners.keys({ action: 'set', target }, ctx.config));
+    });
+  keys
+    .command('list')
+    .description('list the stored keys by variable name (never the values)')
+    .action(async () => {
+      ctx.finish(await ctx.runners.keys({ action: 'list' }, ctx.config));
+    });
+  keys
+    .command('remove')
+    .description('remove a stored key')
+    .argument('<provider|VARIABLE>', 'a provider id or the variable name')
+    .action(async (target) => {
+      ctx.finish(
+        await ctx.runners.keys({ action: 'remove', target }, ctx.config),
+      );
+    });
+}
 
 function registerDoctor(program: Command, ctx: CommandContext): void {
   program
@@ -174,7 +218,7 @@ function registerTrust(program: Command, ctx: CommandContext): void {
   program
     .command('trust')
     .description(
-      "record, revoke or list project trust — one grant covers the project's .kubic/config.toml, its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names) and its project skills",
+      "record, revoke or list project trust — one grant covers the project's .kubic/config.toml, its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names), its AGENTS.md and its project skills",
     )
     .argument(
       '[path]',
@@ -182,10 +226,15 @@ function registerTrust(program: Command, ctx: CommandContext): void {
     )
     .option('--revoke', 'remove the recorded decision — the refusal comes back')
     .option('--list', 'list every recorded decision')
+    .option(
+      '--diff',
+      'show what changed in the project since the last grant, and record nothing',
+    )
     .addHelpText(
       'after',
       examples([
         'kubic trust',
+        'kubic trust --diff',
         'kubic trust --list',
         'kubic trust --revoke',
         'kubic trust ../another-repo',
@@ -198,6 +247,7 @@ function registerTrust(program: Command, ctx: CommandContext): void {
             ...(path === undefined ? {} : { path }),
             ...(opts.revoke === true ? { revoke: true } : {}),
             ...(opts.list === true ? { list: true } : {}),
+            ...(opts.diff === true ? { diff: true } : {}),
           },
           ctx.config,
         ),

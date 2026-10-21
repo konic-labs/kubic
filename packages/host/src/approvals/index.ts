@@ -4,6 +4,8 @@
 // Exports tagged @internal are not part of that API. They expose the
 // detectors and the decider service to the composition-root tests in
 // apps/kubic, which exercise them alongside the production wiring.
+export type { ApprovalBrokerTarget } from './broker.js';
+export { webhookApprovalBroker } from './broker.js';
 export { /** @internal */ controlPlaneRefusal } from './control-plane.js';
 export type { SessionFullAccessGrant } from './full-access.js';
 export {
@@ -22,9 +24,15 @@ export type { ApprovalVerdict } from './policy.js';
 export {
   alwaysAskAutoApprove,
   CAPABILITIES,
+  DEFAULT_MAX_PENDING_MS,
   /** @internal */ KUBIC_STATE_WRITE,
   validatePolicy,
 } from './policy.js';
+export type { PreApprovals } from './pre-approvals.js';
+export {
+  loadPreApprovals,
+  /** @internal */ parsePreApprovals,
+} from './pre-approvals.js';
 export type { ApprovalRequest } from './request.js';
 export { /** @internal */ ApprovalService } from './service.js';
 export {

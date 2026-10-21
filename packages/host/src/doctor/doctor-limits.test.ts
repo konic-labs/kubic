@@ -9,7 +9,6 @@ import {
   EXIT_PROVIDER,
 } from '@kubic/core/cli/exit-codes';
 import { describe, expect, it } from 'vitest';
-import { MCP_ARRIVAL_REQUIREMENTS } from '../config/index.js';
 import { mapTerminusToExitCode } from '../run/index.js';
 import { runDoctorCommand } from './command.js';
 import {
@@ -30,7 +29,7 @@ describe('static limit notices', () => {
       'limit:no-injection-prevention',
       'limit:policy-offer',
       'limit:journal-not-backup',
-      'limit:no-third-party-mcp',
+      'limit:mcp-servers',
     ]);
     for (const check of checks) {
       // Informational only: warn never flips the doctor exit code.
@@ -47,7 +46,9 @@ describe('static limit notices', () => {
     expect(text).toMatch(/no .*injection.*prevention/i);
     expect(text).toMatch(/not enforcement/);
     expect(text).toMatch(/not a backup/);
-    expect(text).toMatch(/no third-party.*MCP|no .*MCP/i);
+    expect(text).toMatch(
+      /MCP server runs only from the managed config's allowlist/,
+    );
   });
 });
 
@@ -93,9 +94,7 @@ describe('doctor matrix', () => {
     expect(check.status).toBe('fail');
     expect(check.reason).toBe('policy-mismatch');
     expect(check.detail).toContain('mcp:filesystem');
-    expect(check.detail).toMatch(
-      /unsupported: no third-party tools or MCP servers/,
-    );
+    expect(check.detail).toMatch(/unsupported: no such capability/);
   });
 
   it('extension request fails the same honest way', () => {
@@ -105,28 +104,6 @@ describe('doctor matrix', () => {
     });
     expect(check.status).toBe('fail');
     expect(check.reason).toBe('policy-mismatch');
-  });
-
-  it('config-level mcp refusal names the arrival requirements', () => {
-    const check = policyEnforceabilityCheck({
-      route: 'ask-user',
-      autoApprove: [],
-      mcp: { servers: [] },
-    });
-    expect(check.status).toBe('fail');
-    for (const req of MCP_ARRIVAL_REQUIREMENTS) {
-      expect(check.detail).toContain(req);
-    }
-  });
-
-  it('config-level mcp key fails the same honest way', () => {
-    const check = policyEnforceabilityCheck({
-      route: 'ask-user',
-      autoApprove: [],
-      mcp: { servers: [] },
-    });
-    expect(check.status).toBe('fail');
-    expect(check.detail).toMatch(/config key \[mcp\] is unsupported/);
   });
 
   it('invalid policy shape defers to policy:approvals without double-failing', () => {

@@ -68,6 +68,24 @@ describe('a refused config fails closed on the agent-executing modes', () => {
     expect(configRefusalExit(refused('bad key'), 'sessions')).toBeUndefined();
   });
 
+  it('lets `kubic policy pull` and `kubic policy sign` run, and stops the rest of `kubic policy`', () => {
+    // Pull fetches the policy a refused load waits for; sign signs a file.
+    for (const sub of ['pull', 'sign']) {
+      expect(
+        configRefusalExit(refused('not fetched yet'), 'policy', [sub]),
+      ).toBeUndefined();
+    }
+    expect(
+      configRefusalExit(refused('not fetched yet'), 'policy', ['explain']),
+    ).toBe(1);
+    expect(
+      configRefusalExit(refused('not fetched yet'), 'policy', [
+        '--tool',
+        'bash',
+      ]),
+    ).toBe(1);
+  });
+
   it('stops `kubic replay`: re-execution tiers consume the effective config', () => {
     const exit = configRefusalExit(
       refused("layer 'project': unknown section '[bogus]'"),

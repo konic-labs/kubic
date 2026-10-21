@@ -239,7 +239,7 @@ describe('command registry', () => {
     const names = registered().commands.map((command) => command.name());
     expect(new Set(names).size).toBe(names.length);
     expect([...names].sort()).toEqual([...COMMAND_NAMES].sort());
-    expect(COMMAND_NAMES.size).toBe(25);
+    expect(COMMAND_NAMES.size).toBe(26);
     expect(ROOT_HELP).toContain('run · tui · resume · attach · sessions');
   });
 
@@ -280,6 +280,7 @@ describe('command registry', () => {
     expect(owned(registerSetupCommands)).toEqual([
       'config',
       'doctor',
+      'keys',
       'models',
       'setup',
       'skills',

@@ -1,6 +1,6 @@
 // The settled result of a `kubic run`, after its session closed: the report
-// fields, the session's own usage, the secret scrub, the `[verify]` gates and
-// the trajectory.
+// fields, the session's own usage, the secret scrub, the `[verify]` gates,
+// the trajectory, the telemetry export and the run-end hooks.
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import { NodeExecutionEnv } from '@kubic/exec/env';
 import { withDetachedCheckout } from '@kubic/exec/git-clean';
@@ -10,6 +10,8 @@ import {
   verifyCommandAudit,
 } from '@kubic/host/audit';
 import { readSessionRunUsage } from '@kubic/host/cost';
+import { runRunEndHooks } from '@kubic/host/hooks';
+import { dataProtectionOf } from '@kubic/host/policy';
 import {
   type GateObserver,
   type HeadlessRunResult,
@@ -19,6 +21,7 @@ import {
 } from '@kubic/host/run';
 import { matchableSecrets, redactSecretValues } from '@kubic/host/secret-refs';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
+import { approvalCounts, exportRunTelemetry } from '@kubic/host/telemetry';
 import type { RunReport, RunState } from './state.js';
 import { persistRunTrajectory } from './trajectory.js';
 
@@ -46,9 +49,13 @@ export async function finishRun(
   const cwd = state.capture.cwd ?? state.deps.env?.cwd;
   const evalLabels = await verifyGates(state, sessionId, cwd);
   const { capture, deps } = state;
+  let trajectoryRef: string | undefined;
   try {
-    const path = persistRunTrajectory({
+    trajectoryRef = persistRunTrajectory({
       sessionsRoot,
+      ...(dataProtectionOf(deps.modelPolicy) === undefined
+        ? {}
+        : { redact: true }),
       sessionId,
       agentId: resolveRunAgentId(deps.agentId),
       role: capture.role ?? DEFAULT_RUN_ROLE,
@@ -62,6 +69,19 @@ export async function finishRun(
       endedAt: Date.now(),
       base: state.base,
       evalLabels,
+      // Each move along `[model] fallback`, with the error that caused it.
+      ...(state.report.fallbacks === undefined ||
+      state.report.fallbacks.length === 0
+        ? {}
+        : {
+            escalations: state.report.fallbacks.map((move) => ({
+              reason: `fallback: ${move.reason}`,
+              at: new Date(move.at).toISOString(),
+              fromModel: move.from,
+              toModel: move.to,
+              thinking: capture.thinking ?? null,
+            })),
+          }),
       warn: state.sinks.warn,
       outcome: {
         terminus: settled.terminus,
@@ -70,12 +90,73 @@ export async function finishRun(
         interrupted: capture.interrupted,
       },
     });
-    return { ...settled, trajectoryRef: path };
   } catch (error) {
     state.sinks.warn(
       `trajectory not written for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return settled;
+  }
+  await exportTelemetry(state, settled, cwd);
+  await runEndHooks(state, settled, cwd);
+  return trajectoryRef === undefined ? settled : { ...settled, trajectoryRef };
+}
+
+// The `[[hooks]]` run-end hooks, with how the run ended; each is bounded and
+// audited, and none changes the result.
+async function runEndHooks(
+  state: RunState,
+  settled: HeadlessRunResult,
+  cwd: string | undefined,
+): Promise<void> {
+  const hooks = state.deps.hooks;
+  if (hooks === undefined || cwd === undefined) return;
+  const model = state.capture.model;
+  await runRunEndHooks(
+    hooks,
+    { status: settled.terminus, summary: settled.summary },
+    {
+      sessionId: settled.sessionId,
+      workspace: cwd,
+      ...(model === undefined
+        ? {}
+        : { model: `${model.provider}/${model.id}` }),
+      onAuditError: state.sinks.warn,
+    },
+  );
+}
+
+// The run to the OpenTelemetry collector, when `[telemetry]` names one: its
+// spans and its own tally, with the approval asks it wrote to the ledger. A
+// collector that does not answer is a warning, never a change to the result.
+async function exportTelemetry(
+  state: RunState,
+  settled: HeadlessRunResult,
+  cwd: string | undefined,
+): Promise<void> {
+  const target = state.deps.telemetry;
+  if (target === undefined) return;
+  const { capture } = state;
+  const tally = capture.tally;
+  const failures = await exportRunTelemetry(target, {
+    sessionId: settled.sessionId,
+    status: settled.terminus,
+    ...(capture.model === undefined ? {} : { model: capture.model }),
+    spans: state.spans.trace(),
+    usage: {
+      input: tally.input,
+      output: tally.output,
+      cacheRead: tally.cacheRead,
+      cacheWrite: tally.cacheWrite,
+      costUsd: tally.costUsd,
+    },
+    toolErrors: tally.toolErrors,
+    approvals: approvalCounts(settled.sessionId, cwd, capture.startedAt),
+    startedAt: capture.startedAt,
+    endedAt: Date.now(),
+    prompt: state.prompt,
+    answer: settled.summary,
+  });
+  for (const failure of failures) {
+    state.sinks.warn(`telemetry: not exported: ${failure}`);
   }
 }
 
@@ -90,6 +171,15 @@ function withReport(
     ...result,
     ...(report.model === undefined ? {} : { model: report.model }),
     ...(report.posture === undefined ? {} : { posture: report.posture }),
+    ...(report.fallbacks === undefined || report.fallbacks.length === 0
+      ? {}
+      : {
+          fallbacks: report.fallbacks.map(({ from, to, reason }) => ({
+            from,
+            to,
+            reason,
+          })),
+        }),
     ...(report.mode === undefined ? {} : { mode: report.mode }),
   };
 }

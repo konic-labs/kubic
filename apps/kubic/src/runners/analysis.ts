@@ -1,6 +1,8 @@
 // The production runners of the analysis commands: cost, policy, audit,
 // eval, benchmark, replay and export.
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { EXIT_FAILED } from '@kubic/core/cli/exit-codes';
 import { runBenchmarkCommand, runEvalCommand } from '@kubic/eval/cli';
 import { runExportCommand as runTrajectoryExportCommand } from '@kubic/eval/export-cli';
@@ -9,21 +11,28 @@ import { isGitWorktreeClean } from '@kubic/exec/git-clean';
 import { readStdinText } from '@kubic/exec/stdin';
 import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
+  AUDIT_LEDGER_FILE,
   auditLedgerDirFor,
+  flushAuditSinks,
   loadProdAuditSecrets,
   readAuditLedger,
   runAuditCommand,
+  runAuditFlushCommand,
+  runAuditVerifyCommand,
 } from '@kubic/host/audit';
 import { loadSessionCostRows, runCostCommand } from '@kubic/host/cost';
 import {
   policyFromInstalledAllowlist,
   policyWithInstalledAllowlist,
   runPolicyCommand,
+  runPolicyExplainCommand,
+  runPolicyPullCommand,
+  runPolicySignCommand,
 } from '@kubic/host/policy';
 import type { ReplayRuntimeDeps } from '@kubic/host/replay';
 import { runReplayCommand } from '@kubic/host/replay';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
-import { projectTrustFor } from '../config/load.js';
+import { kubicConfigLoader, projectTrustFor } from '../config/load.js';
 import { runtimePolicy } from '../config/model-selection.js';
 import {
   installedPolicyDeps,
@@ -33,6 +42,7 @@ import {
   runtimeSkillsDeps,
   runtimeSystemPromptSection,
 } from '../config/projections.js';
+import { createFileSuiteRunner, loadSuiteFiles } from '../eval-files.js';
 import { createProdRunSuite } from '../eval-prod.js';
 import { runProdReplay } from '../replay-run.js';
 import { resolveSessionTrajectory } from '../run/trajectory.js';
@@ -55,6 +65,20 @@ export function costRunner(io: ProdRunnerIo): ProdRunners['cost'] {
 export function policyRunner(io: ProdRunnerIo): ProdRunners['policy'] {
   const { debug } = io;
   return (options, cliConfig) => {
+    // Pull and sign repair and produce the managed policy: they run on no
+    // config, so a refused load (a policy not fetched yet) never stops them.
+    if (options.command === 'pull') {
+      return runPolicyPullCommand({
+        home: cliConfig.trust.home === '' ? homedir() : cliConfig.trust.home,
+        ...analysisReport(io),
+      });
+    }
+    if (options.command === 'sign') {
+      return runPolicySignCommand(
+        { key: options.key ?? '', file: options.file ?? '' },
+        analysisReport(io),
+      );
+    }
     // A refused config is never answered around: the
     // offer and the run must agree, so `kubic policy` reports the refusal
     // instead of printing a decision a run would never enforce.
@@ -67,6 +91,12 @@ export function policyRunner(io: ProdRunnerIo): ProdRunners['policy'] {
     // allowlist `kubic run` boots with and `kubic doctor` reports — so the
     // three surfaces cannot disagree. Deny-by-default still holds once the
     // installed allowlist is supplied; the deciding layer is named.
+    if (options.command === 'explain') {
+      return runPolicyExplainCommand(options, {
+        load: kubicConfigLoader(cliConfig),
+        ...analysisReport(io),
+      });
+    }
     const posture = installedPolicyPosture({
       workspace: process.cwd(),
       ...installedPolicyDeps(cliConfig),
@@ -88,18 +118,34 @@ export function policyRunner(io: ProdRunnerIo): ProdRunners['policy'] {
 }
 
 export function auditRunner(io: ProdRunnerIo): ProdRunners['audit'] {
-  return (options) =>
+  return async (options) => {
+    if (options.command === 'verify') {
+      return runAuditVerifyCommand(options, {
+        ledgerPath: join(auditLedgerDirFor(process.cwd()), AUDIT_LEDGER_FILE),
+        ...analysisReport(io),
+      });
+    }
+    if (options.command === 'flush') {
+      return runAuditFlushCommand({
+        flush: () => flushAuditSinks(AUDIT_FLUSH_MS),
+        ...analysisReport(io),
+      });
+    }
     // Audit query over the repo-root ledger (one OrgAuditRecord per
     // line, <repo>/.kubic/audit/audit.jsonl): the approval layer writes
     // every decision there through emitAudit.
     // loadSecrets is the prod inventory hook: every printed record is
     // redacted against it, so a listed value never echoes via --json.
-    runAuditCommand(options, {
+    return runAuditCommand(options, {
       loadRecords: () => readAuditLedger(auditLedgerDirFor(process.cwd())),
       loadSecrets: loadProdAuditSecrets,
       ...analysisReport(io),
     });
+  };
 }
+
+// How long `kubic audit flush` waits on each collector.
+const AUDIT_FLUSH_MS = 30_000;
 
 export function evalRunner(io: ProdRunnerIo): ProdRunners['eval'] {
   return (options, cliConfig) =>
@@ -126,6 +172,10 @@ export function benchmarkRunner(io: ProdRunnerIo): ProdRunners['benchmark'] {
     runBenchmarkCommand(options, {
       runSuite: createProdRunSuite(options, cliConfig),
       ensureCleanWorktree: (worktree: string) => isGitWorktreeClean(worktree),
+      // `--suite-file`: the team's suites, trust checked, each run in a
+      // fresh workspace on every model compared.
+      loadSuiteFiles: (paths) => loadSuiteFiles(paths, cliConfig),
+      runFileSuite: createFileSuiteRunner(options, cliConfig),
       ...analysisReport(io),
     });
 }

@@ -11,7 +11,7 @@
 // handler's semantics, so a secret-shaped value is redacted before it is
 // echoed and replay/export/eval keep their `--json` error envelopes.
 
-import type { CommandResult } from '@kubic/core/cli/exit-codes';
+import { CliUsageError, type CommandResult } from '@kubic/core/cli/exit-codes';
 import { EVAL_DEFAULT_MODEL, type EvalOptions } from '@kubic/eval/cli';
 import {
   DATASET_TYPES,
@@ -81,6 +81,144 @@ function command(
     .addHelpText('after', examples(usageExamples));
 }
 
+// `kubic audit`: the ledger query, its chain check and the collector flush.
+function registerAudit(
+  program: KubicProgram,
+  ctx: Parameters<CommandRegistrar>[1],
+): void {
+  const { config, runners } = ctx;
+  const done = (result: CommandResult): void => {
+    ctx.finish(result);
+  };
+  const audit = command(
+    program,
+    'audit',
+    "query the repo's approval audit ledger (redacted); verify its chain or flush the collector sinks",
+    [
+      'kubic audit',
+      'kubic audit --result deny --json',
+      'kubic audit --since 7d --format csv > audit.csv',
+      'kubic audit verify',
+      'kubic audit flush',
+    ],
+  )
+    .option('--posture <name>', 'filter on posture')
+    .option('--result <result>', 'filter on result: ok|deny|error')
+    .option('--session <id>', 'filter on one session')
+    .option(
+      '--since <time>',
+      'records at or after this time: ISO 8601, or an age such as 24h or 7d',
+    )
+    .option('--until <time>', 'records before this time, in the same forms')
+    .option('--format <format>', 'table (default), json, jsonl or csv')
+    .option('--json', JSON_HELP)
+    .action(async (options) => done(await runners.audit(options, config)));
+  audit
+    .command('verify')
+    .description(
+      "check the ledger's hash chain and name the first line that does not hold",
+    )
+    .option(
+      '--file <path>',
+      'a chained [[audit]] file target instead of the repo ledger',
+    )
+    .option('--json', JSON_HELP)
+    .action(async (options) =>
+      done(
+        await runners.audit(
+          {
+            command: 'verify',
+            ...(options.file === undefined ? {} : { file: options.file }),
+            ...(options.json === true ? { json: true } : {}),
+          },
+          config,
+        ),
+      ),
+    );
+  audit
+    .command('flush')
+    .description(
+      'deliver what the collector sinks (tcp/tls syslog, https, otlp) hold in their spools now',
+    )
+    .action(async () =>
+      done(await runners.audit({ command: 'flush' }, config)),
+    );
+}
+
+// `kubic policy`: the tool query, and the managed-policy subcommands.
+function registerPolicy(
+  program: KubicProgram,
+  ctx: Parameters<CommandRegistrar>[1],
+): void {
+  const { config, runners } = ctx;
+  const done = (result: CommandResult): void => {
+    ctx.finish(result);
+  };
+  const policy = command(
+    program,
+    'policy',
+    'report the installed tool policy decision for one tool (a routing offer, never enforcement); explain, pull or sign the managed policy',
+    [
+      'kubic policy --tool shell',
+      'kubic policy --tool network_fetch --json',
+      'kubic policy explain',
+      'kubic policy pull',
+      'kubic policy sign --key policy.key /etc/kubic/config.toml',
+    ],
+  )
+    .option('--tool <name>', 'the tool to query')
+    .option('--json', JSON_HELP)
+    .action(async (options) => {
+      // `--tool` is required for the query itself; the subcommands take none.
+      if (options.tool === undefined) {
+        throw new CliUsageError(
+          "required option '--tool <name>' not specified",
+        );
+      }
+      done(await runners.policy(options, config));
+    });
+  policy
+    .command('explain')
+    .description(
+      'print the effective policy: every [policy] key, the audit sinks and the keys the enterprise and product layers set, each with its layer, and where the managed config came from',
+    )
+    .option('--json', JSON_HELP)
+    .action(async (options) =>
+      done(
+        await runners.policy(
+          {
+            command: 'explain',
+            ...(options.json === true ? { json: true } : {}),
+          },
+          config,
+        ),
+      ),
+    );
+  policy
+    .command('pull')
+    .description(
+      "fetch the organization's signed remote policy ([managed] url) now, verify it and cache it",
+    )
+    .action(async () =>
+      done(await runners.policy({ command: 'pull' }, config)),
+    );
+  policy
+    .command('sign')
+    .description(
+      'sign a managed config with an Ed25519 private key (PEM): writes <file>.sig beside it',
+    )
+    .argument('<file>', 'the managed config to sign')
+    .requiredOption('--key <path>', 'the Ed25519 private key, in PEM form')
+    .action(async (file, options) =>
+      done(
+        await runners.policy(
+          { command: 'sign', file, key: options.key },
+          config,
+        ),
+      ),
+    );
+}
+
 export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
   const { config, runners } = ctx;
   const done = (result: CommandResult): void => {
@@ -91,7 +229,11 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     program,
     'cost',
     'report token and dollar cost over stored sessions',
-    ['kubic cost', 'kubic cost --session 3f2a --json'],
+    [
+      'kubic cost',
+      'kubic cost --session 3f2a --json',
+      'kubic cost --all --by team --format csv > spend.csv',
+    ],
   )
     .option('--session <id>', 'read only this session ([A-Za-z0-9_-])')
     .option(
@@ -100,32 +242,15 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
     )
     .option(
       '--by <level>',
-      'group rows: request|session|project (default session)',
+      'group rows: request|session|project|user|team|model|day (default session)',
     )
+    .option('--format <format>', 'table (default), json or csv')
     .option('--json', JSON_HELP)
     .action(async (options) => done(await runners.cost(options, config)));
 
-  command(
-    program,
-    'policy',
-    'report the installed tool policy decision for one tool (a routing offer, never enforcement)',
-    ['kubic policy --tool shell', 'kubic policy --tool network_fetch --json'],
-  )
-    .requiredOption('--tool <name>', 'the tool to query')
-    .option('--json', JSON_HELP)
-    .action(async (options) => done(await runners.policy(options, config)));
+  registerPolicy(program, ctx);
 
-  command(
-    program,
-    'audit',
-    "query the repo's approval audit ledger (redacted)",
-    ['kubic audit', 'kubic audit --result deny --json'],
-  )
-    .option('--posture <name>', 'filter on posture')
-    .option('--result <result>', 'filter on result: ok|deny|error')
-    .option('--session <id>', 'filter on one session')
-    .option('--json', JSON_HELP)
-    .action(async (options) => done(await runners.audit(options, config)));
+  registerAudit(program, ctx);
 
   command(
     program,
@@ -155,10 +280,29 @@ export const registerAnalysisCommands: CommandRegistrar = (program, ctx) => {
   command(
     program,
     'benchmark',
-    'run the reproducible suite matrix (stub suites are reported, never passed)',
-    ['kubic benchmark --worktree wt --size smoke --json'],
+    'run the reproducible suite matrix (stub suites are reported, never passed), or your own suite files across models side by side',
+    [
+      'kubic benchmark --worktree wt --size smoke --json',
+      'kubic benchmark --suite-file .kubic/evals --models anthropic/claude-sonnet-5-5,openai/gpt-5 --repeat 3',
+    ],
   )
     .option('--suite <id>', 'one suite instead of the whole matrix')
+    .option(
+      '--suite-file <path>',
+      'a suite file, or a directory of *.toml suites, to compare models on (repeatable)',
+      (value: string, previous: string[] | undefined) => [
+        ...(previous ?? []),
+        value,
+      ],
+    )
+    .option(
+      '--models <a,b>',
+      'the models a --suite-file comparison runs, comma-separated (default: --model)',
+    )
+    .option(
+      '--repeat <n>',
+      'how many times each suite runs on each model (1-20, default 1)',
+    )
     .option('--model <id>', MODEL_HELP, EVAL_DEFAULT_MODEL)
     .option('--worktree <path>', WORKTREE_HELP)
     .option('--size <size>', SIZE_HELP)

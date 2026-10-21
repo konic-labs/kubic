@@ -165,7 +165,8 @@ of entries with their own `id` is accepted as an alias):
 | `api` | `openai-completions` or `openai-responses` (required). |
 | `apiKey` | A literal key (e.g. `not-needed` for a keyless local server), an allowlisted `$VAR` (same allowlist as `apiKeyEnv`), or a `!command` resolved per request. Escaped `\$` / `\!` stay literal. Not together with `apiKeyEnv`. |
 | `apiKeyEnv` | The env variable holding the key (allowlist above; default `KUBIC_API_KEY`). |
-| `name`, `headers` | Display name; per-request headers (non-empty strings). Literal values ride every request statically; `$VAR` (allowlisted) and `!command` values resolve per request through the key auth instead and never reach the wire verbatim. |
+| `name`, `headers` | Display name; per-request headers (non-empty strings). Literal values ride every request statically; `$VAR` (allowlisted) and `!command` values resolve per request through the key auth instead and never reach the wire verbatim. A gateway (LiteLLM, Portkey, Azure API Management) that routes or authorizes on a header of its own takes it here. |
+| `tls` | Mutual TLS for a gateway that demands a client certificate: `{"cert": "/etc/kubic/client.pem", "key": "/etc/kubic/client.key", "ca": "/etc/kubic/gateway-ca.pem"}` — absolute PEM paths; `ca` (optional) is trusted beside the default roots for this provider. The provider's requests present the certificate; a file that cannot be read refuses the models.json by name. See [Corporate networks](enterprise.md#corporate-networks). |
 | `models` | Non-empty list of models (ids unique per provider). |
 
 | Model key | Meaning |
@@ -189,6 +190,29 @@ List a local model server (`localhost`, `127.0.0.1`) in `NO_PROXY` so it is
 not sent to the proxy. Tool processes get the proxy variables separately,
 with any credentials stripped (see
 [journal and safety](../architecture/journal-and-safety.md#tool-process-environment)).
+
+## `kubic keys set|list|remove`
+
+```sh
+kubic keys set anthropic                                # typed without echo
+printf %s "$GATEWAY_KEY" | kubic keys set KUBIC_GATEWAY_API_KEY
+kubic keys list
+kubic keys remove anthropic
+```
+
+`kubic keys` keeps provider keys in the operating system's keychain instead
+of a shell profile: the macOS keychain, or the Secret Service (GNOME Keyring,
+KWallet) through libsecret's `secret-tool` on Linux. A key is stored under the
+variable it stands for — `kubic keys set anthropic` stores
+`ANTHROPIC_API_KEY`; a models.json provider's variable is named directly —
+and is typed without echo on a terminal or read from standard input
+otherwise, never from the command line. Kubic records the variable names, not
+the values, in `~/.kubic/keychain.json`, and whenever one of those variables
+is not set, the model catalogue reads its key from the keychain: the provider
+is usable with no environment variable, `kubic run` scrubs the key like any
+other, and nothing prints it. A variable set in the environment wins, and
+`kubic keys list` says so. On another system, or without `secret-tool`, the
+command names what is missing and keys stay in the environment.
 
 ## Secrets (never in config)
 

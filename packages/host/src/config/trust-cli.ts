@@ -18,6 +18,7 @@ import {
 } from '@kubic/core/cli/exit-codes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { type CliIo, diagnosticsOf } from '../cli/index.js';
+import { renderTrustReview } from './trust-review.js';
 import { canonicalTrustPath, type ProjectTrustStore } from './trust-store.js';
 
 const BRIDGE = createNodeFileBridge('/');
@@ -28,6 +29,8 @@ export interface TrustCommandOptions {
   readonly path?: string;
   readonly revoke?: boolean;
   readonly list?: boolean;
+  // Show what changed since the last grant; record nothing.
+  readonly diff?: boolean;
 }
 
 export interface TrustCommandDeps extends CliIo {
@@ -69,9 +72,13 @@ export function runTrustCommand(
   const diagnose = diagnosticsOf(deps);
   try {
     if (options.list === true) {
-      if (options.revoke === true || options.path !== undefined) {
+      if (
+        options.revoke === true ||
+        options.diff === true ||
+        options.path !== undefined
+      ) {
         throw new CliUsageError(
-          '--list takes neither --revoke nor a path — it reports every recorded decision',
+          '--list takes neither --revoke, --diff nor a path — it reports every recorded decision',
         );
       }
       const entries = deps.store.entries();
@@ -94,9 +101,20 @@ export function runTrustCommand(
       }
       return { exitCode: EXIT_OK };
     }
+    if (options.diff === true && options.revoke === true) {
+      throw new CliUsageError(
+        '--diff and --revoke are mutually exclusive — --diff records nothing',
+      );
+    }
     const target = options.path ?? deps.cwd;
     requireDirectory(target);
     const key = canonicalTrustPath(target);
+    if (options.diff === true) {
+      for (const line of renderTrustReview(deps.store.review(target))) {
+        deps.out(line);
+      }
+      return { exitCode: EXIT_OK };
+    }
     if (options.revoke === true) {
       // Removing the key — not storing `false` — is what brings the
       // interactive prompt back; `kubic trust` is the way to accept again.
@@ -106,6 +124,12 @@ export function runTrustCommand(
         "the project layer there is refused again until you run 'kubic trust'",
       );
       return { exitCode: EXIT_OK };
+    }
+    // Re-trusting a changed project shows what is being accepted first.
+    if (deps.store.inspect(target).changed) {
+      for (const line of renderTrustReview(deps.store.review(target))) {
+        deps.out(line);
+      }
     }
     deps.store.set(target, true);
     deps.out(`trusted project ${key} (store: ${deps.store.file})`);
@@ -117,7 +141,7 @@ export function runTrustCommand(
     );
     // The grant is per project tree, not per file: say what else it unlocks.
     deps.out(
-      "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default) and its project skills",
+      "this grant also covers the project's models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its AGENTS.md and its project skills",
     );
     deps.out(
       "it covers these files as they are now: a change to any of them makes the project untrusted until you run 'kubic trust' again",

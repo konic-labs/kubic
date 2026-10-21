@@ -12,7 +12,7 @@
 // counter. Pending work, the turn itself, progress output and the TUI's
 // interactive switches stay with each front end.
 
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import type { Lane, LaneCompactionOptions } from '@kubic/agent/lane/boot';
 import type {
@@ -49,22 +49,42 @@ import type {
   RunReconciliation,
 } from '@kubic/exec/journal';
 import type {
+  ApprovalBrokerTarget,
   ApprovalConfig,
   InstalledPolicy,
   installPolicy,
+  PreApprovals,
 } from '@kubic/host/approvals';
-import type { RuntimeThinking } from '@kubic/host/config';
+import type {
+  AdminHook,
+  RuntimeSandbox,
+  RuntimeThinking,
+} from '@kubic/host/config';
+import type { RuntimeOidc } from '@kubic/host/credentials';
+import type { ProjectInstructions } from '@kubic/host/instructions';
+import {
+  loadProjectInstructions,
+  projectInstructionsNotices,
+} from '@kubic/host/instructions';
+import type { McpConnection, McpServerSpec } from '@kubic/host/mcp';
 import type { AssembledModels } from '@kubic/host/models';
+import type { EgressProxy } from '@kubic/host/net';
 import type { EffectivePolicy } from '@kubic/host/policy';
+import { dataProtectionOf } from '@kubic/host/policy';
 import type { ResolvedRole, RoleLayerInput } from '@kubic/host/roles';
-import { redactBridgeWrites } from '@kubic/host/secret-refs';
+import { redactBridgeWrites, scanBridgeWrites } from '@kubic/host/secret-refs';
 import { defaultSessionsRoot } from '@kubic/host/sessions';
 import { bootSkills } from '@kubic/host/skills';
+import type { RegionGate } from '../config/model-selection.js';
 import { installBootPolicy } from './approval-policy.js';
 import { assembleBootCatalog } from './catalog.js';
+import { bootEgressProxy } from './egress.js';
+import type { ModelFallback } from './fallback.js';
 import { beginBootJournal, probeBootOverlap } from './journal.js';
 import { bootSessionLane } from './lane.js';
+import { connectBootMcp } from './mcp.js';
 import { resolveBootRole } from './role.js';
+import { bootSandbox } from './sandbox.js';
 
 // Why a boot stopped before the lane ran. Each front end maps these to its
 // own output: an exit code and stderr for `kubic run`, an error the TUI
@@ -110,6 +130,29 @@ export interface SessionBootConfig {
   reconcileOutOfScope?: readonly string[];
   // [agent] systemPromptFile contents, composed ahead of the skills block.
   systemPromptSection?: string;
+  // `[agent] projectInstructions`: false skips the AGENTS.md search.
+  projectInstructions?: boolean;
+  // Why the project models.json stays out of the catalog, when it does.
+  projectProvidersRefusal?: string;
+  // `[cost] team`: recorded on a session this boot creates.
+  sessionTeam?: string;
+  // The `[[hooks]]` the lane runs around each tool call.
+  hooks?: readonly AdminHook[];
+  // The approval broker that answers asks when no user is attached.
+  approvalBroker?: ApprovalBrokerTarget;
+  // A verified pre-approval file the policy grants from.
+  preApprovals?: PreApprovals;
+  // `[providers.<id>] region` declarations, for `[policy] allowed_regions`.
+  providerRegions?: Readonly<Record<string, string>>;
+  // `[model] fallback`: the models tried, in order, when the selected one
+  // is unavailable.
+  modelFallback?: readonly string[];
+  // `[oidc]`: the job's OIDC token as a cloud credential.
+  oidc?: RuntimeOidc;
+  // `[mcp.<name>]`: the MCP servers the organization allowlists.
+  mcp?: readonly McpServerSpec[];
+  // `[sandbox]`: the bash tool's OS sandbox.
+  sandbox?: RuntimeSandbox;
   // Enterprise policy: gates the role grants, the tool set and the model.
   modelPolicy?: EffectivePolicy;
   // The per-path trust check for the project models.json and skills.
@@ -175,6 +218,10 @@ export interface SessionBootSinks {
   // An unresolvable explicit --skill.
   skillsWarn: (line: string) => void;
   skillsLog: (line: string) => void;
+  // A cut or skipped AGENTS.md.
+  instructionsNotice?: (line: string) => void;
+  // A tool result the data policy redacted before the model read it.
+  dlpNotice?: (line: string) => void;
 }
 
 export interface BootRole {
@@ -239,6 +286,19 @@ export class SessionBoot {
   journal: FileJournalStore | undefined;
   reconciliation: RunReconciliation | undefined;
   skills: ReturnType<typeof bootSkills> | undefined;
+  instructions: ProjectInstructions | undefined;
+  // `[policy] allowed_regions` as a gate on this boot's catalog; absent when
+  // no region gate is configured.
+  regionGate: RegionGate | undefined;
+  // The moves along `[model] fallback` this boot or its run made.
+  readonly fallbacks: ModelFallback[] = [];
+  // The allowlisted MCP servers this boot reached.
+  readonly mcp: McpConnection[] = [];
+  // The OS sandbox the bash tool's commands run in, when one does.
+  sandboxKind: 'seatbelt' | 'bubblewrap' | undefined;
+  // The egress proxy the bash tool's network goes through, when the policy
+  // mandates one.
+  egressProxy: EgressProxy | undefined;
   lane: Lane | undefined;
   // The model the booted lane runs.
   liveModel: { provider: string; id: string } | undefined;
@@ -254,6 +314,8 @@ export class SessionBoot {
   thinkingLevel: string | undefined;
   // Every provider key the request-time resolver has handed out so far.
   liveSecrets: () => string[] = () => [];
+  // The secret values `data_policy` kept out of what the session stored.
+  secretsKeptOut = 0;
   private tornDown = false;
 
   constructor(
@@ -265,9 +327,17 @@ export class SessionBoot {
     this.config = config;
     this.sinks = sinks;
     this.root = config.sessionsRoot ?? defaultSessionsRoot();
-    this.bridge = redactBridgeWrites(createNodeFileBridge(this.root), () =>
+    const scrubbed = redactBridgeWrites(createNodeFileBridge(this.root), () =>
       this.liveSecrets(),
     );
+    // `data_policy = "redact"` (or `redact-model`): every text the session
+    // stores is scanned for secrets, the journal excepted.
+    this.bridge =
+      dataProtectionOf(config.modelPolicy) === undefined
+        ? scrubbed
+        : scanBridgeWrites(scrubbed, (found) => {
+            this.secretsKeptOut += found;
+          });
   }
 
   get id(): string {
@@ -314,6 +384,7 @@ export class SessionBoot {
               {
                 cwd: this.config.env?.cwd ?? process.cwd(),
                 ...(sessionMode === undefined ? {} : { mode: sessionMode }),
+                ...sessionOwner(this.config.sessionTeam),
               },
               context,
             )
@@ -339,15 +410,22 @@ export class SessionBoot {
     this.role = role;
     const catalog = await assembleBootCatalog(this);
     if (catalog !== undefined) return catalog;
-    const env = this.config.env ?? new NodeExecutionEnv(process.cwd());
+    const unsandboxed = this.config.env ?? new NodeExecutionEnv(process.cwd());
+    this.env = unsandboxed;
+    await installBootPolicy(this, unsandboxed);
+    const proxied = await bootEgressProxy(this, unsandboxed);
+    if ('kind' in proxied) return proxied;
+    const env = bootSandbox(this, proxied);
+    if ('kind' in env) return env;
     this.env = env;
-    await installBootPolicy(this, env);
     this.request.onPolicyInstalled?.(this);
     beginBootJournal(this, env);
     await probeBootOverlap(this, env);
     this.bootRunSkills();
+    this.bootRunInstructions();
     const skills = this.request.onSkillsBooted?.(this);
     if (skills !== undefined) return skills;
+    await connectBootMcp(this, env);
     if (this.request.cancelled?.() === true) return { kind: 'cancelled' };
     return bootSessionLane(this, env);
   }
@@ -383,6 +461,25 @@ export class SessionBoot {
       warn: sinks.skillsWarn,
       log: sinks.skillsLog,
     });
+  }
+
+  // Project instructions: the trusted AGENTS.md files from the repository
+  // root down to the workspace, appended to the prompt after the
+  // systemPromptFile. A cut or untrusted file is named, never fatal.
+  private bootRunInstructions(): void {
+    const { config, sinks } = this;
+    const envTrusted =
+      process.env.KUBIC_TRUST_PROJECT === '1' ||
+      process.env.KUBIC_TRUST_PROJECT === 'true';
+    this.instructions = loadProjectInstructions({
+      bridge: this.bridge,
+      cwd: this.env?.cwd ?? process.cwd(),
+      trustProject: config.trustProject ?? (() => envTrusted),
+      enabled: config.projectInstructions !== false,
+    });
+    for (const line of projectInstructionsNotices(this.instructions)) {
+      sinks.instructionsNotice?.(line);
+    }
   }
 
   requireInstalled(): InstalledPolicy {
@@ -434,6 +531,8 @@ export class SessionBoot {
     } catch {
       // Best-effort.
     }
+    for (const connection of this.mcp) connection.close();
+    await this.egressProxy?.close().catch(() => undefined);
     // The harness owns the storage it adopted; closing it first means the
     // handle's release only gives the lock back.
     try {
@@ -468,4 +567,22 @@ async function settledWithin<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+// Who a new session is billed to: the OS user running it, and the configured
+// team. A user the platform cannot name is left out, never guessed.
+function sessionOwner(team: string | undefined): {
+  user?: string;
+  team?: string;
+} {
+  let user: string | undefined;
+  try {
+    user = userInfo().username;
+  } catch {
+    user = process.env.USER ?? process.env.USERNAME;
+  }
+  return {
+    ...(user === undefined || user === '' ? {} : { user }),
+    ...(team === undefined ? {} : { team }),
+  };
 }

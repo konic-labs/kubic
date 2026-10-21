@@ -26,6 +26,8 @@ accepts, returns and bounds is on the [tools page](../cli/tools.md).
 | `@kubic/agent/lane/interceptors` | The hooks that run before every tool call: confinement, destructive and network commands, approvals, redaction |
 | `@kubic/agent/lane/policy` | Tool policy enforcement |
 | `@kubic/agent/lane/wrap` | Tool-wrap composition: permission checks and telemetry |
+| `@kubic/agent/lane/branches` | The session's branches: the conversation the lane runs, and the forks `/tree` moves between |
+| `@kubic/agent/lane/external-tools` | Tools from outside the binary (an allowlisted MCP server's), offered beside the built-ins and run through the same interceptors |
 | `@kubic/agent/lane/session-store` | Session storage: create, attach, fork, list, and the session lock |
 | `@kubic/agent/lane/session-fs` | Pi's `FileSystem` over the exec file bridge |
 | `@kubic/agent/lane/transcript` | The one adapter from durable entries to Kubic's transcript items |

@@ -102,7 +102,11 @@ export function laneToolSet(
   let names =
     classAllowed === undefined
       ? [...roleNames]
-      : roleNames.filter((tool) => classAllowed.includes(tool));
+      : roleNames.filter(
+          (tool) =>
+            classAllowed.includes(tool) ||
+            (options.externalTools ?? []).some((each) => each.name === tool),
+        );
   if (enterpriseGate !== undefined) {
     names = names.filter((tool) => enterpriseGate(tool));
   }
@@ -117,7 +121,10 @@ export function laneToolSet(
       options.toolAllowlist !== undefined ||
       options.toolSelection !== undefined ||
       options.noTools === true ||
-      enterpriseGate !== undefined,
+      enterpriseGate !== undefined ||
+      // External tools sit outside the class-derived set: the offer is
+      // configured from the full intersection.
+      (options.externalTools ?? []).length > 0,
   };
 }
 

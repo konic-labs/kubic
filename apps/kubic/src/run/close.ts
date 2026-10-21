@@ -93,6 +93,11 @@ export async function closeRun(
       );
     },
   });
+  if (boot.secretsKeptOut > 0) {
+    state.sinks.notice(
+      `data policy: ${boot.secretsKeptOut} secret value(s) kept out of what the session stored`,
+    );
+  }
 }
 
 // The span artifact is written on every exit path (success or mapped

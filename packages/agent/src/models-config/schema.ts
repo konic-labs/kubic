@@ -59,6 +59,12 @@ export interface CustomProviderSpec {
   apiKeyRef?: SecretRef;
   /** Parsed header refs by name; literals stay in `headers`. */
   headerRefs?: Record<string, SecretRef>;
+  /**
+   * Mutual TLS for a gateway: the client certificate and key the provider's
+   * requests present, and the CA its server certificate chains to when the
+   * default roots do not cover it (absolute PEM paths).
+   */
+  tls?: { cert: string; key: string; ca?: string };
   api: CustomApi;
   models: CustomModelSpec[];
 }

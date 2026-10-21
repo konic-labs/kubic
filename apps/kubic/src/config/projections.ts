@@ -9,20 +9,30 @@ import type {
   ModelStreamTuning,
   StreamTuningTables,
 } from '@kubic/agent/stream-options';
+import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import type { JournalRetention } from '@kubic/exec/journal';
 import type { ApprovalConfig } from '@kubic/host/approvals';
 import type {
+  AdminHook,
   ProjectTrustCheck,
   RuntimeConfig,
   RuntimeEscalation,
+  RuntimeSandbox,
   RuntimeThinking,
   RuntimeVerify,
+  SpendCaps,
 } from '@kubic/host/config';
 import { CONFIG_LAYERS, checkModelStreamTuning } from '@kubic/host/config';
+import type { RuntimeOidc } from '@kubic/host/credentials';
+import type { ProjectInstructions } from '@kubic/host/instructions';
+import { loadProjectInstructions } from '@kubic/host/instructions';
+import type { McpServerSpec } from '@kubic/host/mcp';
 import type { RoleLayerInput, RoleLayerSpec } from '@kubic/host/roles';
 import type { RunCommandOptions } from '@kubic/host/run';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
+import { resolveTelemetryTarget } from '@kubic/host/telemetry';
 import type { CliConfigResult } from './load.js';
-import { projectTrustFor } from './load.js';
+import { projectModelsDeps, projectTrustFor } from './load.js';
 
 // The config `[approvals]` policy as the install consumes it: route,
 // maxPendingMs, autoApprove, requireJustification and sessionScoped, projected
@@ -141,6 +151,24 @@ export function runtimeLaneDeps(result: CliConfigResult): {
   /** The merged `[model]` ladder — the lane climbs
    * the role's own rungs first when the role names any. */
   escalate?: RuntimeEscalation;
+  /** `[agent] projectInstructions = false`: no AGENTS.md is read. */
+  projectInstructions?: boolean;
+  /** Why the project models.json providers stay out, when they do. */
+  projectProvidersRefusal?: string;
+  /** `[cost] team`: recorded on each session the lane creates. */
+  sessionTeam?: string;
+  /** The `[[hooks]]` the lane runs around tool calls and at run end. */
+  hooks?: readonly AdminHook[];
+  /** `[providers.<id>] region`, for the `[policy] allowed_regions` gate. */
+  providerRegions?: Readonly<Record<string, string>>;
+  /** `[model] fallback`: the models tried when the selected one is unavailable. */
+  modelFallback?: readonly string[];
+  /** `[oidc]`: the job's OIDC token as a cloud credential. */
+  oidc?: RuntimeOidc;
+  /** `[mcp.<name>]`: the MCP servers the organization allowlists. */
+  mcp?: readonly McpServerSpec[];
+  /** `[sandbox]`: the bash tool's OS sandbox. */
+  sandbox?: RuntimeSandbox;
 } {
   const runtime = result.runtime;
   if (runtime === undefined) return {};
@@ -166,6 +194,23 @@ export function runtimeLaneDeps(result: CliConfigResult): {
     ...(runtime.thinking === undefined
       ? {}
       : { thinking: { ...runtime.thinking } }),
+    ...(runtime.config.agent?.projectInstructions === false
+      ? { projectInstructions: false }
+      : {}),
+    ...projectModelsDeps(result),
+    ...(runtime.config.cost?.team === undefined
+      ? {}
+      : { sessionTeam: runtime.config.cost.team }),
+    ...(runtime.hooks.length === 0 ? {} : { hooks: runtime.hooks }),
+    ...(Object.keys(runtime.providerRegions).length === 0
+      ? {}
+      : { providerRegions: runtime.providerRegions }),
+    ...(runtime.modelFallback === undefined
+      ? {}
+      : { modelFallback: runtime.modelFallback }),
+    ...(runtime.oidc === undefined ? {} : { oidc: runtime.oidc }),
+    ...(runtime.mcp.length === 0 ? {} : { mcp: runtime.mcp }),
+    ...(runtime.sandbox.mode === 'off' ? {} : { sandbox: runtime.sandbox }),
     // No ladder, no field: escalation stays opt-in — the
     // lane climbs nothing it was never configured with.
     ...(runtime.escalate === undefined
@@ -400,4 +445,49 @@ export function installedPolicyClasses(result: CliConfigResult): {
 } {
   const { classes } = installedPolicyDeps(result);
   return classes === undefined ? {} : { classes };
+}
+
+// The AGENTS.md files a run from `cwd` would load: the search the lane boot
+// runs, under the same per-path trust check and `[agent] projectInstructions`
+// switch — what `kubic config` and `kubic doctor` report.
+export function runtimeProjectInstructions(
+  result: CliConfigResult,
+  cwd: string,
+): ProjectInstructions {
+  return loadProjectInstructions({
+    bridge: createNodeFileBridge(cwd),
+    cwd,
+    trustProject: projectTrustFor(result),
+    enabled: result.runtime?.config.agent?.projectInstructions !== false,
+  });
+}
+
+// The `[policy]` spend caps `kubic run` and `kubic tui` are held to: nothing
+// when no layer sets one.
+export function runtimeSpendDeps(result: CliConfigResult): {
+  spend?: SpendCaps;
+} {
+  const caps = result.runtime?.spend;
+  return caps === undefined ||
+    (caps.run === undefined && caps.daily === undefined)
+    ? {}
+    : { spend: caps };
+}
+
+// The `[telemetry]` export target over the `OTEL_*` variables: nothing when
+// telemetry is off, and the reason when it cannot be used.
+export function runtimeTelemetryDeps(
+  result: CliConfigResult,
+  env: Readonly<Record<string, string | undefined>>,
+  version?: string,
+): { telemetry?: TelemetryTarget; problem?: string } {
+  const target = resolveTelemetryTarget(
+    result.runtime?.config.telemetry,
+    env,
+    version,
+  );
+  if (target === undefined) return {};
+  return 'problem' in target
+    ? { problem: target.problem }
+    : { telemetry: target };
 }

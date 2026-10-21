@@ -11,6 +11,7 @@ import {
   TRUST_VIEW_MAX_LINES,
   trustFileLines,
   trustQuestionLines,
+  trustReviewLines,
 } from './trust-question.js';
 
 const plain = createCliTheme('none');
@@ -23,6 +24,7 @@ describe('the trust question', () => {
         root: '/home/me/proj',
         configPath: '/home/me/proj/.kubic/config.toml',
         message: 'Trust project /home/me/proj?',
+        changed: false,
       },
       100,
       '/home/me',
@@ -42,7 +44,7 @@ describe('the trust question', () => {
       'any *_API_KEY or KUBIC_* variable it names (KUBIC_API_KEY by default)',
     );
     expect(body).toContain(
-      'project skills, role documents and [agent] systemPromptFile are instructions the model follows',
+      'project skills, role documents, AGENTS.md and [agent] systemPromptFile are instructions the model follows',
     );
     expect(lines.at(-1)?.trim()).toBe('y  yes   n  not now   v  view file');
     for (const line of lines) expect(line.length).toBeLessThanOrEqual(100);
@@ -99,5 +101,61 @@ describe('the trust question', () => {
       }),
     ).toBe(true);
     expect(store.get(project)).toBe(true);
+  });
+
+  it('says a changed project changed and offers its diff on d', async () => {
+    const home = tempDir('trust-home-');
+    const project = tempDir('trust-proj-');
+    mkdirSync(join(project, '.kubic'), { recursive: true });
+    const config = join(project, '.kubic', 'config.toml');
+    writeFileSync(config, '[approvals]\nroute = "ask-user"\n');
+    const store = new ProjectTrustStore(join(home, '.kubic', 'trust.json'));
+    store.set(project, true);
+    writeFileSync(
+      config,
+      '[approvals]\nroute = "ask-user"\nautoApprove = ["destructive-shell"]\n',
+    );
+    const questions: Array<{ changed: boolean }> = [];
+    const reviews: string[][] = [];
+    const answers: Array<'changes' | 'yes'> = ['changes', 'yes'];
+    expect(
+      await resolveInteractiveProjectTrust({
+        home,
+        cwd: project,
+        env: {},
+        store: new ProjectTrustStore(join(home, '.kubic', 'trust.json')),
+        ask: async (question) => {
+          questions.push({ changed: question.changed });
+          return answers.shift() ?? null;
+        },
+        showChanges: (lines) => reviews.push(lines),
+      }),
+    ).toBe(true);
+    expect(questions).toEqual([{ changed: true }, { changed: true }]);
+    expect(reviews[0]).toEqual(
+      expect.arrayContaining([
+        '--- a/.kubic/config.toml',
+        '+++ b/.kubic/config.toml',
+        '+autoApprove = ["destructive-shell"]',
+      ]),
+    );
+    const lines = trustQuestionLines(
+      plain,
+      {
+        root: project,
+        configPath: config,
+        message: 'changed',
+        changed: true,
+      },
+      200,
+    );
+    expect(lines[0]).toContain(
+      `${project} changed since you trusted it — load its project config again?`,
+    );
+    expect(lines.at(-1)?.trim()).toBe(
+      'y  yes   n  not now   v  view file   d  view changes',
+    );
+    const painted = trustReviewLines(plain, ['+a\u001b[2J', '-b']);
+    expect(painted.join('\n')).not.toContain('\u001b');
   });
 });

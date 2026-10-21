@@ -1,81 +1,76 @@
-// POSIX path helpers for skill roots, and the project chain a skill search
-// walks (the cwd up to the git top level).
+// Path helpers for skill roots, and the project chain a skill search walks
+// (the cwd up to the git top level). Platform paths throughout, so a Windows
+// drive path (`D:\repo\pkg`) walks and joins like a POSIX one.
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 
-export function joinPosix(...parts: string[]): string {
-  const segments: string[] = [];
-  for (const chunk of parts.join('/').split('/')) {
-    if (chunk === '' || chunk === '.') continue;
-    if (chunk === '..') {
-      segments.pop();
-      continue;
-    }
-    segments.push(chunk);
-  }
-  return `/${segments.join('/')}`;
+/** The parts joined and normalized, anchored at the root when relative. */
+export function joinPath(...parts: string[]): string {
+  return resolve(sep, join(...parts));
 }
 
 // Explicit skill paths anchor at the invoking
-// cwd, never at '/' and never at whatever root the caller's bridge
+// cwd, never at the root and never at whatever root the caller's bridge
 // carries. Absolute values pass through (normalized); relative values —
 // './rel-skill', 'rel-skill', '../up/skill', 'rel/SKILL.md' — resolve
 // against the cwd, so `kubic run` (sessions-rooted bridge) and `kubic tui`
-// (cwd bridge) agree. joinPosix cannot do this: it roots everything at '/'.
+// (cwd bridge) agree. joinPath cannot do this: it anchors at the root.
+// A relative path stays relative and never climbs above its start.
 export function normalizeSkillPath(path: string): string {
-  const absolute = path.startsWith('/');
-  const segments: string[] = [];
-  for (const chunk of path.split('/')) {
-    if (chunk === '' || chunk === '.') continue;
-    if (chunk === '..') {
-      if (segments.length > 0) segments.pop();
-      continue;
-    }
-    segments.push(chunk);
-  }
-  return `${absolute ? '/' : ''}${segments.join('/')}`;
+  if (isAbsolute(path)) return resolve(path);
+  return normalize(path)
+    .split(sep)
+    .filter((part) => part !== '' && part !== '.' && part !== '..')
+    .join(sep);
 }
 
 export function resolveSkillPath(cwd: string, value: string): string {
-  if (value.startsWith('/')) return normalizeSkillPath(value);
-  return normalizeSkillPath(`${cwd}/${value}`);
+  if (isAbsolute(value)) return normalizeSkillPath(value);
+  return normalizeSkillPath(join(cwd, value));
 }
 
 export function basenameOf(path: string): string {
-  const clean = path.replace(/\/*$/, '');
-  const slash = clean.lastIndexOf('/');
-  return slash === -1 ? clean : clean.slice(slash + 1);
+  return basename(path);
 }
 
 export function dirnameOf(path: string): string {
-  const clean = path.replace(/\/*$/, '');
-  const slash = clean.lastIndexOf('/');
-  if (slash === -1) return '.';
-  if (slash === 0) return '/';
-  return clean.slice(0, slash);
+  return dirname(path);
 }
 
-// Ancestors nearest-first: /a/b -> ['/a/b', '/a', '/'].
+// Ancestors nearest-first, up to the root: /a/b -> ['/a/b', '/a', '/'],
+// D:\a -> ['D:\a', 'D:\']. A root is its own parent, which ends the walk.
 function ancestorsOf(cwd: string): string[] {
-  const clean = cwd.replace(/\/*$/, '') || '/';
   const out: string[] = [];
-  let current = clean;
+  let current = resolve(cwd);
   for (;;) {
     out.push(current);
-    if (current === '/') break;
-    current = dirnameOf(current);
+    const parent = dirname(current);
+    if (parent === current) return out;
+    current = parent;
   }
-  return out;
 }
 
 // The repository top level, Pi-style — the nearest
 // ancestor (itself included) holding a `.git` entry. Probed through the
 // injected bridge (I/O confinement: no node:fs here); an unreadable path
 // reads as "no marker", never fatal.
-function findRepoRoot(bridge: FileBridge, cwd: string): string | undefined {
+function findRepoRoot(
+  bridge: Pick<FileBridge, 'exists'>,
+  cwd: string,
+): string | undefined {
   for (const ancestor of ancestorsOf(cwd)) {
     let hasMarker = false;
     try {
-      hasMarker = bridge.exists(joinPosix(ancestor, '.git'));
+      hasMarker = bridge.exists(join(ancestor, '.git'));
     } catch {
       hasMarker = false;
     }
@@ -89,12 +84,14 @@ function findRepoRoot(bridge: FileBridge, cwd: string): string | undefined {
 // repository. Trusting one repo must not trust instructions from a parent
 // directory, a shared /tmp, or $HOME, and a package.json above the root
 // contributes nothing (it is never walked to).
-export function projectChain(bridge: FileBridge, cwd: string): string[] {
+export function projectChain(
+  bridge: Pick<FileBridge, 'exists'>,
+  cwd: string,
+): string[] {
   const root = findRepoRoot(bridge, cwd);
-  if (root === undefined) return [cwd.replace(/\/*$/, '') || '/'];
-  if (root === '/') return ancestorsOf(cwd).reverse();
+  if (root === undefined) return [resolve(cwd)];
   return ancestorsOf(cwd)
-    .filter((dir) => dir === root || dir.startsWith(`${root}/`))
+    .filter((dir) => isWithinDir(dir, root))
     .reverse();
 }
 
@@ -112,7 +109,9 @@ export function projectChain(bridge: FileBridge, cwd: string): string[] {
 // repo. A transient realPath failure fails closed (error skip, never a
 // lexical fallback load).
 export function isWithinDir(path: string, dir: string): boolean {
-  const cleanDir = dir.replace(/\/*$/, '') || '/';
-  if (cleanDir === '/') return true;
-  return path === cleanDir || path.startsWith(`${cleanDir}/`);
+  const rel = relative(dir, path);
+  return (
+    rel === '' ||
+    (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+  );
 }

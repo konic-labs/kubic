@@ -356,35 +356,55 @@ describe('enterprise doctor checks', () => {
 
   // Nothing enforces network_policy, so a configured one — an allowlist
   // with domains included — fails, and enforceability with it.
-  it('reports a configured network_policy as not enforced', async () => {
+  it('passes a proxy allowlist the egress proxy enforces, and fails what nothing enforces', async () => {
     const mod = await import('./index.js');
-    const { policy } = mod.resolveEffectivePolicy([
-      {
-        layer: 'enterprise',
-        policy: {
-          network: { mode: 'allowlist', domains: ['example.com'] },
-          audit: { sinks: [{ kind: 'syslog', target: 'local0' }] },
-        },
-      },
-    ]);
-    const checks = mod.enterpriseDoctorChecks(policy, {
-      syslogAvailable: true,
+    const checksFor = (network: {
+      mode: 'allowlist' | 'none';
+      domains?: string[];
+    }) =>
+      mod.enterpriseDoctorChecks(
+        mod.resolveEffectivePolicy([
+          {
+            layer: 'enterprise',
+            policy: {
+              network,
+              audit: { sinks: [{ kind: 'syslog', target: 'local0' }] },
+            },
+          },
+        ]).policy,
+        { syslogAvailable: true },
+      );
+    const enforced = checksFor({ mode: 'allowlist', domains: ['example.com'] });
+    expect(
+      enforced.find((c) => c.id === 'policy:enterprise-network'),
+    ).toMatchObject({
+      status: 'pass',
+      detail: expect.stringContaining(
+        'the bash tool reaches only 1 allowed domain(s), through the egress proxy',
+      ),
     });
-    const network = checks.find((c) => c.id === 'policy:enterprise-network');
+    expect(
+      enforced.find((c) => c.id === 'policy:enterprise-enforceability')?.status,
+    ).toBe('pass');
+    const unenforced = checksFor({ mode: 'none' });
+    const network = unenforced.find(
+      (c) => c.id === 'policy:enterprise-network',
+    );
     expect(network).toMatchObject({
       status: 'fail',
       reason: 'policy-mismatch',
     });
     expect(network?.detail).toContain(
-      'network_policy is not enforced: mode allowlist with 1 allowed domain(s)',
+      'network_policy is not enforced: mode none with no allowed domain',
     );
     expect(
-      checks.find((c) => c.id === 'policy:enterprise-enforceability')?.status,
+      unenforced.find((c) => c.id === 'policy:enterprise-enforceability')
+        ?.status,
     ).toBe('fail');
     // The sink check is unchanged by it.
-    expect(checks.find((c) => c.id === 'policy:enterprise-sinks')?.status).toBe(
-      'pass',
-    );
+    expect(
+      unenforced.find((c) => c.id === 'policy:enterprise-sinks')?.status,
+    ).toBe('pass');
   });
 
   it('empty sinks and non-syslog-first sinks fail loudly', async () => {
@@ -408,6 +428,38 @@ describe('enterprise doctor checks', () => {
         .enterpriseDoctorChecks(fileFirst, { syslogAvailable: true })
         .some((c) => c.status === 'fail'),
     ).toBe(true);
+  });
+});
+
+describe('enterprise data_policy check', () => {
+  it('passes for the values Kubic enforces and warns for the rest', async () => {
+    const mod = await import('./index.js');
+    const check = (policy: string) =>
+      mod
+        .enterpriseDoctorChecks(
+          mod.resolveEffectivePolicy([
+            { layer: 'enterprise', policy: { data: { policy } } },
+          ]).policy,
+          { syslogAvailable: true },
+        )
+        .find((entry) => entry.id === 'policy:data');
+    expect(check('redact-model')).toMatchObject({ status: 'pass' });
+    expect(check('redact-model')?.detail).toContain(
+      'out of tool output before the model reads it',
+    );
+    expect(check('redact')).toMatchObject({ status: 'pass' });
+    expect(check('no-external-training')).toMatchObject({
+      status: 'warn',
+      detail:
+        'data_policy "no-external-training" is carried and reported, not enforced: Kubic enforces "redact" and "redact-model"',
+    });
+    expect(
+      mod
+        .enterpriseDoctorChecks(mod.resolveEffectivePolicy([]).policy, {
+          syslogAvailable: true,
+        })
+        .some((entry) => entry.id === 'policy:data'),
+    ).toBe(false);
   });
 });
 

@@ -21,6 +21,9 @@ import {
   InMemoryCredentialStore,
 } from '@kubic/agent/pi-boundary';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
+import { type Keychain, osKeychain } from '@kubic/exec/keychain';
+import { keychainKeys } from '../credentials/index.js';
+import { awsRegionOf } from './aws-region.js';
 import {
   FAUX_PROVIDER_ID,
   fauxProviderActive,
@@ -64,37 +67,52 @@ function preferenceOrder(ids: readonly string[]): string[] {
   return [...preferred, ...rest, ...ambient];
 }
 
-// The AWS region Bedrock would use: AWS_REGION or AWS_DEFAULT_REGION, else
-// the `region` of the active profile in the shared config file — the order
-// the AWS SDK resolves it.
-function awsRegionOf(env: Env, home: string): string | undefined {
-  const fromEnv = env.AWS_REGION || env.AWS_DEFAULT_REGION;
-  if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
-  let text: string;
-  try {
-    text = createNodeFileBridge('/').readTextFile(
-      env.AWS_CONFIG_FILE || join(home, '.aws', 'config'),
-    );
-  } catch {
-    return undefined;
+// What a built-in with credentials still lacks to reach its endpoint:
+// Bedrock without a region ("Region is missing"), Azure OpenAI without its
+// resource, Vertex AI's application-default login without a project and a
+// location (Pi then reports no credentials at all).
+function endpointGap(
+  provider: string,
+  source: string | undefined,
+  env: Env,
+  home: string,
+): string | undefined {
+  if (
+    provider === 'amazon-bedrock' &&
+    source !== undefined &&
+    awsRegionOf(env, home) === undefined
+  ) {
+    return `credentials from ${source} but no AWS region: set AWS_REGION (or AWS_DEFAULT_REGION, or region in the profile) to use it`;
   }
-  const profile = env.AWS_PROFILE || 'default';
-  const sections =
-    profile === 'default'
-      ? ['default', 'profile default']
-      : [`profile ${profile}`];
-  let inProfile = false;
-  for (const raw of text.split(/\r?\n/u)) {
-    const line = raw.trim();
-    const header = /^\[\s*(.+?)\s*\]$/u.exec(line);
-    if (header !== null) {
-      inProfile = sections.includes((header[1] ?? '').replace(/\s+/gu, ' '));
-      continue;
-    }
-    const region = inProfile ? /^region\s*=\s*(\S+)/u.exec(line) : null;
-    if (region?.[1] !== undefined) return region[1];
+  if (
+    provider === 'azure-openai-responses' &&
+    source !== undefined &&
+    !env.AZURE_OPENAI_RESOURCE_NAME &&
+    !env.AZURE_OPENAI_BASE_URL
+  ) {
+    return `a key from ${source} but no Azure OpenAI resource: set AZURE_OPENAI_RESOURCE_NAME (or AZURE_OPENAI_BASE_URL), and AZURE_OPENAI_DEPLOYMENT_NAME_MAP when a deployment is not named after its model`;
+  }
+  if (
+    provider === 'google-vertex' &&
+    source === undefined &&
+    vertexLoginFound(env, home) &&
+    (!(env.GOOGLE_CLOUD_PROJECT || env.GCLOUD_PROJECT) ||
+      !env.GOOGLE_CLOUD_LOCATION)
+  ) {
+    return 'an application-default Google login but no project or location: set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION (a Vertex AI region, or global) to use it';
   }
   return undefined;
+}
+
+function vertexLoginFound(env: Env, home: string): boolean {
+  if (env.GOOGLE_APPLICATION_CREDENTIALS) return true;
+  try {
+    return createNodeFileBridge('/').exists(
+      join(home, '.config', 'gcloud', 'application_default_credentials.json'),
+    );
+  } catch {
+    return false;
+  }
 }
 
 // One models.json location the assembly looked at: the
@@ -104,7 +122,7 @@ interface ModelsSource {
   readonly path: string;
   readonly scope: 'global' | 'project';
   readonly trusted: boolean;
-  readonly status: 'loaded' | 'untrusted' | 'invalid';
+  readonly status: 'loaded' | 'untrusted' | 'forbidden' | 'invalid';
   readonly providers: readonly string[];
   readonly error?: string;
 }
@@ -190,6 +208,8 @@ export interface AssembledModels {
   // configured, in preference order (see PREFERRED_PROVIDERS). A keyless
   // built-in is never on this list.
   readonly fallbackProviders: readonly string[];
+  // The keys read from the keychain, for the run's scrub.
+  readonly keychainSecrets: readonly string[];
 }
 
 // Assembly options are also the provider-registration options: a run passes its
@@ -206,6 +226,12 @@ export interface AssembleOptions extends RegisterCustomProvidersOptions {
   // /repo/pkg never reaches /repo. Absent leaves only the global
   // KUBIC_TRUST_PROJECT opt-in.
   readonly projectTrust?: (path: string) => boolean;
+  // Why the project models.json stays out even when trusted (an enterprise
+  // `[policy] project_policy = "restricted"`). Absent: it loads once trusted.
+  readonly projectProvidersRefusal?: string;
+  // Where `kubic keys` stored keys are read from (tests); absent: this
+  // machine's keychain.
+  readonly keychain?: Keychain;
 }
 
 // The user-global models.json (global tree: ~/.kubic/models/).
@@ -257,11 +283,17 @@ function envTrustsProject(env: Env): boolean {
 // Pi's auth context over an explicit env (never the ambient one in tests):
 // built-in auth resolution reads env keys and ambient credential files
 // through it, both at the availability check and at request time.
-function authContextFor(env: Env, home: string): AuthContext {
+// The auth context reads the environment at request time (a refreshed
+// token is seen), then the keys `kubic keys` stored.
+function authContextFor(
+  env: Env,
+  home: string,
+  stored: Readonly<Record<string, string>>,
+): AuthContext {
   return {
     env: async (name) => {
       const value = env[name];
-      return value === undefined || value === '' ? undefined : value;
+      return value === undefined || value === '' ? stored[name] : value;
     },
     fileExists: async (path) =>
       createNodeFileBridge('/').exists(
@@ -289,9 +321,11 @@ export async function assembleModels(
   options: AssembleOptions = {},
 ): Promise<AssembledModels> {
   const home = options.home ?? homedir();
+  // Keys `kubic keys` stored, for the variables the environment leaves unset.
+  const stored = keychainKeys(env, home, options.keychain ?? osKeychain());
   const models = createModels({
     credentials: new InMemoryCredentialStore(),
-    authContext: authContextFor(env, home),
+    authContext: authContextFor(env, home, stored),
   });
   const bridge = createNodeFileBridge('/');
   const providers = new Map<string, ProviderInfo>();
@@ -312,9 +346,22 @@ export async function assembleModels(
     path: string,
     scope: ModelsSource['scope'],
     trusted: boolean,
+    refusal?: string,
   ): void => {
     if (!bridge.exists(path)) return;
     const label = scope === 'global' ? 'global' : 'project';
+    if (refusal !== undefined) {
+      sources.push({
+        path,
+        scope,
+        trusted,
+        status: 'forbidden',
+        providers: [],
+        error: refusal,
+      });
+      notes.push(`models.json ignored: ${path} (${label}, ${refusal})`);
+      return;
+    }
     if (!trusted) {
       // Refused before the file is read: nothing in it reaches the catalog.
       sources.push({
@@ -394,6 +441,7 @@ export async function assembleModels(
     projectModelsPath(projectRoot),
     'project',
     options.projectTrust?.(projectRoot) === true || envTrustsProject(env),
+    options.projectProvidersRefusal,
   );
   const checks = await Promise.all(
     builtins.map(async (provider) => {
@@ -407,14 +455,9 @@ export async function assembleModels(
   const usableBuiltins: string[] = [];
   builtins.forEach((provider, index) => {
     const check = checks[index];
-    // Bedrock credentials without a region fail every request ("Region is
-    // missing"): such a provider is not usable, and doctor says what to set.
-    const unusable =
-      check !== undefined &&
-      provider.id === 'amazon-bedrock' &&
-      awsRegionOf(env, home) === undefined
-        ? `credentials from ${check.source ?? 'the AWS environment'} but no AWS region: set AWS_REGION (or AWS_DEFAULT_REGION, or region in the profile) to use it`
-        : undefined;
+    // Credentials that cannot reach an endpoint fail every request: such a
+    // provider is not usable, and doctor says what to set.
+    const unusable = endpointGap(provider.id, check?.source, env, home);
     const usable = check !== undefined && unusable === undefined;
     if (usable) usableBuiltins.push(provider.id);
     providers.set(provider.id, {
@@ -430,6 +473,7 @@ export async function assembleModels(
     ...preferenceOrder(usableBuiltins.filter((id) => !customs.includes(id))),
   ];
   return {
+    keychainSecrets: Object.values(stored),
     models,
     notes,
     providers,

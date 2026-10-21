@@ -15,10 +15,19 @@ import type {
   ApprovalVerdict,
   InstalledPolicy,
 } from '@kubic/host/approvals';
-import type { RuntimeEscalation, RuntimeThinking } from '@kubic/host/config';
+import type {
+  AdminHook,
+  RuntimeEscalation,
+  RuntimeSandbox,
+  RuntimeThinking,
+  SpendCaps,
+} from '@kubic/host/config';
+import type { RuntimeOidc } from '@kubic/host/credentials';
+import type { McpServerSpec } from '@kubic/host/mcp';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink } from '@kubic/host/run';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
 import type { ColorLevel } from '@kubic/tui/theme';
 import type { TuiWorkspace } from '@kubic/tui/tui-app';
 import type { Terminal } from '@kubic/tui/tui-boundary';
@@ -52,6 +61,9 @@ export interface TuiRunDeps {
   // Observes a failed journal-panel read or apply (tests; the
   // loop itself swallows it — the journal is observed, never a gate).
   journalFeedError?: (error: unknown) => void;
+  // The `[policy]` spend caps the process is held to, and the sessions root
+  // the day's spend is read from. Absent: no caps.
+  spend?: { caps: SpendCaps; sessionsRoot?: string };
   // The bound on the quit-time drain (a turn still running when
   // the operator quits is aborted, its kills run, and the loop waits at most
   // this long for it to settle before the sweep and session close). Absent
@@ -191,6 +203,26 @@ export interface TuiRunOptions {
   // `kubic run` threads, so the interactive lane assembles the same
   // prompt. Absent means the lane assembles its prompt unchanged.
   systemPromptSection?: string;
+  // `[agent] projectInstructions = false`, as `kubic run` reads it.
+  projectInstructions?: boolean;
+  // The project models.json refusal, as `kubic run` reads it.
+  projectProvidersRefusal?: string;
+  // `[cost] team`, as `kubic run` records it.
+  sessionTeam?: string;
+  // The `[[hooks]]`, as `kubic run` runs them; a settled turn is a run end.
+  hooks?: readonly AdminHook[];
+  // `[providers.<id>] region` and `[model] fallback`, as `kubic run` reads
+  // them (the fallback applies when the boot's model is unavailable).
+  providerRegions?: Readonly<Record<string, string>>;
+  modelFallback?: readonly string[];
+  // `[oidc]`, as `kubic run` reads it.
+  oidc?: RuntimeOidc;
+  // `[mcp.<name>]`, as `kubic run` reads it.
+  mcp?: readonly McpServerSpec[];
+  // `[sandbox]`, as `kubic run` reads it.
+  sandbox?: RuntimeSandbox;
+  // `[telemetry]`: where each settled turn's spans and metrics go.
+  telemetry?: TelemetryTarget;
   // The `[session]` compaction policy — the same
   // projection `kubic run` threads, so the interactive lane compacts under
   // config, not the lane defaults. Absent means the own defaults.

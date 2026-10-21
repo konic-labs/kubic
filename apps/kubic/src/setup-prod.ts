@@ -29,6 +29,7 @@ import {
 import { assembleModels } from '@kubic/host/models';
 import type { CliConfigResult } from './config/load.js';
 import {
+  projectModelsDeps,
   projectTrustFor,
   resolveInteractiveProjectTrust,
 } from './config/load.js';
@@ -123,7 +124,10 @@ export async function prodSetupDeps(
     home,
     ...(options.cliConfig === undefined
       ? {}
-      : { projectTrust: projectTrustFor(options.cliConfig) }),
+      : {
+          projectTrust: projectTrustFor(options.cliConfig),
+          ...projectModelsDeps(options.cliConfig),
+        }),
   });
   // The usable providers in the order the implicit pick tries them, each
   // with its curated default preselected.

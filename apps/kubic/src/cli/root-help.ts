@@ -26,7 +26,15 @@ export const COMMAND_GROUPS: readonly CommandGroup[] = [
   },
   {
     label: 'setup',
-    commands: ['setup', 'models', 'config', 'trust', 'doctor', 'skills'],
+    commands: [
+      'setup',
+      'models',
+      'keys',
+      'config',
+      'trust',
+      'doctor',
+      'skills',
+    ],
     summary: 'providers, project, health',
   },
   {

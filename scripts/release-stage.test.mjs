@@ -59,6 +59,7 @@ describe('releaseManifest', () => {
       engines: { node: '>=22.19' },
       dependencies: { consola: '3.4.2', '@earendil-works/pi-ai': '1.0.2' },
       files: RELEASE_FILES,
+      publishConfig: { access: 'public', provenance: true },
     });
   });
 

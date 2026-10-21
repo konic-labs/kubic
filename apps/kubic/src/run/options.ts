@@ -8,11 +8,25 @@ import type { Context, MutableModels } from '@kubic/agent/pi-boundary';
 import type { StreamTuningTables } from '@kubic/agent/stream-options';
 import type { ExecutionEnv } from '@kubic/exec/env';
 import type { JournalRetention } from '@kubic/exec/journal';
-import type { ApprovalConfig, InstalledPolicy } from '@kubic/host/approvals';
-import type { RuntimeThinking, RuntimeVerify } from '@kubic/host/config';
+import type {
+  ApprovalBrokerTarget,
+  ApprovalConfig,
+  InstalledPolicy,
+  PreApprovals,
+} from '@kubic/host/approvals';
+import type {
+  AdminHook,
+  RuntimeSandbox,
+  RuntimeThinking,
+  RuntimeVerify,
+  SpendCaps,
+} from '@kubic/host/config';
+import type { RuntimeOidc } from '@kubic/host/credentials';
+import type { McpServerSpec } from '@kubic/host/mcp';
 import type { EffectivePolicy } from '@kubic/host/policy';
 import type { RoleLayerInput } from '@kubic/host/roles';
 import type { DebugSink, RunProgressSink } from '@kubic/host/run';
+import type { TelemetryTarget } from '@kubic/host/telemetry';
 
 export interface HeadlessRunOptions {
   sessionId?: string;
@@ -118,6 +132,35 @@ export interface HeadlessRunDeps {
   // load — the boot composes them ahead of the skills block. Absent means
   // the lane assembles its prompt unchanged.
   systemPromptSection?: string;
+  // `[agent] projectInstructions = false` turns the AGENTS.md search off.
+  // Absent means on.
+  projectInstructions?: boolean;
+  // Why the project models.json stays out of the catalog (an enterprise
+  // `[policy] project_policy = "restricted"`). Absent: it loads once trusted.
+  projectProvidersRefusal?: string;
+  // The `[policy]` spend caps the run is held to. Absent: none.
+  spend?: SpendCaps;
+  // `[cost] team`: recorded on the session this run creates.
+  sessionTeam?: string;
+  // The `[[hooks]]` the run's tool calls and its end go through. Absent: none.
+  hooks?: readonly AdminHook[];
+  // `[approvals] broker`: the run's answer seat. Absent: a challenged call
+  // is refused at once.
+  approvalBroker?: ApprovalBrokerTarget;
+  // A verified `--pre-approvals` file. Absent: none.
+  preApprovals?: PreApprovals;
+  // `[providers.<id>] region` declarations, for `[policy] allowed_regions`.
+  providerRegions?: Readonly<Record<string, string>>;
+  // `[model] fallback`: the models a run moves to when its model fails.
+  modelFallback?: readonly string[];
+  // `[oidc]`: the job's OIDC token as a cloud credential.
+  oidc?: RuntimeOidc;
+  // `[mcp.<name>]`: the MCP servers the organization allowlists.
+  mcp?: readonly McpServerSpec[];
+  // `[sandbox]`: the bash tool's OS sandbox.
+  sandbox?: RuntimeSandbox;
+  // `[telemetry]`: where the run's spans and metrics go. Absent: nowhere.
+  telemetry?: TelemetryTarget;
   // The `[session]` compaction policy from the same
   // config load — the boot hands it to the settings. Absent means the
   // lane defaults (automatic, the default reserve, the default recent

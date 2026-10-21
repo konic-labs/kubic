@@ -297,6 +297,11 @@ export function trajectoryResultFor(outcome: RunOutcome): TrajectoryResult {
       status = 'turn_limit';
       category = 'run_limit';
       break;
+    case 'spend_limit':
+      // The trajectory names no spend status: a failure in the run-limit
+      // category, its error saying which cap.
+      category = 'run_limit';
+      break;
     case 'timeout':
       // A wall-clock bound is its own terminus; its category is the
       // guard's, like the turn limit.

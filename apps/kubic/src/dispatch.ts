@@ -29,13 +29,13 @@ import type { CliTheme } from '@kubic/core/cli/theme';
 import { formatVersionLine } from '@kubic/core/license';
 import { suggest } from '@kubic/core/suggest';
 import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
-import { buildConfiguredSinks, setAuditSinks } from '@kubic/host/audit';
 import { refusedReplayEnvelope } from '@kubic/host/replay';
 import {
   buildRunEnvelope,
   refusedRunResult,
   shellQuote,
 } from '@kubic/host/run';
+import { flushAuditSinksAtExit, installAuditSinks } from './audit-sinks.js';
 import type {
   CommandContext,
   CommandRegistrar,
@@ -49,7 +49,8 @@ import { registerJournalCommands } from './commands/journal.js';
 import { registerSessionCommands } from './commands/session.js';
 import { registerSetupCommands } from './commands/setup.js';
 import type { CliConfigResult } from './config/load.js';
-import { configRefusalExit } from './config/load.js';
+import { CONFIG_CONSUMING_COMMANDS, configRefusalExit } from './config/load.js';
+import { applySystemCertificates } from './system-ca.js';
 
 // The supported command names, read off the help's command groups so the
 // routing table and the listing can never drift apart (program.test.ts also
@@ -252,6 +253,11 @@ export interface DispatchDeps {
   // recorded); true/false is the effective decision threaded into the load.
   // Absent means the path asks nobody — a non-TTY caller keeps the refusal.
   readonly resolveProjectTrust?: () => Promise<boolean | undefined>;
+  // Before a command that runs on the config loads it: fetch the
+  // organization's remote policy when the managed config names one and the
+  // cached copy is stale. Resolves to the warnings to print (an unreachable
+  // server keeps the last verified copy). Absent: nothing is fetched.
+  readonly refreshManagedPolicy?: () => Promise<string[]>;
 }
 
 const BARE_SKIP_FLAG = '--dangerously-skip-approvals';
@@ -387,6 +393,15 @@ async function loadProcessConfig(
   ask: boolean,
   deps: DispatchDeps,
 ): Promise<CliConfigResult> {
+  if (
+    command !== undefined &&
+    CONFIG_CONSUMING_COMMANDS.has(command) &&
+    !(command === 'policy' && (args[0] === 'pull' || args[0] === 'sign'))
+  ) {
+    for (const warning of (await deps.refreshManagedPolicy?.()) ?? []) {
+      (deps.err ?? deps.out)(`warning: ${warning}`);
+    }
+  }
   const trust =
     command !== undefined && ask && INTERACTIVE_TRUST_COMMANDS.has(command)
       ? await deps.resolveProjectTrust?.()
@@ -415,7 +430,7 @@ function stopOnRefusedConfig(
   args: readonly string[],
   deps: DispatchDeps,
 ): ExitCode | undefined {
-  const refusalExit = configRefusalExit(cliConfig, command);
+  const refusalExit = configRefusalExit(cliConfig, command, args);
   if (refusalExit === undefined) return undefined;
   const reason = cliConfig.error ?? 'config refused';
   // A diagnostic, so stderr.
@@ -430,23 +445,6 @@ function stopOnRefusedConfig(
     deps.out(envelope(reason, refusalExit));
   }
   return refusalExit;
-}
-
-// Configured audit sinks: one build per process from
-// the loaded `[[audit]]` tables — every command fans its audit rows
-// out to these plus the mandatory repo ledger. An unbuildable table is
-// named on stderr here (and fails its doctor check); it never stops the
-// command, and the repo ledger still records everything.
-function installAuditSinks(
-  cliConfig: CliConfigResult,
-  deps: DispatchDeps,
-): void {
-  if (cliConfig.runtime === undefined) return;
-  const built = buildConfiguredSinks(cliConfig.runtime.config.audit ?? []);
-  setAuditSinks(built.sinks);
-  for (const problem of built.problems) {
-    (deps.err ?? deps.out)(`warning: [[audit]] ${problem}`);
-  }
 }
 
 export async function dispatchCommand(
@@ -479,7 +477,8 @@ export async function dispatchCommand(
   );
   const refusalExit = stopOnRefusedConfig(cliConfig, command, args, deps);
   if (refusalExit !== undefined) return refusalExit;
-  installAuditSinks(cliConfig, deps);
+  installAuditSinks(cliConfig, deps.err ?? deps.out);
+  applySystemCertificates(cliConfig, process.env, deps.err ?? deps.out);
   // `.kubic/` runtime state must never
   // reach a user repo's commit path. Before either mode that creates it,
   // ship the runtime ignore rules into the repo-local exclude file
@@ -521,11 +520,13 @@ export async function dispatchCommand(
     reportUnknownCommand(command ?? '', deps);
     return EXIT_USAGE;
   }
-  return runCommand(command, args, cliConfig, deps, {
+  const code = await runCommand(command, args, cliConfig, deps, {
     rootHelp,
     helpTheme,
     crashProbe,
   });
+  await flushAuditSinksAtExit();
+  return code;
 }
 
 // The commander program over every registrar, run on one command. A

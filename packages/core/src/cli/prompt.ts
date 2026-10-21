@@ -30,6 +30,17 @@ export async function promptConfirm(
   return isCancel(answer) ? null : answer;
 }
 
+// A secret typed without echo (a provider key for the keychain). Same
+// contract as promptConfirm: never prompts off a TTY, `null` on cancel.
+export async function promptSecret(
+  options: PromptBase<string | null>,
+): Promise<string | null> {
+  if (!options.interactive) return options.nonInteractive;
+  const { isCancel, password } = await import('@clack/prompts');
+  const answer = await password({ message: options.message, mask: '•' });
+  return isCancel(answer) ? null : answer;
+}
+
 export interface SelectChoice<T extends string> {
   readonly value: T;
   readonly label: string;

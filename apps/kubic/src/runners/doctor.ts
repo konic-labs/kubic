@@ -12,6 +12,8 @@ import { BACKGROUND_CONTEXT } from '@kubic/agent/pi-boundary';
 import { EXIT_USAGE } from '@kubic/core/cli/exit-codes';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { scanStateModes } from '@kubic/exec/lock-file';
+import { detectSandbox } from '@kubic/exec/sandbox';
+import { windowsBash } from '@kubic/exec/windows-shell';
 import { installedPolicyPosture } from '@kubic/host/approvals';
 import {
   AUDIT_LEDGER_FILE,
@@ -31,7 +33,9 @@ import {
   describeFullAccessSession,
   listFullAccessSessions,
   runDoctorCommand,
+  sandboxDoctorCheck,
 } from '@kubic/host/doctor';
+import { projectInstructionsDoctorCheck } from '@kubic/host/instructions';
 import type { AssembledModels } from '@kubic/host/models';
 import {
   assembleModels,
@@ -49,6 +53,7 @@ import type { CliConfigResult } from '../config/load.js';
 import {
   doctorConfigProbe,
   doctorPolicyLoader,
+  projectModelsDeps,
   projectTrustFor,
 } from '../config/load.js';
 import { runtimeModelPin, runtimePolicy } from '../config/model-selection.js';
@@ -57,6 +62,7 @@ import {
   installedPolicyDeps,
   runtimeCompactionDeps,
   runtimeLaneDeps,
+  runtimeProjectInstructions,
   runtimeSkillsDeps,
 } from '../config/projections.js';
 import type { ProdRunnerIo, ProdRunners } from './shared.js';
@@ -85,6 +91,7 @@ export function doctorRunner(io: ProdRunnerIo): ProdRunners['doctor'] {
     const assembled = await assembleModels(process.cwd(), process.env, {
       home: cliConfig.trust.home,
       projectTrust: projectTrustFor(cliConfig),
+      ...projectModelsDeps(cliConfig),
     });
     for (const note of assembled.notes) view.logger.info(note);
     if (fauxProviderActive(process.env)) view.logger.warn(FAUX_NOTICE);
@@ -237,10 +244,13 @@ function policyChecks(
       : {
           enterpriseChecks: () =>
             enterpriseDoctorChecks(enterprisePolicy, {
-              syslogAvailable: enterprisePolicy.audit.sinks.every(
-                (sink) =>
-                  sink.kind !== 'syslog' ||
-                  isSyslogTargetAvailable(sink.target, auditProbes),
+              sinks: (cliConfig.runtime?.config.audit ?? []).map((table) => ({
+                kind: table.sink,
+              })),
+              syslogAvailable: (cliConfig.runtime?.config.audit ?? []).every(
+                (table) =>
+                  table.sink !== 'syslog' ||
+                  isSyslogTargetAvailable(table.target, auditProbes),
               ),
             }),
         }),
@@ -265,10 +275,18 @@ function policyChecks(
   };
 }
 
-// The project's role documents and skills, judged as a run would see them.
+// The project's role documents, skills and AGENTS.md files, judged as a run
+// would see them.
 function projectChecks(
   cliConfig: CliConfigResult,
-): Pick<DoctorDeps, 'probeRoles' | 'probeSkills'> {
+): Pick<
+  DoctorDeps,
+  | 'probeRoles'
+  | 'probeSkills'
+  | 'probeInstructions'
+  | 'probeSandbox'
+  | 'windowsBash'
+> {
   const enterprisePolicy = runtimePolicy(cliConfig);
   const roleLayers = runtimeLaneDeps(cliConfig).roles?.layers;
   return {
@@ -321,6 +339,25 @@ function projectChecks(
         ...runtimeSkillsDeps(cliConfig),
         ...installedPolicyClasses(cliConfig),
       }),
+    // On Windows, the POSIX bash the bash tool runs through.
+    windowsBash: () =>
+      process.platform === 'win32' ? windowsBash()?.kind : undefined,
+    // The bash sandbox: the configured mode and what this machine offers.
+    probeSandbox: () => {
+      const found = detectSandbox();
+      return [
+        sandboxDoctorCheck(
+          cliConfig.runtime?.sandbox.mode ?? 'off',
+          found.kind,
+          found.kind === undefined ? found.unavailable : undefined,
+        ),
+      ];
+    },
+    probeInstructions: () => [
+      projectInstructionsDoctorCheck(
+        runtimeProjectInstructions(cliConfig, process.cwd()),
+      ),
+    ],
   };
 }
 
@@ -385,8 +422,8 @@ async function sessionChecks(
     // private. Best-effort like the overlap probe: an unreadable root makes
     // no claim.
     // The trust store and its directory, this workspace's audit ledger and
-    // its directory, then every session below the root: the walk is bounded
-    // and names what it skipped.
+    // its directory, then the trust snapshots and every session below the
+    // root: the walk is bounded and names what it skipped.
     probeStatePermissions: () => {
       const ledgerDir = auditLedgerDirFor(process.cwd());
       return scanStateModes(
@@ -397,7 +434,11 @@ async function sessionChecks(
           ledgerDir,
           join(ledgerDir, AUDIT_LEDGER_FILE),
         ],
-        [sessionsRoot],
+        [
+          // The trust grants' snapshots hold copies of project files.
+          ...(home === '' ? [] : [join(home, '.kubic', 'trust-snapshots')]),
+          sessionsRoot,
+        ],
       );
     },
   };

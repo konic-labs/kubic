@@ -36,9 +36,11 @@ import {
   loadRuntimeConfig,
   NO_PROJECT_TRUST,
   ProjectTrustStore,
+  projectProvidersRefusal,
   projectTrustCheck,
   projectTrustReport,
   projectTrustStorePath,
+  renderTrustReview,
 } from '@kubic/host/config';
 import type { DepProbe } from '@kubic/host/doctor';
 
@@ -182,6 +184,16 @@ export function projectTrustFor(result: CliConfigResult): ProjectTrustCheck {
   });
 }
 
+// The project models.json refusal an enterprise `[policy] project_policy =
+// "restricted"` sets, as the spread every models assembly takes: the project
+// providers stay out even when the project is trusted.
+export function projectModelsDeps(result: CliConfigResult): {
+  projectProvidersRefusal?: string;
+} {
+  const refusal = projectProvidersRefusal(result.runtime?.projectRestriction);
+  return refusal === undefined ? {} : { projectProvidersRefusal: refusal };
+}
+
 // The interactive half of the trust gate: `kubic tui` and the
 // bare `kubic` on a TTY ask once about a present, undecided project config
 // before the config load, persist the answer and hand it back — so the
@@ -191,7 +203,7 @@ export function projectTrustFor(result: CliConfigResult): ProjectTrustCheck {
 // A cancelled prompt is not an answer: nothing is persisted, and the
 // invocation fails closed into the refusal path.
 // The restyled question's answers.
-type TrustAnswer = 'yes' | 'not-now' | 'view';
+type TrustAnswer = 'yes' | 'not-now' | 'view' | 'changes';
 
 export interface TrustQuestion {
   /** The canonical project root the decision is keyed to. */
@@ -199,6 +211,8 @@ export interface TrustQuestion {
   readonly configPath: string;
   /** The full disclosure on one line (what `confirm` asks). */
   readonly message: string;
+  /** The project changed since its grant: the question offers the diff. */
+  readonly changed: boolean;
 }
 
 export interface InteractiveTrustDeps {
@@ -213,6 +227,8 @@ export interface InteractiveTrustDeps {
   // asked instead of `confirm`.
   ask?: (question: TrustQuestion) => Promise<TrustAnswer | null>;
   show?: (path: string) => void;
+  // `d`: what changed since the grant, as review lines (then it asks again).
+  showChanges?: (lines: string[]) => void;
   store?: ProjectTrustStore;
 }
 
@@ -250,16 +266,21 @@ export async function resolveInteractiveProjectTrust(
   const lead = report.changed
     ? `Project ${report.key} changed since you trusted it. Trust it again?`
     : `Trust project ${report.key}?`;
-  const message = `${lead} This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions, journal retention and which paths the journal records; its [verify] commands run as shell commands after each run), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills, its project role documents and its [agent] systemPromptFile (instructions the model follows).`;
+  const message = `${lead} This lets the project's own files take effect for runs here: ${report.configPath} (sets the model, approvals, permissions, journal retention and which paths the journal records; its [verify] commands run as shell commands after each run), its models.json (provider URLs, sent the key of any *_API_KEY or KUBIC_* variable it names — KUBIC_API_KEY by default), its project skills, its project role documents, its AGENTS.md and its [agent] systemPromptFile (instructions the model follows).`;
   if (deps.ask !== undefined) {
     for (;;) {
       const answer = await deps.ask({
         root: report.key,
         configPath: report.configPath,
         message,
+        changed: report.changed,
       });
       if (answer === 'view') {
         deps.show?.(report.configPath);
+        continue;
+      }
+      if (answer === 'changes') {
+        deps.showChanges?.(renderTrustReview(store.review(root)));
         continue;
       }
       if (answer === 'yes') {
@@ -314,7 +335,6 @@ const CONFIG_REPORTING_COMMANDS = new Set([
 // The reporting commands (`config`, `doctor`, `trust`) must still run so
 // the named reason can surface; sessions/journal read only
 // `session.retentionDays` (undefined-safe: no invented window).
-/** @internal */
 export const CONFIG_CONSUMING_COMMANDS: ReadonlySet<string> = new Set([
   'run',
   'tui',
@@ -333,10 +353,16 @@ export const CONFIG_CONSUMING_COMMANDS: ReadonlySet<string> = new Set([
 export function configRefusalExit(
   result: CliConfigResult,
   command: string | undefined,
+  args: readonly string[] = [],
 ): ExitCode | undefined {
   if (result.runtime !== undefined) return undefined;
   if (command === undefined) return undefined;
   if (CONFIG_REPORTING_COMMANDS.has(command)) return undefined;
+  // `policy pull` fetches the policy a refused load is waiting for, and
+  // `policy sign` signs a file: neither runs on the config.
+  if (command === 'policy' && (args[0] === 'pull' || args[0] === 'sign')) {
+    return undefined;
+  }
   return CONFIG_CONSUMING_COMMANDS.has(command) ? EXIT_FAILED : undefined;
 }
 

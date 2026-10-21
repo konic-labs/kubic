@@ -9,9 +9,11 @@
   // caller sits in the same file.
   "ignoreExportsUsedInFile": false,
 
-  // mkfifo is a POSIX utility, not an npm dependency: the exec journal test
-  // (packages/exec/src/journal/reconcile-run.test.ts) calls it to make a pipe.
-  "ignoreBinaries": ["mkfifo"],
+  // System utilities, not npm dependencies: the exec journal test
+  // (packages/exec/src/journal/reconcile-run.test.ts) calls mkfifo to make a
+  // pipe, and the audit collector test makes a TLS certificate with openssl
+  // (it skips where openssl is missing).
+  "ignoreBinaries": ["mkfifo", "openssl"],
 
   "workspaces": {
     // Repo root. The repo scripts and the shared test helpers are entries, so

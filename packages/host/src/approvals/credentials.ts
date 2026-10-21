@@ -134,11 +134,21 @@ export function credentialAccessInNameFilter(
     : undefined;
 }
 
+// A read of the OS credential store, which is no path the list above can
+// name: the macOS keychain's `security find-generic-password`,
+// `find-internet-password`, `dump-keychain` and `export` (global flags
+// allowed before the verb), and libsecret's `secret-tool lookup` / `search`.
+// Case-folded like HOME_CREDENTIAL.
+const CREDENTIAL_STORE_READ =
+  /(?:^|[\s;&|(`'"=])(?:[^\s;&|(`'"=]*\/)?(?:security(?:\s+-\w+)*\s+(?:find-generic-password|find-internet-password|dump-keychain|export)|secret-tool\s+(?:lookup|search))(?![-\w])/i;
+
 // The credential path a bash command names, or undefined. Bash cannot be
 // confined, so this is the only guard between a model and `~/.aws`.
 export function credentialAccessInCommand(command: string): string | undefined {
   const home = HOME_CREDENTIAL.exec(command);
   if (home !== null) return home[0].trim();
+  const store = CREDENTIAL_STORE_READ.exec(command);
+  if (store !== null) return store[0].trim();
   for (const token of commandTokens(command)) {
     if (credentialFileBase(baseName(token))) return token;
   }

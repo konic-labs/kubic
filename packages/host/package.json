@@ -29,6 +29,10 @@
       "source": "./src/cost/index.ts",
       "default": "./src/cost/index.ts"
     },
+    "./credentials": {
+      "source": "./src/credentials/index.ts",
+      "default": "./src/credentials/index.ts"
+    },
     "./doctor": {
       "source": "./src/doctor/index.ts",
       "default": "./src/doctor/index.ts"
@@ -37,13 +41,29 @@
       "source": "./src/git/index.ts",
       "default": "./src/git/index.ts"
     },
+    "./hooks": {
+      "source": "./src/hooks/index.ts",
+      "default": "./src/hooks/index.ts"
+    },
+    "./instructions": {
+      "source": "./src/instructions/index.ts",
+      "default": "./src/instructions/index.ts"
+    },
     "./journal": {
       "source": "./src/journal/index.ts",
       "default": "./src/journal/index.ts"
     },
+    "./mcp": {
+      "source": "./src/mcp/index.ts",
+      "default": "./src/mcp/index.ts"
+    },
     "./models": {
       "source": "./src/models/index.ts",
       "default": "./src/models/index.ts"
+    },
+    "./net": {
+      "source": "./src/net/index.ts",
+      "default": "./src/net/index.ts"
     },
     "./policy": {
       "source": "./src/policy/index.ts",
@@ -76,6 +96,14 @@
     "./skills": {
       "source": "./src/skills/index.ts",
       "default": "./src/skills/index.ts"
+    },
+    "./telemetry": {
+      "source": "./src/telemetry/index.ts",
+      "default": "./src/telemetry/index.ts"
+    },
+    "./test-support/fake-mcp-server": {
+      "source": "./src/test-support/fake-mcp-server.ts",
+      "default": "./src/test-support/fake-mcp-server.ts"
     },
     "./test-support/audit-fixtures": {
       "source": "./src/test-support/audit-fixtures.ts",

@@ -9,6 +9,7 @@ import type {
   SetupCommandOptions,
   TrustCommandOptions,
 } from '@kubic/host/config';
+import type { KeysCommandOptions } from '@kubic/host/credentials';
 import type { DoctorCommandOptions } from '@kubic/host/doctor';
 import type { GitRequest } from '@kubic/host/git';
 import type { JournalRequest } from '@kubic/host/journal';
@@ -42,6 +43,7 @@ export interface DispatchRunners extends AnalysisRunners {
   readonly skills: CommandRunner<SkillsCommandOptions>;
   readonly config: CommandRunner<ConfigCommandOptions>;
   readonly trust: CommandRunner<TrustCommandOptions>;
+  readonly keys: CommandRunner<KeysCommandOptions>;
   // The interactive first-run setup.
   readonly setup: CommandRunner<SetupCommandOptions>;
 }

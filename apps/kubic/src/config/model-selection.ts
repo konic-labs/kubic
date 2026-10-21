@@ -196,6 +196,7 @@ export function selectBootModel(input: {
   fallbackProviders: readonly string[] | undefined;
   policy: EffectivePolicy | undefined;
   roleScope?: RoleModelScope;
+  regionGate?: RegionGate;
 }): ReturnType<typeof selectModel> {
   return selectModelUnderPolicy(
     input.models,
@@ -206,7 +207,23 @@ export function selectBootModel(input: {
     input.fallbackProviders,
     input.policy,
     input.roleScope,
+    input.regionGate,
   );
+}
+
+// `[policy] allowed_regions` as a gate: the refusal for a provider whose
+// region is unknown or unlisted, undefined for one it allows.
+export type RegionGate = (provider: string) => string | undefined;
+
+function refuseByRegion(
+  regionGate: RegionGate | undefined,
+  provider: string,
+  id: string,
+): void {
+  const refusal = regionGate?.(provider);
+  if (refusal !== undefined) {
+    throw new ModelSelectError(`model '${provider}/${id}' refused: ${refusal}`);
+  }
 }
 
 export function selectModelUnderPolicy(
@@ -220,7 +237,15 @@ export function selectModelUnderPolicy(
   // — a run that would boot (or switch) outside its role's set refuses
   // by name instead of silently running out-of-set.
   roleScope?: RoleModelScope,
+  // The region gate: an explicit selection outside it is refused, and the
+  // implicit pick never lands outside it.
+  regionGate?: RegionGate,
 ): ReturnType<typeof selectModel> {
+  for (const selection of [explicit, configDefault]) {
+    if (selection !== undefined) {
+      refuseByRegion(regionGate, selection.provider, selection.id);
+    }
+  }
   const gate =
     policy !== undefined && hasModelPolicy(policy) ? policy : undefined;
   if (gate !== undefined) {
@@ -259,13 +284,19 @@ export function selectModelUnderPolicy(
       }
     }
   }
-  const candidates =
+  const gated =
     gate === undefined
       ? fallbackProviders
       : (
           fallbackProviders ??
           models.getProviders().map((provider) => provider.id)
         ).filter((provider) => isProviderAllowed(gate, provider));
+  const candidates =
+    regionGate === undefined
+      ? gated
+      : (gated ?? models.getProviders().map((provider) => provider.id)).filter(
+          (provider) => regionGate(provider) === undefined,
+        );
   let picked: ReturnType<typeof selectModel>;
   try {
     picked = selectModel(models, explicit, configDefault, candidates);
@@ -277,6 +308,7 @@ export function selectModelUnderPolicy(
   if (gate !== undefined && !isModelAllowed(gate, picked.provider, picked.id)) {
     throw new ModelSelectError(modelPolicyRefusal(picked.provider, picked.id));
   }
+  refuseByRegion(regionGate, picked.provider, picked.id);
   if (
     scope !== undefined &&
     !roleModelAllowed(scope.models, picked.provider, picked.id)

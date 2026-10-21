@@ -57,10 +57,14 @@ export type KeyCheck =
   | 'command'
   | 'networkPolicy'
   | 'filesystemPolicy'
+  // `open` or `restricted`.
+  | 'projectPolicy'
   | 'auditSink'
   | 'auditLevel'
   // A facility name, or a number 0–23.
   | 'facility'
+  // `beforeTool`, `afterTool` or `runEnd`.
+  | 'hookEvent'
   // Files or directories of skills.
   | 'skills';
 
@@ -162,6 +166,16 @@ export const CONFIG_SECTIONS = [
           'or unreadable file is a named ConfigError, never a silent skip.',
         ],
       },
+      {
+        name: 'projectInstructions',
+        check: 'boolean',
+        default: 'true',
+        runtime: {
+          effect:
+            "the trusted project's AGENTS.md files the run and tui lanes append to the system prompt (after the systemPromptFile, ahead of the skills block)",
+        },
+        example: 'true',
+      },
     ],
     docs: [
       {
@@ -171,6 +185,10 @@ export const CONFIG_SECTIONS = [
       {
         keys: ['agent.systemPromptFile'],
         text: "Prompt augmentation: a path whose contents are read at load and appended to the assembled system prompt — ahead of the skills block — for `kubic run`, `kubic tui` and the live tiers of `kubic replay`. A leading `~/` expands to the home directory; a relative path resolves against the declaring config file's directory, so the shipped example's `SYSTEM.md` travels with `example.toml`. Global-layer paths are always allowed; a project-layer path applies only when the project is trusted (an untrusted project's file is refused pre-trust with the trust message, before it is read) and must resolve inside the project root — a trusted path outside it, or a symlink whose target lies outside it, is refused by name. A missing or unreadable file is a named `ConfigError`, never a silent skip. `kubic config` reports the effective (resolved) path; the contents never render.",
+      },
+      {
+        keys: ['agent.projectInstructions'],
+        text: 'Project instructions: `kubic run` and `kubic tui` read one `AGENTS.md` per directory from the repository root down to the working directory (the working directory alone outside a repository) and append them to the system prompt, outermost first, after the `systemPromptFile` and ahead of the skills block. A file loads only when its directory is trusted (see [Project instructions](#project-instructions-agentsmd)); each one reaches the prompt up to 32 KiB, and a longer one is cut with a notice. `false` turns the search off; an enterprise `false` holds against every lower layer.',
       },
     ],
   },
@@ -252,6 +270,14 @@ export const CONFIG_SECTIONS = [
             'climbs allowed per run on the escalation ladder; unset means the ladder length',
         },
       },
+      {
+        name: 'fallback',
+        check: 'escalate',
+        runtime: {
+          effect:
+            'the models a run falls back to, in order, when the selected one is unavailable',
+        },
+      },
     ],
     docs: [
       {
@@ -265,6 +291,10 @@ export const CONFIG_SECTIONS = [
           'roles.<name>.escalate',
         ],
         text: "The escalation ladder: `escalate` lists the rungs as concrete `provider/id` refs in climbing order (wildcards refused per entry at load); a role's `escalate` wins outright for runs as that role, even an empty list (which freezes every `/model` switch — opting out of climbing, not of the gate). `maxEscalations` bounds the climbs per run, unset meaning the ladder length. Climbs are one-way (a down-step or off-ladder target is refused by name with the live model untouched) and recorded: `/model <ref>` climbs the ladder silently, `/escalate <ref> [reason]` climbs naming why, and three consecutive tool-failure turns climb one rung automatically — once per run, never back (`kubic run` settles one turn per invocation, so the automatic trigger lives on the `kubic tui` lane). Every climb appends an `escalation: <from> → <to> (<reason>)` transcript row and lands on the trajectory's `model.escalations` (per-model usage already attributes the spend each side of the move).",
+      },
+      {
+        keys: ['model.fallback'],
+        text: 'The fallback chain: concrete `provider/id` refs in the order they are tried. When the selected model cannot be used — its provider has no credentials, is not registered, or is refused by `[policy]` — the first usable rung is selected instead, named on stderr. During a `kubic run`, a turn that fails with a provider error (unreachable, overloaded, rate-limited after the retries, or refusing the credentials) is run again on the next rung. Each move is named on stderr, listed as `fallbacks` in the `--json` envelope and recorded as an escalation on the trajectory, with the error that caused it. See [Regions and fallbacks](enterprise.md#regions-and-fallbacks).',
       },
       {
         keys: ['model.thinking'],
@@ -330,11 +360,43 @@ export const CONFIG_SECTIONS = [
         },
         example: 'false',
       },
+      {
+        name: 'broker',
+        check: 'string',
+        runtime: {
+          effect:
+            'kubic run posts each approval ask to this broker and waits for its answer within maxPendingMs',
+        },
+      },
+      {
+        name: 'brokerTokenEnv',
+        check: 'string',
+        runtime: {
+          effect: 'the variable holding the bearer token sent to the broker',
+        },
+      },
+      {
+        name: 'preApprovalKey',
+        check: 'string',
+        runtime: {
+          effect:
+            'the Ed25519 public key a kubic run --pre-approvals file must be signed with',
+        },
+      },
     ],
     docs: [
       {
         keys: ['approvals.route'],
         text: "Approval routing (`ask-user` \\| `deny`), installed by `kubic run`, `kubic tui`, `kubic replay` and reported by doctor's `policy:installed` line. `deny` refuses every challenged call with `denied by policy route` (exit 4) and never opens the TUI overlay — `autoApprove` entries never apply under it (the lane denies them too, and doctor fails `policy:approvals` for the combination). `KUBIC_APPROVALS_ROUTE` overrides it.",
+      },
+      {
+        keys: [
+          'approvals.broker',
+          'approvals.brokerTokenEnv',
+          'approvals.preApprovalKey',
+        ],
+        label: '`approvals.broker`, `brokerTokenEnv`, `preApprovalKey`',
+        text: 'Headless approvals for `kubic run`: `broker` is an https URL (plain http only to this machine) each challenged call is posted to as one ask, answered by a person within `maxPendingMs` or denied; `brokerTokenEnv` names the variable whose value is sent as a bearer token; `preApprovalKey` is the Ed25519 public key (PEM) a `--pre-approvals` file must be signed with. Read from the enterprise, product and global layers only: a project config setting any of them is refused. See [Headless approvals](enterprise.md#headless-approvals).',
       },
       {
         keys: [
@@ -713,6 +775,259 @@ export const CONFIG_SECTIONS = [
     ],
   },
   {
+    name: 'telemetry',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'enabled',
+        check: 'boolean',
+        default: 'false',
+        runtime: {
+          effect:
+            'sends each run and each settled tui turn to an OpenTelemetry collector as OTLP/HTTP traces and metrics',
+        },
+        example: 'true',
+      },
+      {
+        name: 'endpoint',
+        check: 'string',
+        runtime: {
+          effect:
+            'the OTLP/HTTP base URL; absent: OTEL_EXPORTER_OTLP_ENDPOINT, else http://localhost:4318',
+        },
+        example: '"http://localhost:4318"',
+      },
+      {
+        name: 'content',
+        check: 'boolean',
+        default: 'false',
+        runtime: {
+          effect:
+            'adds the prompt and the final answer (secret shapes redacted) to the run span',
+        },
+        example: 'false',
+      },
+    ],
+    docs: [
+      {
+        keys: ['telemetry.enabled', 'telemetry.endpoint', 'telemetry.content'],
+        text: 'OpenTelemetry export, off by default. With `enabled = true`, every `kubic run` and every settled `kubic tui` turn is sent to an OTLP/HTTP collector: the spans (`kubic.agent.run`, the lane phases, `pi.tool.execute` per tool call) with the GenAI attributes — model, input and output tokens, cost — and the metrics `gen_ai.client.token.usage`, `kubic.cost`, `kubic.tool.errors` and `kubic.approvals`. The standard variables apply: `OTEL_EXPORTER_OTLP_ENDPOINT` (when `endpoint` is unset), `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` and `OTEL_SDK_DISABLED`. No prompt, argument or output leaves unless `content = true`. See [OpenTelemetry](enterprise.md#opentelemetry).',
+      },
+    ],
+  },
+  {
+    name: 'cost',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'team',
+        check: 'string',
+        runtime: {
+          effect:
+            'the team recorded on each new session, which `kubic cost --by team` groups on',
+        },
+        example: '"platform"',
+      },
+    ],
+    docs: [
+      {
+        keys: ['cost.team'],
+        text: 'The team a new session is billed to: recorded on the session with the OS user who ran it, so `kubic cost --by team` and `--by user` group spend by them. Set it in the managed config to bill a fleet by team. Sessions recorded before it report `(unknown)`.',
+      },
+    ],
+  },
+  {
+    name: 'providers',
+    shape: 'tables',
+    runtime: {
+      effect:
+        'what the managed config declares about a provider: the region its endpoint runs in, for [policy] allowed_regions',
+    },
+    keys: [{ name: 'region', check: 'string' }],
+    exampleTables: {
+      'azure-openai-responses': ['region = "westeurope"'],
+    },
+    exampleNote: [
+      'Read from the enterprise and product layers only: the region a',
+      "provider runs in is the organization's declaration.",
+    ],
+    docs: [
+      {
+        keys: ['providers.<name>.region'],
+        label: '`providers.<name>.region` (`[providers.<name>]`)',
+        text: "The region a provider's endpoint runs in, for a provider whose region Kubic cannot read from its environment: Azure OpenAI, a gateway in models.json, a direct API. `[policy] allowed_regions` checks it. Read from the enterprise and product layers only — a region is the organization's declaration, so a global or project config setting one is refused by name. Amazon Bedrock and Vertex AI always use the region their environment selects.",
+      },
+    ],
+  },
+  {
+    name: 'sandbox',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'mode',
+        check: 'string',
+        runtime: {
+          effect:
+            "runs the bash tool's commands in the OS sandbox: off, auto (when available) or required; the strictest any layer sets wins",
+        },
+        example: '"auto"',
+      },
+      {
+        name: 'writable',
+        check: 'strings',
+        runtime: {
+          effect:
+            'paths a sandboxed command may write beside the workspace and the temporary directories',
+        },
+        example: '["~/.npm", "~/.cache"]',
+      },
+    ],
+    docs: [
+      {
+        keys: ['sandbox.mode', 'sandbox.writable'],
+        text: 'The bash tool\'s OS sandbox: `mode = "auto"` runs each bash command in Seatbelt (macOS) or bubblewrap (Linux) when the machine has it, `"required"` refuses to run without one, `"off"` (the default) does not sandbox. Inside it a command writes only to the workspace, the temporary directories and `writable` (anywhere under `filesystem = "full"`), opens no network connection unless `network = "full"`, and cannot read the credential paths (`~/.ssh`, `~/.aws`, …); a call the approval ask approved for `network` or `credentials` gets exactly that. The strictest mode any layer sets wins; `writable` is read from the enterprise, product and global layers only. `kubic doctor` reports the sandbox as `sandbox`. See [The bash sandbox](enterprise.md#the-bash-sandbox).',
+      },
+    ],
+  },
+  {
+    name: 'mcp',
+    shape: 'tables',
+    runtime: {
+      effect:
+        "MCP servers the organization allowlists: each server's pinned command or URL and version, the tools offered, the tools that always ask",
+    },
+    keys: [
+      { name: 'command', check: 'string' },
+      { name: 'args', check: 'strings' },
+      { name: 'url', check: 'string' },
+      { name: 'version', check: 'string', required: true },
+      { name: 'tools', check: 'strings' },
+      { name: 'approve', check: 'strings' },
+      { name: 'env', check: 'strings' },
+    ],
+    exampleTables: {
+      github: [
+        'command = "/opt/mcp/github-mcp-server"',
+        'args = ["stdio"]',
+        'version = "0.9.1"',
+        'tools = ["get_issue", "list_pull_requests", "create_issue"]',
+        'approve = ["create_issue"]',
+        'env = ["GITHUB_TOKEN"]',
+      ],
+    },
+    exampleNote: [
+      'Read from the enterprise and product layers only: an MCP server runs',
+      'only when the organization allowlists it.',
+    ],
+    docs: [
+      {
+        keys: [
+          'mcp.<name>.command',
+          'mcp.<name>.args',
+          'mcp.<name>.url',
+          'mcp.<name>.version',
+          'mcp.<name>.tools',
+          'mcp.<name>.approve',
+          'mcp.<name>.env',
+        ],
+        label: '`mcp.<name>` (`[mcp.<name>]`)',
+        text: "An MCP server the organization allowlists: a stdio server's pinned `command` (an absolute path) and `args`, or a streamable HTTP server's `url` (https, or plain http to this machine); the `version` it must report (a server reporting another is refused); the `tools` offered (all when absent), each named `mcp__<name>__<tool>`; the tools that always ask (`approve`); and the variables a stdio server receives (`env`, above the tool environment). Read from the enterprise and product layers only: a server another layer names is refused by name. See [MCP servers](enterprise.md#mcp-servers).",
+      },
+    ],
+  },
+  {
+    name: 'oidc',
+    shape: 'table',
+    omitEmpty: true,
+    runtime: {
+      effect:
+        "the CI job's OIDC token as the credential of a cloud-hosted model: Bedrock through an AWS role, Vertex AI through workload identity federation, a gateway through $KUBIC_OIDC_TOKEN",
+    },
+    keys: [
+      { name: 'provider', check: 'string' },
+      { name: 'tokenEnv', check: 'string' },
+      { name: 'awsRoleArn', check: 'string' },
+      { name: 'gcpAudience', check: 'string' },
+      { name: 'gcpServiceAccount', check: 'string' },
+      { name: 'gatewayAudience', check: 'string' },
+    ],
+    docs: [
+      {
+        keys: [
+          'oidc.provider',
+          'oidc.tokenEnv',
+          'oidc.awsRoleArn',
+          'oidc.gcpAudience',
+          'oidc.gcpServiceAccount',
+          'oidc.gatewayAudience',
+        ],
+        label: '`oidc` (`[oidc]`)',
+        text: 'OIDC workload identity for `kubic run` and `kubic tui` in CI: `provider = "github"` requests the job\'s token from GitHub Actions (the job needs `permissions: id-token: write`), `provider = "env"` reads it from the variable `tokenEnv` names (GitLab\'s `id_tokens`, for example). `awsRoleArn` lets Amazon Bedrock assume that role with it, `gcpAudience` (the workload identity provider\'s resource name, `//iam.googleapis.com/projects/…/providers/…`) lets Vertex AI exchange it, impersonating `gcpServiceAccount` when set, and `gatewayAudience` offers a token for that audience to models.json as `$KUBIC_OIDC_TOKEN`. Read from the enterprise, product and global layers only: a project config setting any key is refused. See [Keys and workload identity](enterprise.md#keys-and-workload-identity).',
+      },
+    ],
+  },
+  {
+    name: 'tls',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'systemCa',
+        check: 'boolean',
+        runtime: {
+          effect:
+            "trust the operating system's certificate store, beside Node's bundled roots, for model, broker and collector traffic",
+        },
+        example: 'true',
+      },
+    ],
+    docs: [
+      {
+        keys: ['tls.systemCa'],
+        text: "`true` makes Kubic trust the operating system's certificate store (the macOS keychain, the Windows store, the Linux system bundle) beside Node's bundled roots, so a provider behind a TLS-inspecting proxy whose corporate root the device management installed works without `NODE_EXTRA_CA_CERTS`. `KUBIC_SYSTEM_CA=1` turns it on for one invocation. Applied when the command starts; a Node without the API says so on stderr. See [Corporate networks](enterprise.md#corporate-networks).",
+      },
+    ],
+  },
+  {
+    name: 'managed',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'url',
+        check: 'string',
+        runtime: {
+          effect:
+            'the signed remote policy merged into the enterprise layer, fetched into ~/.kubic/managed/ and verified on every load',
+        },
+        example: '"https://policy.example.com/kubic/config.toml"',
+      },
+      {
+        name: 'refreshHours',
+        check: 'tokens',
+        default: '24',
+        runtime: {
+          effect:
+            'how old the cached remote policy may get before a command fetches it again',
+        },
+        example: '24',
+      },
+    ],
+    exampleNote: [
+      'Read only from the managed config (/etc/kubic/config.toml, or the',
+      "platform's device-management path); any other layer setting it is refused.",
+    ],
+    docs: [
+      {
+        keys: ['managed.url', 'managed.refreshHours'],
+        text: "The organization's remote policy: a TOML config served at `url` (https, or plain http to this machine) with its Ed25519 signature at `<url>.sig`. A command that reads the config fetches it when the cached copy is older than `refreshHours` (24 by default), verifies it against the `policy.pub` beside the managed config, and keeps it in `~/.kubic/managed/`; every load verifies the cached copy again, and an unreachable server leaves the last verified copy in force. It is merged into the enterprise layer above the local file. Read only from the managed config — any other layer setting it is refused. See [Managed configuration](enterprise.md#managed-configuration).",
+      },
+    ],
+  },
+  {
     name: 'policy',
     shape: 'table',
     runtime: {
@@ -738,6 +1053,15 @@ export const CONFIG_SECTIONS = [
             'provider gate shared by model selection and the implicit fallback pick',
         },
         example: '["local"]',
+      },
+      {
+        name: 'allowed_regions',
+        field: 'allowedRegions',
+        check: 'strings',
+        runtime: {
+          effect:
+            'region gate: a model whose endpoint region is unknown or unlisted is refused before any request',
+        },
       },
       {
         name: 'allowed_tools',
@@ -792,9 +1116,10 @@ export const CONFIG_SECTIONS = [
         field: 'dataPolicy',
         check: 'string',
         runtime: {
-          kept: 'carried and reported; no local mechanism can promise a provider-side training policy, so it is never claimed as enforced',
+          effect:
+            '"redact" scans secrets out of what sessions store and out of raw transcript output; "redact-model" also scans tool output before the model reads it; any other value is carried and reported, never claimed as enforced',
         },
-        example: '"no-external-training"',
+        example: '"redact"',
       },
       {
         name: 'logging_policy',
@@ -805,11 +1130,45 @@ export const CONFIG_SECTIONS = [
         },
         example: '"full-audit"',
       },
+      {
+        name: 'max_run_cost_usd',
+        field: 'maxRunCostUsd',
+        check: 'number',
+        runtime: {
+          effect:
+            'stops a `kubic run` (or a `kubic tui` process) once its own spend reaches this many US dollars; the lowest value any layer sets wins',
+        },
+        example: '5',
+      },
+      {
+        name: 'max_daily_cost_usd',
+        field: 'maxDailyCostUsd',
+        check: 'number',
+        runtime: {
+          effect:
+            "refuses a run, or stops it, once this machine's spend for the UTC day reaches this many US dollars; the lowest value any layer sets wins",
+        },
+        example: '50',
+      },
+      {
+        name: 'project_policy',
+        field: 'projectPolicy',
+        check: 'projectPolicy',
+        runtime: {
+          effect:
+            'from a layer above the project, "restricted" refuses a project config that auto-approves, widens a permission class or declares [verify] commands, and keeps the project models.json providers out',
+        },
+        example: '"restricted"',
+      },
     ],
     docs: [
       {
         keys: ['policy.allowed_models'],
         text: 'The model gate: `provider/id`, `provider/*` (or `*` glob) patterns and bare model ids. A selection outside the list — `--model`, `[model]`, `KUBIC_MODEL`, a role pin, or the implicit first-available pick — exits 6 with a named policy refusal before any provider call; the implicit pick skips disallowed providers. It gates `kubic run`, `kubic tui` (boot and `/model` switches — a refused switch leaves the live model untouched) and the re-executing tiers of `kubic replay`.',
+      },
+      {
+        keys: ['policy.allowed_regions'],
+        text: 'The regions a model endpoint may run in, as region ids or `*` globs (`["eu-*", "europe-*", "westeurope"]`). The region is read from the environment for Amazon Bedrock (`AWS_REGION`, `AWS_DEFAULT_REGION` or the profile) and Vertex AI (`GOOGLE_CLOUD_LOCATION`), is `local` for the testing provider and a models.json provider on this machine, and is what the managed config declares for any other provider (`[providers.<id>] region`). A model whose region is unknown or unlisted is refused before any request — at selection, on a resumed session and on a `/model` switch. See [Regions and fallbacks](enterprise.md#regions-and-fallbacks).',
       },
       {
         keys: ['policy.allowed_providers'],
@@ -821,15 +1180,65 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['policy.network_policy', 'policy.allowed_domains'],
-        text: 'Parsed and resolved into the effective policy: `"proxy"` is carried as the engine\'s allowlist mode. **Not enforced:** Kubic has no proxy-mediated enforcement, so these keys protect nothing; `kubic config` lists them (`kept`) rather than the section being silently ignored. `kubic doctor` says so: any configured `network_policy` fails `policy:enterprise-network` as not enforced, and `policy:enterprise-enforceability` with it. The engine mode names (`none`, `allowlist`, `full`) are accepted too.',
+        text: '`"proxy"` (the engine\'s allowlist mode) with `allowed_domains` starts the egress proxy each `kubic run` and `kubic tui` boot: the bash tool\'s environment points at it, a host off the list is refused (403), and every connection is a `network:egress` audit row with its host, port, decision and bytes; under `[sandbox]` on macOS it is the only connection a command can open. Entries are domains (`github.com` covers its subdomains, `*.github.com` only the subdomains) or IPs. Any other configured value is parsed and reported, not enforced, and `kubic doctor` fails `policy:enterprise-network` for it. The engine mode names (`none`, `allowlist`, `full`) are accepted too. See [The egress proxy](enterprise.md#the-egress-proxy).',
       },
       {
         keys: ['policy.filesystem_policy'],
         text: "Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from the `[permissions]` classes, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it.",
       },
       {
-        keys: ['policy.data_policy', 'policy.logging_policy'],
-        text: 'Parsed and carried (for example `no-external-training`, `full-audit`); no local mechanism can promise a provider-side policy, so they are reported, never claimed as enforced.',
+        keys: ['policy.max_run_cost_usd', 'policy.max_daily_cost_usd'],
+        text: "Spend caps in US dollars, from the cost the providers report. `max_run_cost_usd` stops a `kubic run` once its own spend reaches the cap (a `kubic tui` process counts its spend since it started); `max_daily_cost_usd` refuses a run when this machine's spend for the UTC day has reached the cap, and stops one that reaches it. Unlike other policy keys, every layer may set a cap and the **lowest** wins, so a user can tighten an organization's cap but never loosen it. A run stopped by a cap exits 3 with status `spend_limit`; the check runs after each model response, so one response can overshoot the cap by its own cost. See [Spend caps](enterprise.md#spend-caps).",
+      },
+      {
+        keys: ['policy.project_policy'],
+        text: 'What a repository may set for itself: `"open"` (the default) or `"restricted"`. Set in a layer above the project (enterprise, product or global; the first that sets it wins), `"restricted"` refuses a project config that sets `[approvals] autoApprove`, widens a `[permissions]` class past the layers above (or the defaults), or declares `[verify]` commands — the load names every such key, before anything runs — and keeps the project `models.json` providers out of the catalog (`kubic models` and `kubic doctor` name the file). A project may still narrow. See [Restricting project configuration](enterprise.md#restricting-project-configuration).',
+      },
+      {
+        keys: ['policy.data_policy'],
+        text: 'Data loss prevention. `"redact"` runs the secret scanner (PEM private keys, key shapes, random-looking secret-named assignments, URL passwords, Basic credentials) over everything a session stores — its transcript, the run trajectory and the spans; the change journal keeps file content verbatim so `kubic undo` still restores it — and over the raw transcript `kubic sessions attach` prints. `"redact-model"` also scans each tool result before the model reads it and names every redaction. Any other value (`no-external-training`, …) is carried and reported, never claimed as enforced: no local mechanism can promise a provider-side policy. `kubic doctor` reports it as `policy:data`. See [Data loss prevention](enterprise.md#data-loss-prevention).',
+      },
+      {
+        keys: ['policy.logging_policy'],
+        text: 'Parsed and carried (for example `full-audit`); no local mechanism is selected by it, so it is reported, never claimed as enforced.',
+      },
+    ],
+  },
+  {
+    name: 'hooks',
+    shape: 'array',
+    runtime: {
+      effect:
+        'admin hooks: a shell command run before each tool call (a non-zero exit or a timeout refuses the call), after each tool call, or when a run ends; read from the enterprise, product and global layers only, each run audited',
+    },
+    keys: [
+      { name: 'event', check: 'hookEvent', required: true },
+      { name: 'command', check: 'command', required: true },
+      { name: 'tools', check: 'strings' },
+      { name: 'timeoutMs', check: 'timeoutMs' },
+    ],
+    exampleTables: {
+      policy: [
+        'event = "beforeTool"',
+        'command = "/opt/acme/kubic-check"',
+        'tools = ["bash", "write", "edit"]',
+        'timeoutMs = 5000',
+      ],
+    },
+    exampleNote: [
+      'Read from the enterprise, product and global layers only; a project',
+      'config declaring [[hooks]] is refused.',
+    ],
+    docs: [
+      {
+        keys: [
+          'hooks.event',
+          'hooks.command',
+          'hooks.tools',
+          'hooks.timeoutMs',
+        ],
+        label: '`hooks` (`[[hooks]]`)',
+        text: 'Admin hooks: `event` = `beforeTool` \\| `afterTool` \\| `runEnd`, `command` (run as `sh -c` with a JSON payload on stdin and the tool environment, so no provider key), optional `tools` (the tool names a tool hook applies to; all when absent) and `timeoutMs` (default 5000). A `beforeTool` hook that exits non-zero refuses the call, naming the reason from its output; one that times out refuses it too (fails closed). Every hook run is audited (`hook:<event>`). Read from the enterprise, product and global layers, all of them; a project config declaring hooks is refused. See [Admin hooks](enterprise.md#admin-hooks).',
       },
     ],
   },
@@ -844,15 +1253,24 @@ export const CONFIG_SECTIONS = [
       { name: 'level', check: 'auditLevel', required: true },
       { name: 'target', check: 'string' },
       { name: 'facility', check: 'facility' },
+      { name: 'ca', check: 'string' },
+      { name: 'tokenEnv', check: 'string' },
     ],
     exampleTables: {
       syslog: ['sink = "syslog"', 'level = "privileged"'],
     },
     docs: [
       {
-        keys: ['audit.sink', 'audit.level', 'audit.target', 'audit.facility'],
+        keys: [
+          'audit.sink',
+          'audit.level',
+          'audit.target',
+          'audit.facility',
+          'audit.ca',
+          'audit.tokenEnv',
+        ],
         label: '`audit` (`[[audit]]`)',
-        text: 'Sink tables (`sink` = `syslog` \\| `file` \\| `memory`, `level` = `privileged` \\| `all`, optional `target`/`facility`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory repo ledger (see [Audit sinks](enterprise.md#audit-sinks-audit)).',
+        text: 'Sink tables (`sink` = `syslog` \\| `https` \\| `otlp` \\| `file` \\| `memory`, `level` = `privileged` \\| `all`, optional `target`, `facility`, `ca` and `tokenEnv`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory, hash-chained repo ledger. A collector over the network (`tcp://`/`tls://` syslog, `https`, `otlp`) is spooled on disk and drained when it answers (see [Audit sinks](enterprise.md#audit-sinks-audit)).',
       },
     ],
   },

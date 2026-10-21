@@ -19,6 +19,7 @@ rationale, package APIs and CLI behaviour never mix.
 | [overview.md](architecture/overview.md) | System overview and package map |
 | [in-process.md](architecture/in-process.md) | The in-process runtime: a single trust zone, no isolation |
 | [journal-and-safety.md](architecture/journal-and-safety.md) | The change journal and the approvals safety model |
+| [threat-model.md](architecture/threat-model.md) | What Kubic defends, against whom, and what is out of scope |
 
 ### Packages
 
@@ -55,6 +56,13 @@ rationale, package APIs and CLI behaviour never mix.
 | [skills.md](cli/skills.md) | `kubic skills`: which skills loaded and why any were left out |
 | [contributing.md](contributing.md) | Contributor workflow |
 | [contributing-cli.md](contributing-cli.md) | Building CLI commands: the commander registry, exit codes, `--json`, output helpers |
+
+### Policies
+
+| Page | Covers |
+| --- | --- |
+| [support-policy.md](support-policy.md) | Supported versions and platforms, and security fixes |
+| [release-trust.md](release-trust.md) | Provenance, the SBOM, signed checksums and code scanning |
 
 ## Standards
 

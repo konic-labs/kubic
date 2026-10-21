@@ -17,6 +17,10 @@
       "source": "./src/git-clean.ts",
       "default": "./src/git-clean.ts"
     },
+    "./hook-runner": {
+      "source": "./src/hook-runner.ts",
+      "default": "./src/hook-runner.ts"
+    },
     "./ignore": {
       "source": "./src/ignore.ts",
       "default": "./src/ignore.ts"
@@ -25,9 +29,17 @@
       "source": "./src/journal/index.ts",
       "default": "./src/journal/index.ts"
     },
+    "./keychain": {
+      "source": "./src/keychain.ts",
+      "default": "./src/keychain.ts"
+    },
     "./lock-file": {
       "source": "./src/lock-file.ts",
       "default": "./src/lock-file.ts"
+    },
+    "./mcp-stdio": {
+      "source": "./src/mcp-stdio.ts",
+      "default": "./src/mcp-stdio.ts"
     },
     "./read-roots": {
       "source": "./src/read-roots.ts",
@@ -36,6 +48,10 @@
     "./runtime-exclude": {
       "source": "./src/runtime-exclude.ts",
       "default": "./src/runtime-exclude.ts"
+    },
+    "./sandbox": {
+      "source": "./src/sandbox.ts",
+      "default": "./src/sandbox.ts"
     },
     "./secret-runner": {
       "source": "./src/secret-runner.ts",
@@ -49,6 +65,14 @@
       "source": "./src/stdin.ts",
       "default": "./src/stdin.ts"
     },
+    "./tls-fetch": {
+      "source": "./src/tls-fetch.ts",
+      "default": "./src/tls-fetch.ts"
+    },
+    "./windows-shell": {
+      "source": "./src/windows-shell.ts",
+      "default": "./src/windows-shell.ts"
+    },
     "./test-support/env-fakes": {
       "source": "./src/test-support/env-fakes.ts",
       "default": "./src/test-support/env-fakes.ts"
@@ -56,6 +80,10 @@
     "./test-support/fake-env": {
       "source": "./src/test-support/fake-env.ts",
       "default": "./src/test-support/fake-env.ts"
+    },
+    "./test-support/tls-certs": {
+      "source": "./src/test-support/tls-certs.ts",
+      "default": "./src/test-support/tls-certs.ts"
     },
     "./test-support/git-sandbox": {
       "source": "./src/test-support/git-sandbox.ts",

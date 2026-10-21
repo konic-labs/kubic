@@ -32,6 +32,8 @@ export type RunTerminusKind =
   | 'failed'
   | 'usage'
   | 'turn_limit'
+  // A `[policy]` spend cap stopped the run (exit 3, like the turn limit).
+  | 'spend_limit'
   | 'timeout'
   | 'cancelled'
   | 'approval_denied'
@@ -57,6 +59,7 @@ export function mapTerminusToExitCode(
     case 'usage':
       return EXIT_USAGE;
     case 'turn_limit':
+    case 'spend_limit':
       return EXIT_TURN_LIMIT;
     // `cancelled` keeps POSIX 128+signo (SIGHUP 129, SIGINT 130, SIGTERM 143;
     // SIGINT when no signal is known) so a signalled run reads like a
@@ -134,6 +137,13 @@ export function failureForTerminus(
   switch (terminus) {
     case 'turn_limit':
       return classifyFailure('limit', 'run_limit', '');
+    case 'spend_limit':
+      return {
+        code: 'run_limit',
+        remedy:
+          'A [policy] spend cap stopped the run; run again once the policy allows more spend (the daily cap resets at UTC midnight). Never retry before then.',
+        strategy: 'abandon',
+      };
     case 'approval_denied':
       return classifyFailure('approval', 'approval_denied', '');
     case 'approval_timed_out':
@@ -197,6 +207,9 @@ export interface HeadlessRunResult {
   // default. Absent when no session was ever created (same bound as
   // posture — the mode is read from the session record).
   mode?: RunMode;
+  // The moves along `[model] fallback`: the model that could not be used,
+  // the one used instead and why. Absent when none was made.
+  fallbacks?: ReadonlyArray<{ from: string; to: string; reason: string }>;
 }
 
 export interface RunUsage {
@@ -226,6 +239,7 @@ export interface RunEnvelope {
   error?: { kind: string; message: string };
   // The failure code, remedy and retry strategy, additive.
   failure?: ClassifiedFailure;
+  fallbacks?: ReadonlyArray<{ from: string; to: string; reason: string }>;
 }
 
 export function buildRunEnvelope(
@@ -251,6 +265,7 @@ export function buildRunEnvelope(
     ...(result.mode === undefined ? {} : { mode: result.mode }),
     ...(result.error === undefined ? {} : { error: result.error }),
     ...(failure === undefined ? {} : { failure }),
+    ...(result.fallbacks === undefined ? {} : { fallbacks: result.fallbacks }),
   };
 }
 

@@ -38,7 +38,13 @@ import {
 } from '@kubic/exec/file-bridge';
 import { tightenStateDir } from '@kubic/exec/lock-file';
 import { RUNTIME_ENV_OVERRIDES } from './runtime-env.js';
-import { projectTrustFingerprint } from './trust-fingerprint.js';
+import { projectTrustWalk } from './trust-fingerprint.js';
+import {
+  dropTrustSnapshot,
+  reviewTrustChanges,
+  saveTrustSnapshot,
+  type TrustReview,
+} from './trust-review.js';
 
 // A recorded decision: true (trusted), false (declined), or null (no
 // decision recorded — the store never persists this).
@@ -222,22 +228,29 @@ export class ProjectTrustStore {
   // The home the store lives under: a project config may name its
   // systemPromptFile with `~/`.
   private readonly home: string;
-  // One fingerprint per project per store: a command reads it several times
-  // (the config gate, models.json, each skills ancestor).
-  private readonly fingerprints = new Map<string, string>();
+  // One walk per project per store: a command reads the fingerprint several
+  // times (the config gate, models.json, each skills ancestor).
+  private readonly walks = new Map<
+    string,
+    ReturnType<typeof projectTrustWalk>
+  >();
 
   constructor(file: string) {
     this.file = file;
     this.home = dirname(dirname(file));
   }
 
-  private fingerprintOf(key: string): string {
-    let fingerprint = this.fingerprints.get(key);
-    if (fingerprint === undefined) {
-      fingerprint = projectTrustFingerprint(key, this.home);
-      this.fingerprints.set(key, fingerprint);
+  private walkOf(key: string): ReturnType<typeof projectTrustWalk> {
+    let walk = this.walks.get(key);
+    if (walk === undefined) {
+      walk = projectTrustWalk(key, this.home);
+      this.walks.set(key, walk);
     }
-    return fingerprint;
+    return walk;
+  }
+
+  private fingerprintOf(key: string): string {
+    return this.walkOf(key).fingerprint;
   }
 
   private statusOf(
@@ -288,12 +301,13 @@ export class ProjectTrustStore {
   // never lose an update.
   set(cwd: string, decision: ProjectTrustDecision): void {
     const key = canonicalTrustPath(cwd);
-    this.fingerprints.delete(key);
+    this.walks.delete(key);
+    const walk = decision === true ? this.walkOf(key) : undefined;
     const stored: StoredDecision | null =
       decision === null
         ? null
-        : decision
-          ? { trusted: true, fingerprint: this.fingerprintOf(key) }
+        : walk !== undefined
+          ? { trusted: true, fingerprint: walk.fingerprint }
           : { trusted: false };
     // Kubic state, private whichever command creates it first: the store is
     // written 0600, a new `~/.kubic` is created 0700, and a loose one is
@@ -311,6 +325,19 @@ export class ProjectTrustStore {
         return serializeTrustFile(entries);
       },
       { mode: 0o600 },
+    );
+    // The grant's snapshot is what the next review diffs against.
+    if (walk !== undefined) saveTrustSnapshot(dir, key, walk.files);
+    else dropTrustSnapshot(dir, key);
+  }
+
+  // What changed since the grant for `cwd`, for the trust question and
+  // `kubic trust`. Read-only.
+  review(cwd: string): TrustReview {
+    return reviewTrustChanges(
+      this.home,
+      dirname(this.file),
+      canonicalTrustPath(cwd),
     );
   }
 

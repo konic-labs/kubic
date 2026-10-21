@@ -195,14 +195,20 @@ export class TurnSpans {
   }
 
   // Closes the turn and returns its artifact lines (run span plus that
-  // turn's tool spans, tagged with this session). Unknown keys end
-  // nothing and serialize nothing.
-  endRun(key: string): string | undefined {
+  // turn's tool spans, tagged with this session) with the records they
+  // serialize. Unknown keys end nothing and serialize nothing.
+  endRun(
+    key: string,
+  ): { artifact: string; spans: RunSpanRecord[] } | undefined {
     const turn = this.open.get(key);
     if (turn === undefined) return undefined;
     this.open.delete(key);
     turn.spans.endRun(turn.run);
-    return serializeSpanArtifact(turn.spans.trace(), turn.run, this.sessionId);
+    const spans = turn.spans.trace();
+    return {
+      artifact: serializeSpanArtifact(spans, turn.run, this.sessionId),
+      spans,
+    };
   }
 
   private latest(): { spans: RunSpans; run: string } | undefined {
@@ -213,10 +219,24 @@ export class TurnSpans {
 }
 
 // What a turn-driven surface (the TUI) passes its runner:
-// the per-turn tracker plus where a settled turn's artifact lines go.
+// the per-turn tracker plus where a settled turn's artifact lines go, with
+// the turn's span records and its tally (for the telemetry export).
 export interface TurnSpansSink {
   turns: TurnSpans;
-  write: (artifact: string) => void;
+  write: (artifact: string, turn?: SettledTurnSpans) => void;
+}
+
+export interface SettledTurnSpans {
+  readonly spans: readonly RunSpanRecord[];
+  readonly startedAt: number;
+  readonly usage: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheWrite: number;
+    readonly costUsd: number;
+  };
+  readonly toolErrors: number;
 }
 
 export function serializeSpanArtifact(

@@ -16,6 +16,7 @@ import {
 } from '@kubic/agent/permissions';
 import type { ApprovalVerdict, Capability } from './policy.js';
 import { PolicyValidationError, validatePolicy } from './policy.js';
+import type { PreApprovals } from './pre-approvals.js';
 import type { ApprovalRequest } from './request.js';
 import type { AccessPosture } from './stores.js';
 import { FileApprovalStore } from './stores.js';
@@ -96,6 +97,12 @@ export interface PolicyInput {
   autoApprove?: Capability[];
   /** Config `[approvals] requireJustification`. */
   requireJustification?: boolean;
+  /**
+   * A verified pre-approval file (`kubic run --pre-approvals`): the
+   * capabilities, tools and commands it lists are approved without an ask,
+   * checked on every call, headless included.
+   */
+  preApprovals?: PreApprovals;
   /** Session dir carrying posture.json (session-scoped full access). */
   sessionDir?: string;
   /**
@@ -176,7 +183,7 @@ export interface RecordedApprovalDeny {
 // collect a verdict. Named once, here, so the block reason and the headless
 // run's terminus say the same sentence.
 export const NO_ANSWER_SURFACE_REASON =
-  'approval required, but no approval surface is installed on this command: kubic run has no ask prompt, so the call is refused; answer approvals in kubic tui, or change the approval route or policy';
+  'approval required, but no approval surface is installed on this command: kubic run has no ask prompt, so the call is refused; answer approvals in kubic tui, configure an approval broker or a pre-approval file, or change the approval route or policy';
 
 export interface InstalledPolicy {
   classes: PermissionClasses;
@@ -209,6 +216,9 @@ export interface InstalledPolicy {
   // stops applying. And whether one applies right now (the status line).
   endTurn?: () => void;
   editsApprovedThisTurn?: () => boolean;
+  // The capabilities a call was approved for, by its call id: the bash
+  // sandbox widens exactly that call.
+  grantsFor?: (toolCallId: string) => readonly string[];
 }
 
 export function installedPolicyPosture(

@@ -468,7 +468,7 @@ describe('kubic cost project scope and grouping', () => {
     const err: string[] = [];
     const code = (
       await runCostCommand(
-        { by: 'model' },
+        { by: 'agent' },
         {
           loadRows: () => [],
           out: (line) => out.push(line),

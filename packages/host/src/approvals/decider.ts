@@ -18,6 +18,7 @@ import type {
 import { NO_ANSWER_SURFACE_REASON } from './installed-policy.js';
 import type { Capability } from './policy.js';
 import { ALLOW_TURN_EDITS, ALWAYS_ASK, KUBIC_STATE_WRITE } from './policy.js';
+import { preApprovalFor } from './pre-approvals.js';
 import { approvalPreview } from './preview.js';
 import {
   approvalKey,
@@ -65,6 +66,8 @@ export interface Decider {
   guardPosture: () => void;
   controlPlane: ControlPlaneRoots;
   turnEdits: boolean;
+  // Records the capabilities an approved call was granted.
+  grant?: (toolCallId: string, capabilities: readonly string[]) => void;
 }
 
 // The operator approved this turn's edits at once (`A`): an
@@ -126,6 +129,7 @@ export async function judge(
     if (capabilities.length === 0) {
       // An untriggered call waived nothing, so it is not challenged and no
       // guard needs standing down.
+      if (detected.length > 0) d.grant?.(call.toolCallId, detected);
       return { approved: true, challenged: detected.length > 0 };
     }
   }
@@ -134,6 +138,7 @@ export async function judge(
     const refused = await decideCapability(d, call, capability, edits);
     if (refused !== undefined) return refused;
   }
+  d.grant?.(call.toolCallId, capabilities);
   return { approved: true, challenged: true };
 }
 
@@ -208,6 +213,26 @@ async function decideCapability(
       call.toolName,
       capability,
       { approved: true, by: ALLOW_TURN_EDITS },
+      false,
+    );
+    return undefined;
+  }
+  // A signed pre-approval file grants exactly what it lists: checked on
+  // every call, never latched, never for an always-ask capability.
+  const preApproved =
+    d.input.preApprovals === undefined
+      ? undefined
+      : preApprovalFor(
+          d.input.preApprovals,
+          call.toolName,
+          capability,
+          call.args,
+        );
+  if (preApproved !== undefined) {
+    d.recorder.audit(
+      call.toolName,
+      capability,
+      { approved: true, by: preApproved },
       false,
     );
     return undefined;

@@ -362,7 +362,7 @@ describe('TurnSpans per-turn attribution', () => {
     turns.startRun('u1');
     turns.startTool('call-1', 'read');
     turns.endTool('call-1', false);
-    const artifact = turns.endRun('u1');
+    const artifact = turns.endRun('u1')?.artifact;
     expect(artifact).toContain('kubic.agent.run');
     expect(artifact).toContain('pi.tool.execute');
     expect(artifact).toContain('"toolName":"read"');
@@ -375,7 +375,7 @@ describe('TurnSpans per-turn attribution', () => {
     turns.startRun('u2');
     turns.startTool('call-9', 'write');
     turns.endTool('call-9', true);
-    const second = turns.endRun('u2') ?? '';
+    const second = turns.endRun('u2')?.artifact ?? '';
     expect(second).not.toContain('u1');
     const runs = second
       .trim()

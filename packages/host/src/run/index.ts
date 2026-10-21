@@ -25,7 +25,7 @@ export {
   /** @internal */ mapTerminusToExitCode,
   refusedRunResult,
 } from './run-result.js';
-export type { TurnSpansSink } from './run-spans.js';
+export type { SettledTurnSpans, TurnSpansSink } from './run-spans.js';
 export {
   RunSpans,
   runSpanHooks,

@@ -13,14 +13,12 @@
 // module never touches node:fs directly. Never imports agent impl.
 
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
 import type { RoleModelEntry } from './checks.js';
 import { checkKeys, checkNoUnknown, isRecord } from './checks.js';
-import { ConfigError, ProjectUntrustedError } from './errors.js';
+import { ConfigError } from './errors.js';
 import type { ConfigKey } from './schema.js';
 import { CONFIG_SECTIONS } from './schema.js';
-import { assertNoMcpConfig, McpUnsupportedError } from './stances.js';
-import { assertSafePathKey, parseTomlDocument } from './toml-parse.js';
+import { parseTomlDocument } from './toml-parse.js';
 
 export const CONFIG_LAYERS = [
   'enterprise',
@@ -41,6 +39,8 @@ interface AgentConfig {
   // the home directory); the project layer additionally requires trust
   // and containment in the project root, enforced at load.
   systemPromptFile?: string;
+  // Whether the trusted project's AGENTS.md files reach the prompt.
+  projectInstructions?: boolean;
 }
 
 export interface ModelConfig {
@@ -59,6 +59,8 @@ export interface ModelConfig {
   escalate?: string[];
   /** Escalation bound: climbs allowed per run. */
   maxEscalations?: number;
+  /** The models a run falls back to, in order, when this one is unavailable. */
+  fallback?: string[];
 }
 
 export interface ApprovalsConfig {
@@ -67,6 +69,9 @@ export interface ApprovalsConfig {
   autoApprove?: string[];
   sessionScoped?: boolean;
   requireJustification?: boolean;
+  broker?: string;
+  brokerTokenEnv?: string;
+  preApprovalKey?: string;
 }
 
 // Permission classes as a config section: the values are
@@ -165,6 +170,13 @@ interface RunConfig {
   maxTurns?: number;
 }
 
+// `[managed]`: the signed remote policy a managed config points at. Read only
+// from the managed (enterprise) config.
+interface ManagedConfig {
+  url?: string;
+  refreshHours?: number;
+}
+
 // The `[verify]` gate commands: the section's command keys.
 type VerifyCommandKey = Extract<
   SchemaSection<'verify'>['keys'][number],
@@ -185,6 +197,8 @@ export const VERIFY_COMMAND_KEYS: readonly VerifyCommandKey[] = sectionNamed(
 interface PolicyConfig {
   allowedModels?: string[];
   allowedProviders?: string[];
+  // The regions a model endpoint may run in (`*` globs).
+  allowedRegions?: string[];
   allowedTools?: string[];
   deniedTools?: string[];
   // 'proxy' is the spelling of the engine's 'allowlist' mode; the engine
@@ -195,6 +209,69 @@ interface PolicyConfig {
   filesystemPolicy?: string;
   dataPolicy?: string;
   loggingPolicy?: string;
+  // 'open' (default) or 'restricted': what a repository may set for itself.
+  projectPolicy?: string;
+  // Spend caps in US dollars; the lowest any layer sets wins.
+  maxRunCostUsd?: number;
+  maxDailyCostUsd?: number;
+}
+
+// `[sandbox]`: the bash tool's OS sandbox.
+interface SandboxConfig {
+  mode?: string;
+  writable?: string[];
+}
+
+// `[mcp.<name>]`: one MCP server the organization allowlists.
+interface McpTableConfig {
+  command?: string;
+  args?: string[];
+  url?: string;
+  version?: string;
+  tools?: string[];
+  approve?: string[];
+  env?: string[];
+}
+
+// `[oidc]`: the job's OIDC token as the credential of a cloud-hosted model.
+interface OidcConfig {
+  provider?: string;
+  tokenEnv?: string;
+  awsRoleArn?: string;
+  gcpAudience?: string;
+  gcpServiceAccount?: string;
+  gatewayAudience?: string;
+}
+
+// `[providers.<id>]`: what the organization declares about a provider, for
+// a provider whose region Kubic cannot read from its environment.
+interface ProviderFacts {
+  region?: string;
+}
+
+// `[tls]`: the certificate store model and collector traffic trusts.
+interface TlsConfig {
+  systemCa?: boolean;
+}
+
+// `[cost]`: the team new sessions are billed to.
+interface CostConfig {
+  team?: string;
+}
+
+// `[telemetry]`: the OpenTelemetry export.
+export interface TelemetryConfig {
+  enabled?: boolean;
+  endpoint?: string;
+  content?: boolean;
+}
+
+// `[[hooks]]`: an admin hook (run in hooks/).
+interface HookTableConfig {
+  event: string;
+  command: string;
+  tools?: string[];
+  timeoutMs?: number;
 }
 
 // `[[audit]]` (parsed here; built in audit/sinks.ts).
@@ -204,6 +281,10 @@ export interface AuditTableConfig {
   target?: string;
   // Docs promise a name or a number 0–23.
   facility?: string | number;
+  // PEM certificates a TLS syslog, https or otlp collector is checked against.
+  ca?: string;
+  // The environment variable holding a bearer token for https and otlp.
+  tokenEnv?: string;
 }
 
 export interface KubicConfig {
@@ -223,7 +304,16 @@ export interface KubicConfig {
   session?: SessionConfig;
   verify?: VerifyConfig;
   run?: RunConfig;
+  telemetry?: TelemetryConfig;
+  cost?: CostConfig;
+  tls?: TlsConfig;
+  providers?: Record<string, ProviderFacts>;
+  oidc?: OidcConfig;
+  mcp?: Record<string, McpTableConfig>;
+  sandbox?: SandboxConfig;
+  managed?: ManagedConfig;
   policy?: PolicyConfig;
+  hooks?: HookTableConfig[];
   audit?: AuditTableConfig[];
 }
 
@@ -241,7 +331,16 @@ interface SectionTypes {
   session: SessionConfig;
   verify: VerifyConfig;
   run: RunConfig;
+  telemetry: TelemetryConfig;
+  cost: CostConfig;
+  tls: TlsConfig;
+  providers: ProviderFacts;
+  oidc: OidcConfig;
+  mcp: McpTableConfig;
+  sandbox: SandboxConfig;
+  managed: ManagedConfig;
   policy: PolicyConfig;
+  hooks: HookTableConfig;
   audit: AuditTableConfig;
 }
 type SchemaSection<N> = Extract<(typeof CONFIG_SECTIONS)[number], { name: N }>;
@@ -266,7 +365,16 @@ const _sectionsMatchTheirTypes: SectionsMatch = {
   session: true,
   verify: true,
   run: true,
+  telemetry: true,
+  cost: true,
+  tls: true,
+  providers: true,
+  oidc: true,
+  mcp: true,
+  sandbox: true,
+  managed: true,
   policy: true,
+  hooks: true,
   audit: true,
 };
 
@@ -343,7 +451,6 @@ function parseSection(section: Section, raw: unknown): unknown {
 }
 
 function toKubicConfig(raw: Record<string, unknown>): KubicConfig {
-  assertNoMcpConfig(raw);
   for (const key of Object.keys(raw)) {
     if (!KNOWN_TOP_LEVEL.has(key)) {
       throw new ConfigError(`unknown section '[${key}]'`);
@@ -441,91 +548,6 @@ export function parseTomlConfig(text: string): KubicConfig {
   return toKubicConfig(parseTomlDocument(text));
 }
 
-export interface LayerInput {
-  layer: ConfigLayer;
-  config: KubicConfig;
-  // Project-local config is trust-gated: callers must pass trusted: true
-  // only after the project was trusted (`kubic trust`, the TUI prompt, or
-  // KUBIC_TRUST_PROJECT=1 for the invocation).
-  trusted?: boolean;
-}
-
-export interface MergeResult {
-  config: KubicConfig;
-  // Leaf paths where a lower layer attempted to override a higher layer
-  // (first wins; attempts are reported, never applied).
-  overriddenAttempts: string[];
-}
-
-function flattenRecord(
-  value: Record<string, unknown>,
-  prefix: string,
-  out: Map<string, unknown>,
-): void {
-  for (const [key, entry] of Object.entries(value)) {
-    const path = prefix === '' ? key : `${prefix}.${key}`;
-    if (isRecord(entry)) flattenRecord(entry, path, out);
-    else out.set(path, entry);
-  }
-}
-
-function sameValue(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function unflatten(leaves: Map<string, unknown>): KubicConfig {
-  const root: Record<string, unknown> = {};
-  for (const [path, value] of leaves) {
-    const parts = path.split('.');
-    for (const part of parts) assertSafePathKey(part, `path '${path}'`);
-    let node = root;
-    for (let i = 0; i < parts.length - 1; i += 1) {
-      const key = parts[i] as string;
-      const next = node[key];
-      if (!isRecord(next)) {
-        const fresh: Record<string, unknown> = {};
-        node[key] = fresh;
-        node = fresh;
-      } else {
-        node = next;
-      }
-    }
-    node[parts[parts.length - 1] as string] = value;
-  }
-  return root as KubicConfig;
-}
-
-export function mergeLayered(inputs: LayerInput[]): MergeResult {
-  for (const input of inputs) {
-    if (
-      input.layer === 'project' &&
-      input.trusted !== true &&
-      Object.keys(input.config).length > 0
-    ) {
-      throw new ProjectUntrustedError(
-        "project-local config refused: the project layer is untrusted — run 'kubic trust' to accept this project, or set KUBIC_TRUST_PROJECT=1 for this invocation",
-      );
-    }
-  }
-  const ordered = [...inputs].sort(
-    (a, b) => CONFIG_LAYERS.indexOf(a.layer) - CONFIG_LAYERS.indexOf(b.layer),
-  );
-  const leaves = new Map<string, unknown>();
-  const overriddenAttempts: string[] = [];
-  for (const input of ordered) {
-    const flat = new Map<string, unknown>();
-    flattenRecord(input.config as Record<string, unknown>, '', flat);
-    for (const [path, value] of flat) {
-      if (!leaves.has(path)) {
-        leaves.set(path, value);
-      } else if (!sameValue(leaves.get(path), value)) {
-        overriddenAttempts.push(path);
-      }
-    }
-  }
-  return { config: unflatten(leaves), overriddenAttempts };
-}
-
 export function defaultLayerPaths(args: {
   home: string;
   projectRoot: string;
@@ -543,28 +565,7 @@ export function defaultLayerPaths(args: {
   };
 }
 
-// The rule set is owned by the module that writes it:
-// @kubic/exec `runtime-exclude.ts` is what `kubic run` ships into a user
-// repo, so this list is a projection of
-// that module — never a second hand-maintained copy. `config.test.ts`
-// pins the two together, so a rule added there cannot go unchecked here.
-/** @internal */
-export const GITIGNORE_REQUIRED_ENTRIES = [...RUNTIME_EXCLUDE_ENTRIES] as const;
-
-export function checkGitignoreSplit(gitignoreText: string): {
-  missing: string[];
-} {
-  return {
-    missing: GITIGNORE_REQUIRED_ENTRIES.filter(
-      (entry) => !gitignoreText.includes(entry),
-    ),
-  };
-}
-
 function withLayerContext(layer: ConfigLayer, error: unknown): never {
-  if (error instanceof McpUnsupportedError) {
-    throw new McpUnsupportedError(`layer '${layer}': ${error.message}`);
-  }
   if (error instanceof ConfigError) {
     throw new ConfigError(`layer '${layer}': ${error.message}`);
   }

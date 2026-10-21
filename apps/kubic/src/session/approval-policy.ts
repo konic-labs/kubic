@@ -4,10 +4,16 @@
 import { join } from 'node:path';
 import { DEFAULT_PERMISSIONS } from '@kubic/agent/permissions';
 import type { ExecutionEnv } from '@kubic/exec/env';
-import { enableSessionFullAccess, installPolicy } from '@kubic/host/approvals';
+import {
+  DEFAULT_MAX_PENDING_MS,
+  enableSessionFullAccess,
+  installPolicy,
+  webhookApprovalBroker,
+} from '@kubic/host/approvals';
 import { resolveRunBaseRevision } from '@kubic/host/audit';
 import { effectiveRoleClasses } from '@kubic/host/roles';
 import type { SessionBoot } from './bootstrap.js';
+import { mcpApprovalTools } from './mcp.js';
 
 // The approval policy the lane runs under — the same derivation doctor
 // reports. Config classes replace the documented DEFAULT_PERMISSIONS; the
@@ -71,8 +77,10 @@ export async function installBootPolicy(
               { ...DEFAULT_PERMISSIONS, ...config.classes },
               role.classes,
             ),
-            ...(role.requires.length === 0 ? {} : { requires: role.requires }),
           }),
+      // The role's approval obligations, and the MCP tools whose allowlist
+      // entry says they always ask.
+      ...requiresOf(role?.requires, mcpApprovalTools(config.mcp)),
       // The layer's own record, so the posture's `source` is the same
       // answer doctor prints.
       source: config.policySource ?? 'default',
@@ -86,7 +94,31 @@ export async function installBootPolicy(
       model: () => boot.liveModelRef,
       thinking: () => boot.liveThinkingRef,
       base,
-      // The answer seat, when a user is attached to collect verdicts.
-      ...(request.answer === undefined ? {} : { answer: request.answer }),
+      // A verified pre-approval file grants what it lists, headless too.
+      ...(config.preApprovals === undefined
+        ? {}
+        : { preApprovals: config.preApprovals }),
+      // The answer seat: the user attached to collect verdicts, else the
+      // approval broker a run without a terminal asks.
+      ...(request.answer !== undefined
+        ? { answer: request.answer }
+        : config.approvalBroker === undefined
+          ? {}
+          : {
+              answer: webhookApprovalBroker(config.approvalBroker, {
+                sessionId: id,
+                workspace: env.cwd,
+                maxPendingMs:
+                  config.approvals?.maxPendingMs ?? DEFAULT_MAX_PENDING_MS,
+              }),
+            }),
     });
+}
+
+function requiresOf(
+  role: readonly string[] | undefined,
+  mcp: readonly string[],
+): { requires?: string[] } {
+  const requires = [...(role ?? []), ...mcp];
+  return requires.length === 0 ? {} : { requires };
 }

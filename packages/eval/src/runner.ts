@@ -40,7 +40,9 @@ export type EvalRunnerErrorCode =
   | 'invalid-record'
   | 'trajectory-unreadable'
   | 'trajectory-malformed'
-  | 'provenance-mismatch';
+  | 'provenance-mismatch'
+  | 'suite-file-invalid'
+  | 'suite-file-untrusted';
 
 export class EvalRunnerError extends Error {
   readonly code: EvalRunnerErrorCode;

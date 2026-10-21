@@ -13,7 +13,9 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { matchableSecrets } from '../secret-refs/index.js';
 import type { AuditInput, AuditSink, OrgAuditRecord } from './audit.js';
 import { AUDIT_RECORD_VERSION, emitAudit } from './audit.js';
+import { appendChainedAuditLine } from './chain.js';
 import { isPrivilegedAuditWhat } from './records.js';
+import type { SpooledSink } from './spool.js';
 
 export const AUDIT_LEDGER_FILE = 'audit.jsonl';
 
@@ -109,38 +111,16 @@ export async function resolveRunBaseRevision(
   return 'none';
 }
 
-// The creation modes of audit files: private like every other piece of
-// Kubic state. They apply only to what an append creates; an existing file or
-// directory keeps its own mode.
-const AUDIT_FILE_MODE = 0o600;
-const AUDIT_DIR_MODE = 0o700;
-
-// One record line appended durably (fsync) where the bridge offers it — the
-// journal's own primitive — so a crash cannot lose an acknowledged record.
-// Shared by the repo ledger and the `[[audit]] file` sink.
-export function appendAuditLine(
-  bridge: ReturnType<typeof createNodeFileBridge>,
-  file: string,
-  record: OrgAuditRecord,
-): void {
-  if (!bridge.exists('.')) bridge.createDir('.', true, AUDIT_DIR_MODE);
-  const line = `${JSON.stringify(record)}\n`;
-  if (bridge.appendDurably !== undefined) {
-    bridge.appendDurably(file, line, { mode: AUDIT_FILE_MODE });
-  } else {
-    bridge.appendFile(file, line, { mode: AUDIT_FILE_MODE });
-  }
-}
-
-// A synchronous file sink: one validated record per line. appendAudit
-// refuses async sinks, so the append completes before emitAudit returns.
+// A synchronous file sink: one validated record per line, chained to the
+// line before it and appended durably (chain.ts). appendAudit refuses async
+// sinks, so the append completes before emitAudit returns.
 function createLedgerSink(dir: string): AuditSink {
   const bridge = createNodeFileBridge(dir);
   return {
     name: `file:${join(dir, AUDIT_LEDGER_FILE)}`,
     kind: 'file',
     write: (record: OrgAuditRecord): void => {
-      appendAuditLine(bridge, AUDIT_LEDGER_FILE, record);
+      appendChainedAuditLine(bridge, dir, AUDIT_LEDGER_FILE, record);
     },
   };
 }
@@ -207,7 +187,12 @@ export function readAuditLedger(dir: string): OrgAuditRecord[] {
         ),
       );
     }
-    records.push(parsed);
+    // The chain link is the ledger's, not the record's: `kubic audit verify`
+    // reads it from the lines themselves.
+    const { chain: _chain, ...record } = parsed as OrgAuditRecord & {
+      chain?: unknown;
+    };
+    records.push(record);
   });
   return records;
 }
@@ -241,14 +226,69 @@ export function auditSinkSnapshot(): ReadonlyArray<{
   name: string;
   level: AuditSinkLevel;
   failures: readonly string[];
+  // The records a collector sink still holds in its spool.
+  pending?: number;
 }> {
-  return configuredAuditSinks.map((entry) => ({
-    source: entry.source,
-    kind: entry.sink.kind,
-    name: entry.sink.name,
-    level: entry.level,
-    failures: [...entry.failures],
-  }));
+  return configuredAuditSinks.map((entry) => {
+    const spool = spooledOf(entry.sink);
+    return {
+      source: entry.source,
+      kind: entry.sink.kind,
+      name: entry.sink.name,
+      level: entry.level,
+      failures: [...entry.failures],
+      ...(spool === undefined ? {} : { pending: spool.pending() }),
+    };
+  });
+}
+
+function spooledOf(sink: AuditSink): SpooledSink | undefined {
+  const candidate = sink as Partial<SpooledSink>;
+  return typeof candidate.drain === 'function' &&
+    typeof candidate.pending === 'function'
+    ? (sink as SpooledSink)
+    : undefined;
+}
+
+export interface AuditSinkFlush {
+  readonly source: string;
+  readonly delivered: number;
+  readonly pending: number;
+  readonly error?: string;
+}
+
+/**
+ * Drains every configured collector sink's spool, each bounded by
+ * `timeoutMs`: what it delivered and what still waits. Never throws.
+ */
+export async function flushAuditSinks(
+  timeoutMs: number,
+): Promise<AuditSinkFlush[]> {
+  return Promise.all(
+    configuredAuditSinks.flatMap((entry) => {
+      const spool = spooledOf(entry.sink);
+      if (spool === undefined) return [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const bound = new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs);
+      });
+      return [
+        Promise.race([spool.drain().catch(() => undefined), bound]).then(
+          (drained) => {
+            if (timer !== undefined) clearTimeout(timer);
+            return drained === undefined
+              ? {
+                  source: entry.source,
+                  delivered: 0,
+                  pending: spool.pending(),
+                  error: `the collector did not answer within ${timeoutMs} ms`,
+                }
+              : { source: entry.source, ...drained };
+          },
+        ),
+      ];
+    }),
+  );
 }
 
 export function probeMessage(error: unknown): string {

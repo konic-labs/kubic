@@ -53,6 +53,10 @@ import {
   reconcileStoredModel,
   toolContextFor,
 } from './boot-steps.js';
+import {
+  type ExternalTool,
+  externalToolRegistrations,
+} from './external-tools.js';
 import type { PolicyInterceptorOptions } from './interceptors/index.js';
 import {
   laneConversationIdOf,
@@ -165,12 +169,16 @@ export interface LaneCompactionOptions {
 // policy boot — not just tested in isolation.
 function withPolicyContributions(
   policy: LanePolicyOptions | undefined,
+  external: ReadonlySet<string>,
 ): ToolContribution[] {
   const extra = policy?.contributions ?? [];
   if (policy?.classes === undefined) return extra;
   const valid = validateClasses({ ...policy.classes });
   const allowed = toolsForClasses(valid);
-  return [withPermissionCheck((name) => allowed.includes(name)), ...extra];
+  return [
+    withPermissionCheck((name) => allowed.includes(name) || external.has(name)),
+    ...extra,
+  ];
 }
 
 export interface LaneBootOptions {
@@ -226,6 +234,9 @@ export interface LaneBootOptions {
   // class-derived policy so the role is the narrower of the two (a role
   // can only narrow, never widen, what the permission classes allow).
   toolAllowlist?: string[];
+  // Tools from outside the binary (an allowlisted MCP server's), offered
+  // beside the built-ins and outside the permission classes.
+  externalTools?: readonly ExternalTool[];
   // The per-invocation tool selection
   // (`--tools <a,b>`). Intersected with the class/role/enterprise sets — a
   // selection can only narrow, never widen. `noTools` is the empty set (a
@@ -354,10 +365,36 @@ export async function escalateLaneModel(
   return result;
 }
 
+// The `kubic` extension: the lane's tools, composed with the permission
+// wrapper and the contributions, and its prompt section.
+function installKubicExtension(
+  registry: ReturnType<typeof createRegistry>,
+  options: LaneBootOptions,
+  baseTools: ReturnType<typeof kubicToolsToPiTools>,
+  promptText: string,
+): void {
+  registry.install(
+    defineExtension({
+      name: 'kubic',
+      tools: composeTools(
+        baseTools,
+        withPolicyContributions(
+          options.policy,
+          new Set((options.externalTools ?? []).map((tool) => tool.name)),
+        ),
+      ),
+      sections: [section(PROMPT_SECTION, () => promptText, { tag: false })],
+    }),
+  );
+}
+
 export async function bootLane(options: LaneBootOptions): Promise<Lane> {
   const context = options.context ?? BACKGROUND_CONTEXT;
   const kills = new OperationKillRegistry();
-  const baseTools = kubicToolsToPiTools(toolContextFor(options, kills));
+  const baseTools = [
+    ...kubicToolsToPiTools(toolContextFor(options, kills)),
+    ...externalToolRegistrations(options.externalTools ?? []),
+  ];
   const tools = laneToolSet(
     options,
     baseTools.map((tool) => tool.name),
@@ -459,13 +496,11 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
   const effectiveId = defaultModelId(effectiveModel);
   currentModelId = effectiveId;
 
-  const promptText = lanePromptText(options, tools.names, effectiveId);
-  registry.install(
-    defineExtension({
-      name: 'kubic',
-      tools: composeTools(baseTools, withPolicyContributions(options.policy)),
-      sections: [section(PROMPT_SECTION, () => promptText, { tag: false })],
-    }),
+  installKubicExtension(
+    registry,
+    options,
+    baseTools,
+    lanePromptText(options, tools.names, effectiveId),
   );
 
   const thinking = laneThinkingLevel(

@@ -1,7 +1,6 @@
 // The prod `kubic tui` boot: the shared session bootstrap (session, role,
 // model, policy, journal baseline, skills, lane) plus what the interactive
 // loop reads from it.
-import { join } from 'node:path';
 import { killLaneProcesses } from '@kubic/agent/lane/abort';
 import type { Lane } from '@kubic/agent/lane/boot';
 import {
@@ -31,7 +30,6 @@ import {
   type InstalledPolicy,
   type SessionFullAccessGrant,
 } from '@kubic/host/approvals';
-import { TurnSpans } from '@kubic/host/run';
 import {
   readSessionUsage,
   type SessionSummary,
@@ -43,6 +41,7 @@ import type { StatusUsageRow } from '@kubic/tui/status-bar';
 import { type BootRefusal, SessionBoot } from '../session/bootstrap.js';
 import { bootedLoop, contextLimitsOf, liveModelOf } from './lane-loop.js';
 import type { TuiRunOptions } from './options.js';
+import { turnSpans } from './turn-sinks.js';
 import type { TuiLaneBoot } from './types.js';
 
 // A refused tool selection: a usage error (exit 2), not a generic lane boot
@@ -183,6 +182,15 @@ function tuiSessionBoot(
       journalRetention: options.journalRetention,
       reconcileOutOfScope: options.reconcileOutOfScope,
       systemPromptSection: options.systemPromptSection,
+      projectInstructions: options.projectInstructions,
+      projectProvidersRefusal: options.projectProvidersRefusal,
+      sessionTeam: options.sessionTeam,
+      hooks: options.hooks,
+      providerRegions: options.providerRegions,
+      modelFallback: options.modelFallback,
+      oidc: options.oidc,
+      mcp: options.mcp,
+      sandbox: options.sandbox,
       modelPolicy: options.modelPolicy,
       trustProject: options.trustProject,
       skills: options.skills,
@@ -202,6 +210,10 @@ function tuiSessionBoot(
       // No debug footer on the alt-screen: loader lines are dropped (the
       // block itself is observable).
       skillsLog: () => undefined,
+      instructionsNotice: (line) =>
+        notices.warnings.push(`project instructions: ${line}`),
+      // A redaction mid-session lands in the transcript the loop drains.
+      dlpNotice: (line) => notices.transcript.push(line),
     },
   );
 }
@@ -254,7 +266,7 @@ async function describeBoot(
     // The injected sink, threaded to the turn runner
     // for its fault and token lines (absent in prod — no --debug flag).
     debug: options.debug,
-    turnSpans: turnSpans(boot, id),
+    turnSpans: turnSpans(boot, id, options, notices),
     thinking: thinking ?? 'off',
     // The resolved set travels on the boot so `/scoped-models` can report
     // it.
@@ -348,24 +360,6 @@ async function abortPendingTurn(
   return interrupted === undefined
     ? notice
     : `${notice} — interrupted prompt: ${interrupted}`;
-}
-
-// Per-turn spans next to the headless artifact — the
-// session's spans.jsonl carries one run span per TUI turn plus its
-// tool spans. Best-effort: telemetry never fails a turn or a boot.
-function turnSpans(boot: SessionBoot, id: string): TuiLaneBoot['turnSpans'] {
-  return {
-    turns: new TurnSpans(id),
-    write: (artifact: string): void => {
-      try {
-        boot.bridge.appendFile(join(id, 'spans.jsonl'), artifact, {
-          mode: 0o600,
-        });
-      } catch {
-        // A failed artifact write is not a turn failure.
-      }
-    },
-  };
 }
 
 // `/resume` and the palette list THIS boot's sessions store, and `/fork`

@@ -3,6 +3,7 @@
 
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import { scanSecrets } from '@kubic/core/secret-scan';
 import { readRootFor } from '@kubic/exec/read-roots';
 import { effectiveNetworkLevel } from '../../permissions.js';
 import type { HookRegistration, JsonValue } from '../../pi-boundary.js';
@@ -12,7 +13,7 @@ import { defaultIsDestructive } from './detectors.js';
 import { isNetworkCommand } from './network.js';
 import { readOnlyViolation } from './read-only.js';
 import { redactReason, redactSecrets } from './redact.js';
-import type { PolicyInterceptorOptions } from './types.js';
+import type { PolicyInterceptorOptions, ToolHookCalls } from './types.js';
 
 // A pi-durable block verdict: the harness turns the string into the error
 // result the model sees (`Tool call blocked: …`).
@@ -60,9 +61,10 @@ function canonicalArgsHash(args: Record<string, unknown>): string {
 }
 
 // The lane's policy interception as ordered `ToolTask` hooks.
-// Order is correctness: the approval seat first, then the
-// destructive/network guard, then the confine rewrite last — and the
-// harness skips every later hook once a block is returned. Each
+// Order is correctness: the approval seat first, then the admin hooks (on
+// the arguments the operator allowed), then the destructive/network guard,
+// then the confine rewrite last — and the harness skips every later hook
+// once a block is returned. Each
 // registration is one handler, so the order of this array IS the chain
 // order.
 //
@@ -81,6 +83,9 @@ export function policyInterceptorHooks(
   const editedCalls = new Map<string, { from: string; to: string }>();
   return [
     approvalHook(options, stands, editedCalls),
+    ...(options.toolHooks?.before === undefined
+      ? []
+      : [adminBeforeHook(options.toolHooks.before)]),
     shellGuardHook(options, stands),
     confineHook(options, stands),
     // Last in the chain: a stand-down is SPENT once the call
@@ -94,7 +99,80 @@ export function policyInterceptorHooks(
           return undefined;
         }),
     }),
+    ...(options.redactToolOutput === undefined
+      ? []
+      : [toolOutputScanHook(options.redactToolOutput)]),
+    // After the scan, so an admin hook reads the output the model reads.
+    ...(options.toolHooks?.after === undefined
+      ? []
+      : [adminAfterHook(options.toolHooks.after)]),
   ];
+}
+
+// An admin hook's refusal blocks the call with the reason it gave; a hook
+// that throws blocks it too (fail closed).
+function adminBeforeHook(
+  before: NonNullable<ToolHookCalls['before']>,
+): HookRegistration {
+  return hook(ToolTask, {
+    beforeTool: (call) =>
+      failClosed(async () => {
+        const reason = await before({
+          toolName: call.name,
+          args: call.arguments as Record<string, unknown>,
+        });
+        return reason === undefined ? undefined : block(reason);
+      }),
+  });
+}
+
+// An after-tool admin hook observes the result; its failure is its own
+// (audited by the host) and never changes what the model reads.
+function adminAfterHook(
+  after: NonNullable<ToolHookCalls['after']>,
+): HookRegistration {
+  return hook(ToolTask, {
+    afterTool: async (call, result) => {
+      const output = (result.content ?? [])
+        .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+        .join('\n');
+      try {
+        await after({
+          toolName: call.name,
+          args: call.arguments as Record<string, unknown>,
+          isError: result.isError === true,
+          output,
+        });
+      } catch {
+        // Observation only.
+      }
+      return undefined;
+    },
+  });
+}
+
+// The model never reads a secret a tool returned: every text part of the
+// result is scanned after the tool runs, before the result entry is
+// committed — so neither the model's context nor the stored transcript holds
+// it — and the caller hears how many values were redacted.
+function toolOutputScanHook(
+  notify: (toolName: string, found: number) => void,
+): HookRegistration {
+  return hook(ToolTask, {
+    afterTool: (call, result) => {
+      if (result.content === undefined) return undefined;
+      let found = 0;
+      const content = result.content.map((part) => {
+        if (part.type !== 'text') return part;
+        const scanned = scanSecrets(part.text);
+        found += scanned.found;
+        return scanned.found === 0 ? part : { ...part, text: scanned.text };
+      });
+      if (found === 0) return undefined;
+      notify(call.name, found);
+      return { ...result, content };
+    },
+  });
 }
 
 const APPROVED_CALLS_CAP = 512;

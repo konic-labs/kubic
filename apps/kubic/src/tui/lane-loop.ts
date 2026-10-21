@@ -37,6 +37,7 @@ import {
 import type { ModelEscalationEvent } from '@kubic/agent/prompts';
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import { providerKeyHints } from '@kubic/host/models';
+import { dataProtectionOf } from '@kubic/host/policy';
 import {
   AUTO_ESCALATION_TOOL_FAILURES,
   createAutoEscalation,
@@ -310,6 +311,8 @@ async function switchLaneModel(
     // Escalation outside the role's set is refused: the live model
     // stays put, like the enterprise gate.
     roleModelScope(boot.role?.resolved),
+    // So is a switch outside `[policy] allowed_regions`.
+    boot.regionGate,
   );
   // With a ladder configured the switch climbs
   // it through escalateLaneModel — one-way, budget-bounded,
@@ -501,6 +504,9 @@ async function recordTuiTurn(
   }
   persistRunTrajectory({
     sessionsRoot: inputs.root,
+    ...(dataProtectionOf(options.modelPolicy) === undefined
+      ? {}
+      : { redact: true }),
     sessionId: inputs.id,
     agentId: options.agentId ?? 'root',
     role: options.role ?? DEFAULT_RUN_ROLE,

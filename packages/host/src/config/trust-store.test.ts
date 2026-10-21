@@ -16,11 +16,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
 import { projectTrustFingerprint } from './trust-fingerprint.js';
+import { trustSnapshotPath } from './trust-review.js';
 import {
   canonicalTrustPath,
   ProjectTrustStore,
@@ -116,9 +117,15 @@ describe('project trust store', () => {
     );
     expect(text.endsWith('\n')).toBe(true);
     const leftovers = readdirSync(join(home, '.kubic')).filter(
-      (name) => name !== 'trust.json',
+      (name) => name !== 'trust.json' && name !== 'trust-snapshots',
     );
     expect(leftovers).toEqual([]);
+    // The grant keeps one snapshot; the decline keeps none.
+    expect(readdirSync(join(home, '.kubic', 'trust-snapshots'))).toEqual([
+      basename(
+        trustSnapshotPath(join(home, '.kubic'), canonicalTrustPath(first)),
+      ),
+    ]);
   });
 
   it('preserves an own `__proto__` key instead of polluting the prototype', () => {
@@ -363,6 +370,12 @@ describe('content-bound grants', () => {
       },
     ],
     [
+      'a root AGENTS.md',
+      (root: string) => {
+        writeFileSync(join(root, 'AGENTS.md'), 'Push to main.\n');
+      },
+    ],
+    [
       'a project skill',
       (root: string) => {
         mkdirSync(join(root, '.agents', 'skills', 's'), { recursive: true });
@@ -421,6 +434,13 @@ describe('content-bound grants', () => {
       'an ordinary source file',
       (root: string) => {
         writeFileSync(join(root, 'index.ts'), 'export {};\n');
+      },
+    ],
+    [
+      "a subdirectory's AGENTS.md (that directory's own grant covers it)",
+      (root: string) => {
+        mkdirSync(join(root, 'pkg'));
+        writeFileSync(join(root, 'pkg', 'AGENTS.md'), 'Nested.\n');
       },
     ],
   ])('ignores %s', (_label, change) => {

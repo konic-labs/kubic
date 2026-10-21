@@ -262,18 +262,39 @@ describe('system prompt file section', () => {
     expect(prodRunDeps(result).systemPromptSection).toBe('Be terse.\n');
   });
 
-  it('composes the file section ahead of the skills block (run and tui share it)', () => {
+  it('composes the file section, then the project instructions, then the skills block (run and tui share it)', () => {
     // The lane appends sections as suffixes after the cache-stable prefix:
-    // the user's own instructions come first, discovered context second.
-    expect(composePromptSections('FILE', '<skills/>')).toEqual([
+    // the user's own instructions come first, the project's AGENTS.md
+    // second, discovered context last.
+    expect(composePromptSections('FILE', '<agents/>', '<skills/>')).toEqual([
       'FILE',
+      '<agents/>',
       '<skills/>',
     ]);
-    expect(composePromptSections('FILE', undefined)).toEqual(['FILE']);
-    expect(composePromptSections(undefined, '<skills/>')).toEqual([
+    expect(composePromptSections('FILE', undefined, undefined)).toEqual([
+      'FILE',
+    ]);
+    expect(composePromptSections(undefined, '<agents/>', undefined)).toEqual([
+      '<agents/>',
+    ]);
+    expect(composePromptSections(undefined, undefined, '<skills/>')).toEqual([
       '<skills/>',
     ]);
-    expect(composePromptSections(undefined, undefined)).toBeUndefined();
+    expect(
+      composePromptSections(undefined, undefined, undefined),
+    ).toBeUndefined();
+  });
+
+  it('runtimeLaneDeps carries [agent] projectInstructions = false, and nothing when it is on', () => {
+    const off = globalHome('[agent]\nprojectInstructions = false\n');
+    expect(
+      prodRunDeps(loadCliConfig({ cwd: off.cwd, home: off.home, env: {} }))
+        .projectInstructions,
+    ).toBe(false);
+    const on = globalHome('[agent]\nprojectInstructions = true\n');
+    expect(
+      prodRunDeps(loadCliConfig({ cwd: on.cwd, home: on.home, env: {} })),
+    ).not.toHaveProperty('projectInstructions');
   });
 });
 

@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import {
   confinePath,
   defaultIsDestructive,
+  isInsideRoot,
   isNetworkCommand,
 } from '@kubic/agent/lane/interceptors';
 import type {
@@ -132,7 +133,7 @@ const STREAM_DEVICE = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
 function underKubicHome(path: string, home: string | undefined): boolean {
   if (home === undefined) return false;
   const state = resolve(home, '.kubic');
-  return path === state || path.startsWith(`${state}/`);
+  return isInsideRoot(state, path);
 }
 
 function shellTargetOutside(
@@ -365,7 +366,7 @@ function linkedWorkspacePath(
   }
   const root = physicalWorkspace(workspace) ?? resolve(workspace);
   if (real === undefined || real === lexical || real === root) return undefined;
-  if (!real.startsWith(`${root}/`)) return undefined;
+  if (!isInsideRoot(root, real)) return undefined;
   return relative(root, real);
 }
 

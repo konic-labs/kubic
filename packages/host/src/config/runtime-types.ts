@@ -4,12 +4,20 @@
 import type { PermissionClasses } from '@kubic/agent/permissions';
 import type { FileBridge } from '@kubic/exec/file-bridge';
 import type { validatePolicy } from '../approvals/index.js';
+import type { RuntimeOidc } from '../credentials/index.js';
+import type { McpServerSpec } from '../mcp/index.js';
 import type { EffectivePolicy } from '../policy/index.js';
 import type {
   ConfigLayer,
   KubicConfig,
   VERIFY_COMMAND_KEYS,
 } from './config.js';
+import type { RuntimeHeadlessApprovals } from './headless-approvals.js';
+import type { AdminHook } from './hooks-config.js';
+import type { ManagedReport } from './managed.js';
+import type { ProjectRestriction } from './project-restriction.js';
+import type { RuntimeSandbox } from './sandbox-config.js';
+import type { SpendCaps } from './spend-caps.js';
 
 // Where an effective value came from: one of the six config layers, the
 // documented environment overrides, the explicit CLI flag, or the product's
@@ -44,7 +52,7 @@ export interface ModelPinOverride {
   pinned: string;
 }
 
-export interface RuntimeApprovals {
+export interface RuntimeApprovals extends RuntimeHeadlessApprovals {
   policy: ReturnType<typeof validatePolicy>;
   source: ConfigValueSource;
 }
@@ -125,6 +133,9 @@ export interface RuntimeConfigInputs {
   projectRoot?: string;
   enterprisePath?: string;
   productPath?: string;
+  // The directories the managed files are searched in (tests). Absent: the
+  // platform's managed path, then /etc/kubic.
+  managedDirs?: readonly string[];
   env?: Record<string, string | undefined>;
   // Trust gate for the project layer. An explicit true is the
   // caller's accepted trust prompt; KUBIC_TRUST_PROJECT=1 also opts in.
@@ -182,6 +193,26 @@ export interface RuntimeConfig {
   verify: RuntimeVerify;
   run: RuntimeRun;
   projectTrusted: boolean;
+  // `[policy] project_policy = "restricted"` from a layer above the project.
+  projectRestriction?: ProjectRestriction;
+  // Where the managed (enterprise) config came from, when there is one.
+  managed?: ManagedReport;
+  // `[policy] max_run_cost_usd` / `max_daily_cost_usd`: the lowest of each
+  // any layer sets.
+  spend: SpendCaps;
+  // `[[hooks]]` of the enterprise, product and global layers, in order.
+  hooks: AdminHook[];
+  // `[providers.<id>] region` from the enterprise and product layers.
+  providerRegions: Record<string, string>;
+  // `[model] fallback`: the models tried, in order, when the selected one is
+  // unavailable. Absent: none.
+  modelFallback?: string[];
+  // `[oidc]`: the job's OIDC token as a cloud credential. Absent: none.
+  oidc?: RuntimeOidc;
+  // `[mcp.<name>]`: the MCP servers the organization allowlists.
+  mcp: McpServerSpec[];
+  // `[sandbox]`: the bash tool's OS sandbox.
+  sandbox: RuntimeSandbox;
   overriddenAttempts: string[];
   // The cli/env model pins a frozen enterprise `[model]` overrode (also named
   // in `overriddenAttempts`); empty when nothing was overridden — the same pin

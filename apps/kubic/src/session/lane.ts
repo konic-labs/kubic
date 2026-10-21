@@ -8,26 +8,31 @@ import { resolveStreamOptions } from '@kubic/agent/stream-options';
 import type { ExecutionEnv } from '@kubic/exec/env';
 import type { RuntimeThinking } from '@kubic/host/config';
 import {
+  dataProtectionOf,
   hasModelPolicy,
   hasToolPolicy,
   isModelAllowed,
   isToolAllowedByEnterprise,
 } from '@kubic/host/policy';
 import { resolveRoleThinking } from '../config/model-selection.js';
+import { toolHooksFor } from './admin-hooks.js';
 import type { BootRefusal, SessionBoot } from './bootstrap.js';
+import { mcpExternalTools } from './mcp.js';
 
 // The lane's appended prompt sections: the `[agent] systemPromptFile` text
-// first (the user's own instructions), the skills block second (discovered
-// context). Undefined when neither is set, so the lane assembles its prompt
-// unchanged — the cache-stable prefix is never rewritten by an empty
-// composition.
+// first (the user's own instructions), the project's AGENTS.md files second,
+// the skills block last (discovered context). Undefined when none is set, so
+// the lane assembles its prompt unchanged — the cache-stable prefix is never
+// rewritten by an empty composition.
 /** @internal */
 export function composePromptSections(
   systemPromptSection: string | undefined,
+  instructionsBlock: string | undefined,
   skillsBlock: string | undefined,
 ): string[] | undefined {
   const sections = [
     ...(systemPromptSection === undefined ? [] : [systemPromptSection]),
+    ...(instructionsBlock === undefined ? [] : [instructionsBlock]),
     ...(skillsBlock === undefined ? [] : [skillsBlock]),
   ];
   return sections.length === 0 ? undefined : sections;
@@ -57,6 +62,38 @@ function laneThinking(
   };
 }
 
+// The enterprise gates the lane installs: the tool gate drives the active
+// tool set and the prompt's tools line; the model gate checks the stored
+// model of a resumed session (the selection was checked at the catalog
+// step), under `[policy]` and `allowed_regions` alike.
+function laneGates(boot: SessionBoot): {
+  toolGate?: (tool: string) => boolean;
+  modelGate?: (provider: string, modelId: string) => boolean;
+} {
+  const policy = boot.config.modelPolicy;
+  const policyGate =
+    policy !== undefined && hasModelPolicy(policy)
+      ? (provider: string, modelId: string): boolean =>
+          isModelAllowed(policy, provider, modelId)
+      : undefined;
+  const regionGate = boot.regionGate;
+  return {
+    ...(policy !== undefined && hasToolPolicy(policy)
+      ? {
+          toolGate: (tool: string): boolean =>
+            isToolAllowedByEnterprise(policy, tool),
+        }
+      : {}),
+    ...(policyGate === undefined && regionGate === undefined
+      ? {}
+      : {
+          modelGate: (provider: string, modelId: string): boolean =>
+            (policyGate?.(provider, modelId) ?? true) &&
+            regionGate?.(provider) === undefined,
+        }),
+  };
+}
+
 export async function bootSessionLane(
   boot: SessionBoot,
   env: ExecutionEnv,
@@ -72,17 +109,7 @@ export async function bootSessionLane(
   }
   const role = boot.role;
   const policy = config.modelPolicy;
-  const toolGate =
-    policy !== undefined && hasToolPolicy(policy)
-      ? (tool: string): boolean => isToolAllowedByEnterprise(policy, tool)
-      : undefined;
-  // The stored model of a resumed session is gated too: the selection is
-  // checked above, the stored one only by this closure.
-  const modelGate =
-    policy !== undefined && hasModelPolicy(policy)
-      ? (provider: string, modelId: string): boolean =>
-          isModelAllowed(policy, provider, modelId)
-      : undefined;
+  const { toolGate, modelGate } = laneGates(boot);
   // Request options: the merged `[model]` tuning with the role layered
   // over it becomes this lane's `settings.stream`.
   const stream = resolveStreamOptions(
@@ -99,9 +126,16 @@ export async function bootSessionLane(
   );
   const sections = composePromptSections(
     config.systemPromptSection,
+    boot.instructions?.block,
     skills?.block,
   );
   const contributions = [...installed.contributions];
+  const toolHooks = toolHooksFor(config.hooks, {
+    sessionId: boot.id,
+    workspace: env.cwd,
+    model: `${model.provider}/${model.id}`,
+    onAuditError: sinks.warn,
+  });
   try {
     boot.lane = await bootLane({
       session,
@@ -126,6 +160,10 @@ export async function bootSessionLane(
         ? {}
         : { currentTurn: request.currentTurn }),
       ...(sections === undefined ? {} : { promptSections: sections }),
+      // The allowlisted MCP servers' tools, each call audited.
+      ...(boot.mcp.length === 0
+        ? {}
+        : { externalTools: mcpExternalTools(boot, env.cwd) }),
       // The advertised skills outside the cwd stay readable.
       ...(skills === undefined || skills.readRoots.length === 0
         ? {}
@@ -154,7 +192,21 @@ export async function bootSessionLane(
       // spans after policy (a blocked call never opens one).
       policy: {
         classes: installed.classes,
-        interceptors: installed.interceptors,
+        interceptors: {
+          ...installed.interceptors,
+          // `data_policy = "redact-model"`: tool output is scanned before
+          // the model reads it, and each redaction is named.
+          ...(dataProtectionOf(policy) === 'redact-model'
+            ? {
+                redactToolOutput: (tool: string, found: number) =>
+                  sinks.dlpNotice?.(
+                    `data policy: ${found} secret value(s) redacted from the ${tool} tool's output before the model read it`,
+                  ),
+              }
+            : {}),
+          // The `[[hooks]]` around each call.
+          ...(toolHooks === undefined ? {} : { toolHooks }),
+        },
         ...(contributions.length === 0 ? {} : { contributions }),
         ...(request.spanHooks === undefined
           ? {}

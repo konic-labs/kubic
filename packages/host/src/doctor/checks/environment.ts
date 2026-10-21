@@ -35,18 +35,32 @@ export function licenseCheck(): DoctorCheck {
 }
 
 // The platform posture. Every approval detector reads POSIX shell, so the bash
-// tool runs on Linux and macOS and refuses to run on Windows, where cmd would
-// run with no detector coverage.
-export function platformCheck(platform: string): DoctorCheck {
+// tool runs bash on Linux and macOS, and on Windows a POSIX bash (Git Bash,
+// else WSL) — refusing when there is none, since cmd would run with no
+// detector coverage.
+export function platformCheck(
+  platform: string,
+  // On Windows, the POSIX bash the tool runs through (`Git Bash`, `WSL`, a
+  // path); absent: none was found.
+  windowsBash?: string,
+): DoctorCheck {
   if (platform === 'win32') {
-    return {
-      id: 'platform:shell',
-      label: 'platform shell',
-      status: 'warn',
-      reason: 'unsupported-platform',
-      detail:
-        'Windows is not supported: the bash tool refuses to run, because the approval detectors read POSIX shell commands only',
-    };
+    return windowsBash === undefined
+      ? {
+          id: 'platform:shell',
+          label: 'platform shell',
+          status: 'warn',
+          reason: 'unsupported-platform',
+          detail:
+            'Windows without a POSIX bash: the bash tool refuses to run, because the approval detectors read POSIX shell commands only — install Git for Windows (Git Bash) or WSL, or set KUBIC_BASH',
+        }
+      : {
+          id: 'platform:shell',
+          label: 'platform shell',
+          status: 'pass',
+          reason: 'ok',
+          detail: `win32: the bash tool runs through ${windowsBash}, and the approval detectors read POSIX shell commands`,
+        };
   }
   return {
     id: 'platform:shell',

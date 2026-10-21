@@ -16,6 +16,7 @@ name = "kubic"
 # additionally requires trust and containment in the project root; a missing
 # or unreadable file is a named ConfigError, never a silent skip.
 systemPromptFile = "SYSTEM.md"
+projectInstructions = true
 
 [model]
 provider = "local"
@@ -73,6 +74,36 @@ timeoutMs = 600000
 timeoutMs = 300000
 maxTurns = 50
 
+[telemetry]
+enabled = true
+endpoint = "http://localhost:4318"
+content = false
+
+[cost]
+team = "platform"
+
+[providers.azure-openai-responses]
+region = "westeurope"
+
+[sandbox]
+mode = "auto"
+writable = ["~/.npm", "~/.cache"]
+
+[mcp.github]
+command = "/opt/mcp/github-mcp-server"
+args = ["stdio"]
+version = "0.9.1"
+tools = ["get_issue", "list_pull_requests", "create_issue"]
+approve = ["create_issue"]
+env = ["GITHUB_TOKEN"]
+
+[tls]
+systemCa = true
+
+[managed]
+url = "https://policy.example.com/kubic/config.toml"
+refreshHours = 24
+
 [policy]
 allowed_models = ["local/*"]
 allowed_providers = ["local"]
@@ -81,8 +112,17 @@ denied_tools = []
 network_policy = "proxy"
 allowed_domains = ["registry.npmjs.org", "github.com"]
 filesystem_policy = "workspace-only"
-data_policy = "no-external-training"
+data_policy = "redact"
 logging_policy = "full-audit"
+max_run_cost_usd = 5
+max_daily_cost_usd = 50
+project_policy = "restricted"
+
+[[hooks]]
+event = "beforeTool"
+command = "/opt/acme/kubic-check"
+tools = ["bash", "write", "edit"]
+timeoutMs = 5000
 
 [[audit]]
 sink = "syslog"

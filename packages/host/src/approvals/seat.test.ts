@@ -121,7 +121,7 @@ describe('installed policy answer seat', () => {
 
   it('says why a headless run cannot ask, and how to get an answer', () => {
     expect(NO_ANSWER_SURFACE_REASON).toBe(
-      'approval required, but no approval surface is installed on this command: kubic run has no ask prompt, so the call is refused; answer approvals in kubic tui, or change the approval route or policy',
+      'approval required, but no approval surface is installed on this command: kubic run has no ask prompt, so the call is refused; answer approvals in kubic tui, configure an approval broker or a pre-approval file, or change the approval route or policy',
     );
   });
 });

@@ -38,12 +38,14 @@ export function declaredDependencies(manifest) {
 
 // esbuild plugin: `@kubic/*` is resolved and bundled; Node builtins and
 // declared third-party packages are external; any other bare specifier fails
-// the build, naming the import.
+// the build, naming the import. The entry point is a path, never a package,
+// even where the filter matches it (a Windows drive path, `D:\…`).
 export function thirdPartyExternals(declared) {
   return {
     name: 'third-party-externals',
     setup(esbuildBuild) {
       esbuildBuild.onResolve({ filter: /^[^./]/ }, (args) => {
+        if (args.kind === 'entry-point') return undefined;
         if (args.path.startsWith('@kubic/')) return undefined;
         if (isBuiltin(args.path)) return { path: args.path, external: true };
         if (declared.has(packageNameOf(args.path))) {

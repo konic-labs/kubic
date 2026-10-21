@@ -97,9 +97,10 @@ isolation, no containment — approvals plus the journal are the controls.
 | [The terminal UI](tui.md) | `kubic tui` ([keys](tui-keys.md), [approvals](approvals.md)) |
 | [Sessions](sessions.md) | `kubic sessions` |
 | [Reviewing and reverting changes](journal.md) | `kubic diff`, `undo`, `log`, `status`, `git`, `commit`, `journal prune` |
-| [Models and providers](models.md) | `kubic models`, `kubic setup` |
+| [Models and providers](models.md) | `kubic models`, `kubic setup`, `kubic keys` |
 | [Configuration](configuration.md) | `kubic config` |
 | [Project trust](trust.md) | `kubic trust` |
 | [Doctor and debug](doctor-and-debug.md) | `kubic doctor` |
+| [The GitHub Action](github-action.md) | `uses: konic-labs/kubic@…` in a workflow |
 | [Skills](skills.md) | `kubic skills` |
 | [Analysis](analysis.md) | `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy`, `audit` |

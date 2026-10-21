@@ -135,6 +135,10 @@ same context the headless one does:
   Relative paths resolve against the invoking cwd, and an
   unresolvable value is a `warning:` line in the transcript: the screen owns
   stderr.
+- **Project instructions:** the trusted `AGENTS.md` files from the
+  repository root down to the cwd reach the prompt exactly as on `run`; a
+  file that is cut or left out is named in the boot notices (see
+  [Project instructions](configuration.md#project-instructions-agentsmd)).
 - **Roles:** `--role <name>` loads `.kubic/roles/<name>.md` — else `~/.kubic/roles/<name>.md` — or the
   matching preset embedded in the binary when neither has such a
   document (the five presets ship with `kubic`, and a repo document of the same name replaces its preset) — the document's prompt text replaces the built-in

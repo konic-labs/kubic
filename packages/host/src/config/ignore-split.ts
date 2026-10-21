@@ -2,8 +2,27 @@
 // must be ignored, by .gitignore or by git itself, and `.kubic/` must not.
 
 import type { FileBridge } from '@kubic/exec/file-bridge';
+import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
 import { safeExists, safeReadTextFile } from './bridge-reads.js';
-import { checkGitignoreSplit } from './config.js';
+
+// The rule set is owned by the module that writes it:
+// @kubic/exec `runtime-exclude.ts` is what `kubic run` ships into a user
+// repo, so this list is a projection of
+// that module — never a second hand-maintained copy. `config.test.ts`
+// pins the two together, so a rule added there cannot go unchecked here.
+/** @internal */
+export const GITIGNORE_REQUIRED_ENTRIES = [...RUNTIME_EXCLUDE_ENTRIES] as const;
+
+/** @internal */
+export function checkGitignoreSplit(gitignoreText: string): {
+  missing: string[];
+} {
+  return {
+    missing: GITIGNORE_REQUIRED_ENTRIES.filter(
+      (entry) => !gitignoreText.includes(entry),
+    ),
+  };
+}
 
 export function checkWorkspaceIgnoreSplit(
   bridge: Pick<FileBridge, 'exists' | 'readTextFile'>,

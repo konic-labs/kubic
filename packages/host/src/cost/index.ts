@@ -10,3 +10,4 @@ export {
   /** @internal */ summarizeSessionCost,
   /** @internal */ toCostJson,
 } from './session-cost.js';
+export { SpendWatch, spentToday } from './spend.js';

@@ -65,6 +65,7 @@ export function runResult(
     case 'interrupted':
     case 'timeout':
     case 'turn-limit':
+    case 'spend-limit':
       return guardResult(id, stop);
     case 'aborted': {
       const message =
@@ -188,6 +189,8 @@ function guardResult(id: string, stop: GuardStop): HeadlessRunResult {
       return finished(id, 'timeout', message, message);
     case 'turn-limit':
       return finished(id, 'turn_limit', message, message);
+    case 'spend-limit':
+      return finished(id, 'spend_limit', message, message);
   }
 }
 

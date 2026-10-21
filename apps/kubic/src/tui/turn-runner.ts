@@ -18,6 +18,7 @@ import type { DebugSink, TurnSpansSink } from '@kubic/host/run';
 import type { StatusUsageRow } from '@kubic/tui/status-bar';
 import type { TuiApp } from '@kubic/tui/tui-app';
 import { TuiTranscriptFeed } from './transcript-feed.js';
+import { TurnTally } from './turn-tally.js';
 import type {
   TuiLaneLoop,
   TuiModelChoice,
@@ -83,6 +84,8 @@ export class TuiTurnRunner {
   // The live thinking level (the `pi.agent` document). Read once
   // from the lane, then kept by every switch — the status bar and the
   // `/thinking` report read the same value.
+  // The settling turn's own spend and tool errors, for the telemetry export.
+  private readonly tally = new TurnTally();
   private thinking: ModelThinkingLevel | undefined;
 
   constructor(
@@ -233,6 +236,7 @@ export class TuiTurnRunner {
     // already consumed — and then no further event would clear it.
     this.onLaneEvent?.(event);
     this.feed.apply(event);
+    this.tally.observe(event);
     if (event.type === 'run-start') {
       // The run is placed: a latched Ctrl-C may now abort it for real, and a
       // submission the harness queued earlier (a follow-up waiting behind a
@@ -255,14 +259,17 @@ export class TuiTurnRunner {
   };
 
   // The turn settled — flush its artifact (run span plus
-  // its tool spans). Telemetry never fails a turn.
+  // its tool spans) with its tally. Telemetry never fails a turn.
   private flushSpans(inputs: readonly SubmissionId[]): void {
     const spans = this.spans;
     if (spans === undefined) return;
-    const artifact = spans.turns.endRun(turnKey(inputs));
-    if (artifact === undefined) return;
+    const closed = spans.turns.endRun(turnKey(inputs));
+    if (closed === undefined) return;
     try {
-      spans.write(artifact);
+      spans.write(closed.artifact, {
+        spans: closed.spans,
+        ...this.tally.settled(),
+      });
     } catch {
       // A failed artifact write is not a turn failure.
     }

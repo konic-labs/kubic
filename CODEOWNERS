@@ -1,5 +1,4 @@
-# CODEOWNERS — Kubic
-#
-# The Pi boundary choke point needs a human on every change: any Pi-internal
-# touch must stay visible and review-gated.
-/packages/agent/src/pi-boundary.ts @egesabanci
+# Every change needs a maintainer's review. The workflows, the release
+# scripts, bin/ and the Pi boundary matter most: they decide what runs in CI,
+# what reaches npm, and what Kubic takes from the agent harness.
+* @egesabanci

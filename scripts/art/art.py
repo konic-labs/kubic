@@ -110,7 +110,7 @@ MOTION_CSS = (
     '.rise{animation:rise .8s cubic-bezier(.22,.61,.36,1) backwards}'
     '@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}'
     '.dg{animation-timing-function:linear;animation-iteration-count:infinite}'
-    '.tw{animation:tw 2.6s ease-in-out infinite}'
+    '.tw{animation:tw 1.6s ease-in-out infinite}'
     '@keyframes tw{0%,100%{opacity:1}50%{opacity:.2}}'
 )
 # Last in the sheet and one step more specific than the rules it stops.
@@ -371,7 +371,7 @@ def banner(theme, wordmark, type_):
     on the left; the dither field washing in from the right."""
     t = THEMES[theme]
     width, height = 1280, 400
-    field, field_css = dither((0, 0, width, height), 'right', 0.3, 0.1, 7.0,
+    field, field_css = dither((0, 0, width, height), 'right', 0.3, 0.1, 3.5,
                               {'accent': (RED, 1), 'quiet': t['dot']}, spread=0.22, keep_out=690)
     eyebrow, _ = type_.label(EYEBROW, 80, 102, 18, t['muted'], cls='rise', delay=0.1)
     tagline, _ = type_.words(TAGLINE, 80, 334, 34, t['fg'], cls='rise', delay=1.0)
@@ -410,7 +410,7 @@ def footer(theme, type_):
     """1280 x 200: the dither field rising under the Konic mark."""
     t = THEMES[theme]
     width, height = 1280, 200
-    field, field_css = dither((0, 0, width, height), 'bottom', 0.42, 0.16, 8.0,
+    field, field_css = dither((0, 0, width, height), 'bottom', 0.42, 0.16, 4.0,
                               {'accent': (RED, 1), 'quiet': t['dot']}, bands=40)
     signature, label_width = type_.label(SIGNATURE, width / 2 + 15, 74, 18, t['fg'], anchor='middle')
     mark = draw_mark(width / 2 - label_width / 2 - 15, 58, 20, RED)

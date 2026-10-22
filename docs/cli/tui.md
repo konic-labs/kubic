@@ -381,7 +381,7 @@ draft kept, and `//text` sends a prompt that starts with a slash.
 | `/escalate <provider/id> [reason]` | Climb the escalation ladder one rung, with a reason. |
 | `/compact [instructions]` | Compact the context now (see [compaction](#compaction)). |
 | `/session` | The session's id, workspace, model, thinking level, tokens and cost. |
-| `/safety` | Print the honest limits in full. |
+| `/safety` | Print what a session does and does not protect. |
 | `/diff` | Open the diff panel, like `Ctrl+O`. |
 | `/undo` | Put back the session journal's changes (see [undo](#undo)). |
 | `/new` | Start a fresh session without leaving the screen. |
@@ -395,7 +395,7 @@ draft kept, and `//text` sends a prompt that starts with a slash.
 | `/quit` | Leave the TUI, like `Ctrl+D` on an empty draft. |
 
 `/session`, `/safety` and `/help` are answered locally: nothing reaches the
-model. `/safety` prints the honest limits verbatim (the session runs in-process
+model. `/safety` prints what the session does and does not protect, verbatim (it runs in-process
 with your authority over files, network and credentials, with no containment
 and no prompt-injection prevention, and the controls are approvals and the
 journal), even where the startup notice is suppressed (`KUBIC_NO_NOTICE=1`),

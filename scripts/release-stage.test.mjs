@@ -95,16 +95,16 @@ describe('npmReadme', () => {
   };
   const CDN = 'https://cdn.jsdelivr.net/npm/kubic@1.2.3';
 
-  it('shows each picture as its PNG, from the package at this version', () => {
+  it('loads each image from the package at this version, and ships it', () => {
     const { readme, images } = npmReadme(
-      '<picture>\n  <source media="(prefers-color-scheme: dark)" srcset="docs/a-dark.svg" type="image/svg+xml">\n  <img src="docs/a.png" width="100%" alt="A">\n</picture>\n\n<td><picture><source srcset="docs/i.svg"><img src="docs/i.png" alt=""></picture><br></td>\n',
+      '<img src="docs/a.svg" width="100%" alt="A">\n\n<td><img src="docs/i.svg" alt=""><br></td>\n![B](docs/b.svg) ![C](https://example.com/c.svg)\n',
       manifest,
     );
     assert.equal(
       readme,
-      `<img src="${CDN}/docs/a.png" width="100%" alt="A">\n\n<td><img src="${CDN}/docs/i.png" alt=""><br></td>\n`,
+      `<img src="${CDN}/docs/a.svg" width="100%" alt="A">\n\n<td><img src="${CDN}/docs/i.svg" alt=""><br></td>\n![B](${CDN}/docs/b.svg) ![C](https://example.com/c.svg)\n`,
     );
-    assert.deepEqual(images, ['docs/a.png', 'docs/i.png']);
+    assert.deepEqual(images, ['docs/a.svg', 'docs/i.svg', 'docs/b.svg']);
   });
 
   it('points relative links at the repository and keeps the rest', () => {

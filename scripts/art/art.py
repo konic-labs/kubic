@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """art: the README's brand art, as SVG files.
 
-Konic's brand, drawn for the README: a black field (white under GitHub's
-light theme), one red accent, the website's Bayer dither field and the TUI's
+Konic's brand, drawn for the README: a black field (white when the reader's
+system is in light mode), one red accent, the website's Bayer dither field and the TUI's
 own half-block wordmark, read from packages/tui/src/preflight.ts so the two
 never drift apart. Every file stands alone: the type is outlined into paths,
 so no font, script or outside reference is inside, and the motion stops for a
 reader who asks for reduced motion.
 
-  banner-dark.svg, banner-light.svg   the top of the README
-  facts-dark.svg, facts-light.svg     the strip of facts under the title
-  footer-dark.svg, footer-light.svg   the closing band
-  icon-NAME.svg                       the feature grid's 12-pixel icons
+  banner.svg      the top of the README
+  facts.svg       the strip of facts under the title
+  footer.svg      the closing band
+  icon-NAME.svg   the feature grid's 12-pixel icons
 
-Each light-theme file and each icon has a PNG twin beside it, drawn by
-raster.py, for a viewer that shows a <picture>'s <img> and no SVG, such as
-GitHub's mobile apps.
+The banner, the facts and the band each carry both fields and switch between
+them inside the file, on the reader's system theme (prefers-color-scheme):
+a <picture> could switch on GitHub's theme instead, but GitHub's mobile apps
+leave a <picture> out, image and all.
 
 Usage: art.py [--out DIR] [--fonts DIR]
 
 The type is Inter Tight and Space Mono (SIL Open Font License 1.1), fetched
 once from the Google Fonts repository at a pinned commit, checked against its
 SHA-256 and kept in .cache/art-fonts/ in the checkout; --fonts names a
-directory that already holds both files. Outlining the type needs fontTools,
-and drawing the PNGs needs Pillow too (python3 -m pip install fonttools
-Pillow).
+directory that already holds both files. Outlining the type needs fontTools
+(python3 -m pip install fonttools).
 """
 
 import argparse
@@ -34,8 +34,6 @@ import os
 import re
 import sys
 import urllib.request
-
-import raster
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 PREFLIGHT = os.path.join(REPO, 'packages', 'tui', 'src', 'preflight.ts')
@@ -63,6 +61,19 @@ THEMES = {
     'light': {'bg': '#ffffff', 'fg': '#050505', 'muted': '#737373',
               'rule': '#e8e8e8', 'dot': ('#050505', 0.2)},
 }
+
+
+def theme_rules(t):
+    """A theme's colours as class rules: the field, the type, the hairlines
+    and the dither's quiet dots."""
+    colour, opacity = t['dot']
+    return (f'.bg{{fill:{t["bg"]}}}.fg{{fill:{t["fg"]}}}.muted{{fill:{t["muted"]}}}'
+            f'.rule{{stroke:{t["rule"]}}}.quiet{{stroke:{colour};stroke-opacity:{opacity}}}')
+
+
+# The dark field by default, the light one when the reader's system asks.
+THEME_CSS = (theme_rules(THEMES['dark'])
+             + f'@media (prefers-color-scheme:light){{{theme_rules(THEMES["light"])}}}')
 
 EYEBROW = 'Agentic coding, in your control'
 TAGLINE = 'Built for teams and enterprise'
@@ -172,9 +183,11 @@ def draw_wordmark(pixels, x, y, size, fill, delay=0.0):
     return ''.join(out)
 
 
-def draw_mark(x, y, size, fill):
+def draw_mark(x, y, size, fill=None, tone=None):
+    """The Konic mark in FILL, or in the theme's TONE (a colour class)."""
+    paint = f'fill="{fill}"' if fill else f'class="{tone}"'
     return (f'<path transform="translate({num(x)} {num(y)}) scale({size / 512:.5f})" '
-            f'fill="{fill}" d="{MARK}"/>')
+            f'{paint} d="{MARK}"/>')
 
 
 # --- the dither field --------------------------------------------------------
@@ -220,7 +233,9 @@ def dither(box, origin, coverage, swing, period, colours, cell=16, dot=6,
     period. A dot whose threshold sits inside the swing is lit for one arc of
     its band's cycle; dots that share a band and an arc share one animated
     path, so the field costs a few hundred elements, not one per dot. Dots
-    left of KEEP_OUT (an x) are never drawn. Returns (svg, css).
+    left of KEEP_OUT (an x) are never drawn. COLOURS gives each kind of dot
+    its (colour, opacity), or None for a class styled elsewhere. Returns
+    (svg, css).
     """
     x0, y0, w, h = box
     cols, rows = int(w // cell), int(h // cell)
@@ -260,9 +275,11 @@ def dither(box, origin, coverage, swing, period, colours, cell=16, dot=6,
         css.append(f'.b{band}{{animation-duration:{length:.2f}s;'
                    f'animation-delay:{(peak - length / 2) % length - length:.2f}s}}')
     paths = []
-    for key, (colour, opacity) in colours.items():
-        css.append(f'.{key}{{stroke:{colour}'
-                   f'{"" if opacity >= 1 else f";stroke-opacity:{opacity}"}}}')
+    for key, style in colours.items():
+        if style is not None:
+            colour, opacity = style
+            css.append(f'.{key}{{stroke:{colour}'
+                       f'{"" if opacity >= 1 else f";stroke-opacity:{opacity}"}}}')
         if lit[key]:
             paths.append(f'<path class="{key}" d="{stroke_dots(lit[key], dot)}"/>')
         if twinkle[key]:
@@ -347,24 +364,26 @@ class Type:
             glyphs[glyph].draw(transform_pen(pen, (scale, 0, 0, -scale, x + offset, y)))
         return pen.getCommands(), width
 
-    def label(self, text, x, y, size, fill, anchor='start', cls=None, delay=None,
+    def label(self, text, x, y, size, tone, anchor='start', cls=None, delay=None,
               capitals=True):
         """Space Mono, tracked out and in capitals unless CAPITALS is false:
-        Konic's small labels."""
+        Konic's small labels, in the theme's TONE (a colour class)."""
         d, width = self.path(text.upper() if capitals else text, LABEL, size, x, y,
                              tracking=0.1, anchor=anchor)
-        return f'<path{motion(cls, delay)} fill="{fill}" d="{d}"/>', width
+        return f'<path{styled(tone, cls, delay)} d="{d}"/>', width
 
-    def words(self, text, x, y, size, fill, weight=500, cls=None, delay=None):
+    def words(self, text, x, y, size, tone, weight=500, cls=None, delay=None):
         """Inter Tight, set a little tight: Konic's display type."""
         d, width = self.path(text, DISPLAY, size, x, y, tracking=-0.02, weight=weight)
-        return f'<path{motion(cls, delay)} fill="{fill}" d="{d}"/>', width
+        return f'<path{styled(tone, cls, delay)} d="{d}"/>', width
 
 
-def motion(cls, delay):
-    if cls is None:
-        return ''
-    return f' class="{cls}"' + ('' if delay is None else f' style="animation-delay:{delay:.2f}s"')
+def styled(tone, cls=None, delay=None):
+    """The class attribute (the colour class, then any motion class) and the
+    motion's delay."""
+    classes = ' '.join(c for c in (tone, cls) if c)
+    return (f' class="{classes}"'
+            + ('' if delay is None else f' style="animation-delay:{delay:.2f}s"'))
 
 
 # --- the files ---------------------------------------------------------------
@@ -376,57 +395,55 @@ def svg(width, height, title, desc, css, body):
             f'{f"<style>{css}</style>" if css else ""}{body}</svg>\n')
 
 
-def banner(theme, wordmark, type_):
+def banner(wordmark, type_):
     """1280 x 400: the eyebrow, the wordmark, the tagline and the signature
     on the left; the dither field washing in from the right."""
-    t = THEMES[theme]
     width, height = 1280, 400
     field, field_css = dither((0, 0, width, height), 'right', 0.3, 0.1, 3.5,
-                              {'accent': (RED, 1), 'quiet': t['dot']}, spread=0.22, keep_out=690)
-    eyebrow, _ = type_.label(EYEBROW, 80, 102, 18, t['muted'], cls='rise', delay=0.1)
-    tagline, _ = type_.words(TAGLINE, 80, 334, 34, t['fg'], cls='rise', delay=1.0)
-    signature, _ = type_.label(SIGNATURE, 104, 372, 15, t['muted'], cls='rise', delay=1.2)
-    body = (f'<rect width="{width}" height="{height}" fill="{t["bg"]}"/>{field}{eyebrow}'
+                              {'accent': (RED, 1), 'quiet': None}, spread=0.22, keep_out=690)
+    eyebrow, _ = type_.label(EYEBROW, 80, 102, 18, 'muted', cls='rise', delay=0.1)
+    tagline, _ = type_.words(TAGLINE, 80, 334, 34, 'fg', cls='rise', delay=1.0)
+    signature, _ = type_.label(SIGNATURE, 104, 372, 15, 'muted', cls='rise', delay=1.2)
+    body = (f'<rect class="bg" width="{width}" height="{height}"/>{field}{eyebrow}'
             f'{draw_wordmark(wordmark, 80, 128, 34, RED)}{tagline}'
-            f'<g class="rise" style="animation-delay:1.2s">{draw_mark(80, 359, 15, t["muted"])}</g>'
-            f'{signature}<rect x=".5" y=".5" width="{width - 1}" height="{height - 1}" '
-            f'fill="none" stroke="{t["rule"]}"/>')
+            f'<g class="rise" style="animation-delay:1.2s">{draw_mark(80, 359, 15, tone="muted")}</g>'
+            f'{signature}<rect class="rule" x=".5" y=".5" width="{width - 1}" '
+            f'height="{height - 1}" fill="none"/>')
     return svg(width, height, 'Kubic',
                f'The Kubic wordmark in Konic red, between the lines "{EYEBROW}" and '
                f'"{TAGLINE}", beside a red dither field.',
-               MOTION_CSS + field_css + REDUCED_MOTION, body)
+               MOTION_CSS + THEME_CSS + field_css + REDUCED_MOTION, body)
 
 
-def facts(theme, type_):
+def facts(type_):
     """1280 x 64: the facts in a row of hairline cells."""
-    t = THEMES[theme]
     width, height = 1280, 64
     cell = width / len(FACTS)
-    parts = [f'<rect width="{width}" height="{height}" fill="{t["bg"]}"/>']
+    parts = [f'<rect class="bg" width="{width}" height="{height}"/>']
     for i, fact in enumerate(FACTS):
         x = i * cell
         if i:
-            parts.append(f'<path d="M{num(x)} 0V{height}" stroke="{t["rule"]}"/>')
+            parts.append(f'<path class="rule" d="M{num(x)} 0V{height}"/>')
         parts.append(f'<rect x="{num(x + 28)}" y="{height // 2 - 5}" width="10" height="10" fill="{RED}"/>')
-        text, _ = type_.label(fact, x + 50, height / 2 + 6, 17, t['fg'],
+        text, _ = type_.label(fact, x + 50, height / 2 + 6, 17, 'fg',
                               capitals=fact not in FACTS_TYPED)
         parts.append(text)
-    parts.append(f'<rect x=".5" y=".5" width="{width - 1}" height="{height - 1}" '
-                 f'fill="none" stroke="{t["rule"]}"/>')
-    return svg(width, height, 'Kubic at a glance', '. '.join(FACTS) + '.', '', ''.join(parts))
+    parts.append(f'<rect class="rule" x=".5" y=".5" width="{width - 1}" '
+                 f'height="{height - 1}" fill="none"/>')
+    return svg(width, height, 'Kubic at a glance', '. '.join(FACTS) + '.', THEME_CSS,
+               ''.join(parts))
 
 
-def footer(theme, type_):
+def footer(type_):
     """1280 x 200: the dither field rising under the Konic mark."""
-    t = THEMES[theme]
     width, height = 1280, 200
     field, field_css = dither((0, 0, width, height), 'bottom', 0.42, 0.16, 4.0,
-                              {'accent': (RED, 1), 'quiet': t['dot']}, bands=40)
-    signature, label_width = type_.label(SIGNATURE, width / 2 + 15, 74, 18, t['fg'], anchor='middle')
-    mark = draw_mark(width / 2 - label_width / 2 - 15, 58, 20, RED)
-    body = f'<rect width="{width}" height="{height}" fill="{t["bg"]}"/>{field}{mark}{signature}'
+                              {'accent': (RED, 1), 'quiet': None}, bands=40)
+    signature, label_width = type_.label(SIGNATURE, width / 2 + 15, 74, 18, 'fg', anchor='middle')
+    mark = draw_mark(width / 2 - label_width / 2 - 15, 58, 20, fill=RED)
+    body = f'<rect class="bg" width="{width}" height="{height}"/>{field}{mark}{signature}'
     return svg(width, height, 'Konic', 'The Konic mark over a red dither field rising from the bottom edge.',
-               MOTION_CSS + field_css + REDUCED_MOTION, body)
+               MOTION_CSS + THEME_CSS + field_css + REDUCED_MOTION, body)
 
 
 def icon(name):
@@ -439,27 +456,16 @@ def icon(name):
             f'<path fill="{RED}" d="{d}"/></svg>\n')
 
 
-def png_scale(name):
-    """How many times its size a file's PNG twin is drawn, or None for no
-    twin: a <picture>'s <img> shows the light theme's art, at twice its size
-    for sharp type, and an icon at its own."""
-    if name.startswith('icon-'):
-        return 1
-    if name.endswith('-light.svg'):
-        return 2
-    return None
-
-
 def write_all(out_dir, fonts_dir=None):
-    """Draw every file and its PNG twin into OUT_DIR; return their paths."""
+    """Draw every file into OUT_DIR; return their paths."""
     with open(PREFLIGHT, encoding='utf-8') as handle:
         wordmark = wordmark_pixels(wordmark_rows(handle.read()))
     type_ = Type(ensure_fonts(fonts_dir))
-    files = {}
-    for theme in THEMES:
-        files[f'banner-{theme}.svg'] = banner(theme, wordmark, type_)
-        files[f'facts-{theme}.svg'] = facts(theme, type_)
-        files[f'footer-{theme}.svg'] = footer(theme, type_)
+    files = {
+        'banner.svg': banner(wordmark, type_),
+        'facts.svg': facts(type_),
+        'footer.svg': footer(type_),
+    }
     for name in ICONS:
         files[f'icon-{name}.svg'] = icon(name)
     os.makedirs(out_dir, exist_ok=True)
@@ -469,18 +475,12 @@ def write_all(out_dir, fonts_dir=None):
         with open(path, 'w', encoding='utf-8') as handle:
             handle.write(content)
         written.append(path)
-        scale = png_scale(name)
-        if scale is not None:
-            png = f'{path[:-len(".svg")]}.png'
-            raster.write_png(content, png, scale)
-            written.append(png)
     return written
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog='art', description="Draw the README's brand art as SVG files "
-                                "and their PNG twins.")
+        prog='art', description="Draw the README's brand art as SVG files.")
     parser.add_argument('--out', default=DEFAULT_OUT,
                         help='where the files go (default: docs/assets/readme)')
     parser.add_argument('--fonts', help='a directory holding '
@@ -490,7 +490,7 @@ def main(argv=None):
     try:
         for path in write_all(args.out, args.fonts):
             print(f'{os.path.relpath(path, REPO)}: {os.path.getsize(path)} bytes')
-    except (ArtError, raster.RasterError) as error:
+    except ArtError as error:
         print(f'art: {error}', file=sys.stderr)
         return 1
     return 0

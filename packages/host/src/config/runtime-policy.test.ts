@@ -12,6 +12,7 @@ import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import {
   ensureRuntimeExcludeRules,
   gitSync,
+  RUNTIME_EXCLUDE_ENTRIES,
 } from '@kubic/exec/runtime-exclude';
 import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
 import {
@@ -325,6 +326,26 @@ describe('checkWorkspaceIgnoreSplit in linked worktrees', () => {
     expect(split.checked.some((path) => path.endsWith('info/exclude'))).toBe(
       true,
     );
+  });
+
+  it('reads a Windows drive path that git prints for the exclude', () => {
+    // Git for Windows prints a linked worktree's exclude as `C:/…`: it is
+    // absolute, so it must not be joined onto the cwd.
+    const exclude = 'C:/repo/.git/info/exclude';
+    const files = new Map([[exclude, RUNTIME_EXCLUDE_ENTRIES.join('\n')]]);
+    const split = checkWorkspaceIgnoreSplit(
+      {
+        exists: (path) => files.has(path),
+        readTextFile: (path) => files.get(path) ?? '',
+      },
+      'C:/wt',
+      (_cwd, args) =>
+        args[1] === '--show-toplevel'
+          ? { code: 0, out: 'C:/wt' }
+          : { code: 0, out: exclude },
+    );
+    expect(split.checked).toEqual([exclude]);
+    expect(split.missing).toEqual([]);
   });
 
   it('stays inapplicable outside any repository', () => {

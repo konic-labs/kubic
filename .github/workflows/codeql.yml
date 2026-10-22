@@ -10,9 +10,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: codeql-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
-    name: analyze (javascript-typescript)
+    name: analyze (${{ matrix.language }})
     # Code scanning needs a public repository (or Advanced Security): until
     # then the job is skipped.
     if: github.event.repository.private == false
@@ -20,10 +24,19 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      security-events: write
+      security-events: write # uploads the results
+    strategy:
+      fail-fast: false
+      matrix:
+        # The product, the workflows, and the Python docs tooling
+        # (scripts/kshot, scripts/art).
+        language: [javascript-typescript, actions, python]
     steps:
-      - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          languages: javascript-typescript
-      - uses: github/codeql-action/analyze@v3
+          persist-credentials: false
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3

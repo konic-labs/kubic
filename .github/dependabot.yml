@@ -1,7 +1,9 @@
 # Weekly update proposals for the pinned npm dependencies and for the actions
 # the workflows use. Updates keep the exact pins (`npm run check:pins`). The Pi
 # packages move as one group: they ship as a set, and a partial bump would
-# leave two copies of a package in the tree.
+# leave two copies of a package in the tree; vitest and its plugins likewise.
+# A version update waits 7 days after its release, so a hijacked release has
+# time to be caught first. Security updates are not delayed.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -10,10 +12,16 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     versioning-strategy: increase
+    cooldown:
+      default-days: 7
     groups:
       pi:
         patterns:
           - '@earendil-works/*'
+      vitest:
+        patterns:
+          - 'vitest'
+          - '@vitest/*'
     commit-message:
       prefix: build
       include: scope
@@ -23,6 +31,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: ci
       include: scope

@@ -1,0 +1,31 @@
+name: Dependency review
+
+# A pull request may not add or change a dependency, runtime or development,
+# that has a known high or critical advisory or a licence outside the list
+# below: the licences of today's dependency tree, all compatible with shipping
+# under MIT. Shipped dependencies are held to the permissive subset by
+# scripts/license.test.mjs. A workflow of its own, so the `push` twin of a
+# pull request's CI run can never cancel it.
+on: pull_request
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-review-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: dependency review
+    # The dependency graph's diff needs a public repository (or Advanced
+    # Security): until then the job is skipped.
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime, development, unknown
+          allow-licenses: MIT, ISC, Apache-2.0, BSD-2-Clause, BSD-3-Clause, 0BSD, Unlicense, MPL-2.0

@@ -33,7 +33,7 @@
     "lint:dead:prod": "knip --config knip.production.jsonc --production",
     "check:pins": "node scripts/check-pinned-deps.mjs",
     "check:gates": "node --test \"scripts/*.test.mjs\"",
-    "docs:check": "node scripts/check-docs-links.mjs && node scripts/gen-config-docs.mjs --check",
+    "docs:check": "node scripts/check-docs-links.mjs && node scripts/check-docs-content.mjs && node scripts/gen-config-docs.mjs --check",
     "docs:config": "node scripts/gen-config-docs.mjs",
     "docs:images": "node scripts/docs-images.mjs"
   },

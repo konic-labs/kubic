@@ -52,7 +52,8 @@ history: avoid "previously", "used to", "was removed", "after the pivot" and rev
 rounds. Keep tracker references out of code, comments, tests and docs: no issue
 numbers, no design-document section numbers, and no epic or wave names. When
 behaviour changes, document the new behaviour; the commit history already records
-the change.
+the change. The full guide (terms, key notation, tables, screenshots) is
+[docs style](docs/contributing.md#docs-style).
 
 ## Reporting bugs and asking for features
 

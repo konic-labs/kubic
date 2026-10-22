@@ -32,7 +32,7 @@ function mdFiles(dir, out = []) {
 
 // The markdown files a reader reaches: docs/, the root files and each
 // package's and app's own pages.
-function readerFiles(root) {
+export function readerFiles(root) {
   const files = mdFiles(join(root, 'docs'));
   for (const e of readdirSync(root)) {
     if (e.endsWith('.md') && !LOCAL_FILES.has(e)) files.push(join(root, e));

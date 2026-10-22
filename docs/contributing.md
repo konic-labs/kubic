@@ -298,12 +298,52 @@ footer.
 A behaviour change ships its docs page in the same commit, and
 `npm run docs:check` must pass. Configuration keys are declared once, in
 `packages/host/src/config/schema.ts`: the parser's checks, the runtime's
-effect rows, `example.toml` and the key tables in
+effect rows, `example.toml` and the key sections in
 [configuration.md](cli/configuration.md) all derive from it. After changing a
-key, run `npm run docs:config` to regenerate the docs and the example. The area map lives on the
-[docs index](README.md). The docs style rules (present tense, behaviour rather
-than history, no tracker references) are in
-[CONTRIBUTING.md](../CONTRIBUTING.md#docs-style).
+key, run `npm run docs:config` to regenerate the docs and the example. The
+area map lives on the [docs index](README.md).
+
+## Docs style
+
+The docs are for the person using Kubic, so they say what Kubic does and how
+to use it, plainly.
+
+- **Voice.** Present tense and active voice, in short sentences. Describe the
+  behaviour as it is now: no history ("previously", "used to", "was
+  removed"), and no tracker references (issue numbers, design sections, epic
+  or wave names).
+- **One home per fact.** A guide shows how to do something; a reference lists
+  every option. Link to the other page rather than repeat it:
+  [the TUI](cli/tui.md) is the guide and [TUI keys](cli/tui-keys.md) the
+  reference.
+- **Every page** opens with its title and one `>` line that says what it
+  covers, uses `##` for sections and `###` within them, and ends with
+  `## See also` links.
+- **Terms.** *Agent* is what does the work; a *session* is the durable
+  conversation it works in; a *branch* is one line of a session (`/tree`); a
+  *fork* copies a session into a new one; the *journal* records every change,
+  and *undo* restores from it. *Approvals off* is the posture in which
+  challenged calls run without asking; write *full access* only when quoting
+  the CLI. *Lane* is an internal word: it belongs on the package and
+  architecture pages, not in the user docs.
+- **Keys** are written `Ctrl+O`, `Alt+M`, `Shift+Enter`, `Esc`, `Enter` and
+  `Tab`. Quote the TUI's own hint text as it appears (`^O review diff`).
+- **Commands.** Examples write `kubic`; the [docs index](README.md) says once
+  that a source checkout runs `bin/kubic.js`. Show output where it helps, and
+  label sample output as an example.
+- **Tables or sections.** A table suits short, parallel facts: a flag and one
+  line. When a cell needs more than a sentence or two, keep a one-line summary
+  in the table and give the detail a section of its own. `npm run docs:check`
+  fails on a cell over 300 characters, and on a row cut off from its table.
+- **No volatile numbers.** Timings, check counts and sizes change from run to
+  run: leave them out, or mark the output they appear in as an example.
+- **Screenshots** go where a screen says more than the text. The TUI's come
+  from kshot scenarios and the brand art from `scripts/art/art.py`, all
+  remade by `npm run docs:images` (see [docs images](#docs-images)). Every
+  image has alt text that says what it shows (`alt=""` for a decorative one),
+  stays under 300 KB, and is used by some page; `npm run docs:check` checks all
+  three.
+- **Honest limits.** Kubic has no isolation: never imply otherwise.
 
 ## CI
 

@@ -67,9 +67,9 @@ THEMES = {
 EYEBROW = 'Agentic coding, in your control'
 TAGLINE = 'Built for teams and enterprise'
 SIGNATURE = 'Konic'
-FACTS = ('MIT license', 'Node 22.19+', 'Any model', 'Not on npm yet')
-# How many leading facts are stated plainly; the rest are muted.
-FACTS_PLAIN = 3
+FACTS = ('MIT license', 'Node 22.19+', 'Any model', 'npm i -g kubic')
+# The facts set as typed rather than in capitals: a command to copy.
+FACTS_TYPED = {'npm i -g kubic'}
 
 # The Konic mark: a disc split by a gap at 60 degrees, on a 512 grid.
 MARK = ('M169.748 476.331L403.686 71.138A16.384 16.384 0 0 1 428.944 67.25'
@@ -347,9 +347,12 @@ class Type:
             glyphs[glyph].draw(transform_pen(pen, (scale, 0, 0, -scale, x + offset, y)))
         return pen.getCommands(), width
 
-    def label(self, text, x, y, size, fill, anchor='start', cls=None, delay=None):
-        """Space Mono in capitals, tracked out: Konic's small labels."""
-        d, width = self.path(text.upper(), LABEL, size, x, y, tracking=0.1, anchor=anchor)
+    def label(self, text, x, y, size, fill, anchor='start', cls=None, delay=None,
+              capitals=True):
+        """Space Mono, tracked out and in capitals unless CAPITALS is false:
+        Konic's small labels."""
+        d, width = self.path(text.upper() if capitals else text, LABEL, size, x, y,
+                             tracking=0.1, anchor=anchor)
         return f'<path{motion(cls, delay)} fill="{fill}" d="{d}"/>', width
 
     def words(self, text, x, y, size, fill, weight=500, cls=None, delay=None):
@@ -405,8 +408,8 @@ def facts(theme, type_):
         if i:
             parts.append(f'<path d="M{num(x)} 0V{height}" stroke="{t["rule"]}"/>')
         parts.append(f'<rect x="{num(x + 28)}" y="{height // 2 - 5}" width="10" height="10" fill="{RED}"/>')
-        text, _ = type_.label(fact, x + 50, height / 2 + 6, 17,
-                              t['fg'] if i < FACTS_PLAIN else t['muted'])
+        text, _ = type_.label(fact, x + 50, height / 2 + 6, 17, t['fg'],
+                              capitals=fact not in FACTS_TYPED)
         parts.append(text)
     parts.append(f'<rect x=".5" y=".5" width="{width - 1}" height="{height - 1}" '
                  f'fill="none" stroke="{t["rule"]}"/>')

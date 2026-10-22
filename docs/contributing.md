@@ -8,12 +8,14 @@ code, docs, or CLI text.
 
 ## Getting set up
 
-Node >= 22.19 is the only requirement:
+Users install Kubic with `npm install -g kubic`; working on Kubic itself
+starts from a clone. Node >= 22.19 is the only requirement:
 
 ```sh
 npm ci
 npm run build                # esbuild bundle -> gitignored dist/kubic.js
 ./bin/kubic.js --version
+npm link                     # optional: `kubic` on your PATH runs this build
 ```
 
 Kubic runs on the Pi agent harness (`@earendil-works/*` **1.0.2**, exact
@@ -346,8 +348,8 @@ to use it, plainly.
   architecture pages, not in the user docs.
 - **Keys** are written `Ctrl+O`, `Alt+M`, `Shift+Enter`, `Esc`, `Enter` and
   `Tab`. Quote the TUI's own hint text as it appears (`^O review diff`).
-- **Commands.** Examples write `kubic`; the [docs index](README.md) says once
-  that a source checkout runs `bin/kubic.js`. Show output where it helps, and
+- **Commands.** Examples write `kubic`, the command an install puts on the
+  `PATH`; the [docs index](README.md) says so once. Show output where it helps, and
   label sample output as an example.
 - **Tables or sections.** A table suits short, parallel facts: a flag and one
   line. When a cell needs more than a sentence or two, keep a one-line summary

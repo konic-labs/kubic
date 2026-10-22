@@ -2,6 +2,17 @@
 
 > Which versions and platforms Kubic supports, and how fixes ship.
 
+## Installing and updating
+
+Kubic is the `kubic` package on npm:
+
+```sh
+npm install -g kubic          # install
+npm install -g kubic@latest   # update to the newest release
+```
+
+`kubic --version` names the installed version.
+
 ## Supported versions
 
 Kubic is pre-1.0: a minor release may change behaviour, and each change is
@@ -25,6 +36,9 @@ privately to the maintainers, never in a public issue.
 
 ## What a release carries
 
-Each release has its CycloneDX SBOM, SHA-256 checksums of its artifacts and
-an Ed25519 signature over them, and the npm package is published with
-provenance — see [release trust](release-trust.md).
+Every version on npm is signed by the registry, and a version published from
+CI also carries a provenance attestation naming its source commit and
+workflow; `npm audit signatures` checks both. The release tooling also writes
+each package's CycloneDX SBOM and the SHA-256 checksums of its artifacts,
+which it signs with an Ed25519 key when given one — see
+[release trust](release-trust.md).

@@ -1,16 +1,18 @@
 // Unit tests for the pure parts of scripts/release-stage.mjs: the generated
-// release manifest, the lockfile it is seeded with, and the checks on the
-// shrinkwrap, the packed tarball and the SBOM. Staging itself runs in CI's
+// release manifest and README, the lockfile it is seeded with, and the checks
+// on the shrinkwrap, the packed tarball and the SBOM. Staging itself runs in CI's
 // pack-contract job (`npm run release:stage`).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   dropPlatformEntries,
   finishSbom,
+  npmReadme,
   PACK_BUDGET_BYTES,
   packProblems,
   RELEASE_FILES,
   releaseManifest,
+  repositoryUrl,
   sbomFileName,
   sbomProblems,
   seedLockfile,
@@ -75,6 +77,77 @@ describe('releaseManifest', () => {
 
   it('lists the shrinkwrap among the published files', () => {
     assert.ok(RELEASE_FILES.includes('npm-shrinkwrap.json'));
+  });
+
+  it("publishes the README's images beside the release files", () => {
+    assert.deepEqual(releaseManifest(ROOT_MANIFEST, ['docs/a.png']).files, [
+      ...RELEASE_FILES,
+      'docs/a.png',
+    ]);
+  });
+});
+
+describe('npmReadme', () => {
+  const manifest = {
+    name: 'kubic',
+    version: '1.2.3',
+    repository: { type: 'git', url: 'git+https://github.com/acme/kubic.git' },
+  };
+  const CDN = 'https://cdn.jsdelivr.net/npm/kubic@1.2.3';
+
+  it('shows each picture as its PNG, from the package at this version', () => {
+    const { readme, images } = npmReadme(
+      '<picture>\n  <source media="(prefers-color-scheme: dark)" srcset="docs/a-dark.svg" type="image/svg+xml">\n  <img src="docs/a.png" width="100%" alt="A">\n</picture>\n\n<td><picture><source srcset="docs/i.svg"><img src="docs/i.png" alt=""></picture><br></td>\n',
+      manifest,
+    );
+    assert.equal(
+      readme,
+      `<img src="${CDN}/docs/a.png" width="100%" alt="A">\n\n<td><img src="${CDN}/docs/i.png" alt=""><br></td>\n`,
+    );
+    assert.deepEqual(images, ['docs/a.png', 'docs/i.png']);
+  });
+
+  it('points relative links at the repository and keeps the rest', () => {
+    const { readme } = npmReadme(
+      '[Start](docs/start.md), [keys](docs/tui.md#keys), [site](https://example.com) and [up](#top).\n',
+      manifest,
+    );
+    assert.equal(
+      readme,
+      '[Start](https://github.com/acme/kubic/blob/main/docs/start.md), [keys](https://github.com/acme/kubic/blob/main/docs/tui.md#keys), [site](https://example.com) and [up](#top).\n',
+    );
+  });
+
+  it('leaves out the badge line', () => {
+    const { readme } = npmReadme(
+      'Intro.\n[![CI](https://x.test/b.svg)](https://x.test/ci) [![npm](https://y.test/v.svg)](https://y.test)\n\nNext.\n',
+      manifest,
+    );
+    assert.equal(readme, 'Intro.\n\nNext.\n');
+  });
+});
+
+describe('repositoryUrl', () => {
+  it("reads a GitHub repository's address from its git URL", () => {
+    assert.equal(
+      repositoryUrl({
+        type: 'git',
+        url: 'git+https://github.com/acme/kubic.git',
+      }),
+      'https://github.com/acme/kubic',
+    );
+    assert.equal(
+      repositoryUrl('https://github.com/acme/kubic'),
+      'https://github.com/acme/kubic',
+    );
+  });
+
+  it('refuses a missing or other repository', () => {
+    assert.throws(() => repositoryUrl(undefined), /not a GitHub URL/);
+    assert.throws(
+      () => repositoryUrl('https://gitlab.com/acme/kubic'),
+      /not a GitHub URL/,
+    );
   });
 });
 

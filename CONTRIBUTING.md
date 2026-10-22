@@ -7,12 +7,17 @@ full workflow and every CI gate are in [docs/contributing.md](docs/contributing.
 
 ## Set up
 
-Node 22.19 or newer and git are required: the test suite runs real git commands.
+Users install Kubic with `npm install -g kubic`. To work on Kubic itself,
+build it from a clone. Node 22.19 or newer and git are required: the test
+suite runs real git commands.
 
 ```sh
+git clone https://github.com/konic-labs/kubic.git
+cd kubic
 npm ci
 npm run build
 ./bin/kubic.js --version
+npm link        # optional: `kubic` on your PATH runs this build
 ```
 
 ## Before you open a pull request

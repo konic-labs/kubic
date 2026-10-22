@@ -5,20 +5,17 @@
 
 ## Install
 
-Kubic is not on npm yet, so build it from a clone. You need Node 22.19 or later
-and git.
+Kubic needs Node 22.19 or later:
 
 ```sh
-git clone https://github.com/konic-labs/kubic.git
-cd kubic
-npm ci
-npm run build
-npm link        # optional: puts `kubic` on your PATH
+npm install -g kubic
+kubic --version
 ```
 
-`./bin/kubic.js --version` prints the version. The rest of the docs write
-`kubic`; without `npm link`, run `bin/kubic.js` from your clone instead. On
-Windows, the `bash` tool needs Git Bash (Git for Windows) or WSL.
+`kubic --version` prints the version, and `npx kubic` runs Kubic without
+installing it. On Windows, the `bash` tool needs Git Bash (Git for Windows) or
+WSL. To build Kubic from source instead, see
+[contributing](contributing.md#getting-set-up).
 
 ## Connect a model
 

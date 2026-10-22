@@ -26,6 +26,17 @@ describe('fileListProblems', () => {
     assert.deepEqual(fileListProblems(LISTING), []);
   });
 
+  it('accepts the images the README shows and names one that is missing', () => {
+    const images = ['docs/assets/a.png'];
+    assert.deepEqual(
+      fileListProblems([...LISTING, 'package/docs/assets/a.png'], images),
+      [],
+    );
+    assert.deepEqual(fileListProblems(LISTING, images), [
+      'missing docs/assets/a.png',
+    ]);
+  });
+
   it('names a required file the tarball lacks', () => {
     const listing = LISTING.filter((entry) => !entry.endsWith('NOTICE.md'));
     assert.deepEqual(fileListProblems(listing), ['missing NOTICE.md']);

@@ -7,14 +7,14 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/facts-dark.svg" type="image/svg+xml">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/facts-light.svg" type="image/svg+xml">
-  <img src="docs/assets/readme/facts-light.png" width="100%" alt="MIT license. Node 22.19+. Any model. Not on npm yet.">
+  <img src="docs/assets/readme/facts-light.png" width="100%" alt="MIT license. Node 22.19+. Any model. npm i -g kubic.">
 </picture>
 
 **Kubic is Konic's open-source coding agent.** It runs in your terminal with the
 model you choose, records every file change in a journal you can review and undo,
 and asks before anything risky runs. Teams get managed policy, an audit ledger and
 spend caps on top.
-[![CI](https://github.com/konic-labs/kubic/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/konic-labs/kubic/actions/workflows/ci.yml)
+[![CI](https://github.com/konic-labs/kubic/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/konic-labs/kubic/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/kubic?color=ff004d&label=npm)](https://www.npmjs.com/package/kubic)
 
 <picture>
   <source srcset="docs/assets/readme/session.svg" type="image/svg+xml">
@@ -60,23 +60,22 @@ spend caps on top.
   </tr>
 </table>
 
-## Quick start
+## Install
 
-Kubic is not on npm yet. Build it from source with Node 22.19 or later:
+Kubic needs Node 22.19 or later:
 
 ```bash
-git clone https://github.com/konic-labs/kubic.git
-cd kubic && npm ci && npm run build
+npm install -g kubic
 export ANTHROPIC_API_KEY=...    # or OPENAI_API_KEY, GEMINI_API_KEY, ...
-./bin/kubic.js                  # the first launch picks a default model
+kubic                           # the first launch picks a default model
 ```
 
 Describe a task, review the change with `Ctrl+O`, and type `/undo` to put a turn
-back. Run `npm link` once to use `kubic` in any directory. To try Kubic without a
-key, `KUBIC_PROVIDER=faux ./bin/kubic.js` opens the TUI on a built-in model that
-echoes your prompts.
+back. `npx kubic` runs Kubic without installing it, and `KUBIC_PROVIDER=faux kubic`
+opens the TUI without a key, on a built-in model that echoes your prompts.
 
-[Getting started](docs/getting-started.md) walks through a first session.
+[Getting started](docs/getting-started.md) walks through a first session, and
+[Contributing](CONTRIBUTING.md) builds Kubic from source.
 
 ## Documentation
 

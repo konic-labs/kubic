@@ -1,0 +1,72 @@
+name: Kubic
+description: Run Kubic on a pull request — a read-only review by default, or a task — and post what it found as a comment.
+author: Konic
+branding:
+  icon: terminal
+  color: blue
+
+inputs:
+  mode:
+    description: '"review" (read-only: reviews the pull request diff) or "task" (runs the prompt).'
+    default: review
+  prompt:
+    description: The task for mode "task", or extra instructions for a review.
+    default: ''
+  base:
+    description: The branch the review compares against (default the pull request's base branch).
+    default: ''
+  model:
+    description: The model to run, as provider/id (default the configured model).
+    default: ''
+  max-turns:
+    description: The turn bound of the run.
+    default: '40'
+  allow-edits:
+    description: '"true" lets a task edit the checkout; otherwise every run is read-only.'
+    default: 'false'
+  push:
+    description: '"true" (with allow-edits) commits a task''s changes and pushes them to the pull request branch; never for a fork.'
+    default: 'false'
+  comment:
+    description: '"false" skips the pull request comment (the step summary still has the result).'
+    default: 'true'
+  kubic-version:
+    description: The npm version of Kubic to install.
+    default: latest
+  github-token:
+    description: The token the comment and a push use.
+    default: ${{ github.token }}
+
+outputs:
+  status:
+    description: The run's status (completed, failed, approval_denied, …).
+    value: ${{ steps.run.outputs.status }}
+  exit-code:
+    description: The exit code of kubic run.
+    value: ${{ steps.run.outputs.exit-code }}
+  summary:
+    description: The run's final answer.
+    value: ${{ steps.run.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Kubic
+      shell: bash
+      run: npm install --global "kubic@${KUBIC_VERSION}"
+      env:
+        KUBIC_VERSION: ${{ inputs.kubic-version }}
+    - name: Run Kubic
+      id: run
+      shell: bash
+      run: node "${GITHUB_ACTION_PATH}/scripts/github-action.mjs"
+      env:
+        KUBIC_ACTION_MODE: ${{ inputs.mode }}
+        KUBIC_ACTION_PROMPT: ${{ inputs.prompt }}
+        KUBIC_ACTION_BASE: ${{ inputs.base }}
+        KUBIC_ACTION_MODEL: ${{ inputs.model }}
+        KUBIC_ACTION_MAX_TURNS: ${{ inputs.max-turns }}
+        KUBIC_ACTION_ALLOW_EDITS: ${{ inputs.allow-edits }}
+        KUBIC_ACTION_PUSH: ${{ inputs.push }}
+        KUBIC_ACTION_COMMENT: ${{ inputs.comment }}
+        GH_TOKEN: ${{ inputs.github-token }}

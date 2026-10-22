@@ -1,0 +1,129 @@
+# Kubic canonical config example.
+# Committed to the repo: .kubic/config.toml + .kubic/roles/*.md
+# Never committed: audit/
+
+# Settings skills: files or directories, resolved
+# against this file's directory — `./skills` names `<root>/.kubic/skills`
+# (`../skills` would name `<root>/skills`).
+skills = ["./skills"]
+
+[agent]
+name = "kubic"
+# Prompt augmentation: the sibling SYSTEM.md
+# is read at load and appended to the assembled lane prompt (ahead of the
+# skills block) for run, tui and replay. Relative to this
+# file's directory; a leading ~/ expands to home. A project-layer path
+# additionally requires trust and containment in the project root; a missing
+# or unreadable file is a named ConfigError, never a silent skip.
+systemPromptFile = "SYSTEM.md"
+projectInstructions = true
+
+[model]
+provider = "local"
+id = "llama3"
+thinking = "medium"
+
+[approvals]
+route = "ask-user"
+maxPendingMs = 30000
+autoApprove = []
+sessionScoped = true
+requireJustification = false
+
+[permissions]
+filesystem = "workspace-write"
+shell = true
+network = "none"
+git = "workspace"
+credentials = "none"
+
+[journal]
+retentionDays = 30
+
+[roles.reviewer]
+model = "local/llama3"
+tools = ["read", "grep", "diff"]
+models = ["local/*", { id = "acme/big", thinking = "high" }]
+
+[roles.implementer]
+model = "local/llama3"
+tools = ["read", "write", "edit", "bash"]
+
+[ui]
+theme = "dark"
+statusBar = true
+
+[session]
+store = "jsonl"
+dir = ".kubic/sessions"
+retentionDays = 30
+# Compaction policy: automatic threshold compaction, a 4000-token
+# reserved room and a 5000-token verbatim recent window on the run and tui
+# lanes. All three are optional — unset means the lane defaults
+# (automatic, 16384 reserved, 20000 kept recent).
+autoCompact = true
+reserveTokens = 4000
+keepRecentTokens = 5000
+
+[verify]
+tests = "npm test"
+typecheck = "npm run typecheck"
+timeoutMs = 600000
+
+[run]
+timeoutMs = 300000
+maxTurns = 50
+
+[telemetry]
+enabled = true
+endpoint = "http://localhost:4318"
+content = false
+
+[cost]
+team = "platform"
+
+[providers.azure-openai-responses]
+region = "westeurope"
+
+[sandbox]
+mode = "auto"
+writable = ["~/.npm", "~/.cache"]
+
+[mcp.github]
+command = "/opt/mcp/github-mcp-server"
+args = ["stdio"]
+version = "0.9.1"
+tools = ["get_issue", "list_pull_requests", "create_issue"]
+approve = ["create_issue"]
+env = ["GITHUB_TOKEN"]
+
+[tls]
+systemCa = true
+
+[managed]
+url = "https://policy.example.com/kubic/config.toml"
+refreshHours = 24
+
+[policy]
+allowed_models = ["local/*"]
+allowed_providers = ["local"]
+allowed_tools = ["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]
+denied_tools = []
+network_policy = "proxy"
+allowed_domains = ["registry.npmjs.org", "github.com"]
+filesystem_policy = "workspace-only"
+data_policy = "redact"
+logging_policy = "full-audit"
+max_run_cost_usd = 5
+max_daily_cost_usd = 50
+project_policy = "restricted"
+
+[[hooks]]
+event = "beforeTool"
+command = "/opt/acme/kubic-check"
+tools = ["bash", "write", "edit"]
+timeoutMs = 5000
+
+[[audit]]
+sink = "syslog"
+level = "privileged"

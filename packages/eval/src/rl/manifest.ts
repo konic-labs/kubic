@@ -1,0 +1,34 @@
+// Deterministic manifest encoding.
+// canonicalJson sorts object keys recursively so the same trajectory +
+// verifier always serializes byte-identically. Builders emit no
+// timestamps or random ids, so determinism holds by construction.
+export function canonicalJson(value: unknown): string {
+  return stringifyCanonical(value);
+}
+
+function stringifyCanonical(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('non-finite number');
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (Array.isArray(value)) {
+    return `[${value.map(stringifyCanonical).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    // Default string order is UTF-16 code-unit order — the same total
+    // order an explicit comparator would implement, minus its equality
+    // branch (object keys are unique, so that branch is unreachable).
+    // Each value is read exactly once: an accessor answering differently
+    // between reads must not decide both inclusion and output.
+    const entries = Object.keys(record)
+      .sort()
+      .map((key) => [key, record[key]] as const)
+      .filter(([, entry]) => entry !== undefined);
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stringifyCanonical(entry)}`).join(',')}}`;
+  }
+  throw new Error(`uncapturable value of type ${typeof value}`);
+}

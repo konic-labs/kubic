@@ -1,0 +1,55 @@
+{
+  // knip, pinned exactly in package.json. `npm run lint:dead` runs it in CI.
+  // docs/contributing.md ("Dead-code gate") says what this gate does and does
+  // not guarantee.
+  "$schema": "https://unpkg.com/knip@6.38.0/schema.json",
+
+  // An export that only its own module uses is reported, so it must be made
+  // module-private. The gate would otherwise accept dead exports whose only
+  // caller sits in the same file.
+  "ignoreExportsUsedInFile": false,
+
+  // System utilities, not npm dependencies: the exec journal test
+  // (packages/exec/src/journal/reconcile-run.test.ts) calls mkfifo to make a
+  // pipe, and the audit collector test makes a TLS certificate with openssl
+  // (it skips where openssl is missing).
+  "ignoreBinaries": ["mkfifo", "openssl"],
+
+  "workspaces": {
+    // Repo root. The repo scripts and the shared test helpers are entries, so
+    // every module they import is reached. bin/kubic.js is an entry through the
+    // root package.json "bin" field.
+    ".": {
+      // The root manifest is the one npm installs, so it declares every
+      // runtime dependency, the Pi packages included. packages/agent and
+      // packages/tui import and declare those too, which is where knip
+      // counts the use; `npm run check:pins` keeps the two declarations equal.
+      "ignoreDependencies": [
+        "@earendil-works/chord",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-durable",
+        "@earendil-works/pi-telemetry",
+        "@earendil-works/pi-tui"
+      ],
+      "entry": ["scripts/*.mjs", "test/*.ts"],
+      "project": ["**/*.ts", "**/*.mjs"]
+    },
+    // Packages are internal. Their tests are the entries, so a symbol that
+    // only a test imports counts as used. Each package's exports map names
+    // the modules other packages import, and knip reads those targets as
+    // entry files: includeEntryExports keeps an export that nothing uses
+    // reported anyway.
+    "packages/*": {
+      "entry": ["**/*.test.ts"],
+      "project": ["**/*.ts"],
+      "includeEntryExports": true
+    },
+    // The app's entry is its composition root. Its tests are entries, as for
+    // the packages.
+    "apps/kubic": {
+      "entry": ["src/main.ts", "**/*.test.ts"],
+      "project": ["**/*.ts"],
+      "includeEntryExports": true
+    }
+  }
+}

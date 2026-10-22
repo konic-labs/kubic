@@ -1,0 +1,887 @@
+// Shipped-artifact contract for the `kubic` binary.
+//
+// scripts/build-contract.test.mjs asserts the *tree* (manifest, bin wrapper,
+// tsconfig) — this script asserts the *built artifact*: after `npm run build`,
+// the wrapper prints the exact version line, `doctor` fails provider-down with
+// the exit code 6 and the pinned reason, and a provider-less `run -p` exits 6
+// while still printing the four refs (session:/journal:/usage:/trajectory:), so
+// the documented failure path is pinned end to end. adds the front-door
+// contract: root `--help`/`-h` print the listing and exit 0 while the bare
+// invocation off a TTY keeps exit 1 (same line; on an interactive terminal it
+// opens the TUI, — the probes run over pipes, so never a TTY), a stubbed old
+// runtime hits the launcher's named Node guard before any dist import, and an
+// injected command failure (reached only through its contract-only env gate)
+// surfaces as one `error: <message>` line (full stack only under
+// KUBIC_DEBUG=1).
+//
+// Hermetic by construction: probes run with HOME pointing at a temp dir
+// and a cwd holding no models.json, so no provider is ever configured
+// and no network is touched. Usage: node scripts/binary-contract.mjs
+import { spawnSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The five role presets the binary must carry as data:
+// `kubic doctor` on a runner with no `.kubic/roles/` reports each one as
+// `builtin role — …`, which is only possible if the embedded documents
+// reached dist/.
+export const BUILTIN_ROLE_NAMES = [
+  'debugger',
+  'implementer',
+  'planner',
+  'reviewer',
+  'tester',
+];
+
+// The exact `kubic --version` line: 'kubic <version> (license: MIT)' —
+// the same shape core's formatVersionLine emits, pinned here so a drift
+// in either half fails the build contract, not a human's eyeball.
+export const VERSION_SUFFIX = ' (license: MIT)';
+
+// Build output the committed bin wrapper loads (bin/kubic.js).
+export const DIST_ENTRY = 'dist/kubic.js';
+
+// Provider-failure pins: doctor's provider-down check line, and the
+// headless run's provider message.
+export const PROVIDER_DOWN_LINE =
+  'FAIL limit:provider-availability (provider-down)';
+export const RUN_PROVIDER_MESSAGE =
+  'no models available: register a provider first';
+// Literal exit pins are deliberate: this contract stays independent of the source's constants.
+export const RUN_PROVIDER_EXIT = 6;
+export const DOCTOR_PROVIDER_EXIT = 6;
+
+// An unknown command is a usage error (2).
+export const USAGE_EXIT = 2;
+
+// The models.json receipt is a diagnostic; under --json stdout
+// is exactly one JSON document. Pinned literally so a leak fails here.
+export const MODELS_RECEIPT_PREFIX = 'loaded models.json:';
+// The config refusal the refused-config probes trigger (an unknown key in
+// the project layer, loaded through KUBIC_TRUST_PROJECT=1).
+export const CONFIG_REFUSAL_KEY = 'bogus_key';
+
+// The root help: one text serves `kubic --help` /
+// `kubic -h` (exit 0 — help is success) and the bare invocation off a
+// TTY (exit 1 — POSIX usage-on-no-args; a bare `kubic` on an interactive
+// terminal opens the TUI instead). The probes run over pipes, so
+// this is the plain text (no colour). Pinned literally so a command-list
+// drift fails here instead of shipping stale help.
+export const ROOT_HELP_TEXT = [
+  '■ kubic — terminal coding agent by Konic',
+  '',
+  'USAGE      kubic                       open the TUI (on a terminal)',
+  '           kubic "<prompt>"            run one prompt, like kubic run -p',
+  '           kubic <command> [options]',
+  '',
+  'SESSION    run · tui · resume · attach · sessions                     work with the agent',
+  'CHANGES    diff · undo · log · status · commit · git · journal        review and revert what it did',
+  'SETUP      setup · models · keys · config · trust · doctor · skills   providers, project, health',
+  'ANALYSIS   cost · eval · benchmark · replay · export · policy · audit',
+  '',
+  'EXAMPLES   kubic "fix the failing test"',
+  '           kubic run -p "add tests for titleCase" --json',
+  '           kubic diff && kubic undo',
+  '',
+  'kubic <command> --help for options · docs/cli/README.md',
+].join('\n');
+
+// The launcher's named Node-requirement line, printed to
+// stderr when a runtime below 22.19 runs bin/kubic.js. `runningVersion`
+// is process.versions.node as the launcher saw it.
+export function nodeGuardLine(runningVersion) {
+  return `kubic: node >= 22.19 required (running ${runningVersion}) — see the README install section`;
+}
+
+// The failure seam `kubic __crash-probe` throws inside main()
+// (apps/kubic/src/main.ts): a plain Error so the top-level
+// catch-all's operator-facing shape is asserted against the real binary.
+export const CRASH_PROBE_MESSAGE = 'injected probe failure';
+
+// Env gate for the failure seam: main.ts only throws when this
+// is '1', so the seam is internal-only — a bare `kubic __crash-probe` is an
+// unknown command. Named like NODE_STUB_ENV: contract-only, never
+// user-facing.
+export const CRASH_PROBE_ENV = '__KUBIC_CONTRACT_CRASH_PROBE';
+
+// Env var the `--import` preload reads to stub process.versions.node: an
+// old runtime cannot run in CI, so the launcher's guard is exercised by
+// rewriting the version the wrapper sees, before its first statement.
+export const NODE_STUB_ENV = '__KUBIC_CONTRACT_NODE_STUB';
+
+// The ref triple a headless run prints; every value must resolve to the
+// run's own session id.
+export const REF_KINDS = ['session', 'journal', 'usage', 'trajectory'];
+
+// Internal control-flow marker, not an error: thrown on a contract violation
+// so the finally-block scratch cleanup runs. Each problem is already printed
+// by the caller, so the marker is swallowed at the top level.
+const CONTRACT_VIOLATION = Symbol('contract-violation');
+
+export function expectedVersionLine(version) {
+  return `kubic ${version}${VERSION_SUFFIX}`;
+}
+
+// A single-word unknown token stays an unknown command and names the prompt
+// form for exactly that word. A multi-word argv token is the bare prompt
+// itself.
+export function unknownPromptHint(word) {
+  return `hint: to run it as a prompt: kubic run -p '${word}'`;
+}
+
+// The usage error for an unknown command (plain, on stderr) and
+// the hint that closes it.
+export function unknownCommandError(word) {
+  return `error: unknown command '${word}'`;
+}
+export const UNKNOWN_COMMAND_HELP_HINT =
+  'hint: kubic --help lists the commands';
+
+function lines(stdout) {
+  return stdout.split('\n').filter((line) => line.trim() !== '');
+}
+
+// The value of a `<kind>: <value>` line, or null when the line is absent.
+function refValue(stdout, kind) {
+  const prefix = `${kind}: `;
+  for (const line of lines(stdout)) {
+    if (line.startsWith(prefix)) return line.slice(prefix.length).trim();
+  }
+  return null;
+}
+
+function probeProblems(label, probe) {
+  if (probe.error === undefined || probe.error === null) return [];
+  const detail =
+    probe.error instanceof Error ? probe.error.message : String(probe.error);
+  return [`\`${label}\` could not run: ${detail}`];
+}
+
+// Runs the probes through the injected runner and returns every contract
+// violation. An empty `problems` array is the pass condition. The runner
+// takes `(args, opts?)`; `opts` carries the hermetic overrides the real
+// spawn supports (a stubbed `process.versions.node`, extra child env) and
+// is ignored by direct probes.
+export function binaryContract({
+  distPresent,
+  expectedLine,
+  run,
+  modelsCwd,
+  refusedCwd,
+  runSymlinked,
+}) {
+  const problems = [];
+  if (!distPresent) {
+    problems.push(
+      `missing build output ${DIST_ENTRY} — run \`npm run build\` first (the bin wrapper exits 1 without it)`,
+    );
+    return { problems };
+  }
+
+  const version = run(['--version']);
+  const versionFailed = probeProblems('kubic --version', version);
+  if (versionFailed.length > 0) {
+    problems.push(...versionFailed);
+  } else if (version.code !== 0) {
+    problems.push(
+      `\`kubic --version\` exited ${version.code} (expected 0): ${version.stderr.trim()}`,
+    );
+  } else {
+    const printed = version.stdout.trimEnd();
+    if (printed !== expectedLine) {
+      problems.push(
+        `\`kubic --version\` printed ${JSON.stringify(printed)} — expected exactly ${JSON.stringify(expectedLine)}`,
+      );
+    }
+  }
+
+  // Help at the root is success, and the bare invocation keeps
+  // the POSIX usage-on-no-args posture — one help text, two exit codes. The
+  // probes spawn over pipes (non-TTY), which is exactly the scripted case
+  // that must keep exit 1; the TTY → TUI branch is pinned in dispatch.test.
+  for (const [label, probe] of [
+    ['kubic --help', run(['--help'])],
+    ['kubic -h', run(['-h'])],
+  ]) {
+    const failed = probeProblems(label, probe);
+    if (failed.length > 0) {
+      problems.push(...failed);
+      continue;
+    }
+    if (probe.code !== 0) {
+      problems.push(
+        `\`${label}\` exited ${probe.code} (expected 0 — help is success)`,
+      );
+      continue;
+    }
+    const printed = probe.stdout.trimEnd();
+    if (printed !== ROOT_HELP_TEXT) {
+      problems.push(
+        `\`${label}\` printed ${JSON.stringify(printed)} — expected exactly ${JSON.stringify(ROOT_HELP_TEXT)}`,
+      );
+    }
+  }
+
+  // Help is side-effect free — commander answers it before any action, so
+  // no lane boot (nothing on stderr) and no repo write.
+  for (const command of ['run', 'tui']) {
+    const label = `kubic ${command} --help`;
+    const probe = run([command, '--help']);
+    const failed = probeProblems(label, probe);
+    if (failed.length > 0) {
+      problems.push(...failed);
+      continue;
+    }
+    if (probe.code !== 0) {
+      problems.push(
+        `\`${label}\` exited ${probe.code} (expected 0 — help is success)`,
+      );
+    }
+    if (!probe.stdout.includes(`Usage: kubic ${command}`)) {
+      problems.push(
+        `\`${label}\` did not print its usage line (stdout was ${JSON.stringify(probe.stdout.slice(0, 120))})`,
+      );
+    }
+    if (probe.stderr.trim() !== '') {
+      problems.push(
+        `\`${label}\` wrote to stderr (${JSON.stringify(probe.stderr.trim().slice(0, 120))}) — a help request must not boot a lane`,
+      );
+    }
+  }
+
+  const bare = run([]);
+  const bareFailed = probeProblems('kubic (no command)', bare);
+  if (bareFailed.length > 0) {
+    problems.push(...bareFailed);
+  } else {
+    if (bare.code !== 1) {
+      problems.push(
+        `\`kubic\` with no command exited ${bare.code} (expected 1 — off a TTY, usage-on-no-args is the documented POSIX posture)`,
+      );
+    }
+    const printed = bare.stdout.trimEnd();
+    if (printed !== ROOT_HELP_TEXT) {
+      problems.push(
+        `\`kubic\` with no command printed ${JSON.stringify(printed)} — expected the identical \`kubic --help\` text ${JSON.stringify(ROOT_HELP_TEXT)}`,
+      );
+    }
+  }
+
+  // The launcher's Node guard, driven through a stubbed
+  // process.versions.node (the `--import` preload) so the real bin/kubic.js
+  // ordering is exercised without an old runtime. Below the floor: the
+  // refusal is the ONLY output, on stderr, exit 1 — and it happens before
+  // any dist import (a missing build must not mask it).
+  for (const stub of ['21.9.0', '22.18.0']) {
+    const probe = run(['--version'], { nodeStub: stub });
+    const failed = probeProblems(`kubic --version (node ${stub})`, probe);
+    if (failed.length > 0) {
+      problems.push(...failed);
+      continue;
+    }
+    if (probe.code !== 1) {
+      problems.push(
+        `\`kubic --version\` under a stubbed node ${stub} exited ${probe.code} (expected 1 — named Node guard, not a raw stack)`,
+      );
+      continue;
+    }
+    const printed = probe.stderr.trimEnd();
+    const expected = nodeGuardLine(stub);
+    if (printed !== expected) {
+      problems.push(
+        `\`kubic --version\` under a stubbed node ${stub} printed ${JSON.stringify(printed)} to stderr — expected exactly ${JSON.stringify(expected)}`,
+      );
+    }
+    if (probe.stdout !== '') {
+      problems.push(
+        `\`kubic --version\` under a stubbed node ${stub} wrote ${JSON.stringify(probe.stdout)} to stdout — the guard refusal is stderr-only`,
+      );
+    }
+  }
+
+  // At the exact floor the guard must not fire: the wrapper proceeds to the
+  // version path as usual (still zero stderr).
+  const boundary = run(['--version'], { nodeStub: '22.19.0' });
+  const boundaryFailed = probeProblems(
+    'kubic --version (node 22.19.0)',
+    boundary,
+  );
+  if (boundaryFailed.length > 0) {
+    problems.push(...boundaryFailed);
+  } else if (boundary.code !== 0) {
+    problems.push(
+      `\`kubic --version\` at the exact floor (stubbed node 22.19.0) exited ${boundary.code} (expected 0 — the guard must not fire at >= 22.19): ${boundary.stderr.trim()}`,
+    );
+  } else if (boundary.stdout.trimEnd() !== expectedLine) {
+    problems.push(
+      `\`kubic --version\` at the exact floor (stubbed node 22.19.0) printed ${JSON.stringify(boundary.stdout.trimEnd())} — expected the version line ${JSON.stringify(expectedLine)}, not the guard refusal`,
+    );
+  } else if (boundary.stderr !== '') {
+    problems.push(
+      `\`kubic --version\` at the exact floor (stubbed node 22.19.0) wrote ${JSON.stringify(boundary.stderr)} to stderr — the guard must stay silent when it passes`,
+    );
+  }
+
+  // An unexpected command failure is one `error: <message>`
+  // line on stderr, exit 1, no stack. The full stack is opt-in via
+  // KUBIC_DEBUG=1 — and even then the named line stays. The seam is gated
+  // on CRASH_PROBE_ENV; the ungated probe below proves a bare
+  // `kubic __crash-probe` cannot reach it.
+  const crash = run(['__crash-probe'], { env: { [CRASH_PROBE_ENV]: '1' } });
+  const crashFailed = probeProblems('kubic __crash-probe', crash);
+  if (crashFailed.length > 0) {
+    problems.push(...crashFailed);
+  } else {
+    if (crash.code !== 1) {
+      problems.push(
+        `\`kubic __crash-probe\` exited ${crash.code} (expected 1 — unexpected failures exit 1)`,
+      );
+    }
+    const printed = crash.stderr.trimEnd();
+    const expected = `error: ${CRASH_PROBE_MESSAGE}`;
+    if (printed !== expected) {
+      problems.push(
+        `\`kubic __crash-probe\` stderr was ${JSON.stringify(printed)} — expected exactly ${JSON.stringify(expected)} (one named line, no stack)`,
+      );
+    }
+    if (crash.stdout.trimEnd() !== '') {
+      problems.push(
+        `\`kubic __crash-probe\` wrote ${JSON.stringify(crash.stdout)} to stdout — failures are stderr-only`,
+      );
+    }
+  }
+
+  const debugCrash = run(['__crash-probe'], {
+    env: { [CRASH_PROBE_ENV]: '1', KUBIC_DEBUG: '1' },
+  });
+  const debugCrashFailed = probeProblems(
+    'kubic __crash-probe (KUBIC_DEBUG=1)',
+    debugCrash,
+  );
+  if (debugCrashFailed.length > 0) {
+    problems.push(...debugCrashFailed);
+  } else {
+    if (debugCrash.code !== 1) {
+      problems.push(
+        `\`kubic __crash-probe\` with KUBIC_DEBUG=1 exited ${debugCrash.code} (expected 1 — the opt-in changes the output, never the exit)`,
+      );
+    }
+    const stderr = debugCrash.stderr.trimEnd();
+    if (!stderr.includes(`error: ${CRASH_PROBE_MESSAGE}`)) {
+      problems.push(
+        `\`kubic __crash-probe\` with KUBIC_DEBUG=1 lost the \`error: <message>\` line (stderr was ${JSON.stringify(stderr)})`,
+      );
+    }
+    if (!/\n\s+at /.test(stderr)) {
+      problems.push(
+        `\`kubic __crash-probe\` with KUBIC_DEBUG=1 must include the full stack — no \` at \` frame seen in ${JSON.stringify(stderr)}`,
+      );
+    }
+  }
+
+  // The seam is internal-only: without the contract's own env gate, `kubic
+  // __crash-probe` is just an unknown command — exit 2, the usage error on
+  // stderr with no prompt hint and nothing on stdout — never an injected crash.
+  const ungated = run(['__crash-probe']);
+  const ungatedFailed = probeProblems('kubic __crash-probe (ungated)', ungated);
+  if (ungatedFailed.length > 0) {
+    problems.push(...ungatedFailed);
+  } else {
+    if (ungated.code !== USAGE_EXIT) {
+      problems.push(
+        `\`kubic __crash-probe\` without the env gate exited ${ungated.code} (expected ${USAGE_EXIT} — unknown command)`,
+      );
+    }
+    if (ungated.stdout !== '') {
+      problems.push(
+        `\`kubic __crash-probe\` without the env gate printed ${JSON.stringify(ungated.stdout)} on stdout — expected nothing (the seam must stay internal-only)`,
+      );
+    }
+    const expectedUngated = `${unknownCommandError('__crash-probe')}\n${UNKNOWN_COMMAND_HELP_HINT}\n`;
+    if (ungated.stderr !== expectedUngated) {
+      problems.push(
+        `\`kubic __crash-probe\` without the env gate wrote ${JSON.stringify(ungated.stderr)} to stderr — expected exactly ${JSON.stringify(expectedUngated)}`,
+      );
+    }
+  }
+
+  // An unknown command is a usage error, not a task failure —
+  // exit 2.: the error and its hints go to stderr and stdout stays
+  // empty. A word-shaped token also names the prompt form.
+  const unknown = run(['nosuch-command']);
+  const unknownFailed = probeProblems('kubic nosuch-command', unknown);
+  if (unknownFailed.length > 0) {
+    problems.push(...unknownFailed);
+  } else {
+    if (unknown.code !== USAGE_EXIT) {
+      problems.push(
+        `\`kubic nosuch-command\` exited ${unknown.code} (expected ${USAGE_EXIT} — unknown command is a usage error)`,
+      );
+    }
+    if (unknown.stdout !== '') {
+      problems.push(
+        `\`kubic nosuch-command\` printed ${JSON.stringify(unknown.stdout)} on stdout — expected an empty stdout (a usage error is stderr-only)`,
+      );
+    }
+    const expectedUnknown = `${unknownCommandError('nosuch-command')}\n${unknownPromptHint('nosuch-command')}\n${UNKNOWN_COMMAND_HELP_HINT}\n`;
+    if (unknown.stderr !== expectedUnknown) {
+      problems.push(
+        `\`kubic nosuch-command\` wrote ${JSON.stringify(unknown.stderr)} to stderr — expected the error line, the prompt hint and the help hint ${JSON.stringify(expectedUnknown)}`,
+      );
+    }
+  }
+
+  // The headline bare prompt. A single argv token
+  // with whitespace is `kubic run -p "<prompt>"` — the faux provider proves
+  // it runs end to end (the receipt/refusal probes above stay provider-less).
+  const barePrompt = run(['hello there', '--json'], {
+    env: { KUBIC_PROVIDER: 'faux' },
+  });
+  const barePromptFailed = probeProblems('kubic "hello there"', barePrompt);
+  if (barePromptFailed.length > 0) {
+    problems.push(...barePromptFailed);
+  } else {
+    if (barePrompt.code !== 0) {
+      problems.push(
+        `\`kubic "hello there"\` exited ${barePrompt.code} (expected 0 — the bare prompt runs like \`kubic run -p\`)`,
+      );
+    }
+    const documents = lines(barePrompt.stdout);
+    if (documents.length !== 1) {
+      problems.push(
+        `\`kubic "hello there"\` printed ${documents.length} stdout line(s) — expected exactly one --json envelope`,
+      );
+    } else {
+      try {
+        const envelope = JSON.parse(documents[0]);
+        if (envelope.ok !== true || envelope.status !== 'completed') {
+          problems.push(
+            `\`kubic "hello there"\` envelope is ${JSON.stringify({ ok: envelope.ok, status: envelope.status })} — expected ok:true, status:"completed"`,
+          );
+        }
+      } catch (error) {
+        problems.push(
+          `\`kubic "hello there"\` stdout is not one JSON envelope: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  // An installed `kubic` is a bin symlink with no .js suffix (argv[1]
+  // names the link, not the wrapper): the entry must still resolve. The
+  // probe runs only when the symlinked runner is present.
+  if (runSymlinked !== undefined) {
+    const linked = runSymlinked(['--version']);
+    const linkedFailed = probeProblems(
+      'kubic --version through a symlinked bin',
+      linked,
+    );
+    if (linkedFailed.length > 0) {
+      problems.push(...linkedFailed);
+    } else if (linked.code !== 0 || linked.stdout.trimEnd() !== expectedLine) {
+      problems.push(
+        `\`kubic --version\` through a symlinked bin exited ${linked.code} printing ${JSON.stringify(linked.stdout.trimEnd())} (expected 0 and ${JSON.stringify(expectedLine)}): ${linked.stderr.trim().slice(-300)}`,
+      );
+    }
+  }
+
+  // The models.json receipt is a diagnostic (stderr) and the
+  // --json document is the ONLY stdout content, for both commands that
+  // assemble the catalog. The probes run in a scratch dir holding a
+  // models.json, trusted through the documented env opt-in.
+  for (const [label, args] of [
+    ['kubic models --json', ['models', '--json']],
+    ['kubic doctor --json', ['doctor', '--json']],
+  ]) {
+    const probe = run(args, {
+      cwd: modelsCwd,
+      env: { KUBIC_TRUST_PROJECT: '1' },
+    });
+    const failed = probeProblems(label, probe);
+    if (failed.length > 0) {
+      problems.push(...failed);
+      continue;
+    }
+    if (!probe.stderr.includes(MODELS_RECEIPT_PREFIX)) {
+      problems.push(
+        `\`${label}\` did not print the models.json receipt on stderr (stderr was ${JSON.stringify(probe.stderr.trimEnd())})`,
+      );
+    }
+    if (probe.stdout.includes(MODELS_RECEIPT_PREFIX)) {
+      problems.push(
+        `\`${label}\` leaked the models.json receipt to stdout — under --json stdout is exactly one document`,
+      );
+    }
+    try {
+      JSON.parse(probe.stdout);
+    } catch (error) {
+      problems.push(
+        `\`${label}\` stdout is not one JSON document: ${error instanceof Error ? error.message : String(error)} (stdout was ${JSON.stringify(probe.stdout.slice(0, 200))})`,
+      );
+    }
+  }
+
+  // The receipt is a stderr diagnostic in text mode too — the
+  // catalog is the stdout data.
+  const modelsText = run(['models'], {
+    cwd: modelsCwd,
+    env: { KUBIC_TRUST_PROJECT: '1' },
+  });
+  const modelsTextFailed = probeProblems('kubic models', modelsText);
+  if (modelsTextFailed.length > 0) {
+    problems.push(...modelsTextFailed);
+  } else {
+    if (!modelsText.stderr.includes(MODELS_RECEIPT_PREFIX)) {
+      problems.push(
+        `\`kubic models\` did not print the models.json receipt on stderr (stderr was ${JSON.stringify(modelsText.stderr.trimEnd())})`,
+      );
+    }
+    if (modelsText.stdout.includes(MODELS_RECEIPT_PREFIX)) {
+      problems.push(
+        `\`kubic models\` leaked the models.json receipt to stdout — it is a stderr diagnostic`,
+      );
+    }
+  }
+
+  // A refused config under `--json` is the command's standard
+  // failure envelope on stdout (exit 1) with the reason on stderr; without
+  // --json stdout stays empty. The probes run in a scratch dir whose
+  // project config names an unknown key.
+  const refusedReason = run(['run', '-p', 'x'], {
+    cwd: refusedCwd,
+    env: { KUBIC_TRUST_PROJECT: '1' },
+  });
+  const refusedTextFailed = probeProblems(
+    'kubic run (refused config)',
+    refusedReason,
+  );
+  if (refusedTextFailed.length > 0) {
+    problems.push(...refusedTextFailed);
+  } else {
+    if (refusedReason.code !== 1) {
+      problems.push(
+        `\`kubic run\` with a refused config exited ${refusedReason.code} (expected 1)`,
+      );
+    }
+    if (!refusedReason.stderr.includes(CONFIG_REFUSAL_KEY)) {
+      problems.push(
+        `\`kubic run\` with a refused config did not name the reason on stderr (stderr was ${JSON.stringify(refusedReason.stderr.trimEnd())})`,
+      );
+    }
+    if (refusedReason.stdout !== '') {
+      problems.push(
+        `\`kubic run\` with a refused config wrote ${JSON.stringify(refusedReason.stdout)} to stdout without --json — the refusal is stderr-only there`,
+      );
+    }
+  }
+
+  const refusedJson = run(['run', '-p', 'x', '--json'], {
+    cwd: refusedCwd,
+    env: { KUBIC_TRUST_PROJECT: '1' },
+  });
+  const refusedJsonFailed = probeProblems(
+    'kubic run --json (refused config)',
+    refusedJson,
+  );
+  if (refusedJsonFailed.length > 0) {
+    problems.push(...refusedJsonFailed);
+  } else {
+    if (refusedJson.code !== 1) {
+      problems.push(
+        `\`kubic run --json\` with a refused config exited ${refusedJson.code} (expected 1)`,
+      );
+    }
+    if (!refusedJson.stderr.includes(CONFIG_REFUSAL_KEY)) {
+      problems.push(
+        `\`kubic run --json\` with a refused config did not name the reason on stderr (stderr was ${JSON.stringify(refusedJson.stderr.trimEnd())})`,
+      );
+    }
+    const documents = lines(refusedJson.stdout);
+    if (documents.length !== 1) {
+      problems.push(
+        `\`kubic run --json\` with a refused config printed ${documents.length} stdout line(s) — expected exactly one envelope (stdout was ${JSON.stringify(refusedJson.stdout.slice(0, 200))})`,
+      );
+    } else {
+      try {
+        const envelope = JSON.parse(documents[0]);
+        if (envelope.ok !== false || envelope.exitCode !== 1) {
+          problems.push(
+            `\`kubic run --json\` refused-config envelope is ${JSON.stringify({ ok: envelope.ok, exitCode: envelope.exitCode })} — expected ok:false, exitCode:1`,
+          );
+        }
+        if (
+          !String(envelope.error?.message ?? '').includes(CONFIG_REFUSAL_KEY)
+        ) {
+          problems.push(
+            `\`kubic run --json\` refused-config envelope does not name the reason (error was ${JSON.stringify(envelope.error)})`,
+          );
+        }
+      } catch (error) {
+        problems.push(
+          `\`kubic run --json\` refused-config stdout is not one JSON envelope: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  const doctor = run(['doctor']);
+  const doctorFailed = probeProblems('kubic doctor', doctor);
+  if (doctorFailed.length > 0) {
+    problems.push(...doctorFailed);
+  } else {
+    if (doctor.code !== DOCTOR_PROVIDER_EXIT) {
+      problems.push(
+        `\`kubic doctor\` exited ${doctor.code} (expected ${DOCTOR_PROVIDER_EXIT} — provider-down on a runner with no provider)`,
+      );
+    }
+    const fails = lines(doctor.stdout).filter((line) =>
+      line.startsWith('FAIL '),
+    );
+    // Deliberately pinned to exactly one FAIL: on a clean runner with no
+    // provider the provider-down check is the only failure, so any second
+    // FAIL means an unrelated check broke (e.g. a missing bundle) and the
+    // job should stop on the doctor probe rather than on the provider line
+    // alone. Do not relax this to `>= 1`.
+    if (fails.length !== 1 || !fails[0].startsWith(PROVIDER_DOWN_LINE)) {
+      problems.push(
+        `\`kubic doctor\` printed ${fails.length} FAIL line(s) — expected exactly one, starting with ${JSON.stringify(PROVIDER_DOWN_LINE)}; saw ${JSON.stringify(fails)}`,
+      );
+    }
+    // The embedded role presets must be in the built artifact:
+    // this cwd has no `.kubic/roles/`, so a missing preset is a missing
+    // bundle, not a configuration choice.
+    const missingRoles = BUILTIN_ROLE_NAMES.filter(
+      (name) =>
+        !lines(doctor.stdout).some(
+          (line) =>
+            line.includes(`role:${name}`) && line.includes('builtin role'),
+        ),
+    );
+    if (missingRoles.length > 0) {
+      problems.push(
+        `\`kubic doctor\` did not report the embedded role preset(s) ${JSON.stringify(missingRoles)} as \`builtin role\` — the built artifact is missing them`,
+      );
+    }
+  }
+
+  const headless = run(['run', '-p', 'hi']);
+  const headlessFailed = probeProblems('kubic run -p', headless);
+  if (headlessFailed.length > 0) {
+    problems.push(...headlessFailed);
+    return { problems };
+  }
+  if (headless.code !== RUN_PROVIDER_EXIT) {
+    problems.push(
+      `\`kubic run -p\` exited ${headless.code} (expected ${RUN_PROVIDER_EXIT} — no provider configured)`,
+    );
+  }
+  if (!headless.stdout.includes(RUN_PROVIDER_MESSAGE)) {
+    problems.push(
+      `\`kubic run -p\` did not print the provider failure ${JSON.stringify(RUN_PROVIDER_MESSAGE)}`,
+    );
+  }
+  const session = refValue(headless.stdout, 'session');
+  if (session === null) {
+    problems.push('`kubic run -p` missing the `session:` ref');
+  }
+  for (const kind of REF_KINDS) {
+    if (kind === 'session') continue;
+    const value = refValue(headless.stdout, kind);
+    // The trajectory ref is the written trajectory file: even this
+    // provider-less run settles with a session, so it names
+    // <sessions-root>/<id>/trajectory.json rather than a `trajectory:<id>`
+    // string that resolves to nothing.
+    const expected =
+      kind === 'trajectory'
+        ? (ref) => ref.endsWith(`/${session}/trajectory.json`)
+        : (ref) => ref === `${kind}:${session}`;
+    if (value === null) {
+      problems.push(`\`kubic run -p\` missing the \`${kind}:\` ref`);
+    } else if (session !== null && !expected(value)) {
+      problems.push(
+        `\`kubic run -p\` \`${kind}:\` ref ${JSON.stringify(value)} does not point at session ${session}`,
+      );
+    }
+  }
+  return { problems };
+}
+
+// Real probe runner: `node bin/kubic.js <args>` under a hermetic HOME
+// and a cwd without models.json. spawnSync reports `status` (and leaves
+// it null when a signal or the timeout killed the child) — normalise to
+// the contract's `{code, stdout, stderr, error}` probe shape.
+//
+// `opts.nodeStub` prepends `--import <stubPath>` and hands the
+// version to the preload through NODE_STUB_ENV, so the launcher's guard
+// sees the stubbed runtime; `opts.env` adds probe-scoped child env
+// (e.g. KUBIC_DEBUG=1). Neither leaks into probes that did not ask.
+function realRunner(root, { cwd, home, timeoutMs = 60_000, stubPath }) {
+  // Hermetic by construction, not by luck: the child gets a minimal env with
+  // HOME pointing at the scratch dir, so nothing on the machine (provider
+  // credentials, a models.json path, a KUBIC_* override) can reach the probes.
+  return (args, opts = {}) => {
+    const env = {
+      PATH: process.env.PATH ?? '',
+      HOME: home,
+      TMPDIR: process.env.TMPDIR ?? '',
+      ...opts.env,
+    };
+    const nodeArgs = [];
+    if (opts.nodeStub !== undefined) {
+      env[NODE_STUB_ENV] = opts.nodeStub;
+      nodeArgs.push('--import', stubPath);
+    }
+    const result = spawnSync(
+      process.execPath,
+      [...nodeArgs, join(root, 'bin', 'kubic.js'), ...args],
+      {
+        cwd: opts.cwd ?? cwd,
+        env,
+        encoding: 'utf8',
+        timeout: timeoutMs,
+      },
+    );
+    return {
+      code: result.status,
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+      error:
+        result.error ??
+        (result.status === null
+          ? new Error(`killed by signal ${result.signal}`)
+          : null),
+    };
+  };
+}
+
+// Symlinked-entry runner: `node <link> <args>` where <link> is a `kubic`
+// bin symlink with no .js suffix — the installed-user shape where
+// process.argv[1] names the link, not the wrapper. Spelling the link as an
+// explicit argv entry (rather than exec'ing it) needs no exec bit and keeps
+// argv[1] byte-identical to the shebang case. Same hermetic env as the
+// real runner.
+function symlinkRunner(linkPath, { cwd, home, timeoutMs = 60_000 }) {
+  return (args, opts = {}) => {
+    const env = {
+      PATH: process.env.PATH ?? '',
+      HOME: home,
+      TMPDIR: process.env.TMPDIR ?? '',
+      ...opts.env,
+    };
+    const result = spawnSync(process.execPath, [linkPath, ...args], {
+      cwd: opts.cwd ?? cwd,
+      env,
+      encoding: 'utf8',
+      timeout: timeoutMs,
+    });
+    return {
+      code: result.status,
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+      error:
+        result.error ??
+        (result.status === null
+          ? new Error(`killed by signal ${result.signal}`)
+          : null),
+    };
+  };
+}
+
+// The `--import` preload the stubbed guard probes run with:
+// rewrites process.versions.node before the entry module evaluates, so an
+// old runtime is simulated on the current one. A value the contract never
+// sets is ignored, keeping direct probes byte-identical.
+function nodeStubPreload() {
+  return [
+    '// Generated by scripts/binary-contract.mjs — do not ship.',
+    `const stub = process.env[${JSON.stringify(NODE_STUB_ENV)}];`,
+    'if (stub !== undefined) {',
+    "  Object.defineProperty(process.versions, 'node', { value: stub });",
+    '}',
+    '',
+  ].join('\n');
+}
+
+if (import.meta.main) {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const scratch = mkdtempSync(join(tmpdir(), 'kubic-binary-contract-'));
+  try {
+    const cwd = join(scratch, 'cwd');
+    const modelsCwd = join(scratch, 'models');
+    const refusedCwd = join(scratch, 'refused');
+    const bindir = join(scratch, 'bindir');
+    const home = join(scratch, 'home');
+    mkdirSync(cwd);
+    mkdirSync(modelsCwd);
+    mkdirSync(join(refusedCwd, '.kubic'), { recursive: true });
+    mkdirSync(bindir);
+    mkdirSync(home);
+    // A `kubic` bin symlink (no .js suffix — the installed-user shape where
+    // argv[1] names the link, not the wrapper).
+    const symlinkBin = join(bindir, 'kubic');
+    symlinkSync(join(root, 'bin', 'kubic.js'), symlinkBin);
+    // Fixtures: a models.json the receipt names, and a project
+    // config with an unknown key that fails the load closed.
+    writeFileSync(
+      join(modelsCwd, 'models.json'),
+      JSON.stringify({
+        providers: [
+          {
+            id: 'local',
+            baseUrl: 'http://127.0.0.1:11434',
+            api: 'openai-completions',
+            models: [{ id: 'llama3' }],
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(refusedCwd, '.kubic', 'config.toml'),
+      '[policy]\nbogus_key = 1\n',
+    );
+    const stubPath = join(scratch, 'node-version-stub.mjs');
+    writeFileSync(stubPath, nodeStubPreload());
+    const manifest = JSON.parse(
+      readFileSync(join(root, 'package.json'), 'utf8'),
+    );
+    const expectedLine = expectedVersionLine(manifest.version);
+    const result = binaryContract({
+      distPresent: existsSync(join(root, DIST_ENTRY)),
+      expectedLine,
+      modelsCwd,
+      refusedCwd,
+      run: realRunner(root, { cwd, home, stubPath }),
+      runSymlinked: symlinkRunner(symlinkBin, { cwd, home }),
+    });
+    if (result.problems.length > 0) {
+      for (const problem of result.problems) {
+        console.error(`binary contract: ${problem}`);
+      }
+      // Throwing (rather than process.exit) keeps the finally-block cleanup
+      // running: a failing run must not leak its scratch dir. The problems
+      // are already reported above, so the marker is swallowed below and
+      // only the exit code survives.
+      process.exitCode = 1;
+      throw CONTRACT_VIOLATION;
+    }
+    console.log(
+      `binary contract OK: ${expectedLine} (exit 0); --help/-h exit 0 with the root help; bare kubic exit 1 (same text); an unknown command exits ${USAGE_EXIT} with the error and hints on stderr; the bare multi-word prompt runs like \`kubic run -p\` (completed on faux); models/doctor --json keep stdout to one document with the models.json receipt on stderr; a refused config exits 1 with the run envelope under --json and stderr-only otherwise; stubbed old node hits the named guard (exit 1, stderr-only) and the 22.19 floor passes; injected failure prints one \`error:\` line (stack only under KUBIC_DEBUG=1); doctor exit ${DOCTOR_PROVIDER_EXIT} ${JSON.stringify(PROVIDER_DOWN_LINE)} with the five embedded role presets reported as builtin; provider-less run exit ${RUN_PROVIDER_EXIT} with session:/journal:/usage:/trajectory: refs; --version through a symlinked bin exits 0`,
+    );
+  } catch (error) {
+    // The violation marker carries no information the user has not already
+    // seen (each problem was printed above): swallow it, keep the exit code.
+    if (error !== CONTRACT_VIOLATION) throw error;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}

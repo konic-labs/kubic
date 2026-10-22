@@ -1,0 +1,9 @@
+{
+  "name": "@kubic/cli",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {},
+  "description": "Kubic CLI composition root (wires host + tui)"
+}

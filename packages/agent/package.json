@@ -1,0 +1,138 @@
+{
+  "name": "@kubic/agent",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./compaction": {
+      "source": "./src/compaction.ts",
+      "default": "./src/compaction.ts"
+    },
+    "./lane/abort": {
+      "source": "./src/lane/abort.ts",
+      "default": "./src/lane/abort.ts"
+    },
+    "./lane/boot": {
+      "source": "./src/lane/boot.ts",
+      "default": "./src/lane/boot.ts"
+    },
+    "./lane/branches": {
+      "source": "./src/lane/branches.ts",
+      "default": "./src/lane/branches.ts"
+    },
+    "./lane/events": {
+      "source": "./src/lane/events.ts",
+      "default": "./src/lane/events.ts"
+    },
+    "./lane/external-tools": {
+      "source": "./src/lane/external-tools.ts",
+      "default": "./src/lane/external-tools.ts"
+    },
+    "./lane/failures": {
+      "source": "./src/lane/failures.ts",
+      "default": "./src/lane/failures.ts"
+    },
+    "./lane/interceptors": {
+      "source": "./src/lane/interceptors/index.ts",
+      "default": "./src/lane/interceptors/index.ts"
+    },
+    "./lane/pending": {
+      "source": "./src/lane/pending.ts",
+      "default": "./src/lane/pending.ts"
+    },
+    "./lane/policy": {
+      "source": "./src/lane/policy.ts",
+      "default": "./src/lane/policy.ts"
+    },
+    "./lane/session-fs": {
+      "source": "./src/lane/session-fs.ts",
+      "default": "./src/lane/session-fs.ts"
+    },
+    "./lane/session-store": {
+      "source": "./src/lane/session-store/index.ts",
+      "default": "./src/lane/session-store/index.ts"
+    },
+    "./lane/settle": {
+      "source": "./src/lane/settle.ts",
+      "default": "./src/lane/settle.ts"
+    },
+    "./lane/transcript": {
+      "source": "./src/lane/transcript.ts",
+      "default": "./src/lane/transcript.ts"
+    },
+    "./lane/turn": {
+      "source": "./src/lane/turn.ts",
+      "default": "./src/lane/turn.ts"
+    },
+    "./lane/wrap": {
+      "source": "./src/lane/wrap.ts",
+      "default": "./src/lane/wrap.ts"
+    },
+    "./model-select": {
+      "source": "./src/model-select.ts",
+      "default": "./src/model-select.ts"
+    },
+    "./models-config": {
+      "source": "./src/models-config/index.ts",
+      "default": "./src/models-config/index.ts"
+    },
+    "./ops/display-diff": {
+      "source": "./src/ops/display-diff.ts",
+      "default": "./src/ops/display-diff.ts"
+    },
+    "./ops/git": {
+      "source": "./src/ops/git/index.ts",
+      "default": "./src/ops/git/index.ts"
+    },
+    "./ops/memos": {
+      "source": "./src/ops/memos.ts",
+      "default": "./src/ops/memos.ts"
+    },
+    "./ops/registry": {
+      "source": "./src/ops/registry.ts",
+      "default": "./src/ops/registry.ts"
+    },
+    "./ops/types": {
+      "source": "./src/ops/types.ts",
+      "default": "./src/ops/types.ts"
+    },
+    "./ops/walk": {
+      "source": "./src/ops/walk.ts",
+      "default": "./src/ops/walk.ts"
+    },
+    "./permissions": {
+      "source": "./src/permissions.ts",
+      "default": "./src/permissions.ts"
+    },
+    "./pi-boundary": {
+      "source": "./src/pi-boundary.ts",
+      "default": "./src/pi-boundary.ts"
+    },
+    "./prompts": {
+      "source": "./src/prompts.ts",
+      "default": "./src/prompts.ts"
+    },
+    "./skills": {
+      "source": "./src/skills/index.ts",
+      "default": "./src/skills/index.ts"
+    },
+    "./stream-options": {
+      "source": "./src/stream-options.ts",
+      "default": "./src/stream-options.ts"
+    },
+    "./test-support/lane-harness": {
+      "source": "./src/test-support/lane-harness.ts",
+      "default": "./src/test-support/lane-harness.ts"
+    },
+    "./test-support/models-fixtures": {
+      "source": "./src/test-support/models-fixtures.ts",
+      "default": "./src/test-support/models-fixtures.ts"
+    }
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.0.2",
+    "@earendil-works/pi-ai": "1.0.2",
+    "@earendil-works/pi-durable": "1.0.2"
+  }
+}

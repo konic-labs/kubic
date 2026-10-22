@@ -1,0 +1,1322 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: one declaration per config key is the point of this module: the parser, the runtime, example.toml and the docs tables all derive from this one list, so splitting it would split that source.
+// Every configuration key, declared once: the check its value must pass,
+// what the runtime does with it, its environment override and default, its
+// value in the example config, and its row in the docs. The parser
+// (config.ts), the runtime's effect table (runtime.ts), example.toml and the
+// key tables in docs/cli/configuration.md (scripts/gen-config-docs.mjs) all
+// derive from this list.
+//
+// The module imports nothing, so the docs generator loads it as it is.
+
+// What the runtime does with a key. `effect`: the value reaches a code path.
+// `kept`: the key is reserved and reported, and the reason it is not consumed
+// is stated. `notYetImplemented`: pending work, named.
+export type KeyEffect =
+  | { readonly effect: string }
+  | { readonly kept: string }
+  | { readonly notYetImplemented: string };
+
+// The check a key's value must pass (config.ts implements each one, and its
+// error message names the key).
+export type KeyCheck =
+  // A non-empty string.
+  | 'string'
+  | 'boolean'
+  // A non-negative, finite number.
+  | 'number'
+  // An array of strings.
+  | 'strings'
+  // A thinking level of the vocabulary.
+  | 'thinking'
+  // A permission class: a string level or a boolean.
+  | 'permission'
+  // A positive integer of milliseconds a timer can hold.
+  | 'timeoutMs'
+  // A non-negative integer.
+  | 'count'
+  // A non-negative integer of milliseconds a timer can hold.
+  | 'retryDelayMs'
+  | 'cacheRetention'
+  | 'approvalRoute'
+  // A non-negative number of milliseconds a timer can hold.
+  | 'pendingMs'
+  // A positive integer of bytes.
+  | 'journalBytes'
+  // Relative paths, none empty.
+  | 'outOfScope'
+  // `provider/id` rungs, no wildcards.
+  | 'escalate'
+  | 'maxEscalations'
+  // A `provider/id` ref.
+  | 'roleModel'
+  // `provider/id` or `provider/*` entries, or `{ id, thinking? }` tables.
+  | 'roleModels'
+  // A positive safe integer.
+  | 'tokens'
+  // A non-empty command string.
+  | 'command'
+  | 'networkPolicy'
+  | 'filesystemPolicy'
+  // `open` or `restricted`.
+  | 'projectPolicy'
+  | 'auditSink'
+  | 'auditLevel'
+  // A facility name, or a number 0–23.
+  | 'facility'
+  // `beforeTool`, `afterTool` or `runEnd`.
+  | 'hookEvent'
+  // Files or directories of skills.
+  | 'skills';
+
+export interface ConfigKey {
+  // The key within its section (`maxBytes`).
+  readonly name: string;
+  readonly check: KeyCheck;
+  // The parsed field, when it differs from the key (`allowed_models` parses
+  // into `allowedModels`).
+  readonly field?: string;
+  // The parse refuses a table without it.
+  readonly required?: boolean;
+  // The value when nothing sets it. `fill` makes the parse write it.
+  readonly default?: string;
+  readonly fill?: boolean;
+  // The environment variable that overrides it, above every file layer.
+  readonly env?: string;
+  // What the runtime does with it; absent for a key the section's own row
+  // covers (`roles.<name>.model` resolves through `roles`).
+  readonly runtime?: KeyEffect;
+  // Its TOML value in example.toml, with the comment lines above it.
+  readonly example?: string;
+  readonly note?: readonly string[];
+}
+
+// One row of the docs' key table: the keys it documents (dotted, as the
+// parse names them: `roles.<name>.model`, `audit.sink`), and the key column
+// when it reads otherwise than those keys in backticks.
+interface DocsRow {
+  readonly keys: readonly string[];
+  readonly label?: string;
+  readonly text: string;
+}
+
+export interface ConfigSection {
+  readonly name: string;
+  // `table`: `[name]`. `tables`: `[name.<key>]`, one table per key.
+  // `array`: `[[name]]`, an array of tables. `value`: a top-level key.
+  readonly shape: 'table' | 'tables' | 'array' | 'value';
+  // A section the parse leaves out when none of its keys is set.
+  readonly omitEmpty?: boolean;
+  // The section's own runtime row (open-ended sections, and a top-level
+  // key).
+  readonly runtime?: KeyEffect;
+  readonly keys: readonly ConfigKey[];
+  readonly docs: readonly DocsRow[];
+  // The example's tables for a `tables` or `array` section, as
+  // `key = value` lines per table.
+  readonly exampleTables?: Readonly<Record<string, readonly string[]>>;
+  readonly exampleNote?: readonly string[];
+}
+
+// The request options `[model]` and `[roles.<name>]` share. `timeoutMs`
+// bounds one provider request (0 would refuse every request, so it is
+// refused by name); `maxRetries`/`maxRetryDelayMs` are non-negative (0
+// disables retries / the delay cap — both real provider meanings, never
+// "unset"); `cacheRetention` names Pi's retention vocabulary.
+const REQUEST_OPTIONS = [
+  { name: 'timeoutMs', check: 'timeoutMs' },
+  { name: 'maxRetries', check: 'count' },
+  { name: 'maxRetryDelayMs', check: 'retryDelayMs' },
+  { name: 'cacheRetention', check: 'cacheRetention' },
+] as const satisfies readonly ConfigKey[];
+
+const PERMISSION_EFFECT = {
+  effect: 'permission classes for the lane: derived tool allowlist',
+} as const;
+
+const VERIFY_COMMAND_EFFECT = (gate: string): KeyEffect => ({
+  effect: `${gate} gate: a shell command (sh -c) run in the worktree after each run settles, outside approvals and recorded in the audit ledger; exit status → signal:${gate}`,
+});
+
+export const CONFIG_SECTIONS = [
+  {
+    name: 'agent',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'name',
+        check: 'string',
+        runtime: { effect: 'agent id on the lane + journal attribution' },
+        example: '"kubic"',
+      },
+      {
+        name: 'systemPromptFile',
+        check: 'string',
+        runtime: {
+          effect:
+            'file whose contents the run, tui and replay lanes append to the assembled system prompt (ahead of the skills block)',
+        },
+        example: '"SYSTEM.md"',
+        note: [
+          'Prompt augmentation: the sibling SYSTEM.md',
+          'is read at load and appended to the assembled lane prompt (ahead of the',
+          'skills block) for run, tui and replay. Relative to this',
+          "file's directory; a leading ~/ expands to home. A project-layer path",
+          'additionally requires trust and containment in the project root; a missing',
+          'or unreadable file is a named ConfigError, never a silent skip.',
+        ],
+      },
+      {
+        name: 'projectInstructions',
+        check: 'boolean',
+        default: 'true',
+        runtime: {
+          effect:
+            "the trusted project's AGENTS.md files the run and tui lanes append to the system prompt (after the systemPromptFile, ahead of the skills block)",
+        },
+        example: 'true',
+      },
+    ],
+    docs: [
+      {
+        keys: ['agent.name'],
+        text: "The agent's id: journal entries are attributed to it. Unset ⇒ `root`, unchanged.",
+      },
+      {
+        keys: ['agent.systemPromptFile'],
+        text: "Prompt augmentation: a path whose contents are read at load and appended to the assembled system prompt — ahead of the skills block — for `kubic run`, `kubic tui` and the live tiers of `kubic replay`. A leading `~/` expands to the home directory; a relative path resolves against the declaring config file's directory, so the shipped example's `SYSTEM.md` travels with `example.toml`. Global-layer paths are always allowed; a project-layer path applies only when the project is trusted (an untrusted project's file is refused pre-trust with the trust message, before it is read) and must resolve inside the project root — a trusted path outside it, or a symlink whose target lies outside it, is refused by name. A missing or unreadable file is a named `ConfigError`, never a silent skip. `kubic config` reports the effective (resolved) path; the contents never render.",
+      },
+      {
+        keys: ['agent.projectInstructions'],
+        text: 'Project instructions: `kubic run` and `kubic tui` read one `AGENTS.md` per directory from the repository root down to the working directory (the working directory alone outside a repository) and append them to the system prompt, outermost first, after the `systemPromptFile` and ahead of the skills block. A file loads only when its directory is trusted (see [Project instructions](#project-instructions-agentsmd)); each one reaches the prompt up to 32 KiB, and a longer one is cut with a notice. `false` turns the search off; an enterprise `false` holds against every lower layer.',
+      },
+    ],
+  },
+  {
+    name: 'model',
+    shape: 'table',
+    keys: [
+      {
+        name: 'provider',
+        check: 'string',
+        env: 'KUBIC_MODEL',
+        runtime: {
+          effect:
+            'provider selection for `kubic run` and `kubic tui` (selectModel)',
+        },
+        example: '"local"',
+      },
+      {
+        name: 'id',
+        check: 'string',
+        env: 'KUBIC_MODEL',
+        runtime: {
+          effect:
+            'model selection for `kubic run` and `kubic tui` (selectModel)',
+        },
+        example: '"llama3"',
+      },
+      {
+        name: 'thinking',
+        check: 'thinking',
+        env: 'KUBIC_MODEL_THINKING',
+        runtime: {
+          effect:
+            'thinking level the run/tui lane boots with (clamped to the model); per-run override is --thinking, then KUBIC_MODEL_THINKING',
+        },
+        example: '"medium"',
+      },
+      {
+        ...REQUEST_OPTIONS[0],
+        runtime: {
+          effect:
+            'per-request provider timeout on the lane (`settings.stream`), layered per role by `[roles.<name>].timeoutMs`',
+        },
+      },
+      {
+        ...REQUEST_OPTIONS[1],
+        runtime: {
+          effect:
+            'provider/SDK retries inside one request attempt on the lane (`settings.stream`), layered per role by `[roles.<name>].maxRetries`',
+        },
+      },
+      {
+        ...REQUEST_OPTIONS[2],
+        runtime: {
+          effect:
+            'cap on the server-requested retry delay on the lane (`settings.stream`), layered per role by `[roles.<name>].maxRetryDelayMs`',
+        },
+      },
+      {
+        ...REQUEST_OPTIONS[3],
+        runtime: {
+          effect:
+            'prompt cache retention preference on the lane (`settings.stream`), layered per role by `[roles.<name>].cacheRetention`',
+        },
+      },
+      {
+        name: 'escalate',
+        check: 'escalate',
+        runtime: {
+          effect:
+            'escalation ladder rungs the run/tui lane climbs one-way; a role escalate wins for that role',
+        },
+      },
+      {
+        name: 'maxEscalations',
+        check: 'maxEscalations',
+        runtime: {
+          effect:
+            'climbs allowed per run on the escalation ladder; unset means the ladder length',
+        },
+      },
+      {
+        name: 'fallback',
+        check: 'escalate',
+        runtime: {
+          effect:
+            'the models a run falls back to, in order, when the selected one is unavailable',
+        },
+      },
+    ],
+    docs: [
+      {
+        keys: ['model.provider', 'model.id'],
+        text: 'Selects the provider/model for `kubic run` and `kubic tui` (`selectModel`); `--model` and `KUBIC_MODEL` beat it as the `cli`/`env` layers of the config load, and a frozen enterprise `[model]` beats all of them (announced on stderr).',
+      },
+      {
+        keys: [
+          'model.escalate',
+          'model.maxEscalations',
+          'roles.<name>.escalate',
+        ],
+        text: "The escalation ladder: `escalate` lists the rungs as concrete `provider/id` refs in climbing order (wildcards refused per entry at load); a role's `escalate` wins outright for runs as that role, even an empty list (which freezes every `/model` switch — opting out of climbing, not of the gate). `maxEscalations` bounds the climbs per run, unset meaning the ladder length. Climbs are one-way (a down-step or off-ladder target is refused by name with the live model untouched) and recorded: `/model <ref>` climbs the ladder silently, `/escalate <ref> [reason]` climbs naming why, and three consecutive tool-failure turns climb one rung automatically — once per run, never back (`kubic run` settles one turn per invocation, so the automatic trigger lives in `kubic tui`). Every climb appends an `escalation: <from> → <to> (<reason>)` transcript row and lands on the trajectory's `model.escalations` (per-model usage already attributes the spend each side of the move).",
+      },
+      {
+        keys: ['model.fallback'],
+        text: 'The fallback chain: concrete `provider/id` refs in the order they are tried. When the selected model cannot be used — its provider has no credentials, is not registered, or is refused by `[policy]` — the first usable rung is selected instead, named on stderr. During a `kubic run`, a turn that fails with a provider error (unreachable, overloaded, rate-limited after the retries, or refusing the credentials) is run again on the next rung. Each move is named on stderr, listed as `fallbacks` in the `--json` envelope and recorded as an escalation on the trajectory, with the error that caused it. See [Regions and fallbacks](enterprise.md#regions-and-fallbacks).',
+      },
+      {
+        keys: ['model.thinking'],
+        text: "The file-layer thinking default. A session starts with the winner of `--thinking` > `KUBIC_MODEL_THINKING` > session record > role default > this key, clamped to the effective model's supported levels (a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite); the applied level is committed to the session and recorded in `trajectory.json`. A level the vocabulary does not know is refused by name at load.",
+      },
+      {
+        keys: [
+          'model.timeoutMs',
+          'model.maxRetries',
+          'model.maxRetryDelayMs',
+          'model.cacheRetention',
+        ],
+        text: 'Request options for every model request (`settings.stream`): `timeoutMs` bounds one provider request (a positive integer of milliseconds), `maxRetries` caps the provider/SDK retries inside one request attempt and `maxRetryDelayMs` caps the delay a server may ask for before a retry (non-negative integers: `0` disables retries / the cap), and `cacheRetention` is the prompt cache preference (`none`, `short`, `long`). `[roles.<name>]` layers each of them per key for runs as that role. A mistyped value is refused by name at load.',
+      },
+    ],
+  },
+  {
+    name: 'approvals',
+    shape: 'table',
+    keys: [
+      {
+        name: 'route',
+        check: 'approvalRoute',
+        default: 'ask-user',
+        fill: true,
+        env: 'KUBIC_APPROVALS_ROUTE',
+        runtime: { effect: 'approval routing (ask-user | deny)' },
+        example: '"ask-user"',
+      },
+      {
+        name: 'maxPendingMs',
+        check: 'pendingMs',
+        runtime: {
+          effect:
+            'pending-approval bound on the lane; a pending ask denies on timeout',
+        },
+        example: '30000',
+      },
+      {
+        name: 'autoApprove',
+        check: 'strings',
+        runtime: {
+          effect:
+            'explicit-only capability auto-approvals on the lane (never inferred)',
+        },
+        example: '[]',
+      },
+      {
+        name: 'sessionScoped',
+        check: 'boolean',
+        runtime: {
+          effect:
+            'per-session approval store (true only; false is refused — no shared store exists)',
+        },
+        example: 'true',
+      },
+      {
+        name: 'requireJustification',
+        check: 'boolean',
+        runtime: {
+          effect:
+            'installed on the lane: an approval without justification is denied',
+        },
+        example: 'false',
+      },
+      {
+        name: 'broker',
+        check: 'string',
+        runtime: {
+          effect:
+            'kubic run posts each approval ask to this broker and waits for its answer within maxPendingMs',
+        },
+      },
+      {
+        name: 'brokerTokenEnv',
+        check: 'string',
+        runtime: {
+          effect: 'the variable holding the bearer token sent to the broker',
+        },
+      },
+      {
+        name: 'preApprovalKey',
+        check: 'string',
+        runtime: {
+          effect:
+            'the Ed25519 public key a kubic run --pre-approvals file must be signed with',
+        },
+      },
+    ],
+    docs: [
+      {
+        keys: ['approvals.route'],
+        text: "Approval routing (`ask-user` | `deny`), installed by `kubic run`, `kubic tui`, `kubic replay` and reported by doctor's `policy:installed` line. `deny` refuses every challenged call with `denied by policy route` (exit 4) and never opens the TUI overlay — `autoApprove` entries never apply under it (they are denied too, and doctor fails `policy:approvals` for the combination). `KUBIC_APPROVALS_ROUTE` overrides it.",
+      },
+      {
+        keys: [
+          'approvals.broker',
+          'approvals.brokerTokenEnv',
+          'approvals.preApprovalKey',
+        ],
+        label: '`approvals.broker`, `brokerTokenEnv`, `preApprovalKey`',
+        text: 'Headless approvals for `kubic run`: `broker` is an https URL (plain http only to this machine) each challenged call is posted to as one ask, answered by a person within `maxPendingMs` or denied; `brokerTokenEnv` names the variable whose value is sent as a bearer token; `preApprovalKey` is the Ed25519 public key (PEM) a `--pre-approvals` file must be signed with. Read from the enterprise, product and global layers only: a project config setting any of them is refused. See [Headless approvals](enterprise.md#headless-approvals).',
+      },
+      {
+        keys: [
+          'approvals.maxPendingMs',
+          'approvals.autoApprove',
+          'approvals.sessionScoped',
+          'approvals.requireJustification',
+        ],
+        label:
+          '`approvals.maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification`',
+        text: "Applied to `kubic run`, `kubic tui` and `kubic replay` from the same projection doctor prints, so `policy:approvals` and `policy:installed` always show the same route and bound (doctor fails `policy-mismatch` if they ever differ). `maxPendingMs` bounds the TUI overlay: an unanswered ask denies on timeout. `autoApprove` is explicit-only and applies headless too (the audit record says `approved by autoApprove`), except for an always-ask capability (`kubic-state-write`): naming it is accepted but ignored — it takes the normal ask path (the TUI seat, or the instant no-surface refusal headless, never a `maxPendingMs` stall), `kubic doctor`'s `policy:approvals` line warns by name and `kubic config` counts it as not auto-approved. `requireJustification = true` denies any approval that carries no justification (the TUI overlay and `autoApprove` supply none, so every challenged call is refused). `sessionScoped = false` is refused by the config load: decisions are always stored per session. Only real answers (user, route, autoApprove) persist to `approvals.json` — a timeout denies the call but stores nothing, so a later surface can still ask about the same operation.",
+      },
+    ],
+  },
+  {
+    name: 'permissions',
+    shape: 'table',
+    keys: [
+      {
+        name: 'filesystem',
+        check: 'permission',
+        runtime: PERMISSION_EFFECT,
+        example: '"workspace-write"',
+      },
+      {
+        name: 'shell',
+        check: 'permission',
+        runtime: PERMISSION_EFFECT,
+        example: 'true',
+      },
+      {
+        name: 'network',
+        check: 'permission',
+        runtime: PERMISSION_EFFECT,
+        example: '"none"',
+      },
+      {
+        name: 'git',
+        check: 'permission',
+        runtime: PERMISSION_EFFECT,
+        example: '"workspace"',
+      },
+      {
+        name: 'credentials',
+        check: 'permission',
+        runtime: PERMISSION_EFFECT,
+        example: '"none"',
+      },
+    ],
+    docs: [
+      {
+        keys: [
+          'permissions.filesystem',
+          'permissions.shell',
+          'permissions.network',
+          'permissions.git',
+          'permissions.credentials',
+        ],
+        label: '`permissions.*`',
+        text: 'Permission classes → the tool allowlist they derive. `shell = "read-only-allowlist"` keeps `bash` but enforces an explicit read-only command allowlist at the guard: every `|`/`||`/`&&`/`;`/`&`/newline segment must head with `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` or `git`, and then only in its read-only form — `git status`/`diff`/`log`/`show` (after global options like `-C`/`--no-pager`, without `--output`, and never `-c`/`--config-env`/`--exec-path`/`--upload-pack`/`--receive-pack`, which can execute code), `find` without `-exec*`/`-ok*`/`-delete`/`-fprint*`/`-fls`, `rg` without `--pre`/`--hostname-bin`. Redirection (`>`, `>>`, any fd form) is refused, `sed`/`perl` with `-i`/`--in-place` are refused, and any other verb (`tee`, `rm`, `npm`, `node`, `cp`, …) is blocked by name. Expansion and substitution are never interpreted and are refused outright — `$(…)`, backticks, `<(...)` process substitution and any unquoted `$` (single-quoted text is literal and stays readable) — because an allowed head verb could otherwise launder another command. The parser is lexical, so it over-blocks rather than under-blocks; `shell = true` is unchanged (no allowlist).',
+      },
+    ],
+  },
+  {
+    name: 'journal',
+    shape: 'table',
+    keys: [
+      {
+        name: 'retentionDays',
+        check: 'number',
+        env: 'KUBIC_JOURNAL_RETENTION_DAYS',
+        runtime: {
+          effect:
+            'journal age bound (maxAgeMs) enforced on every append; 0 is retention off',
+        },
+        example: '30',
+      },
+      {
+        name: 'maxBytes',
+        check: 'journalBytes',
+        default: '100 MiB',
+        runtime: {
+          effect:
+            'journal byte bound — index.jsonl plus the blobs it references — enforced on every append; unset ⇒ the 100 MiB default',
+        },
+      },
+      {
+        name: 'outOfScope',
+        check: 'outOfScope',
+        runtime: {
+          effect:
+            'paths excluded from the baseline and the end-of-run sweep (self + children)',
+        },
+      },
+    ],
+    docs: [
+      {
+        keys: ['journal.retentionDays'],
+        text: 'Journal age bound (days), enforced on every append. `0` means retention is off: no age bound is installed, the same reading `kubic journal prune --keep-days 0` has, and `kubic config` prints `journal retention: off`. Unset installs no bound either. It is also the default keep window of `kubic journal prune` (`--keep-days` overrides it).',
+      },
+      {
+        keys: ['journal.maxBytes'],
+        text: 'Journal byte bound, enforced on every append: the store — `index.jsonl` plus the blobs it references — is pruned to stay under it, and a pass that has to prune frees a tenth of the bound (the headroom the next appends need). Content addressing dedupes blobs, so a file toggling between two contents (a formatter fighting the agent, repeated `undo --step`) grows the journal through its lines alone; this key is what keeps that bounded. A positive integer (0 is refused by name: it is not "retention off" — unset is — it is a bound nothing fits). Unset ⇒ 100 MiB (`DEFAULT_JOURNAL_MAX_BYTES`). An entry whose own content cannot fit is refused before anything is written, so the tool call fails as `journal_failed` with the file untouched, and a pass that has to prune never drops the newest entry — the store stays over its bound by that entry instead.',
+      },
+      {
+        keys: ['journal.outOfScope'],
+        text: 'Paths excluded from the baseline and the end-of-run sweep (self + children): `outOfScope = ["dist"]` ⇒ `dist/`, `dist/**`. Path-boundary aware (`dist` never matches `dist-x`). An entry is read as the plain path it names (`./dist` and `dist/` are `dist`); an empty entry, one that names the whole workspace (`.`) and one outside it (`../x`, `/abs`) are refused by name. A change under an excluded path is never journaled, so `kubic undo` cannot restore it: `kubic doctor` warns about every excluded path (`journal:out-of-scope`), and the trust question names journal coverage among what a project config sets.',
+      },
+    ],
+  },
+  {
+    name: 'roles',
+    shape: 'tables',
+    runtime: {
+      effect:
+        'per-role model/tool/thinking/request-option defaults, requires and the allowed model set, layered under the role document',
+    },
+    keys: [
+      { name: 'model', check: 'roleModel' },
+      { name: 'tools', check: 'strings' },
+      { name: 'requires', check: 'strings' },
+      { name: 'thinking', check: 'thinking' },
+      { name: 'models', check: 'roleModels' },
+      { name: 'escalate', check: 'escalate' },
+      ...REQUEST_OPTIONS,
+    ],
+    exampleTables: {
+      reviewer: [
+        'model = "local/llama3"',
+        'tools = ["read", "grep", "diff"]',
+        'models = ["local/*", { id = "acme/big", thinking = "high" }]',
+      ],
+      implementer: [
+        'model = "local/llama3"',
+        'tools = ["read", "write", "edit", "bash"]',
+      ],
+    },
+    docs: [
+      {
+        keys: [
+          'roles.<name>.model',
+          'roles.<name>.tools',
+          'roles.<name>.thinking',
+          'roles.<name>.requires',
+          'roles.<name>.models',
+          'roles.<name>.timeoutMs',
+          'roles.<name>.maxRetries',
+          'roles.<name>.maxRetryDelayMs',
+          'roles.<name>.cacheRetention',
+        ],
+        label:
+          '`roles.<name>.model`, `roles.<name>.tools`, `roles.<name>.thinking`, `roles.<name>.requires`, `roles.<name>.models`',
+        text: "Per-role defaults layered under the role document for `kubic run --role <name>`: `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list, `thinking` is the role's thinking default — below the session's stored level and any `--thinking`/`KUBIC_MODEL_THINKING` override, above the `[model].thinking` file default — `requires` names tools that always require approval under the role — unioned with the document's own `requires:` list, never subtracted. `models` is the role's allowed model set: entries are `\"provider/id\"` or `\"provider/*\"` strings, or `{ id, thinking? }` tables whose thinking beats the flat role default for the matched model — an empty set (or none) allows every registered model, a malformed entry is refused by name at load, and selection plus every `/model` switch resolve against it, refusing out-of-set by name (`kubic config` renders the winning layer's list with provenance; `/scoped-models` reports the resolved set in the TUI). Each leaf is attributed to the layer that set it (enterprise > product > global > project > session > agent). A malformed model ref, an unknown thinking level, a malformed set entry, or a mistyped request option is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools + thinking + requires + models) and install the most restrictive merge of the config classes and the role's (a role declaring `network: none` runs under it even when config allows full); the TUI also takes the `[agent].name` agent id. No role, model or provider is invented when none of those levels sets one. `timeoutMs`/`maxRetries`/`maxRetryDelayMs`/`cacheRetention` layer over the `[model]` request tuning per key for runs as that role.",
+      },
+      {
+        keys: [],
+        label:
+          '`.kubic/roles/<name>.md` frontmatter `name`, `description`, `model`',
+        text: "The role document's own Pi-agent keys: `name` aliases `role` (a document disagreeing with itself is refused by name), `description` is shown by `kubic doctor` in the role detail, and `model` is a `provider/id` pin validated at parse (a malformed ref is refused with its reason before any session starts). Precedence for the model pin: an explicit CLI pin beats `[roles.<name>].model`, which beats the document pin (a layer winning over the document is precedence, never an overridden attempt); the winning pin reaches `kubic run --role`/`kubic tui --role` through the existing role-model selection.",
+      },
+    ],
+  },
+  {
+    name: 'ui',
+    shape: 'table',
+    keys: [
+      {
+        name: 'theme',
+        check: 'string',
+        default: 'default',
+        runtime: {
+          effect:
+            'TUI theme: a built-in name (`default`, `dark`, `light`, `terminal`) or a path to a JSON theme file, resolved and validated before the alt-screen opens (a missing or invalid file is a named `error:` line and exit 2)',
+        },
+        example: '"dark"',
+      },
+      {
+        name: 'statusBar',
+        check: 'boolean',
+        runtime: {
+          kept: 'the status bar is always shown; the key is parsed and reported but hides nothing',
+        },
+        example: 'true',
+      },
+    ],
+    docs: [
+      {
+        keys: ['ui.theme'],
+        text: 'TUI theme (token themes). A built-in name — `default` or `dark` (the shipped Konic brand palette), `light` (for light terminal backgrounds) or `terminal` (your terminal\'s own colours: no backgrounds of its own, semantic colours on the ANSI palette slots) — or a path to a JSON theme file, read relative to the current directory (an absolute path is taken as typed). Resolved and validated **before the alt-screen opens**: a missing file, malformed JSON, an unknown key or colour, an unknown `extends` base, or a value that is not `#rrggbb` is one `error: theme \'<ref>\': …` line on stderr and exit 2 (the message never quotes the file). A theme assigns colours to the design-token roles: `bg0`–`bg3` surfaces, `fg0`–`fg3` text levels, `accent`/`accentBg`, `ok`/`okBg`, `warn`/`warnBg`, `err`/`errBg`, `info`, `add`/`addBg`, `del`/`delBg`, `addWordBg`/`delWordBg` (the changed words of a diff line). Schema (v2): `{ "name": "mine", "extends": "dark", "colors": { "accent": "#00aaff", "bg2": "#202030" } }` — any subset of roles; the rest come from `extends` (`default`/`dark` when absent). A v1 file (exactly the seven keys `accent`, `warm`, `success`, `error`, `warning`, `muted`, `prompt`) is still accepted and mapped onto the dark palette (`accent`→accent, `success`→ok, `error`→err, `warning`→warn, `muted`→fg2, `prompt`→fg0; `warm` is accepted and unused); a file cannot mix v1 keys with `extends`. Every colour is downgraded to the terminal\'s colour level (truecolor RGB, else the nearest xterm-256 entry, else the nearest ANSI colour — surfaces drop their background at 16 colours except the selection — and the identity under `NO_COLOR`). Unset ⇒ `default`.',
+      },
+      {
+        keys: ['ui.statusBar'],
+        text: 'Kept: the status bar is always shown. The key is parsed and reported but hides nothing.',
+      },
+    ],
+  },
+  {
+    name: 'session',
+    shape: 'table',
+    keys: [
+      {
+        name: 'store',
+        check: 'string',
+        runtime: {
+          kept: 'jsonl is the only store; the key is parsed and reported, and sqlite/memory are not implemented',
+        },
+        example: '"jsonl"',
+      },
+      {
+        name: 'dir',
+        check: 'string',
+        runtime: {
+          notYetImplemented:
+            'sessions stay under ~/.kubic/sessions; the key does not relocate them',
+        },
+        example: '".kubic/sessions"',
+      },
+      {
+        name: 'retentionDays',
+        check: 'number',
+        runtime: {
+          effect:
+            'default keep-window for `kubic sessions prune` (deletion stays explicit)',
+        },
+        example: '30',
+      },
+      {
+        name: 'autoCompact',
+        check: 'boolean',
+        runtime: {
+          effect:
+            'threshold compaction on the lane (run, tui): false disables it, true is the automatic default',
+        },
+        example: 'true',
+        note: [
+          'Compaction policy: automatic threshold compaction, a 4000-token',
+          'reserved room and a 5000-token verbatim recent window on the run and tui',
+          'lanes. All three are optional — unset means the lane defaults',
+          '(automatic, 16384 reserved, 20000 kept recent).',
+        ],
+      },
+      {
+        name: 'reserveTokens',
+        check: 'tokens',
+        default: '16384',
+        runtime: {
+          effect:
+            'reserved-room tokens on the lane (run, tui), clamped per model to at most a quarter of its context window',
+        },
+        example: '4000',
+      },
+      {
+        name: 'keepRecentTokens',
+        check: 'tokens',
+        default: '20000',
+        runtime: {
+          effect:
+            'verbatim recent-context window on the lane (run, tui), capped per model to a quarter of the room below its reserve',
+        },
+        example: '5000',
+      },
+    ],
+    docs: [
+      {
+        keys: ['session.store'],
+        text: 'Kept: `jsonl` is the only store. The key is parsed and reported; `sqlite` and `memory` are not implemented.',
+      },
+      {
+        keys: ['session.dir'],
+        text: 'Not implemented: sessions stay under `~/.kubic/sessions`, and the key does not relocate them.',
+      },
+      {
+        keys: ['session.retentionDays'],
+        text: 'Default keep-window (days) for `kubic sessions prune`: `--keep-days` overrides it. `0` means retention is off — prune exits 0 with `session retention is off (keep-days 0) — nothing is pruned`; unset, prune exits 1 naming both ways to set a window (`--keep-days`, or this key) rather than inventing one. Deletion stays explicit (`--yes`), dry-run is the default, and a session holding a live lock is never pruned — the lock is re-checked immediately before each delete, so a session locked between plan and delete is skipped too. The same window self-heals session journals at read time: `kubic log` (with `--session <id>` or the latest-session fallback) drops aged entries as it reads them — with retention unset, or `0`, the log path writes nothing. `kubic journal prune` reads `[journal] retentionDays` instead (see the paragraph below the table).',
+      },
+      {
+        keys: ['session.autoCompact'],
+        text: 'Threshold compaction in `kubic run` and `kubic tui`: `false` disables it, `true` (and unset) keeps the automatic default. A non-boolean is refused by name.',
+      },
+      {
+        keys: ['session.reserveTokens'],
+        text: 'Reserved-room tokens before a session compacts: unset ⇒ 16384. A value that is not a positive integer is refused by name. The effective reserve is clamped per model to at most a quarter of its context window (an 8192-token model reserves 2048), so a small-window model compacts sooner than the configured figure; `kubic config` and `kubic doctor` print the effective reserve.',
+      },
+      {
+        keys: ['session.keepRecentTokens'],
+        text: 'Verbatim recent-context window a session keeps across a compaction: unset ⇒ 20000. A value that is not a positive integer is refused by name. The effective window is capped per model to a quarter of the room below its reserve (window − reserve), so it scales with the model: an 8192-token model keeps 1536, a 16384-token model 3072, a 32768-token model 6144, and the configured 20000 applies from a 96384-token window up. A `/compact` keeps at most 2000 tokens verbatim, whatever the window.',
+      },
+    ],
+  },
+  {
+    name: 'verify',
+    shape: 'table',
+    keys: [
+      {
+        name: 'tests',
+        check: 'command',
+        runtime: VERIFY_COMMAND_EFFECT('tests'),
+        example: '"npm test"',
+      },
+      {
+        name: 'build',
+        check: 'command',
+        runtime: VERIFY_COMMAND_EFFECT('build'),
+      },
+      {
+        name: 'lint',
+        check: 'command',
+        runtime: VERIFY_COMMAND_EFFECT('lint'),
+      },
+      {
+        name: 'typecheck',
+        check: 'command',
+        runtime: VERIFY_COMMAND_EFFECT('typecheck'),
+        example: '"npm run typecheck"',
+      },
+      {
+        name: 'timeoutMs',
+        check: 'timeoutMs',
+        default: '600000',
+        runtime: {
+          effect:
+            'per-command bound for the [verify] gates (a timeout is a fail)',
+        },
+        example: '600000',
+      },
+    ],
+    docs: [
+      {
+        keys: [
+          'verify.tests',
+          'verify.build',
+          'verify.lint',
+          'verify.typecheck',
+        ],
+        text: "The gate commands (see [Gate verification](#gate-verification-verify)). After each `kubic run` settles, each configured command runs as `sh -c <command>` in the run's worktree and its exit status becomes the trajectory's `signal:<gate>` label (0 = `pass`). A gate with no command stays `unknown`. A blank or non-string command is refused by name at load. The command runs outside the approval interceptors, so each run of one is announced on stderr (`verify: running the <gate> gate: <command>`) and recorded as a `verify:<gate>` row in the audit ledger, and `kubic config` lists the commands that will run. A trusted project's config can set them: the trust question says so.",
+      },
+      {
+        keys: ['verify.timeoutMs'],
+        text: 'Per-command bound for the `[verify]` gates, a positive integer of milliseconds up to 2147483647 (default 600000). A command still running at the bound is killed and its gate is `fail`.',
+      },
+    ],
+  },
+  {
+    name: 'run',
+    shape: 'table',
+    keys: [
+      {
+        name: 'timeoutMs',
+        check: 'timeoutMs',
+        default: '300000',
+        runtime: {
+          effect:
+            'wall-clock bound of a headless kubic run when --timeout is not given',
+        },
+        example: '300000',
+      },
+      {
+        name: 'maxTurns',
+        check: 'tokens',
+        runtime: {
+          effect:
+            'turn bound of a headless kubic run when --max-turns is not given',
+        },
+        example: '50',
+      },
+    ],
+    docs: [
+      {
+        keys: ['run.timeoutMs'],
+        text: 'Wall-clock bound for a headless `kubic run` (and the bare `kubic "<prompt>"`), a positive integer of milliseconds up to 2147483647 (default 300000). `--timeout` wins over it. A run still going at the bound settles `status: timeout` and exits 1.',
+      },
+      {
+        keys: ['run.maxTurns'],
+        text: 'Turn bound for a headless `kubic run`: a positive integer (no bound by default). `--max-turns` wins over it. A run that reaches the bound exits 3 (`turn_limit`).',
+      },
+    ],
+  },
+  {
+    name: 'telemetry',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'enabled',
+        check: 'boolean',
+        default: 'false',
+        runtime: {
+          effect:
+            'sends each run and each settled tui turn to an OpenTelemetry collector as OTLP/HTTP traces and metrics',
+        },
+        example: 'true',
+      },
+      {
+        name: 'endpoint',
+        check: 'string',
+        runtime: {
+          effect:
+            'the OTLP/HTTP base URL; absent: OTEL_EXPORTER_OTLP_ENDPOINT, else http://localhost:4318',
+        },
+        example: '"http://localhost:4318"',
+      },
+      {
+        name: 'content',
+        check: 'boolean',
+        default: 'false',
+        runtime: {
+          effect:
+            'adds the prompt and the final answer (secret shapes redacted) to the run span',
+        },
+        example: 'false',
+      },
+    ],
+    docs: [
+      {
+        keys: ['telemetry.enabled', 'telemetry.endpoint', 'telemetry.content'],
+        text: 'OpenTelemetry export, off by default. With `enabled = true`, every `kubic run` and every settled `kubic tui` turn is sent to an OTLP/HTTP collector: the spans (`kubic.agent.run`, the phases of the run, `pi.tool.execute` per tool call) with the GenAI attributes — model, input and output tokens, cost — and the metrics `gen_ai.client.token.usage`, `kubic.cost`, `kubic.tool.errors` and `kubic.approvals`. The standard variables apply: `OTEL_EXPORTER_OTLP_ENDPOINT` (when `endpoint` is unset), `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` and `OTEL_SDK_DISABLED`. No prompt, argument or output leaves unless `content = true`. See [OpenTelemetry](enterprise.md#opentelemetry).',
+      },
+    ],
+  },
+  {
+    name: 'cost',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'team',
+        check: 'string',
+        runtime: {
+          effect:
+            'the team recorded on each new session, which `kubic cost --by team` groups on',
+        },
+        example: '"platform"',
+      },
+    ],
+    docs: [
+      {
+        keys: ['cost.team'],
+        text: 'The team a new session is billed to: recorded on the session with the OS user who ran it, so `kubic cost --by team` and `--by user` group spend by them. Set it in the managed config to bill a fleet by team. Sessions recorded before it report `(unknown)`.',
+      },
+    ],
+  },
+  {
+    name: 'providers',
+    shape: 'tables',
+    runtime: {
+      effect:
+        'what the managed config declares about a provider: the region its endpoint runs in, for [policy] allowed_regions',
+    },
+    keys: [{ name: 'region', check: 'string' }],
+    exampleTables: {
+      'azure-openai-responses': ['region = "westeurope"'],
+    },
+    exampleNote: [
+      'Read from the enterprise and product layers only: the region a',
+      "provider runs in is the organization's declaration.",
+    ],
+    docs: [
+      {
+        keys: ['providers.<name>.region'],
+        label: '`providers.<name>.region` (`[providers.<name>]`)',
+        text: "The region a provider's endpoint runs in, for a provider whose region Kubic cannot read from its environment: Azure OpenAI, a gateway in models.json, a direct API. `[policy] allowed_regions` checks it. Read from the enterprise and product layers only — a region is the organization's declaration, so a global or project config setting one is refused by name. Amazon Bedrock and Vertex AI always use the region their environment selects.",
+      },
+    ],
+  },
+  {
+    name: 'sandbox',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'mode',
+        check: 'string',
+        runtime: {
+          effect:
+            "runs the bash tool's commands in the OS sandbox: off, auto (when available) or required; the strictest any layer sets wins",
+        },
+        example: '"auto"',
+      },
+      {
+        name: 'writable',
+        check: 'strings',
+        runtime: {
+          effect:
+            'paths a sandboxed command may write beside the workspace and the temporary directories',
+        },
+        example: '["~/.npm", "~/.cache"]',
+      },
+    ],
+    docs: [
+      {
+        keys: ['sandbox.mode', 'sandbox.writable'],
+        text: 'The bash tool\'s OS sandbox: `mode = "auto"` runs each bash command in Seatbelt (macOS) or bubblewrap (Linux) when the machine has it, `"required"` refuses to run without one, `"off"` (the default) does not sandbox. Inside it a command writes only to the workspace, the temporary directories and `writable` (anywhere under `filesystem = "full"`), opens no network connection unless `network = "full"`, and cannot read the credential paths (`~/.ssh`, `~/.aws`, …); a call the approval ask approved for `network` or `credentials` gets exactly that. The strictest mode any layer sets wins; `writable` is read from the enterprise, product and global layers only. `kubic doctor` reports the sandbox as `sandbox`. See [The bash sandbox](enterprise.md#the-bash-sandbox).',
+      },
+    ],
+  },
+  {
+    name: 'mcp',
+    shape: 'tables',
+    runtime: {
+      effect:
+        "MCP servers the organization allowlists: each server's pinned command or URL and version, the tools offered, the tools that always ask",
+    },
+    keys: [
+      { name: 'command', check: 'string' },
+      { name: 'args', check: 'strings' },
+      { name: 'url', check: 'string' },
+      { name: 'version', check: 'string', required: true },
+      { name: 'tools', check: 'strings' },
+      { name: 'approve', check: 'strings' },
+      { name: 'env', check: 'strings' },
+    ],
+    exampleTables: {
+      github: [
+        'command = "/opt/mcp/github-mcp-server"',
+        'args = ["stdio"]',
+        'version = "0.9.1"',
+        'tools = ["get_issue", "list_pull_requests", "create_issue"]',
+        'approve = ["create_issue"]',
+        'env = ["GITHUB_TOKEN"]',
+      ],
+    },
+    exampleNote: [
+      'Read from the enterprise and product layers only: an MCP server runs',
+      'only when the organization allowlists it.',
+    ],
+    docs: [
+      {
+        keys: [
+          'mcp.<name>.command',
+          'mcp.<name>.args',
+          'mcp.<name>.url',
+          'mcp.<name>.version',
+          'mcp.<name>.tools',
+          'mcp.<name>.approve',
+          'mcp.<name>.env',
+        ],
+        label: '`mcp.<name>` (`[mcp.<name>]`)',
+        text: "An MCP server the organization allowlists: a stdio server's pinned `command` (an absolute path) and `args`, or a streamable HTTP server's `url` (https, or plain http to this machine); the `version` it must report (a server reporting another is refused); the `tools` offered (all when absent), each named `mcp__<name>__<tool>`; the tools that always ask (`approve`); and the variables a stdio server receives (`env`, above the tool environment). Read from the enterprise and product layers only: a server another layer names is refused by name. See [MCP servers](enterprise.md#mcp-servers).",
+      },
+    ],
+  },
+  {
+    name: 'oidc',
+    shape: 'table',
+    omitEmpty: true,
+    runtime: {
+      effect:
+        "the CI job's OIDC token as the credential of a cloud-hosted model: Bedrock through an AWS role, Vertex AI through workload identity federation, a gateway through $KUBIC_OIDC_TOKEN",
+    },
+    keys: [
+      { name: 'provider', check: 'string' },
+      { name: 'tokenEnv', check: 'string' },
+      { name: 'awsRoleArn', check: 'string' },
+      { name: 'gcpAudience', check: 'string' },
+      { name: 'gcpServiceAccount', check: 'string' },
+      { name: 'gatewayAudience', check: 'string' },
+    ],
+    docs: [
+      {
+        keys: [
+          'oidc.provider',
+          'oidc.tokenEnv',
+          'oidc.awsRoleArn',
+          'oidc.gcpAudience',
+          'oidc.gcpServiceAccount',
+          'oidc.gatewayAudience',
+        ],
+        label: '`oidc` (`[oidc]`)',
+        text: 'OIDC workload identity for `kubic run` and `kubic tui` in CI: `provider = "github"` requests the job\'s token from GitHub Actions (the job needs `permissions: id-token: write`), `provider = "env"` reads it from the variable `tokenEnv` names (GitLab\'s `id_tokens`, for example). `awsRoleArn` lets Amazon Bedrock assume that role with it, `gcpAudience` (the workload identity provider\'s resource name, `//iam.googleapis.com/projects/…/providers/…`) lets Vertex AI exchange it, impersonating `gcpServiceAccount` when set, and `gatewayAudience` offers a token for that audience to models.json as `$KUBIC_OIDC_TOKEN`. Read from the enterprise, product and global layers only: a project config setting any key is refused. See [Keys and workload identity](enterprise.md#keys-and-workload-identity).',
+      },
+    ],
+  },
+  {
+    name: 'tls',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'systemCa',
+        check: 'boolean',
+        runtime: {
+          effect:
+            "trust the operating system's certificate store, beside Node's bundled roots, for model, broker and collector traffic",
+        },
+        example: 'true',
+      },
+    ],
+    docs: [
+      {
+        keys: ['tls.systemCa'],
+        text: "`true` makes Kubic trust the operating system's certificate store (the macOS keychain, the Windows store, the Linux system bundle) beside Node's bundled roots, so a provider behind a TLS-inspecting proxy whose corporate root the device management installed works without `NODE_EXTRA_CA_CERTS`. `KUBIC_SYSTEM_CA=1` turns it on for one invocation. Applied when the command starts; a Node without the API says so on stderr. See [Corporate networks](enterprise.md#corporate-networks).",
+      },
+    ],
+  },
+  {
+    name: 'managed',
+    shape: 'table',
+    omitEmpty: true,
+    keys: [
+      {
+        name: 'url',
+        check: 'string',
+        runtime: {
+          effect:
+            'the signed remote policy merged into the enterprise layer, fetched into ~/.kubic/managed/ and verified on every load',
+        },
+        example: '"https://policy.example.com/kubic/config.toml"',
+      },
+      {
+        name: 'refreshHours',
+        check: 'tokens',
+        default: '24',
+        runtime: {
+          effect:
+            'how old the cached remote policy may get before a command fetches it again',
+        },
+        example: '24',
+      },
+    ],
+    exampleNote: [
+      'Read only from the managed config (/etc/kubic/config.toml, or the',
+      "platform's device-management path); any other layer setting it is refused.",
+    ],
+    docs: [
+      {
+        keys: ['managed.url', 'managed.refreshHours'],
+        text: "The organization's remote policy: a TOML config served at `url` (https, or plain http to this machine) with its Ed25519 signature at `<url>.sig`. A command that reads the config fetches it when the cached copy is older than `refreshHours` (24 by default), verifies it against the `policy.pub` beside the managed config, and keeps it in `~/.kubic/managed/`; every load verifies the cached copy again, and an unreachable server leaves the last verified copy in force. It is merged into the enterprise layer above the local file. Read only from the managed config — any other layer setting it is refused. See [Managed configuration](enterprise.md#managed-configuration).",
+      },
+    ],
+  },
+  {
+    name: 'policy',
+    shape: 'table',
+    runtime: {
+      kept: 'enterprise policy section: resolved once per process into the effective policy; the per-key rows below say what each key does',
+    },
+    keys: [
+      {
+        name: 'allowed_models',
+        field: 'allowedModels',
+        check: 'strings',
+        runtime: {
+          effect:
+            'model selection gate (`provider/id`, `provider/*`, bare ids) before any provider call',
+        },
+        example: '["local/*"]',
+      },
+      {
+        name: 'allowed_providers',
+        field: 'allowedProviders',
+        check: 'strings',
+        runtime: {
+          effect:
+            'provider gate shared by model selection and the implicit fallback pick',
+        },
+        example: '["local"]',
+      },
+      {
+        name: 'allowed_regions',
+        field: 'allowedRegions',
+        check: 'strings',
+        runtime: {
+          effect:
+            'region gate: a model whose endpoint region is unknown or unlisted is refused before any request',
+        },
+      },
+      {
+        name: 'allowed_tools',
+        field: 'allowedTools',
+        check: 'strings',
+        runtime: {
+          effect:
+            'lane tool intersection (active tools and the prompt tools line); a lower layer cannot widen it',
+        },
+        example:
+          '["read", "grep", "find", "ls", "bash", "edit", "write", "git_diff"]',
+      },
+      {
+        name: 'denied_tools',
+        field: 'deniedTools',
+        check: 'strings',
+        runtime: {
+          effect:
+            'lane tool intersection; the deny holds against every lower layer, role document and model grant',
+        },
+        example: '[]',
+      },
+      {
+        name: 'network_policy',
+        field: 'networkPolicy',
+        check: 'networkPolicy',
+        runtime: {
+          kept: 'resolved into the effective policy but NOT enforced: Kubic has no proxy-mediated enforcement, so the key is listed here rather than silently ignored (doctor does not report it)',
+        },
+        example: '"proxy"',
+      },
+      {
+        name: 'allowed_domains',
+        field: 'allowedDomains',
+        check: 'strings',
+        runtime: {
+          kept: 'resolved into the effective policy alongside network_policy; Kubic has no live network enforcement',
+        },
+        example: '["registry.npmjs.org", "github.com"]',
+      },
+      {
+        name: 'filesystem_policy',
+        field: 'filesystemPolicy',
+        check: 'filesystemPolicy',
+        runtime: {
+          kept: 'resolved into the effective policy but NOT enforced as its own gate: Kubic derives filesystem reach from the [permissions] classes',
+        },
+        example: '"workspace-only"',
+      },
+      {
+        name: 'data_policy',
+        field: 'dataPolicy',
+        check: 'string',
+        runtime: {
+          effect:
+            '"redact" scans secrets out of what sessions store and out of raw transcript output; "redact-model" also scans tool output before the model reads it; any other value is carried and reported, never claimed as enforced',
+        },
+        example: '"redact"',
+      },
+      {
+        name: 'logging_policy',
+        field: 'loggingPolicy',
+        check: 'string',
+        runtime: {
+          kept: 'carried and reported; the audit ledger is not selected by this key',
+        },
+        example: '"full-audit"',
+      },
+      {
+        name: 'max_run_cost_usd',
+        field: 'maxRunCostUsd',
+        check: 'number',
+        runtime: {
+          effect:
+            'stops a `kubic run` (or a `kubic tui` process) once its own spend reaches this many US dollars; the lowest value any layer sets wins',
+        },
+        example: '5',
+      },
+      {
+        name: 'max_daily_cost_usd',
+        field: 'maxDailyCostUsd',
+        check: 'number',
+        runtime: {
+          effect:
+            "refuses a run, or stops it, once this machine's spend for the UTC day reaches this many US dollars; the lowest value any layer sets wins",
+        },
+        example: '50',
+      },
+      {
+        name: 'project_policy',
+        field: 'projectPolicy',
+        check: 'projectPolicy',
+        runtime: {
+          effect:
+            'from a layer above the project, "restricted" refuses a project config that auto-approves, widens a permission class or declares [verify] commands, and keeps the project models.json providers out',
+        },
+        example: '"restricted"',
+      },
+    ],
+    docs: [
+      {
+        keys: ['policy.allowed_models'],
+        text: 'The model gate: `provider/id`, `provider/*` (or `*` glob) patterns and bare model ids. A selection outside the list — `--model`, `[model]`, `KUBIC_MODEL`, a role pin, or the implicit first-available pick — exits 6 with a named policy refusal before any provider call; the implicit pick skips disallowed providers. It gates `kubic run`, `kubic tui` (boot and `/model` switches — a refused switch leaves the live model untouched) and the re-executing tiers of `kubic replay`.',
+      },
+      {
+        keys: ['policy.allowed_regions'],
+        text: 'The regions a model endpoint may run in, as region ids or `*` globs (`["eu-*", "europe-*", "westeurope"]`). The region is read from the environment for Amazon Bedrock (`AWS_REGION`, `AWS_DEFAULT_REGION` or the profile) and Vertex AI (`GOOGLE_CLOUD_LOCATION`), is `local` for the testing provider and a models.json provider on this machine, and is what the managed config declares for any other provider (`[providers.<id>] region`). A model whose region is unknown or unlisted is refused before any request — at selection, on a resumed session and on a `/model` switch. See [Regions and fallbacks](enterprise.md#regions-and-fallbacks).',
+      },
+      {
+        keys: ['policy.allowed_providers'],
+        text: 'The provider gate, applied with `allowed_models`: both lists intersect, so a provider the list omits is refused even when a pattern would name the model.',
+      },
+      {
+        keys: ['policy.allowed_tools', 'policy.denied_tools'],
+        text: "The tool intersection: `kubic run`/`kubic tui` (and the re-executing tiers of `kubic replay`) activate only tools that survive it, and the system prompt's `tools:` line names exactly that set. A deny holds against every lower layer, a role document and the model — a role that declares a denied tool is refused by name, while a role that declares none of them is unaffected by a deny-only policy. With no allow list, only the deny list narrows; with one, anything outside it is refused.",
+      },
+      {
+        keys: ['policy.network_policy', 'policy.allowed_domains'],
+        text: '`"proxy"` (the engine\'s allowlist mode) with `allowed_domains` starts the egress proxy each `kubic run` and `kubic tui` boot: the bash tool\'s environment points at it, a host off the list is refused (403), and every connection is a `network:egress` audit row with its host, port, decision and bytes; under `[sandbox]` on macOS it is the only connection a command can open. Entries are domains (`github.com` covers its subdomains, `*.github.com` only the subdomains) or IPs. Any other configured value is parsed and reported, not enforced, and `kubic doctor` fails `policy:enterprise-network` for it. The engine mode names (`none`, `allowlist`, `full`) are accepted too. See [The egress proxy](enterprise.md#the-egress-proxy).',
+      },
+      {
+        keys: ['policy.filesystem_policy'],
+        text: "Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). Kubic derives filesystem reach from the `[permissions]` classes, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it.",
+      },
+      {
+        keys: ['policy.max_run_cost_usd', 'policy.max_daily_cost_usd'],
+        text: "Spend caps in US dollars, from the cost the providers report. `max_run_cost_usd` stops a `kubic run` once its own spend reaches the cap (a `kubic tui` process counts its spend since it started); `max_daily_cost_usd` refuses a run when this machine's spend for the UTC day has reached the cap, and stops one that reaches it. Unlike other policy keys, every layer may set a cap and the **lowest** wins, so a user can tighten an organization's cap but never loosen it. A run stopped by a cap exits 3 with status `spend_limit`; the check runs after each model response, so one response can overshoot the cap by its own cost. See [Spend caps](enterprise.md#spend-caps).",
+      },
+      {
+        keys: ['policy.project_policy'],
+        text: 'What a repository may set for itself: `"open"` (the default) or `"restricted"`. Set in a layer above the project (enterprise, product or global; the first that sets it wins), `"restricted"` refuses a project config that sets `[approvals] autoApprove`, widens a `[permissions]` class past the layers above (or the defaults), or declares `[verify]` commands — the load names every such key, before anything runs — and keeps the project `models.json` providers out of the catalog (`kubic models` and `kubic doctor` name the file). A project may still narrow. See [Restricting project configuration](enterprise.md#restricting-project-configuration).',
+      },
+      {
+        keys: ['policy.data_policy'],
+        text: 'Data loss prevention. `"redact"` runs the secret scanner (PEM private keys, key shapes, random-looking secret-named assignments, URL passwords, Basic credentials) over everything a session stores — its transcript, the run trajectory and the spans; the change journal keeps file content verbatim so `kubic undo` still restores it — and over the raw transcript `kubic sessions attach` prints. `"redact-model"` also scans each tool result before the model reads it and names every redaction. Any other value (`no-external-training`, …) is carried and reported, never claimed as enforced: no local mechanism can promise a provider-side policy. `kubic doctor` reports it as `policy:data`. See [Data loss prevention](enterprise.md#data-loss-prevention).',
+      },
+      {
+        keys: ['policy.logging_policy'],
+        text: 'Parsed and carried (for example `full-audit`); no local mechanism is selected by it, so it is reported, never claimed as enforced.',
+      },
+    ],
+  },
+  {
+    name: 'hooks',
+    shape: 'array',
+    runtime: {
+      effect:
+        'admin hooks: a shell command run before each tool call (a non-zero exit or a timeout refuses the call), after each tool call, or when a run ends; read from the enterprise, product and global layers only, each run audited',
+    },
+    keys: [
+      { name: 'event', check: 'hookEvent', required: true },
+      { name: 'command', check: 'command', required: true },
+      { name: 'tools', check: 'strings' },
+      { name: 'timeoutMs', check: 'timeoutMs' },
+    ],
+    exampleTables: {
+      policy: [
+        'event = "beforeTool"',
+        'command = "/opt/acme/kubic-check"',
+        'tools = ["bash", "write", "edit"]',
+        'timeoutMs = 5000',
+      ],
+    },
+    exampleNote: [
+      'Read from the enterprise, product and global layers only; a project',
+      'config declaring [[hooks]] is refused.',
+    ],
+    docs: [
+      {
+        keys: [
+          'hooks.event',
+          'hooks.command',
+          'hooks.tools',
+          'hooks.timeoutMs',
+        ],
+        label: '`hooks` (`[[hooks]]`)',
+        text: 'Admin hooks: `event` = `beforeTool` | `afterTool` | `runEnd`, `command` (run as `sh -c` with a JSON payload on stdin and the tool environment, so no provider key), optional `tools` (the tool names a tool hook applies to; all when absent) and `timeoutMs` (default 5000). A `beforeTool` hook that exits non-zero refuses the call, naming the reason from its output; one that times out refuses it too (fails closed). Every hook run is audited (`hook:<event>`). Read from the enterprise, product and global layers, all of them; a project config declaring hooks is refused. See [Admin hooks](enterprise.md#admin-hooks).',
+      },
+    ],
+  },
+  {
+    name: 'audit',
+    shape: 'array',
+    runtime: {
+      kept: '[[audit]] sinks are parsed, validated and built: appendToLedger fans every audit row out to the configured sinks plus the mandatory repo ledger (level = privileged keeps decisions and privileged actions only)',
+    },
+    keys: [
+      { name: 'sink', check: 'auditSink', required: true },
+      { name: 'level', check: 'auditLevel', required: true },
+      { name: 'target', check: 'string' },
+      { name: 'facility', check: 'facility' },
+      { name: 'ca', check: 'string' },
+      { name: 'tokenEnv', check: 'string' },
+    ],
+    exampleTables: {
+      syslog: ['sink = "syslog"', 'level = "privileged"'],
+    },
+    docs: [
+      {
+        keys: [
+          'audit.sink',
+          'audit.level',
+          'audit.target',
+          'audit.facility',
+          'audit.ca',
+          'audit.tokenEnv',
+        ],
+        label: '`audit` (`[[audit]]`)',
+        text: 'Sink tables (`sink` = `syslog` | `https` | `otlp` | `file` | `memory`, `level` = `privileged` | `all`, optional `target`, `facility`, `ca` and `tokenEnv`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory, hash-chained repo ledger. A collector over the network (`tcp://`/`tls://` syslog, `https`, `otlp`) is spooled on disk and drained when it answers (see [Audit sinks](enterprise.md#audit-sinks-audit)).',
+      },
+    ],
+  },
+  {
+    name: 'skills',
+    shape: 'value',
+    runtime: {
+      effect:
+        'settings skills for `kubic run` and `kubic tui` (loaded with source `settings`)',
+    },
+    keys: [
+      {
+        name: 'skills',
+        check: 'skills',
+        example: '["./skills"]',
+        note: [
+          'Settings skills: files or directories, resolved',
+          "against this file's directory — `./skills` names `<root>/.kubic/skills`",
+          '(`../skills` would name `<root>/skills`).',
+        ],
+      },
+    ],
+    docs: [
+      {
+        keys: ['skills'],
+        text: 'Settings skills: files or directories loaded with source `settings` in every session a command starts — `kubic run`, `kubic tui`, the suite runs of `kubic eval`/`kubic benchmark` and the re-executing tiers of `kubic replay` (see [Settings skills](#settings-skills)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load.',
+      },
+    ],
+  },
+] as const satisfies readonly ConfigSection[];
+
+// The example config's header (read by the docs generator, not the
+// product).
+/** @internal */
+export const EXAMPLE_HEADER = [
+  'Kubic canonical config example.',
+  'Committed to the repo: .kubic/config.toml + .kubic/roles/*.md',
+  'Never committed: audit/',
+] as const;
+
+// One key's declaration, by its section and name.
+export function configKey(section: string, name: string): ConfigKey {
+  const found = CONFIG_SECTIONS.find(
+    (candidate) => candidate.name === section,
+  )?.keys.find((key) => key.name === name);
+  if (found === undefined)
+    throw new Error(`no config key '${section}.${name}'`);
+  return found;
+}

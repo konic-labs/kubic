@@ -1,0 +1,97 @@
+{
+  "name": "@kubic/core",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./cli/exit-codes": {
+      "source": "./src/cli/exit-codes.ts",
+      "default": "./src/cli/exit-codes.ts"
+    },
+    "./cli/kit": {
+      "source": "./src/cli/kit.ts",
+      "default": "./src/cli/kit.ts"
+    },
+    "./cli/logger": {
+      "source": "./src/cli/logger.ts",
+      "default": "./src/cli/logger.ts"
+    },
+    "./cli/output": {
+      "source": "./src/cli/output.ts",
+      "default": "./src/cli/output.ts"
+    },
+    "./cli/prompt": {
+      "source": "./src/cli/prompt.ts",
+      "default": "./src/cli/prompt.ts"
+    },
+    "./cli/spinner": {
+      "source": "./src/cli/spinner.ts",
+      "default": "./src/cli/spinner.ts"
+    },
+    "./cli/table": {
+      "source": "./src/cli/table.ts",
+      "default": "./src/cli/table.ts"
+    },
+    "./cli/theme": {
+      "source": "./src/cli/theme.ts",
+      "default": "./src/cli/theme.ts"
+    },
+    "./cli/width": {
+      "source": "./src/cli/width.ts",
+      "default": "./src/cli/width.ts"
+    },
+    "./license": {
+      "source": "./src/license.ts",
+      "default": "./src/license.ts"
+    },
+    "./presentation": {
+      "source": "./src/presentation.ts",
+      "default": "./src/presentation.ts"
+    },
+    "./run-role": {
+      "source": "./src/run-role.ts",
+      "default": "./src/run-role.ts"
+    },
+    "./secret-keys": {
+      "source": "./src/secret-keys.ts",
+      "default": "./src/secret-keys.ts"
+    },
+    "./secret-refs": {
+      "source": "./src/secret-refs.ts",
+      "default": "./src/secret-refs.ts"
+    },
+    "./secret-scan": {
+      "source": "./src/secret-scan.ts",
+      "default": "./src/secret-scan.ts"
+    },
+    "./secret-shapes": {
+      "source": "./src/secret-shapes.ts",
+      "default": "./src/secret-shapes.ts"
+    },
+    "./suggest": {
+      "source": "./src/suggest.ts",
+      "default": "./src/suggest.ts"
+    },
+    "./ui/color": {
+      "source": "./src/ui/color.ts",
+      "default": "./src/ui/color.ts"
+    },
+    "./ui/glyphs": {
+      "source": "./src/ui/glyphs.ts",
+      "default": "./src/ui/glyphs.ts"
+    },
+    "./ui/style": {
+      "source": "./src/ui/style.ts",
+      "default": "./src/ui/style.ts"
+    },
+    "./ui/theme-file": {
+      "source": "./src/ui/theme-file.ts",
+      "default": "./src/ui/theme-file.ts"
+    },
+    "./ui/tokens": {
+      "source": "./src/ui/tokens.ts",
+      "default": "./src/ui/tokens.ts"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+# Every change needs a maintainer's review. The workflows, the release
+# scripts, bin/ and the Pi boundary matter most: they decide what runs in CI,
+# what reaches npm, and what Kubic takes from the agent harness.
+* @egesabanci

@@ -1,0 +1,354 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`kubicToolsToPiTools > bash: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "command": {
+      "description": "Shell command line, run in the workspace root.",
+      "minLength": 1,
+      "type": "string",
+    },
+    "timeout": {
+      "description": "Timeout in SECONDS (not milliseconds).",
+      "exclusiveMinimum": 0,
+      "type": "number",
+    },
+  },
+  "required": [
+    "command",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > edit: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "expectCount": {
+      "description": "Exact number of occurrences oldText must have (default 1); any other count is refused and nothing changes.",
+      "minimum": 1,
+      "type": "integer",
+    },
+    "newText": {
+      "description": "Replacement text.",
+      "type": "string",
+    },
+    "oldText": {
+      "description": "Exact text to replace, byte for byte (whitespace included).",
+      "minLength": 1,
+      "type": "string",
+    },
+    "path": {
+      "description": "File path, relative to the workspace root.",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "path",
+    "oldText",
+    "newText",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > find: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "maxResults": {
+      "description": "Maximum entries to return (default 100).",
+      "minimum": 1,
+      "type": "integer",
+    },
+    "nameContains": {
+      "description": "Only entries whose name contains this substring.",
+      "type": "string",
+    },
+    "root": {
+      "description": "Directory to search from (default ".").",
+      "minLength": 1,
+      "type": "string",
+    },
+    "type": {
+      "anyOf": [
+        {
+          "const": "file",
+          "type": "string",
+        },
+        {
+          "const": "dir",
+          "type": "string",
+        },
+      ],
+      "description": "Only files ("file") or only directories ("dir").",
+    },
+  },
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_branch: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "create": {
+      "description": "Name of a branch to create; omit to list branches (no checkout).",
+      "type": "string",
+    },
+  },
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_checkpoint: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "message": {
+      "description": "Label for the restorable stash point.",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "message",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_commit: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "amend": {
+      "description": "Amend the previous commit.",
+      "type": "boolean",
+    },
+    "message": {
+      "description": "Commit message.",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "message",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_conflict_status: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_diff: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "description": "Limit the diff to this path.",
+      "type": "string",
+    },
+    "range": {
+      "description": "Revision or range, e.g. "HEAD~1..HEAD" (no leading dash).",
+      "type": "string",
+    },
+    "staged": {
+      "description": "Diff the index (staged changes).",
+      "type": "boolean",
+    },
+  },
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_log: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "max": {
+      "description": "Commits to return (default 20, capped at 100).",
+      "minimum": 1,
+      "type": "integer",
+    },
+    "path": {
+      "description": "Only commits touching this path.",
+      "type": "string",
+    },
+  },
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_merge: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "branch": {
+      "description": "Local branch to merge into the current one.",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "branch",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_show: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "ref": {
+      "description": "Commit or ref to show, e.g. "HEAD" (no leading dash).",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "ref",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_stage: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "paths": {
+      "description": "Explicit paths to stage (never "-A").",
+      "items": {
+        "type": "string",
+      },
+      "minItems": 1,
+      "type": "array",
+    },
+  },
+  "required": [
+    "paths",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_status: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > git_worktree_list: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > grep: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "include": {
+      "description": "Only files whose path contains this substring (not a glob), e.g. ".ts".",
+      "type": "string",
+    },
+    "maxMatches": {
+      "description": "Maximum matching lines (default 100).",
+      "minimum": 1,
+      "type": "integer",
+    },
+    "pattern": {
+      "description": "JavaScript regular expression, matched against each line.",
+      "minLength": 1,
+      "type": "string",
+    },
+    "root": {
+      "description": "Directory to search from (default ".").",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "pattern",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > ls: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "description": "Directory to list, relative to the workspace (default ".").",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > read: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "limit": {
+      "description": "Maximum lines to return (default and cap 2000).",
+      "minimum": 1,
+      "type": "integer",
+    },
+    "offset": {
+      "description": "1-indexed line to start from (default 1).",
+      "minimum": 1,
+      "type": "integer",
+    },
+    "path": {
+      "description": "File path, relative to the workspace root.",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "path",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`kubicToolsToPiTools > write: schema snapshot 1`] = `
+{
+  "additionalProperties": false,
+  "properties": {
+    "content": {
+      "description": "The complete new file content (replaces the file).",
+      "type": "string",
+    },
+    "path": {
+      "description": "File path, relative to the workspace root.",
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "path",
+    "content",
+  ],
+  "type": "object",
+}
+`;

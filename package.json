@@ -1,0 +1,82 @@
+{
+  "name": "kubic",
+  "version": "0.1.2",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Agentic coding, in your control: any model, every change journaled and undoable, built for teams and enterprise.",
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "llm",
+    "cli",
+    "tui",
+    "terminal",
+    "anthropic",
+    "openai",
+    "gemini"
+  ],
+  "homepage": "https://github.com/konic-labs/kubic#readme",
+  "bugs": {
+    "url": "https://github.com/konic-labs/kubic/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/konic-labs/kubic.git"
+  },
+  "author": "Konic Labs",
+  "bin": {
+    "kubic": "bin/kubic.js"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "kubic": "node ./bin/kubic.js",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:binary": "node scripts/binary-contract.mjs && node scripts/faux-smoke.mjs",
+    "kshot": "npm run build && python3 scripts/kshot/kshot.py",
+    "release:stage": "node scripts/release-stage.mjs",
+    "release:contract": "node scripts/pack-install-contract.mjs",
+    "release:sign": "node scripts/release-sign.mjs",
+    "check": "npm run typecheck && npm run lint && npm run lint:deps && npm run lint:dead && npm run lint:dead:prod && npm run check:pins && npm run docs:check && npm run check:gates",
+    "typecheck": "tsc --noEmit -p tsconfig.base.json",
+    "lint": "biome ci .",
+    "lint:deps": "node scripts/dep-lint.mjs",
+    "lint:dead": "knip",
+    "lint:dead:prod": "knip --config knip.production.jsonc --production",
+    "check:pins": "node scripts/check-pinned-deps.mjs",
+    "check:gates": "node --test \"scripts/*.test.mjs\"",
+    "docs:check": "node scripts/check-docs-links.mjs && node scripts/check-docs-content.mjs && node scripts/gen-config-docs.mjs --check",
+    "docs:config": "node scripts/gen-config-docs.mjs",
+    "docs:images": "node scripts/docs-images.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "26.6.2",
+    "@vitest/coverage-v8": "5.0.3",
+    "esbuild": "0.28.2",
+    "knip": "6.38.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  },
+  "dependencies": {
+    "@clack/prompts": "1.8.1",
+    "@commander-js/extra-typings": "15.0.0",
+    "@earendil-works/chord": "1.0.2",
+    "@earendil-works/pi-ai": "1.0.2",
+    "@earendil-works/pi-durable": "1.0.2",
+    "@earendil-works/pi-telemetry": "1.0.2",
+    "@earendil-works/pi-tui": "1.0.2",
+    "commander": "15.0.0",
+    "consola": "3.4.2",
+    "lowlight": "3.3.0"
+  }
+}

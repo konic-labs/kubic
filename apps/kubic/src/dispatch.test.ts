@@ -1,0 +1,586 @@
+// Dispatch wiring suite: the composition root's front door — which command
+// routes to which runner, the config-refusal matrix, the exit codes, and
+// the front-door special cases — over injected
+// runners. Faux everything: no real lanes, no network, and no fs beyond the
+// one fixture dir this file creates.
+//
+// The `prod wiring deps shapes` block drives the REAL production runners
+// (./prod-runners.js) over hermetic argv and fixtures on purpose: it pins
+// the documented deps shapes the root wires (cost {loadRows,out}, audit
+// {loadRecords,loadSecrets,out}, export {readFile,out})
+// and the eval runSuite refusal message, verbatim.
+
+import { rmSync } from 'node:fs';
+import type { CommandResult } from '@kubic/core/cli/exit-codes';
+import { createCliTheme } from '@kubic/core/cli/theme';
+import { NO_PROJECT_TRUST } from '@kubic/host/config';
+import { afterAll, describe, expect, it } from 'vitest';
+import { ROOT_HELP } from './cli/root-help.js';
+import type { CliConfigResult } from './config/load.js';
+import { CONFIG_CONSUMING_COMMANDS } from './config/load.js';
+import { dispatchCommand } from './dispatch.js';
+import {
+  FIXTURE,
+  harness,
+  loadedConfig,
+  RUNNER_KEYS,
+  type RunnerKey,
+  refusedConfig,
+} from './test-support/dispatch-harness.js';
+
+// Every command in the if-chain, the argv it is dispatched with, and the
+// runner it must reach. Journal commands receive `[command, ...rest]` —
+// the argv the root passed before the extraction.
+const ROUTES: readonly (readonly [string, readonly string[], RunnerKey])[] = [
+  ['sessions', ['list'], 'sessions'],
+  ['git', ['status'], 'git'],
+  ['commit', ['-m', 'msg'], 'git'],
+  ['diff', ['--json'], 'journal'],
+  ['undo', ['--step'], 'journal'],
+  ['log', [], 'journal'],
+  ['status', [], 'journal'],
+  ['models', ['--json'], 'models'],
+  ['run', ['-p', 'hi'], 'run'],
+  ['tui', [], 'tui'],
+  ['attach', ['abc'], 'tui'],
+  ['resume', ['abc'], 'tui'],
+  ['doctor', [], 'doctor'],
+  ['skills', ['--json'], 'skills'],
+  ['cost', ['--json'], 'cost'],
+  ['policy', ['--tool', 'shell'], 'policy'],
+  ['config', ['--json'], 'config'],
+  ['trust', [], 'trust'],
+  ['audit', [], 'audit'],
+  ['eval', ['--suite', 'swe-bench-mini', '--task', 'p'], 'eval'],
+  ['benchmark', [], 'benchmark'],
+  ['replay', ['t.json', '--tier', 'recorded'], 'replay'],
+  ['export', ['--trajectory', 'trajectory.json'], 'export'],
+];
+
+// Commands migrated to real commander definitions (commands/*.ts): their
+// runner receives the parsed options for the ROUTES argv, never argv.
+const PARSED: Readonly<Record<string, unknown>> = {
+  sessions: { command: 'list' },
+  models: { json: true },
+  run: { prompt: 'hi' },
+  tui: {},
+  attach: { session: 'abc' },
+  resume: { session: 'abc' },
+  commit: { command: 'commit', message: 'msg' },
+  doctor: { skip: [] },
+  skills: { json: true },
+  config: { json: true },
+  trust: {},
+  git: { command: 'status' },
+  diff: { command: 'diff', json: true },
+  undo: { command: 'undo', step: true },
+  log: { command: 'log' },
+  status: { command: 'status' },
+  cost: { json: true },
+  policy: { tool: 'shell' },
+  audit: {},
+  // No commander model default on eval — the handler applies it on
+  // the --task path; --trajectory reads the model from the export.
+  eval: {
+    suite: 'swe-bench-mini',
+    task: 'p',
+  },
+  benchmark: { model: 'faux/echo' },
+  replay: { trajectory: 't.json', tier: 'recorded' },
+  export: { trajectory: 'trajectory.json' },
+};
+
+afterAll(() => {
+  rmSync(FIXTURE, { recursive: true, force: true });
+});
+
+// The defensive no-reason shape (the `config refused` fallback path).
+function refusedConfigWithoutReason(): CliConfigResult {
+  return {
+    runtime: undefined,
+    error: undefined,
+    ignoreSplit: { missing: [], checked: [], applicable: false },
+    trust: NO_PROJECT_TRUST,
+  };
+}
+
+describe('dispatch routing', () => {
+  it('pins the roster: 23 commands, 17 runners, every runner exercised', () => {
+    expect(ROUTES).toHaveLength(23);
+    expect(RUNNER_KEYS).toHaveLength(17);
+    const routed = new Set(ROUTES.map(([, , key]) => key));
+    expect([...routed].sort()).toEqual([...RUNNER_KEYS].sort());
+  });
+
+  it('routes every command in the if-chain to its injected runner', async () => {
+    for (const [command, rest, key] of ROUTES) {
+      const h = harness();
+      const code = await dispatchCommand(command, rest, h.deps);
+      const label = `\`${command}\` must route to the ${key} runner`;
+      expect(
+        h.calls.map((call) => call.key),
+        label,
+      ).toEqual([key]);
+      expect(h.calls[0]?.rest, label).toEqual(PARSED[command] ?? rest);
+      expect(code, `${label} — exit code must flow back`).toBe(0);
+    }
+  });
+
+  it('returns the runner exit code verbatim', async () => {
+    const h = harness({ runners: { sessions: () => ({ exitCode: 5 }) } });
+    expect(await dispatchCommand('sessions', ['list'], h.deps)).toBe(5);
+  });
+
+  it('hands the runner the process-wide config load', async () => {
+    const config = loadedConfig();
+    const h = harness({ config });
+    await dispatchCommand('models', [], h.deps);
+    expect(h.calls[0]?.config).toBe(config);
+  });
+
+  it('falls through to the usage line for a command outside the table (usage, exit 2)', async () => {
+    const h = harness();
+    expect(await dispatchCommand('definitely-not-a-command', [], h.deps)).toBe(
+      2,
+    );
+    expect(h.lines).toEqual([
+      "error: unknown command 'definitely-not-a-command'",
+      "hint: to run it as a prompt: kubic run -p 'definitely-not-a-command'",
+      'hint: kubic --help lists the commands',
+    ]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('a bare multi-word prompt is `kubic run -p <prompt>`', async () => {
+    const h = harness();
+    expect(
+      await dispatchCommand('fix the authentication bug', [], h.deps),
+    ).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['run', { prompt: 'fix the authentication bug' }],
+    ]);
+    // The prompt form is a state-creating mode: the exclude rules ship.
+    expect(h.state.excludeCalls).toBe(1);
+    expect(h.lines).toEqual([]);
+  });
+
+  it('a bare prompt carries trailing flags through', async () => {
+    const h = harness();
+    expect(await dispatchCommand('do x', ['--json'], h.deps)).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['run', { prompt: 'do x', json: true }],
+    ]);
+  });
+
+  it('a quoted command is refused as a usage error, never sent as a prompt', async () => {
+    for (const [token, unquoted] of [
+      ['sessions list', 'kubic sessions list'],
+      ['status --json', 'kubic status --json'],
+      ['git log', 'kubic git log'],
+    ] as const) {
+      const h = harness();
+      expect(await dispatchCommand(token, [], h.deps)).toBe(2);
+      expect(h.lines).toEqual([
+        `error: quoted command '${token}'`,
+        `hint: run it unquoted: ${unquoted}`,
+        `hint: to send it as a prompt: kubic run -p '${token}'`,
+        'hint: kubic --help lists the commands',
+      ]);
+      expect(h.calls).toEqual([]);
+      expect(h.state.excludeCalls).toBe(0);
+    }
+  });
+
+  it('a prompt that only starts with a command word still runs', async () => {
+    const h = harness();
+    expect(await dispatchCommand('commit the staged changes', [], h.deps)).toBe(
+      0,
+    );
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['run', { prompt: 'commit the staged changes' }],
+    ]);
+  });
+
+  it('a single-word unknown token stays an unknown command with the prompt hint', async () => {
+    const h = harness();
+    expect(await dispatchCommand('nosuch', [], h.deps)).toBe(2);
+    expect(h.lines).toEqual([
+      "error: unknown command 'nosuch'",
+      "hint: to run it as a prompt: kubic run -p 'nosuch'",
+      'hint: kubic --help lists the commands',
+    ]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('an empty token gets no dead-end hint', async () => {
+    // `kubic ""` cannot be run as a prompt (the prompt is empty), so the
+    // hint would name a command that exits 2 again.
+    const h = harness();
+    expect(await dispatchCommand('', [], h.deps)).toBe(2);
+    expect(h.lines).toEqual([
+      "error: unknown command ''",
+      'hint: kubic --help lists the commands',
+    ]);
+    expect(h.calls).toEqual([]);
+  });
+});
+
+describe('front door', () => {
+  it('--version prints the version line from the injected version', async () => {
+    const h = harness({ version: '9.9.9' });
+    expect(await dispatchCommand('--version', [], h.deps)).toBe(0);
+    expect(h.lines).toEqual(['kubic 9.9.9 (license: MIT)']);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('-V is the same version path', async () => {
+    const h = harness({ version: '1.2.3' });
+    expect(await dispatchCommand('-V', [], h.deps)).toBe(0);
+    expect(h.lines).toEqual(['kubic 1.2.3 (license: MIT)']);
+  });
+
+  it('--help and -h answer the root usage with exit 0', async () => {
+    for (const flag of ['--help', '-h']) {
+      const h = harness();
+      expect(await dispatchCommand(flag, [], h.deps), flag).toBe(0);
+      expect(h.lines, flag).toEqual([ROOT_HELP]);
+      expect(h.calls, flag).toEqual([]);
+    }
+  });
+
+  it('the bare invocation prints the usage and exits 1 (POSIX posture)', async () => {
+    const h = harness();
+    expect(await dispatchCommand(undefined, [], h.deps)).toBe(1);
+    expect(h.lines).toEqual([ROOT_HELP]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('the bare invocation on an interactive terminal opens the TUI', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => true };
+    expect(await dispatchCommand(undefined, [], deps)).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([['tui', {}]]);
+    // Same boot as `kubic tui`: the runtime ignore rules ship first.
+    expect(h.state.excludeCalls).toBe(1);
+    expect(h.lines).toEqual([]);
+  });
+
+  it('bare `kubic --dangerously-skip-approvals` on a TTY is `kubic tui --dangerously-skip-approvals`', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => true };
+    expect(
+      await dispatchCommand('--dangerously-skip-approvals', [], deps),
+    ).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['tui', { dangerouslySkipApprovals: true }],
+    ]);
+    expect(h.state.excludeCalls).toBe(1);
+  });
+
+  it('bare `kubic --dangerously-skip-approvals` off a TTY keeps usage + exit 1', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => false };
+    expect(
+      await dispatchCommand('--dangerously-skip-approvals', [], deps),
+    ).toBe(1);
+    expect(h.lines).toEqual([ROOT_HELP]);
+    expect(h.calls).toEqual([]);
+  });
+
+  // Bare `kubic --model p/id` on a TTY is `kubic tui --model`.
+  it('routes a bare --model on an interactive terminal to the TUI', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => true };
+    expect(await dispatchCommand('--model', ['faux/b'], deps)).toBe(0);
+    expect(h.calls.map((call) => [call.key, call.rest])).toEqual([
+      ['tui', { model: { provider: 'faux', id: 'b' } }],
+    ]);
+    // Off a TTY it stays the usage + exit 1 posture.
+    const off = harness();
+    expect(
+      await dispatchCommand('--model', ['faux/b'], {
+        ...off.deps,
+        isInteractive: () => false,
+      }),
+    ).toBe(1);
+    expect(off.calls).toEqual([]);
+  });
+
+  it('the bare invocation off a TTY keeps the usage + exit 1 posture', async () => {
+    const h = harness();
+    const deps = { ...h.deps, isInteractive: () => false };
+    expect(await dispatchCommand(undefined, [], deps)).toBe(1);
+    expect(h.lines).toEqual([ROOT_HELP]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('a refused config stops the bare interactive TUI like `kubic tui`', async () => {
+    const h = harness({ config: refusedConfig() });
+    const deps = { ...h.deps, isInteractive: () => true };
+    expect(await dispatchCommand(undefined, [], deps)).not.toBe(0);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('throws from the gated crash probe (contract seam)', async () => {
+    process.env.__KUBIC_CONTRACT_CRASH_PROBE = '1';
+    try {
+      await expect(
+        dispatchCommand('__crash-probe', [], harness().deps),
+      ).rejects.toThrow('injected probe failure');
+    } finally {
+      delete process.env.__KUBIC_CONTRACT_CRASH_PROBE;
+    }
+  });
+
+  it('an ungated crash probe is just an unknown command (usage, exit 2)', async () => {
+    delete process.env.__KUBIC_CONTRACT_CRASH_PROBE;
+    const h = harness();
+    expect(await dispatchCommand('__crash-probe', [], h.deps)).toBe(2);
+    expect(h.lines).toEqual([
+      "error: unknown command '__crash-probe'",
+      'hint: kubic --help lists the commands',
+    ]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('an unknown root option is a usage error; `help` names the prompt form (usage, exit 2)', async () => {
+    for (const command of ['--bogus', '-x']) {
+      const h = harness();
+      expect(await dispatchCommand(command, [], h.deps), command).toBe(2);
+      expect(h.lines, command).toEqual([
+        `error: unknown option '${command}'`,
+        'hint: kubic --help lists the commands and options',
+      ]);
+      expect(h.calls, command).toEqual([]);
+    }
+    // `help` and `version` point at the real flags, never at
+    // the prompt form; a typo names the closest command.
+    const help = harness();
+    expect(await dispatchCommand('help', [], help.deps)).toBe(2);
+    expect(help.lines).toEqual([
+      "error: unknown command 'help'",
+      'hint: kubic --help lists the commands',
+    ]);
+    const version = harness();
+    expect(await dispatchCommand('version', [], version.deps)).toBe(2);
+    expect(version.lines).toEqual([
+      "error: unknown command 'version'",
+      'hint: kubic --version prints the version',
+      'hint: kubic --help lists the commands',
+    ]);
+    const typo = harness();
+    expect(await dispatchCommand('stauts', [], typo.deps)).toBe(2);
+    expect(typo.lines).toEqual([
+      "error: unknown command 'stauts'",
+      'hint: did you mean kubic status?',
+      'hint: kubic --help lists the commands',
+    ]);
+  });
+
+  it('runs the first-run setup only for a bare interactive kubic', async () => {
+    let asked = 0;
+    const firstRunSetup = async (): Promise<CommandResult | undefined> => {
+      asked += 1;
+      return { exitCode: 6 };
+    };
+    const bare = harness({ interactive: true });
+    expect(
+      await dispatchCommand(undefined, [], { ...bare.deps, firstRunSetup }),
+    ).toBe(6);
+    expect(asked).toBe(1);
+    expect(bare.calls).toEqual([]);
+    const command = harness({ interactive: true });
+    await dispatchCommand('doctor', [], { ...command.deps, firstRunSetup });
+    const piped = harness();
+    await dispatchCommand(undefined, [], { ...piped.deps, firstRunSetup });
+    expect(asked).toBe(1);
+  });
+
+  it('renders a usage error as an error block on a colour terminal', async () => {
+    const h = harness();
+    const theme = createCliTheme('truecolor');
+    expect(
+      await dispatchCommand('stauts', [], {
+        ...h.deps,
+        errorTheme: () => theme,
+      }),
+    ).toBe(2);
+    expect(h.lines[0]).toBe(
+      `${theme.ui.fg('err')('✕')} ${theme.ui.style({ fg: 'err', bold: true })('unknown command')} ${theme.ui.fg('fg0')('stauts')}`,
+    );
+    expect(h.lines[1]).toContain(theme.ui.fg('fg1')('kubic status'));
+    expect(h.lines.at(-1)).toBe(`  ${theme.ui.fg('fg3')('exit 2 · usage')}`);
+  });
+
+  it('root options after the command reach the command (positional options)', async () => {
+    // `--help` after a command is that command's generated help, never the
+    // root listing; `-V` after it is the command's (unknown) option, never
+    // the root version.
+    const help = harness();
+    expect(await dispatchCommand('doctor', ['--help'], help.deps)).toBe(0);
+    expect(help.calls).toEqual([]);
+    expect(help.lines.join('\n')).toContain('Usage: kubic doctor');
+    expect(help.lines).not.toContain(ROOT_HELP);
+    const version = harness();
+    expect(await dispatchCommand('doctor', ['-V'], version.deps)).toBe(2);
+    expect(version.calls).toEqual([]);
+    expect(version.lines.join('\n')).toContain("unknown option '-V'");
+  });
+});
+
+describe('config refusal', () => {
+  // policy consumes a config projection (the installed posture a run
+  // enforces), so a refused config must stop it like the agent-executing
+  // modes.
+  // attach/resume boot the same TUI lane as tui, and eval/benchmark run
+  // agent lanes under the same projections — all fail closed here.
+  const CONSUMING = [
+    'run',
+    'tui',
+    'attach',
+    'resume',
+    'replay',
+    'policy',
+    'eval',
+    'benchmark',
+  ];
+  const REPORTING = ['config', 'doctor', 'skills', 'trust'];
+
+  it('pins gate membership: the gate is exactly the refused commands', () => {
+    // A new command whose runner reads cliConfig.runtime must join the
+    // gate here — or be a reporting command, or take the documented
+    // sessions/journal retention fallback. run, tui (+attach/resume
+    // aliases), replay, policy (installed posture) and eval/benchmark (lane
+    // projections) read runtime; config/doctor/skills/trust report it;
+    // sessions/journal read only sessionRetentionDays (undefined-safe
+    // fallback); models reads only the trust report (present on refusal);
+    // git, cost, audit and export read no config at all.
+    expect([...CONFIG_CONSUMING_COMMANDS].sort()).toEqual(
+      [...CONSUMING].sort(),
+    );
+  });
+
+  it('refuses the agent-executing modes with exit 1 and the named reason', async () => {
+    for (const command of CONSUMING) {
+      const h = harness({ config: refusedConfig('unknown key [nope]') });
+      const code = await dispatchCommand(command, [], h.deps);
+      expect(code, command).toBe(1);
+      expect(h.lines, command).toEqual(['error: unknown key [nope]']);
+      expect(h.calls, `${command} must not reach a runner`).toEqual([]);
+    }
+  });
+
+  it('still runs the reporting commands so the reason can surface', async () => {
+    for (const command of REPORTING) {
+      const h = harness({ config: refusedConfig() });
+      expect(await dispatchCommand(command, [], h.deps), command).toBe(0);
+      expect(
+        h.calls.map((call) => call.key),
+        command,
+      ).toEqual([command]);
+      expect(h.lines, command).toEqual([]);
+    }
+  });
+
+  it('lets every other command proceed', async () => {
+    const others = ROUTES.filter(
+      ([command]) =>
+        !CONSUMING.includes(command) && !REPORTING.includes(command),
+    );
+    expect(others).toHaveLength(11);
+    // Each with its ROUTES argv: a bare `kubic git` is a usage error.
+    for (const [command, rest] of others) {
+      const h = harness({ config: refusedConfig() });
+      expect(await dispatchCommand(command, rest, h.deps), command).toBe(0);
+      expect(h.calls, `${command} must reach its runner`).toHaveLength(1);
+      expect(h.lines, `${command} must not print a refusal`).toEqual([]);
+    }
+  });
+
+  it('prints the refusal on stderr, keeping stdout for data without --json', async () => {
+    const h = harness({ config: refusedConfig('unknown key [nope]') });
+    const errs: string[] = [];
+    const deps = { ...h.deps, err: (line: string) => errs.push(line) };
+    expect(await dispatchCommand('run', ['-p', 'hi'], deps)).toBe(1);
+    expect(h.lines).toEqual([]);
+    expect(errs).toEqual(['error: unknown key [nope]']);
+  });
+
+  it('prints the command’s failure envelope on stdout under --json', async () => {
+    const cases: Array<{
+      command: string;
+      rest: string[];
+      check: (envelope: Record<string, unknown>) => void;
+    }> = [
+      {
+        command: 'run',
+        rest: ['-p', 'hi', '--json'],
+        check: (envelope) => {
+          expect(envelope.status).toBe('failed');
+          expect(envelope.sessionId).toBe('unassigned');
+          expect(envelope.result).toEqual({ summary: 'unknown key [nope]' });
+          expect(envelope.error).toEqual({
+            kind: 'failed',
+            message: 'unknown key [nope]',
+          });
+        },
+      },
+      {
+        command: 'replay',
+        rest: ['t.json', '--json'],
+        check: (envelope) => {
+          expect(envelope.tier).toBe('unknown');
+          expect(envelope.error).toEqual({
+            code: 'config_refused',
+            message: 'unknown key [nope]',
+          });
+        },
+      },
+    ];
+    for (const { command, rest, check } of cases) {
+      const h = harness({ config: refusedConfig('unknown key [nope]') });
+      const errs: string[] = [];
+      const deps = { ...h.deps, err: (line: string) => errs.push(line) };
+      expect(await dispatchCommand(command, rest, deps), command).toBe(1);
+      expect(errs, command).toEqual(['error: unknown key [nope]']);
+      expect(h.lines, command).toHaveLength(1);
+      const envelope = JSON.parse(h.lines[0] as string) as Record<
+        string,
+        unknown
+      >;
+      expect(envelope.ok, command).toBe(false);
+      expect(envelope.exitCode, command).toBe(1);
+      check(envelope);
+      expect(h.calls, `${command} must not reach a runner`).toEqual([]);
+    }
+  });
+
+  it('a refusal without --json stays stdout-empty for every consuming command', async () => {
+    const cases: Array<[string, string[]]> = [
+      ['run', ['-p', 'hi']],
+      ['replay', ['t.json']],
+      ['tui', []],
+      ['policy', ['--tool', 'shell']],
+    ];
+    for (const [command, rest] of cases) {
+      const h = harness({ config: refusedConfig('unknown key [nope]') });
+      const errs: string[] = [];
+      const deps = { ...h.deps, err: (line: string) => errs.push(line) };
+      expect(await dispatchCommand(command, rest, deps), command).toBe(1);
+      expect(h.lines, command).toEqual([]);
+      expect(errs, command).toEqual(['error: unknown key [nope]']);
+    }
+  });
+
+  it('a refused config short-circuits before the runtime-exclude step', async () => {
+    const h = harness({ config: refusedConfig() });
+    expect(await dispatchCommand('run', [], h.deps)).toBe(1);
+    expect(h.state.excludeCalls).toBe(0);
+  });
+
+  it('reports `config refused` when the load names no reason', async () => {
+    const h = harness({ config: refusedConfigWithoutReason() });
+    expect(await dispatchCommand('run', [], h.deps)).toBe(1);
+    expect(h.lines).toEqual(['error: config refused']);
+  });
+});

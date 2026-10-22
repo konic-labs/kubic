@@ -1,0 +1,113 @@
+{
+  "name": "@kubic/host",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./approvals": {
+      "source": "./src/approvals/index.ts",
+      "default": "./src/approvals/index.ts"
+    },
+    "./audit": {
+      "source": "./src/audit/index.ts",
+      "default": "./src/audit/index.ts"
+    },
+    "./cli": {
+      "source": "./src/cli/index.ts",
+      "default": "./src/cli/index.ts"
+    },
+    "./config": {
+      "source": "./src/config/index.ts",
+      "default": "./src/config/index.ts"
+    },
+    "./config/schema": {
+      "source": "./src/config/schema.ts",
+      "default": "./src/config/schema.ts"
+    },
+    "./cost": {
+      "source": "./src/cost/index.ts",
+      "default": "./src/cost/index.ts"
+    },
+    "./credentials": {
+      "source": "./src/credentials/index.ts",
+      "default": "./src/credentials/index.ts"
+    },
+    "./doctor": {
+      "source": "./src/doctor/index.ts",
+      "default": "./src/doctor/index.ts"
+    },
+    "./git": {
+      "source": "./src/git/index.ts",
+      "default": "./src/git/index.ts"
+    },
+    "./hooks": {
+      "source": "./src/hooks/index.ts",
+      "default": "./src/hooks/index.ts"
+    },
+    "./instructions": {
+      "source": "./src/instructions/index.ts",
+      "default": "./src/instructions/index.ts"
+    },
+    "./journal": {
+      "source": "./src/journal/index.ts",
+      "default": "./src/journal/index.ts"
+    },
+    "./mcp": {
+      "source": "./src/mcp/index.ts",
+      "default": "./src/mcp/index.ts"
+    },
+    "./models": {
+      "source": "./src/models/index.ts",
+      "default": "./src/models/index.ts"
+    },
+    "./net": {
+      "source": "./src/net/index.ts",
+      "default": "./src/net/index.ts"
+    },
+    "./policy": {
+      "source": "./src/policy/index.ts",
+      "default": "./src/policy/index.ts"
+    },
+    "./presentation": {
+      "source": "./src/presentation/index.ts",
+      "default": "./src/presentation/index.ts"
+    },
+    "./replay": {
+      "source": "./src/replay/index.ts",
+      "default": "./src/replay/index.ts"
+    },
+    "./roles": {
+      "source": "./src/roles/index.ts",
+      "default": "./src/roles/index.ts"
+    },
+    "./run": {
+      "source": "./src/run/index.ts",
+      "default": "./src/run/index.ts"
+    },
+    "./secret-refs": {
+      "source": "./src/secret-refs/index.ts",
+      "default": "./src/secret-refs/index.ts"
+    },
+    "./sessions": {
+      "source": "./src/sessions/index.ts",
+      "default": "./src/sessions/index.ts"
+    },
+    "./skills": {
+      "source": "./src/skills/index.ts",
+      "default": "./src/skills/index.ts"
+    },
+    "./telemetry": {
+      "source": "./src/telemetry/index.ts",
+      "default": "./src/telemetry/index.ts"
+    },
+    "./test-support/fake-mcp-server": {
+      "source": "./src/test-support/fake-mcp-server.ts",
+      "default": "./src/test-support/fake-mcp-server.ts"
+    },
+    "./test-support/audit-fixtures": {
+      "source": "./src/test-support/audit-fixtures.ts",
+      "default": "./src/test-support/audit-fixtures.ts"
+    }
+  }
+}

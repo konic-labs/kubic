@@ -1,0 +1,332 @@
+// The interactive TUI's slash-command registry.
+//
+// One source of truth for what a `/`-command is: the palette rows, the
+// editor's autocomplete, `/help` and the submit path's dispatcher all read
+// this list, so a command that exists is discoverable and a command that
+// does not is refused locally instead of being sent to the model as a
+// prompt. Each entry names the `PresentationCommand` it issues (absent
+// for a purely local read like `/help`), which is what makes the dispatcher
+// typed rather than a string switch.
+//
+// Presentation only: the registry says what a command is and which typed
+// command it maps to; the composition root owns what each one DOES (it is
+// the only layer that can reach the lane, the journal and the sessions
+// store).
+
+import type { PresentationCommand } from '@kubic/core/presentation';
+import type { KeyAction } from './keybindings.js';
+import type {
+  AutocompleteItem,
+  AutocompleteProvider,
+  AutocompleteSuggestions,
+} from './tui-boundary.js';
+
+export interface SlashCommandSpec {
+  /** The name without the slash (`'help'`). */
+  readonly name: string;
+  /** One line for the palette and `/help`. */
+  readonly summary: string;
+  /** The usage line (`'/help [command]'`). */
+  readonly usage: string;
+  /**
+   * The presentation command this emits. Absent for a local action or a local
+   * read (`/help`, `/session`, `/diff`, `/undo`) — those never reach the lane.
+   */
+  readonly command?: PresentationCommand;
+  /** The key equivalent, when one exists (shown by `/help`). */
+  readonly keys?: string;
+  /**
+   * The key action behind `keys`, so the palette shows the key
+   * the registry has bound now (a rebound key included).
+   */
+  readonly keyAction?: KeyAction;
+  /** What the argument is, for the autocomplete's hint. */
+  readonly argumentHint?: string;
+}
+
+// The shipped command set. Every working command is listed: a palette that
+// hides working capabilities is worse than one that names them.
+export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
+  {
+    name: 'help',
+    summary: 'list the commands, or one command’s usage',
+    usage: '/help [command]',
+    argumentHint: 'command',
+  },
+  {
+    name: 'session',
+    summary: 'session id, model, tokens and cost',
+    usage: '/session',
+  },
+  {
+    name: 'new',
+    summary: 'start a fresh session without leaving the TUI',
+    usage: '/new',
+    command: 'session.attach',
+  },
+  {
+    name: 'resume',
+    summary: 'switch to another session',
+    usage: '/resume',
+    command: 'session.attach',
+  },
+  {
+    // A branch is a fork of the lane inside the session: `/tree` moves the
+    // lane between branches in place, while `/fork` copies the session into
+    // a new one.
+    name: 'tree',
+    summary: 'browse the session’s branches and go to any entry',
+    usage: '/tree',
+    command: 'session.fork',
+  },
+  {
+    name: 'fork',
+    summary: 'fork this session at an entry and switch to the fork',
+    usage: '/fork <entry>',
+    command: 'session.fork',
+    argumentHint: 'entry',
+  },
+  {
+    // No presentation command: the posture toggle is a session decision, not a
+    // response to an approval request (the vocabulary's `approval.respond`
+    // needs a request id this has none of).
+    name: 'approvals',
+    summary: 'turn approvals on or off for this session (off = full access)',
+    usage: '/approvals [on|off]',
+    keys: 'Alt+A',
+    keyAction: 'approvals.fullAccess',
+    argumentHint: 'on|off',
+  },
+  {
+    // The honest limits on demand; no permanent footer carries them, and the
+    // header keeps the mode badge on every frame.
+    name: 'safety',
+    summary: 'what this mode does and does not protect',
+    usage: '/safety',
+  },
+  {
+    name: 'diff',
+    summary: 'the current run’s changes',
+    usage: '/diff',
+    keys: 'Ctrl-O',
+    keyAction: 'panel.diff',
+  },
+  {
+    name: 'undo',
+    summary: 'restore the journaled changes',
+    usage: '/undo',
+  },
+  // Explicit skill invocation — hidden skills
+  // included. The skill name rides the command (`/skill:<name>`), so one
+  // static entry covers discovery (/help, the palette, the `/sk` prefix
+  // completion); the composition root parses the name, expands the
+  // booted skill and submits the expansion as the turn prompt. Per-skill
+  // `/skill:<name>` rows for the popup come from skillCommandSpecs below.
+  {
+    name: 'skill',
+    summary: 'invoke an explicit skill (hidden skills included)',
+    usage: '/skill:<name> [instructions]',
+  },
+  {
+    // No presentation command: quitting ends the process (the session close is
+    // part of that), which the presentation vocabulary does not name.
+    name: 'quit',
+    summary: 'leave the TUI',
+    usage: '/quit',
+    // Esc never quits; Ctrl-D on an empty draft does.
+    keys: 'Ctrl-D',
+    keyAction: 'app.eof',
+  },
+  {
+    name: 'model',
+    summary: 'switch the live lane’s model',
+    usage: '/model [provider/id]',
+    keys: 'Alt+M',
+    keyAction: 'model.pick',
+    argumentHint: 'provider/id',
+    command: 'model.select',
+  },
+  {
+    // The explicit climb — same ladder gate as
+    // `/model`, but the reason lands in the escalation event.
+    name: 'escalate',
+    summary: 'climb the escalation ladder with a reason',
+    usage: '/escalate <provider/id> [reason]',
+    argumentHint: 'provider/id',
+  },
+  {
+    // No presentation command: the allowed set is a local read like
+    // `/session` — the loop reports the resolved set, nothing is sent.
+    name: 'scoped-models',
+    summary: 'show the role’s allowed model set',
+    usage: '/scoped-models',
+  },
+  {
+    name: 'thinking',
+    summary: 'set the live lane’s thinking level',
+    usage: '/thinking [level]',
+    keys: 'Alt+T',
+    keyAction: 'model.thinking',
+    argumentHint: 'level',
+    command: 'thinking.cycle',
+  },
+  {
+    // The theme picker — previewed live, kept for the session.
+    name: 'theme',
+    summary: 'pick a colour theme for this session (previewed live)',
+    usage: '/theme [name]',
+    argumentHint: 'name',
+  },
+  {
+    name: 'compact',
+    summary: 'compact the session’s context',
+    usage: '/compact [instructions]',
+    argumentHint: 'instructions',
+    command: 'lane.compact',
+  },
+  {
+    // Attaching an image is local — it reads one file and arms the next prompt
+    // — so it issues no presentation command; the composition root owns the
+    // read. Registered here so `/help`, the palette and the autocomplete know
+    // it, and so the unknown-command refusal lets it through to the local
+    // dispatcher instead of refusing it as a typo.
+    name: 'image',
+    summary: 'attach an image to the next prompt',
+    usage: '/image <path>',
+    argumentHint: 'path',
+  },
+];
+
+const SLASH_COMMAND_NAMES: ReadonlySet<string> = new Set(
+  SLASH_COMMANDS.map((spec) => spec.name),
+);
+
+export function findSlashCommand(name: string): SlashCommandSpec | undefined {
+  return SLASH_COMMANDS.find((spec) => spec.name === name);
+}
+
+// One parsed draft: the command name and the rest, verbatim (the individual
+// commands own their own argument rules). `undefined` means the draft is a
+// prompt, not a command — including a bare `/` and a `//`-prefixed line.
+export interface ParsedSlashCommand {
+  readonly name: string;
+  readonly argument: string;
+}
+
+export function parseSlashCommand(
+  input: string,
+): ParsedSlashCommand | undefined {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith('/') || trimmed === '/') return undefined;
+  const body = trimmed.slice(1);
+  // A `//`-prefixed line is the explicit escape hatch: a prompt that starts
+  // with a slash, never a command.
+  if (body.startsWith('/')) return undefined;
+  const space = body.search(/\s/);
+  if (space === -1) return { name: body, argument: '' };
+  return {
+    name: body.slice(0, space),
+    argument: body.slice(space + 1).trim(),
+  };
+}
+
+// The command a draft runs, when the registry knows its name. A prompt, a
+// `//` line and an unregistered name are all `undefined`.
+export function parseKnownSlashCommand(
+  input: string,
+): ParsedSlashCommand | undefined {
+  const parsed = parseSlashCommand(input);
+  return parsed !== undefined && SLASH_COMMAND_NAMES.has(parsed.name)
+    ? parsed
+    : undefined;
+}
+
+// The commands whose name starts with the draft's command prefix (`'he'` →
+// `/help`), for the autocomplete.
+/** @internal */
+export function matchingSlashCommands(
+  prefix: string,
+  commands: readonly SlashCommandSpec[] = SLASH_COMMANDS,
+): readonly SlashCommandSpec[] {
+  const body = prefix.startsWith('/') ? prefix.slice(1) : prefix;
+  if (body.includes(' ')) return [];
+  return commands.filter((spec) => spec.name.startsWith(body));
+}
+
+// `/help`'s body: one line per command, generated from the registry — the
+// palette (ui/palette.ts rows, built by the app) and the printed help can
+// never drift.
+export function helpLines(
+  commands: readonly SlashCommandSpec[] = SLASH_COMMANDS,
+): readonly string[] {
+  return commands.map((spec) => {
+    const keys = spec.keys === undefined ? '' : ` (${spec.keys})`;
+    return `${spec.usage} — ${spec.summary}${keys}`;
+  });
+}
+
+// Per-skill completion rows: the composition root
+// synthesizes one spec per booted (gated-visible, hidden included) skill
+// so the editor's popup completes `/skill:<prefix>` to `/skill:<name>`.
+// Static registry entries cannot name boot-time skills, so these live
+// only in the autocomplete list the app builds — never in SLASH_COMMANDS
+// (`/help` and the palette stay static).
+export function skillCommandSpecs(
+  names: readonly string[],
+): readonly SlashCommandSpec[] {
+  return names.map((name) => ({
+    name: `skill:${name}`,
+    summary: `invoke the '${name}' skill explicitly`,
+    usage: `/skill:${name} [instructions]`,
+  }));
+}
+
+// The editor's autocomplete provider: a draft that starts with
+// `/` and has no space yet offers the registry's commands, so `/` alone
+// lists them and `/he<Tab>` completes `/help`. Presentation only — it
+// completes TEXT; the submit path still parses and dispatches.
+export class SlashCommandAutocomplete implements AutocompleteProvider {
+  readonly triggerCharacters = ['/'];
+  private readonly commands: readonly SlashCommandSpec[];
+
+  constructor(commands: readonly SlashCommandSpec[] = SLASH_COMMANDS) {
+    this.commands = commands;
+  }
+
+  getSuggestions(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+  ): Promise<AutocompleteSuggestions | null> {
+    const line = lines[cursorLine] ?? '';
+    const before = line.slice(0, cursorCol);
+    if (!before.startsWith('/') || before.includes(' ')) {
+      return Promise.resolve(null);
+    }
+    const matches = matchingSlashCommands(before, this.commands);
+    if (matches.length === 0) return Promise.resolve(null);
+    return Promise.resolve({
+      prefix: before,
+      items: matches.map((spec) => ({
+        value: `/${spec.name}`,
+        label: `/${spec.name}${spec.argumentHint === undefined ? '' : ` <${spec.argumentHint}>`}`,
+        description: spec.summary,
+      })),
+    });
+  }
+
+  // The suggestion is always the line's first token (see getSuggestions), so
+  // the completion replaces the prefix and leaves the cursor after it.
+  applyCompletion(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    item: AutocompleteItem,
+    _prefix: string,
+  ): { lines: string[]; cursorLine: number; cursorCol: number } {
+    const next = [...lines];
+    const line = next[cursorLine] ?? '';
+    next[cursorLine] = `${item.value}${line.slice(cursorCol)}`;
+    return { lines: next, cursorLine, cursorCol: item.value.length };
+  }
+}

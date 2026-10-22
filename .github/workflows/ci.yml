@@ -1,0 +1,140 @@
+name: CI
+
+# Tags are left to the release workflow, which calls this one.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# One live run per ref. A newer push supersedes the older run, and a PR branch
+# (which fires both `push` and `pull_request`) keeps a single run. main is
+# keyed by commit, so every merged commit is verified in full and never
+# cancelled. A release's call is keyed apart from the push run of its commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name == 'main' && format('main-{0}', github.sha) || format('ci-{0}', github.head_ref || github.ref_name) }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        # The lowest supported Node (engines >=22.19) on every ref; the newest
+        # LTS as well on main, once per merged commit.
+        node: ${{ fromJSON(github.ref_name == 'main' && '["22", "24"]' || '["22"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # The bash sandbox's tests run bubblewrap for real. The runner's
+      # AppArmor restricts unprivileged user namespaces, which bubblewrap
+      # needs; the last line fails the job if it still cannot start, so those
+      # tests are never skipped here.
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends bubblewrap
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --dev /dev --proc /proc --unshare-net -- true
+      # The static gates do not depend on the Node version: run them once,
+      # first, so a typo fails in seconds, before the test suite.
+      - if: matrix.node == '22'
+        run: npm run check
+      # A known high or critical advisory in a production dependency fails
+      # the run (the audit asks the registry).
+      - if: matrix.node == '22'
+        run: npm audit --omit=dev --audit-level=high
+      # The Node 22 leg measures coverage against the floors in
+      # vitest.config.ts; the other leg runs the plain suite.
+      - if: matrix.node == '22'
+        run: npm run test:coverage
+      - if: matrix.node != '22'
+        run: npm test
+      # The shipped artifact (bin/kubic.js over dist/) is proven per push:
+      # build, then run the built binary's contract and the faux smoke.
+      # Hermetic: HOME is a temp dir, no provider, no network.
+      - run: npm run build
+      - run: npm run test:binary
+
+  # Windows: the built binary runs a faux `kubic run` whose bash tool call goes
+  # through Git Bash, then `kubic log` and `kubic doctor`
+  # (scripts/windows-smoke.mjs). The suite itself runs on Linux.
+  windows:
+    name: windows smoke (node 22)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: node scripts/windows-smoke.mjs
+
+  # The npm package a user installs: staged from the root build with its
+  # shrinkwrap, packed, installed into an empty prefix and run, then installed
+  # through a loopback registry that honours the shrinkwrap
+  # (scripts/pack-install-contract.mjs; that install uses the network).
+  pack-contract:
+    name: pack contract (${{ matrix.os }}, node ${{ matrix.node }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # The lowest supported Node and the newest LTS. The registry install
+        # is engine-strict, so the 22.19.0 leg proves no locked package needs
+        # a newer Node.
+        node: ['22.19.0', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run release:stage
+      - run: npm run release:contract
+
+  # The one check a pull request needs from this workflow, whatever the matrix
+  # becomes: it fails unless every job it needs succeeded. GitHub counts a
+  # skipped required check as passed, so this job runs even when a needed job
+  # was skipped or cancelled, and fails then.
+  ci:
+    name: ci
+    if: always()
+    needs: [test, windows, pack-contract]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then
+              echo "a job this check needs ended as $result"
+              exit 1
+            fi
+          done

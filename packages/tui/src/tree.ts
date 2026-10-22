@@ -1,0 +1,388 @@
+// The agent tree: one row for the run, with its tool calls as children. The
+// head row carries the status glyph (✓ ● ◌) and the run's cost and tokens; a
+// tool row carries its argument summary and outcome, and ✗ when the call
+// failed. Calls are grouped per turn, earlier turns fold to one line each, and
+// truncation is measured in columns. A click toggles the tree; the wheel
+// passes through to the transcript underneath.
+//
+// The tree reads only `TreeLaneSnapshot`, which the host projector folds from
+// the lane: the tui package never imports agent or host code (dep-lint), so
+// the fields it reads are typed here.
+
+import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
+import { summarizeToolArguments, summarizeToolOutcome } from './lane-cells.js';
+import { sanitizeLaneText } from './lane-text.js';
+import { formatStatusCost } from './status-bar.js';
+import { tuiTheme } from './theme.js';
+import type { Component, MouseRegionHandler } from './tui-boundary.js';
+import { MouseRegion, truncateToWidth } from './tui-boundary.js';
+
+/** @internal */
+export type RunStatus = 'idle' | 'running' | 'done';
+/** @internal */
+export type ToolCallState = 'running' | 'done';
+
+/** @internal */
+export function statusGlyph(status: RunStatus): string {
+  if (status === 'running') return '●';
+  if (status === 'done') return '✓';
+  return '◌';
+}
+
+// A finished call that failed gets its own glyph, never ✓. The colour is applied at render time (styleTreeLine), so the
+// glyph stays distinct with NO_COLOR too.
+/** @internal */
+export function toolGlyph(state: ToolCallState, error = false): string {
+  if (state === 'running') return '●';
+  return error ? '✗' : '✓';
+}
+
+interface TreeToolCall {
+  id: string;
+  name: string;
+  done: boolean;
+  error: boolean;
+  // The key argument (the bash command, the read/edit path) and
+  // the finished call's outcome (a test summary, a non-zero exit). Both are
+  // derived from untrusted model/tool output and sanitized at ingress.
+  argsSummary?: string;
+  outcome?: string;
+  durationMs?: number;
+}
+
+// The conversation's own spend, summed from usage events: the
+// head row shows `$cost in/out`. `seen` keeps the segment off a fresh tree
+// that has not heard a usage row yet.
+interface TreeUsage {
+  seen: boolean;
+  costTotal: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+// One completed turn, rolled up: the tree only ever folds past turns
+// into a count line, so it keeps the counts — not the calls — and its state
+// stays bounded by the number of turns, never by the session's tool calls.
+interface TreeTurnSummary {
+  calls: number;
+  durationMs: number;
+}
+
+export interface TreeState {
+  label: string;
+  status: RunStatus;
+  // The LIVE turn's calls; a run-start rolls them into `previousTurns`.
+  tools: TreeToolCall[];
+  // One entry per completed turn, oldest first: earlier turns fold
+  // into a single line that names how many turns and calls it covers, so the
+  // live turn is its own group instead of mixing into one count.
+  previousTurns: TreeTurnSummary[];
+  collapsed: boolean;
+  usage: TreeUsage;
+}
+
+/** @internal */
+export function createTreeState(label = DEFAULT_RUN_ROLE): TreeState {
+  return {
+    label,
+    status: 'idle',
+    tools: [],
+    previousTurns: [],
+    collapsed: false,
+    usage: { seen: false, costTotal: 0, inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+/** @internal */
+export function toggleTree(state: TreeState): void {
+  state.collapsed = !state.collapsed;
+}
+
+function previousCalls(state: TreeState): number {
+  return state.previousTurns.reduce((sum, turn) => sum + turn.calls, 0);
+}
+
+function previousDurationMs(state: TreeState): number {
+  return state.previousTurns.reduce((sum, turn) => sum + turn.durationMs, 0);
+}
+
+// The tree's one lane input: the replicated presentation state the host
+// projector folds. The summarizers stay here, so the state never carries a
+// display string.
+/** @internal */
+export interface TreeToolSnapshot {
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly status: 'running' | 'done';
+  readonly isError: boolean;
+  readonly args?: unknown;
+  readonly entry?: unknown;
+  readonly durationMs?: number;
+}
+
+export interface TreeLaneSnapshot {
+  readonly status: RunStatus;
+  readonly tools: ReadonlyArray<TreeToolSnapshot>;
+  readonly usage?: {
+    readonly costTotal: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
+}
+
+export function applyTreeSnapshot(
+  state: TreeState,
+  lane: TreeLaneSnapshot,
+): void {
+  // A new turn (the session goes back to running) closes the previous group.
+  if (
+    lane.status === 'running' &&
+    state.status !== 'running' &&
+    state.tools.length > 0
+  ) {
+    state.previousTurns.push({
+      calls: state.tools.length,
+      durationMs: state.tools.reduce(
+        (sum, call) => sum + (call.durationMs ?? 0),
+        0,
+      ),
+    });
+    state.tools = [];
+  }
+  state.status = lane.status;
+  state.tools = lane.tools.map((tool) => ({
+    id: tool.toolCallId,
+    name: sanitizeLaneText(tool.toolName),
+    done: tool.status === 'done',
+    error: tool.isError,
+    argsSummary: summarizeToolArguments(tool.args),
+    ...(tool.status === 'done'
+      ? { outcome: summarizeToolOutcome(tool.entry, tool.toolName) }
+      : {}),
+    ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+  }));
+  if (lane.usage !== undefined) {
+    state.usage = {
+      seen: true,
+      costTotal: lane.usage.costTotal,
+      inputTokens: lane.usage.inputTokens,
+      outputTokens: lane.usage.outputTokens,
+    };
+  }
+}
+
+/** @internal */
+export function collapsedSummary(state: TreeState): string {
+  const calls = previousCalls(state) + state.tools.length;
+  const total =
+    previousDurationMs(state) +
+    state.tools.reduce((sum, t) => sum + (t.durationMs ?? 0), 0);
+  const unit = calls === 1 ? 'call' : 'calls';
+  return `…${calls} ${unit}, ${total}ms`;
+}
+
+function toolLine(call: TreeToolCall): string {
+  const parts = [
+    toolGlyph(call.done ? 'done' : 'running', call.error),
+    call.name,
+  ];
+  if (call.argsSummary !== undefined && call.argsSummary !== '') {
+    parts.push(call.argsSummary);
+  }
+  if (call.durationMs !== undefined) parts.push(`${call.durationMs}ms`);
+  const line = `  ${parts.join(' ')}`;
+  return call.outcome === undefined ? line : `${line} · ${call.outcome}`;
+}
+
+// Tokens read in thousands once the number stops being glanceable; the
+// sub-100 counters stay exact (`42`), everything above scales (`0.3k`,
+// `1.2k`, `182.4k`).
+function formatTreeTokens(count: number): string {
+  const n = Math.max(0, Math.round(count));
+  if (n < 100) return String(n);
+  return `${(n / 1000).toFixed(1)}k`;
+}
+
+function headLine(state: TreeState): string {
+  const head = `${statusGlyph(state.status)} ${state.label}`;
+  if (!state.usage.seen) return head;
+  const cost = formatStatusCost(state.usage.costTotal);
+  const tokens = `${formatTreeTokens(state.usage.inputTokens)}/${formatTreeTokens(
+    state.usage.outputTokens,
+  )}`;
+  return `${head} ${cost} ${tokens}`;
+}
+
+// One line covers every completed turn: the live turn below is visibly its
+// own group, and the count still names how much history the fold hides.
+function earlierTurnsLine(callCount: number, turnCount: number): string {
+  const calls = callCount === 1 ? 'call' : 'calls';
+  const turns = turnCount === 1 ? 'turn' : 'turns';
+  return `  … ${callCount} earlier ${calls} in ${turnCount} ${turns}`;
+}
+
+function fitLine(line: string, width: number): string {
+  return truncateToWidth(line, Math.max(0, width), '…');
+}
+
+// Pure headless render (no VirtualTerminal in Pi 0.85.1): callers render
+// these lines directly like renderLayout in layout.test.ts.
+/** @internal */
+export function renderTreeLines(state: TreeState, width: number): string[] {
+  const w = Math.max(0, Math.floor(width));
+  const lines = [headLine(state)];
+  if (state.collapsed) {
+    if (previousCalls(state) + state.tools.length > 0) {
+      lines.push(`  ${collapsedSummary(state)}`);
+    }
+  } else {
+    // The row is height-capped (layout TREE_MAX_ROWS): the LATEST calls are
+    // the live work, so older ones fold into one count line.
+    let budget = TREE_MAX_TOOL_LINES;
+    const earlier = previousCalls(state);
+    if (earlier > 0) {
+      lines.push(earlierTurnsLine(earlier, state.previousTurns.length));
+      budget -= 1;
+    }
+    if (budget > 0) {
+      const calls = state.tools;
+      const overflow = calls.length - budget;
+      if (overflow > 0) {
+        const hidden = overflow + 1;
+        lines.push(`  … ${hidden} earlier ${hidden === 1 ? 'call' : 'calls'}`);
+        for (const call of calls.slice(hidden)) lines.push(toolLine(call));
+      } else {
+        for (const call of calls) lines.push(toolLine(call));
+      }
+    }
+  }
+  return lines.map((line) => styleTreeLine(fitLine(line, w)));
+}
+
+// Tool lines shown before older calls fold into a count (one row is the
+// head, so head + TREE_MAX_TOOL_LINES fits layout's TREE_MAX_ROWS of 6).
+// A previous-turns fold line takes one of these slots, so the live turn
+// shows one call fewer.
+const TREE_MAX_TOOL_LINES = 5;
+
+// Colour is applied AFTER truncation, over the plain line, so widths are
+// measured on text only. Identity under the default (plain) theme.
+function styleTreeLine(line: string): string {
+  const theme = tuiTheme();
+  if (theme.level === 'none') return line;
+  const match = /^(\s*)(✓|✗|●|◌)( .*)$/u.exec(line);
+  if (match === null) return theme.muted(line);
+  const [, lead = '', glyph = '', rest = ''] = match;
+  const styledGlyph =
+    glyph === '✓'
+      ? theme.success(glyph)
+      : glyph === '✗'
+        ? theme.error(glyph)
+        : glyph === '●'
+          ? theme.warm(glyph)
+          : theme.muted(glyph);
+  const styledRest = rest.replace(/ (\d+ms)$/, ` ${theme.muted('$1')}`);
+  return `${lead}${styledGlyph}${lead === '' ? theme.bold(styledRest) : styledRest}`;
+}
+
+export type TreeMouseEvent = Parameters<MouseRegionHandler>[0];
+export type TreeMouseResult = ReturnType<MouseRegionHandler>;
+
+export interface TreeViewOptions {
+  label?: string;
+  collapsed?: boolean;
+  onFocusEditor?: () => void;
+}
+
+const TOGGLE_KEYS: ReadonlySet<string> = new Set(['t', 'T', '\r', '\n', ' ']);
+
+// Inner body: renders exact pre-truncated lines (no padding/wrap) so
+// headless snapshots assert content, not pixels. Pi's Text pads to the
+// full width, which would bury the tree lines in spaces.
+class TreeBody implements Component {
+  private treeState: TreeState;
+
+  constructor(state: TreeState) {
+    this.treeState = state;
+  }
+
+  render(width: number): string[] {
+    return renderTreeLines(this.treeState, width);
+  }
+
+  invalidate(): void {}
+}
+
+export class TreeView implements Component {
+  private body: TreeBody;
+  private region: MouseRegion;
+  private treeState: TreeState;
+  // The label the view names its tree with; a reset keeps it.
+  private baseLabel: string;
+  private focusEditor: () => void;
+
+  constructor(state?: TreeState, options?: TreeViewOptions) {
+    this.treeState = state ?? createTreeState(options?.label);
+    this.baseLabel = options?.label ?? this.treeState.label;
+    if (options?.collapsed !== undefined) {
+      this.treeState.collapsed = options.collapsed;
+    }
+    this.focusEditor = options?.onFocusEditor ?? (() => {});
+    this.body = new TreeBody(this.treeState);
+    this.region = new MouseRegion(this.body, (event) => this.onMouse(event));
+  }
+
+  getState(): TreeState {
+    return this.treeState;
+  }
+
+  // `/new` and `/resume` show another session's work; the tree
+  // starts empty (the label is the view's own default). The
+  // caller says whether it starts collapsed — the lane hides the tree row until
+  // Ctrl-T opens it.
+  reset(label?: string, collapsed = false): void {
+    if (label !== undefined) this.baseLabel = label;
+    this.treeState = createTreeState(this.baseLabel);
+    this.treeState.collapsed = collapsed;
+    this.body = new TreeBody(this.treeState);
+    this.region = new MouseRegion(this.body, (event) => this.onMouse(event));
+  }
+
+  isCollapsed(): boolean {
+    return this.treeState.collapsed;
+  }
+
+  toggle(): void {
+    toggleTree(this.treeState);
+  }
+
+  handleInput(data: string): void {
+    if (!TOGGLE_KEYS.has(data)) return;
+    this.toggle();
+    this.focusEditor();
+  }
+
+  handleMouse(event: TreeMouseEvent): TreeMouseResult {
+    return this.region.handleMouse(event);
+  }
+
+  render(width: number): string[] {
+    return this.region.render(width);
+  }
+
+  invalidate(): void {
+    this.body.invalidate();
+    this.region.invalidate();
+  }
+
+  private onMouse(event: TreeMouseEvent): TreeMouseResult {
+    // Click toggles collapse and returns focus to the editor.
+    // Wheel/move/drag/release chain through (undefined) so the
+    // transcript keeps scrolling under the tree.
+    if (event.type !== 'click') return undefined;
+    if (event.button !== 'left') return undefined;
+    this.toggle();
+    this.focusEditor();
+    return { handled: true };
+  }
+}

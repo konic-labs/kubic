@@ -1,0 +1,60 @@
+{
+  // Production-mode knip: the program as the binary runs it, with test code
+  // left out. `npm run lint:dead:prod` runs it (see docs/contributing.md).
+  "$schema": "https://unpkg.com/knip@6.38.0/schema.json",
+
+  // An export only tests import is reported, even when production code uses
+  // it inside its own module: such an export is tagged @internal (below), and
+  // everything else is either used by production code elsewhere or private.
+  "ignoreExportsUsedInFile": false,
+
+  // Exports named by a package's exports map are entry files for knip (see
+  // knip.jsonc). This keeps the production gate reporting them too.
+  "includeEntryExports": true,
+
+  // mkfifo is a POSIX utility, not a dependency (see knip.jsonc).
+  "ignoreBinaries": ["mkfifo"],
+
+  // Exports tagged @internal exist for tests: limits and pure helpers a test
+  // pins directly, and the Pi and TUI seams only tests reach. knip ignores
+  // @internal exports in production mode only, so the default gate still
+  // checks them.
+
+  "workspaces": {
+    ".": {
+      // The root manifest is the one npm installs, so it declares every
+      // runtime dependency, the Pi packages included. packages/agent and
+      // packages/tui import and declare those too, which is where knip
+      // counts the use; `npm run check:pins` keeps the two declarations equal.
+      "ignoreDependencies": [
+        "@earendil-works/chord",
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-durable",
+        "@earendil-works/pi-telemetry",
+        "@earendil-works/pi-tui"
+      ],
+      // The vitest plugin would add every *.test.ts as an entry, which makes
+      // any test import count as use. It is off here, so `ignore` below holds.
+      "vitest": false,
+      // bin/kubic.js loads dist/kubic.js, the esbuild bundle of
+      // apps/kubic/src/main.ts (scripts/build.mjs), so the source entry is
+      // main.ts. scripts/*.mjs are repo tooling and are entries in their own
+      // right.
+      "entry": [
+        "apps/kubic/src/main.ts",
+        "bin/kubic.js",
+        "scripts/*.mjs",
+        "!scripts/*.test.mjs"
+      ],
+      "project": ["apps/**/*.ts", "packages/**/*.ts"],
+      // Tests, test-support helpers and the test harness are not part of the
+      // program. Their imports must not count as production use.
+      "ignore": [
+        "**/*.test.ts",
+        "**/*.test.mjs",
+        "**/test-support/**",
+        "test/**"
+      ]
+    }
+  }
+}

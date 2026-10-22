@@ -1,0 +1,326 @@
+// The model must be told the truth about its own
+// tool set. The prompt's `tools:` line and the conversation's offered set
+// are one intersection — base tools, narrowed by the permission classes when
+// declared and by the role allowlist when declared — in every combination,
+// including the classes-only one, which must not be advertised in full.
+// Ported to the durable harness.
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { FakeExecutionEnv } from '@kubic/exec/test-support/fake-env';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_PERMISSIONS } from '../permissions.js';
+import {
+  BACKGROUND_CONTEXT,
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  MemoryStorage,
+  openNodeJsonlStorage,
+  type Storage,
+  SystemEntry,
+} from '../pi-boundary.js';
+import type { TestSession } from '../test-support/session-handle.js';
+import { bootLane, type Lane, PROMPT_SECTION } from './boot.js';
+
+vi.mock('./interceptors/index.js', () => ({
+  policyInterceptorHooks: () => [],
+}));
+
+vi.mock('../compaction.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../compaction.js')>();
+  return {
+    ...original,
+    compactionSettings: (options: {
+      configuredReserveTokens?: number;
+      currentWindow?: () => number | undefined;
+    }) => ({
+      enabled: true,
+      keepRecentTokens: 20_000,
+      get reserveTokens() {
+        return (
+          options.configuredReserveTokens ?? original.DEFAULT_RESERVE_TOKENS
+        );
+      },
+    }),
+  };
+});
+
+vi.mock('./tools-adapter.js', async () => {
+  const { defineTool, Type } = await import('../pi-boundary.js');
+  const { OPERATIONS } = await import('../ops/registry.js');
+  return {
+    kubicToolsToPiTools: () =>
+      Object.keys(OPERATIONS).map((name) =>
+        defineTool({
+          name,
+          description: `${name} (faux)`,
+          parameters: Type.Object({}),
+          execute: async () => ({
+            content: [{ type: 'text' as const, text: name }],
+          }),
+        }),
+      ),
+  };
+});
+
+const LANES: Lane[] = [];
+const DIRS: string[] = [];
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  for (const lane of LANES.splice(0)) {
+    await lane.close(BACKGROUND_CONTEXT).catch(() => undefined);
+  }
+  for (const dir of DIRS.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+function handle(id = 'sess-1'): TestSession {
+  const storage = new MemoryStorage();
+  return {
+    id,
+    dir: `/tmp/kubic-lane-tools-line/${id}`,
+    storage,
+    meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
+    // The boot adopts the storage, so the handle must expose it.
+    adopt: () => storage,
+    release: vi.fn(async () => undefined),
+  };
+}
+
+const READ_ONLY_CLASSES = {
+  ...DEFAULT_PERMISSIONS,
+  filesystem: 'read' as const,
+  shell: false as const,
+  git: false as const,
+};
+
+function toolsLine(prompt: string): string[] {
+  const line = /^tools: (.*)$/m.exec(prompt)?.[1] ?? '';
+  return line
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name !== '')
+    .sort();
+}
+
+// Boots a lane and returns what the model is told (`tools:` line of the
+// committed prompt section) next to what the conversation actually offers.
+async function boot(extra: {
+  policy?: Parameters<typeof bootLane>[0]['policy'];
+  toolAllowlist?: string[];
+  toolSelection?: string[];
+  noTools?: boolean;
+}): Promise<{ advertised: string[]; offered: string[] }> {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([fauxAssistantMessage('hi')]);
+  const lane = await bootLane({
+    session: handle() as never,
+    models,
+    model: faux.getModel(),
+    env: new FakeExecutionEnv({}),
+    sessionId: 'sess-1',
+    agentId: 'root',
+    ...extra,
+  });
+  LANES.push(lane);
+  const settled = await (
+    await lane.conversation.submit(
+      { type: 'input', content: 'hi' },
+      BACKGROUND_CONTEXT,
+    )
+  ).wait(BACKGROUND_CONTEXT);
+  expect(settled.status).toBe('done');
+  const page = await lane.conversation.entries(
+    {},
+    200,
+    undefined,
+    BACKGROUND_CONTEXT,
+  );
+  const system = page.items.find((entry) => SystemEntry.is(entry));
+  const message = (
+    system?.model as unknown as Array<{
+      sections?: Record<string, string | null>;
+    }>
+  )?.[0];
+  const prompt = message?.sections?.[PROMPT_SECTION] ?? '';
+  const offered = (await lane.conversation.agent(BACKGROUND_CONTEXT)).tools
+    .map((tool) => tool.name)
+    .sort();
+  return { advertised: toolsLine(prompt), offered };
+}
+
+describe('the prompt tools line is the same intersection the conversation offers', () => {
+  it('neither classes nor allowlist: every base tool is advertised and offered', async () => {
+    const all = Object.keys(
+      (await import('../ops/registry.js')).OPERATIONS,
+    ).sort();
+    const { advertised, offered } = await boot({});
+    expect(advertised).toEqual(all);
+    expect(offered).toEqual(all);
+  });
+
+  it('classes only: a read-only session never advertises write, edit, bash or git', async () => {
+    const { advertised, offered } = await boot({
+      policy: { classes: READ_ONLY_CLASSES },
+    });
+    expect(advertised).toEqual(['find', 'grep', 'ls', 'read']);
+    expect(offered).toEqual(['find', 'grep', 'ls', 'read']);
+  });
+
+  it('allowlist only: the role set is advertised and offered, nothing more', async () => {
+    const { advertised, offered } = await boot({
+      toolAllowlist: ['read', 'write', 'grep'],
+    });
+    expect(advertised).toEqual(['grep', 'read', 'write']);
+    expect(offered).toEqual(['grep', 'read', 'write']);
+  });
+
+  it('classes and allowlist: the narrower of the two, so a role never widens the classes', async () => {
+    const { advertised, offered } = await boot({
+      policy: { classes: READ_ONLY_CLASSES },
+      toolAllowlist: ['read', 'write', 'grep', 'bash'],
+    });
+    expect(advertised).toEqual(['grep', 'read']);
+    expect(offered).toEqual(['grep', 'read']);
+  });
+
+  it('a role naming a tool this build does not carry advertises only what is offered', async () => {
+    const { advertised, offered } = await boot({
+      toolAllowlist: ['read', 'no_such_tool'],
+    });
+    expect(advertised).toEqual(['read']);
+    expect(offered).toEqual(['read']);
+  });
+
+  it('enterprise gate: a denied tool leaves both the tools line and the offered set', async () => {
+    const { advertised, offered } = await boot({
+      policy: { toolAllowed: (tool) => tool !== 'bash' },
+    });
+    const all = Object.keys((await import('../ops/registry.js')).OPERATIONS)
+      .filter((name) => name !== 'bash')
+      .sort();
+    expect(advertised).toEqual(all);
+    expect(offered).toEqual(all);
+  });
+
+  it('a reopened session without narrowing offers exactly the prompt tools line', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kubic-lane-tools-reopen-'));
+    DIRS.push(dir);
+    const all = Object.keys(
+      (await import('../ops/registry.js')).OPERATIONS,
+    ).sort();
+
+    // One boot on the same sessions dir; drives a turn and reports the
+    // prompt's tools: line next to the conversation's offered set.
+    async function bootOn(extra: {
+      toolAllowlist?: string[];
+    }): Promise<{ advertised: string[]; offered: string[] }> {
+      const faux = fauxProvider();
+      const models = createModels();
+      models.setProvider(faux.provider);
+      faux.setResponses([fauxAssistantMessage('hi')]);
+      const sessionId = 'reopen';
+      const lane = await bootLane({
+        session: {
+          id: sessionId,
+          dir,
+          storage: await openNodeJsonlStorage(dir, BACKGROUND_CONTEXT),
+          meta: { cwd: '/ws', createdAt: new Date(0).toISOString() },
+          adopt: function (this: { storage: Storage }) {
+            return this.storage;
+          },
+          release: async () => undefined,
+        } as never,
+        models,
+        model: faux.getModel(),
+        env: new FakeExecutionEnv({}),
+        sessionId,
+        agentId: 'root',
+        ...extra,
+      });
+      LANES.push(lane);
+      const settled = await (
+        await lane.conversation.submit(
+          { type: 'input', content: 'hi' },
+          BACKGROUND_CONTEXT,
+        )
+      ).wait(BACKGROUND_CONTEXT);
+      expect(settled.status).toBe('done');
+      const page = await lane.conversation.entries(
+        {},
+        200,
+        undefined,
+        BACKGROUND_CONTEXT,
+      );
+      const system = page.items.find((entry) => SystemEntry.is(entry));
+      const message = (
+        system?.model as unknown as Array<{
+          sections?: Record<string, string | null>;
+        }>
+      )?.[0];
+      return {
+        advertised: toolsLine(message?.sections?.[PROMPT_SECTION] ?? ''),
+        offered: (await lane.conversation.agent(BACKGROUND_CONTEXT)).tools
+          .map((tool) => tool.name)
+          .sort(),
+      };
+    }
+
+    const narrowed = await bootOn({ toolAllowlist: ['read', 'grep'] });
+    expect(narrowed).toEqual({
+      advertised: ['grep', 'read'],
+      offered: ['grep', 'read'],
+    });
+    await LANES.at(-1)?.close(BACKGROUND_CONTEXT);
+
+    // The narrowing was durably stored; this boot has none, so it must clear
+    // the stored filter instead of keeping a set the prompt does not name.
+    const cleared = await bootOn({});
+    expect(cleared.advertised).toEqual(all);
+    expect(cleared.offered).toEqual(all);
+    await LANES.at(-1)?.close(BACKGROUND_CONTEXT);
+  });
+});
+
+describe('the per-invocation tool selection', () => {
+  it('a --tools selection narrows the offered and advertised set', async () => {
+    const { advertised, offered } = await boot({
+      toolSelection: ['read', 'ls'],
+    });
+    expect(offered).toEqual(['ls', 'read']);
+    expect(advertised).toEqual(['ls', 'read']);
+  });
+
+  it('--no-tools offers and advertises nothing', async () => {
+    const { advertised, offered } = await boot({ noTools: true });
+    expect(offered).toEqual([]);
+    expect(advertised).toEqual([]);
+  });
+
+  it('the selection intersects the role allowlist and the classes, never widening', async () => {
+    const role = await boot({
+      toolAllowlist: ['read', 'write', 'grep'],
+      toolSelection: ['write', 'bash'],
+    });
+    // `write` is in the role set; `bash` is not — the flag cannot add it.
+    expect(role.offered).toEqual(['write']);
+    expect(role.advertised).toEqual(['write']);
+    const classes = await boot({
+      policy: { classes: READ_ONLY_CLASSES },
+      toolSelection: ['read', 'write'],
+    });
+    // The read-only classes drop `write` even though the flag named it.
+    expect(classes.offered).toEqual(['read']);
+    expect(classes.advertised).toEqual(['read']);
+  });
+
+  it('a library caller that sets both forms is refused by name', async () => {
+    await expect(
+      boot({ toolSelection: ['read'], noTools: true }),
+    ).rejects.toThrow(/mutually exclusive/);
+  });
+});

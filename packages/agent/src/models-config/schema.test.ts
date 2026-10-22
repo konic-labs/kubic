@@ -1,0 +1,266 @@
+// models.json schema: the spec's
+// object form, cache costs, input modalities, and validated
+// contextWindow/maxTokens. Zero network: registration only.
+import { describe, expect, it } from 'vitest';
+import { createModels } from '../pi-boundary.js';
+import { parseModelsJson } from './parse.js';
+import { registerCustomProviders } from './register.js';
+import { ModelsJsonError } from './schema.js';
+
+// The object-form example in docs/cli/configuration.md, verbatim.
+const DOCS_EXAMPLE = `{
+  "providers": {
+    "local": {
+      "baseUrl": "http://127.0.0.1:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "not-needed",
+      "models": [
+        { "id": "qwen3-coder-27b", "contextWindow": 131072, "maxTokens": 16384 }
+      ]
+    }
+  }
+}`;
+
+function one(model: Record<string, unknown>) {
+  return {
+    providers: {
+      p: {
+        baseUrl: 'http://127.0.0.1:8000/v1',
+        api: 'openai-completions',
+        models: [{ id: 'm', ...model }],
+      },
+    },
+  };
+}
+
+function withProvider(extra: Record<string, unknown>) {
+  return {
+    providers: {
+      p: {
+        baseUrl: 'http://127.0.0.1:8000/v1',
+        api: 'openai-completions',
+        models: [{ id: 'm' }],
+        ...extra,
+      },
+    },
+  };
+}
+
+describe('models.json schema', () => {
+  it('parses and registers the block as written', async () => {
+    const specs = parseModelsJson(JSON.parse(DOCS_EXAMPLE));
+    expect(specs.map((s) => s.id)).toEqual(['local']);
+    const models = createModels();
+    registerCustomProviders(models, specs);
+    const model = models.getModel('local', 'qwen3-coder-27b');
+    expect(model?.contextWindow).toBe(131072);
+    expect(model?.maxTokens).toBe(16384);
+    // The literal apiKey is the provider's key.
+    const auth = await models.getAuth('local');
+    expect(auth?.auth.apiKey).toBe('not-needed');
+  });
+
+  it('keeps the array form as an alias', () => {
+    const specs = parseModelsJson({
+      providers: [
+        {
+          id: 'a',
+          baseUrl: 'http://127.0.0.1:1/v1',
+          api: 'openai-completions',
+          models: [{ id: 'm' }],
+        },
+      ],
+    });
+    expect(specs[0]?.id).toBe('a');
+  });
+
+  it('refuses an object-form entry whose id disagrees with its key', () => {
+    expect(() =>
+      parseModelsJson({
+        providers: {
+          a: {
+            id: 'b',
+            baseUrl: 'http://127.0.0.1:1/v1',
+            api: 'openai-completions',
+            models: [{ id: 'm' }],
+          },
+        },
+      }),
+    ).toThrow(ModelsJsonError);
+  });
+
+  it('refuses an empty providers object', () => {
+    expect(() => parseModelsJson({ providers: {} })).toThrow(/non-empty/);
+  });
+
+  it('carries cost.cacheRead/cacheWrite into Model.cost', () => {
+    const models = createModels();
+    registerCustomProviders(
+      models,
+      parseModelsJson(
+        one({
+          cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
+        }),
+      ),
+    );
+    expect(models.getModel('p', 'm')?.cost).toEqual({
+      input: 1,
+      output: 2,
+      cacheRead: 0.1,
+      cacheWrite: 1.25,
+    });
+  });
+
+  it('refuses a cost given both flat and in the cost object', () => {
+    expect(() =>
+      parseModelsJson(one({ inputCost: 1, cost: { input: 2 } })),
+    ).toThrow(/inputCost/);
+  });
+
+  it('carries input modalities into the registered model', () => {
+    const models = createModels();
+    registerCustomProviders(
+      models,
+      parseModelsJson(one({ input: ['text', 'image'] })),
+    );
+    expect(models.getModel('p', 'm')?.input).toEqual(['text', 'image']);
+    expect(() => parseModelsJson(one({ input: ['audio'] }))).toThrow(/'input'/);
+    expect(() => parseModelsJson(one({ input: [] }))).toThrow(/'input'/);
+  });
+
+  it.each([
+    [{ contextWindow: 0 }, 'contextWindow'],
+    [{ contextWindow: 8192.5 }, 'contextWindow'],
+    [{ maxTokens: 0 }, 'maxTokens'],
+    [{ maxTokens: 1.5 }, 'maxTokens'],
+    [{ contextWindow: 4096, maxTokens: 8192 }, 'maxTokens'],
+    [{ contextWindow: 4096, maxTokens: 4096 }, 'maxTokens'],
+    [{ contextWindow: 1024 }, 'maxTokens'],
+  ])('refuses %j naming %s', (model, field) => {
+    expect(() => parseModelsJson(one(model))).toThrow(ModelsJsonError);
+    expect(() => parseModelsJson(one(model))).toThrow(`'${field}'`);
+  });
+
+  it('accepts an allowlisted $ENV apiKey ref, and still refuses apiKey together with apiKeyEnv', () => {
+    const env = parseModelsJson(withProvider({ apiKey: '$OPENAI_API_KEY' }));
+    expect(env[0]?.apiKey).toBe('$OPENAI_API_KEY');
+    expect(env[0]?.apiKeyRef).toEqual({
+      kind: 'env',
+      name: 'OPENAI_API_KEY',
+      raw: '$OPENAI_API_KEY',
+    });
+    expect(() =>
+      parseModelsJson(
+        withProvider({ apiKey: 'x', apiKeyEnv: 'KUBIC_API_KEY' }),
+      ),
+    ).toThrow(/apiKey/);
+  });
+
+  // `apiKey` takes the full ref table — a !command or
+  // an escaped/plain literal (unescaped at parse, so the wire never sees
+  // the backslash). Refusal is for what cannot name a credential: a
+  // non-allowlisted variable, an empty command.
+  it('parses apiKey !command / escaped refs', () => {
+    const command = parseModelsJson(
+      withProvider({ apiKey: '!op read "my vault/item"' }),
+    );
+    expect(command[0]?.apiKeyRef).toEqual({
+      kind: 'command',
+      argv: ['op', 'read', 'my vault/item'],
+      raw: '!op read "my vault/item"',
+    });
+    const escaped = parseModelsJson(withProvider({ apiKey: '\\$literal' }));
+    expect(escaped[0]?.apiKeyRef).toEqual({
+      kind: 'literal',
+      value: '$literal',
+    });
+    const plain = parseModelsJson(withProvider({ apiKey: 'not-needed' }));
+    expect(plain[0]?.apiKeyRef).toEqual({
+      kind: 'literal',
+      value: 'not-needed',
+    });
+    expect(plain[0]?.headerRefs).toBeUndefined();
+  });
+
+  // The allowlist guards `apiKey: "$VAR"` exactly as it
+  // guards `apiKeyEnv` — the file may not choose an arbitrary secret — and
+  // an empty command stays a named refusal.
+  it('refuses a non-allowlisted apiKey variable and empty commands', () => {
+    expect(() =>
+      parseModelsJson(withProvider({ apiKey: '$AWS_SECRET_ACCESS_KEY' })),
+    ).toThrow(/apiKey.*allowed key variable/);
+    expect(() => parseModelsJson(withProvider({ apiKey: '!' }))).toThrow(
+      /apiKey/,
+    );
+  });
+
+  // Ref-valued headers leave the static map and ride the
+  // request-time auth instead — a `$TOKEN` header must never reach the
+  // wire verbatim. Literals stay static (the gateway contract).
+  it('splits header refs from static headers', () => {
+    const specs = parseModelsJson(
+      withProvider({
+        headers: {
+          'x-static': 'kubic',
+          'x-token': '$KUBIC_GATEWAY_TOKEN',
+          'x-vault': '!vault kv get -field=password secret/api',
+        },
+      }),
+    );
+    expect(specs[0]?.headers).toEqual({ 'x-static': 'kubic' });
+    expect(specs[0]?.headerRefs?.['x-token']).toEqual({
+      kind: 'env',
+      name: 'KUBIC_GATEWAY_TOKEN',
+      raw: '$KUBIC_GATEWAY_TOKEN',
+    });
+    const vaultRef = specs[0]?.headerRefs?.['x-vault'];
+    if (vaultRef?.kind !== 'command') throw new Error('expected a command ref');
+    expect(vaultRef.argv[0]).toBe('vault');
+    expect(() =>
+      parseModelsJson(withProvider({ headers: { 'x-bad': '$HOME' } })),
+    ).toThrow(/headers.*allowed key variable/);
+  });
+
+  // The model-level sampling defaults Pi resolves
+  // per effective thinking level. Forwarded as declared — Pi merges the
+  // level's object over the model default at request time.
+  it('carries samplingParams and samplingParamsByThinkingLevel onto the model', () => {
+    const models = createModels();
+    registerCustomProviders(
+      models,
+      parseModelsJson(
+        one({
+          samplingParams: { temperature: 0.2, top_p: 0.9 },
+          samplingParamsByThinkingLevel: {
+            high: { temperature: 1, top_p: 1 },
+            off: { temperature: 0 },
+          },
+        }),
+      ),
+    );
+    const model = models.getModel('p', 'm');
+    expect(model?.samplingParams).toEqual({ temperature: 0.2, top_p: 0.9 });
+    expect(model?.samplingParamsByThinkingLevel).toEqual({
+      high: { temperature: 1, top_p: 1 },
+      off: { temperature: 0 },
+    });
+  });
+
+  it('refuses malformed sampling params by field name', () => {
+    expect(() => parseModelsJson(one({ samplingParams: 0.5 }))).toThrow(
+      /'samplingParams'/,
+    );
+    expect(() => parseModelsJson(one({ samplingParams: [1] }))).toThrow(
+      /'samplingParams'/,
+    );
+    expect(() =>
+      parseModelsJson(one({ samplingParamsByThinkingLevel: { often: {} } })),
+    ).toThrow(/samplingParamsByThinkingLevel/);
+    expect(() =>
+      parseModelsJson(one({ samplingParamsByThinkingLevel: { high: 1 } })),
+    ).toThrow(/samplingParamsByThinkingLevel/);
+    expect(() =>
+      parseModelsJson(one({ samplingParamsByThinkingLevel: [] })),
+    ).toThrow(/samplingParamsByThinkingLevel/);
+  });
+});

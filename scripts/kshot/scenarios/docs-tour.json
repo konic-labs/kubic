@@ -1,0 +1,41 @@
+{
+  "provider": "demo",
+  "model": "scripted",
+  "replies": [
+    {
+      "text": "I'll read slugify first.",
+      "tools": [{ "name": "read", "arguments": { "path": "src/slug.js" } }]
+    },
+    {
+      "text": "Accented letters fall through the replace. I'll split them into letter and mark, then drop the marks.",
+      "tools": [
+        {
+          "name": "edit",
+          "arguments": {
+            "path": "src/slug.js",
+            "oldText": "    .toLowerCase()\n",
+            "newText": "    .normalize('NFKD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n"
+          }
+        }
+      ]
+    },
+    {
+      "tools": [
+        { "name": "bash", "arguments": { "command": "node test/slug.test.js" } }
+      ]
+    },
+    {
+      "text": "slugify now strips accents: it splits each letter from its mark and drops the marks before the rest is replaced. Both tests pass."
+    },
+    {
+      "text": "I'll remove the build output.",
+      "tools": [{ "name": "bash", "arguments": { "command": "rm -rf dist" } }]
+    },
+    {
+      "text": "Understood: dist/ stays as it is."
+    },
+    {
+      "text": "An empty string. Nothing survives the replace, so slugify('') returns ''."
+    }
+  ]
+}

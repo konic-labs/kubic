@@ -1,0 +1,585 @@
+// Command dispatch seam for the kubic CLI: the routing table — which command
+// runs which runner, which exit code a refused config yields, and the front-door
+// special cases
+// (help, version, the contract crash probe, the usage fallthrough). The
+// runners arrive injected (production wiring: ./prod-runners.js), so this
+// module holds no lanes, no fs and no process state of its own — the
+// routing is exercised directly by dispatch.test.ts.
+//
+// Routing is commander (./cli/program.ts): each command group registers
+// itself from its own module under ./commands/ (docs/contributing-cli.md).
+// The check order is unchanged: config load → refusal → runtime exclude →
+// usage fallthrough → commander (help, version, crash probe, commands).
+
+import {
+  type ModelSelection,
+  parseModelFlag,
+  parseThinkingFlag,
+} from '@kubic/agent/model-select';
+import {
+  type CommandResult,
+  EXIT_FAILED,
+  EXIT_OK,
+  EXIT_USAGE,
+  type ExitCode,
+} from '@kubic/core/cli/exit-codes';
+import { errorBlock } from '@kubic/core/cli/kit';
+import { formatJson } from '@kubic/core/cli/output';
+import type { CliTheme } from '@kubic/core/cli/theme';
+import { formatVersionLine } from '@kubic/core/license';
+import { suggest } from '@kubic/core/suggest';
+import { RUNTIME_EXCLUDE_ENTRIES } from '@kubic/exec/runtime-exclude';
+import { refusedReplayEnvelope } from '@kubic/host/replay';
+import {
+  buildRunEnvelope,
+  refusedRunResult,
+  shellQuote,
+} from '@kubic/host/run';
+import { flushAuditSinksAtExit, installAuditSinks } from './audit-sinks.js';
+import type {
+  CommandContext,
+  CommandRegistrar,
+  DispatchRunners,
+} from './cli/context.js';
+import { createKubicProgram, runKubicProgram } from './cli/program.js';
+import { isQuotedCommand } from './cli/quoted-command.js';
+import { COMMAND_GROUPS, ROOT_HELP, renderRootHelp } from './cli/root-help.js';
+import { registerAnalysisCommands } from './commands/analysis.js';
+import { registerJournalCommands } from './commands/journal.js';
+import { registerSessionCommands } from './commands/session.js';
+import { registerSetupCommands } from './commands/setup.js';
+import type { CliConfigResult } from './config/load.js';
+import { CONFIG_CONSUMING_COMMANDS, configRefusalExit } from './config/load.js';
+import { applySystemCertificates } from './system-ca.js';
+
+// The supported command names, read off the help's command groups so the
+// routing table and the listing can never drift apart (program.test.ts also
+// pins that the registered commander commands are exactly these).
+/** @internal */
+export const COMMAND_NAMES: ReadonlySet<string> = new Set(
+  COMMAND_GROUPS.flatMap((group) => group.commands),
+);
+
+// The modes that create `.kubic/` runtime state.
+const STATE_CREATING_COMMANDS: ReadonlySet<string> = new Set(['run', 'tui']);
+
+// The interactive lane whose boot asks the project-trust question: the explicit
+// `tui` command and the bare invocation it becomes.
+const INTERACTIVE_TRUST_COMMANDS: ReadonlySet<string> = new Set(['tui']);
+
+// A help request must never block on a question: commander
+// answers `--help`/`-h` after this point, so the trust prompt is skipped
+// when the invocation is asking for usage rather than booting the lane.
+const HELP_TOKENS: ReadonlySet<string> = new Set(['--help', '-h']);
+
+// The contract's internal failure seam, never listed.
+const CRASH_PROBE = '__crash-probe';
+
+// Root options commander answers before any command name.
+const ROOT_OPTIONS: ReadonlySet<string> = new Set([
+  '--help',
+  '-h',
+  '--version',
+  '-V',
+]);
+
+// Runner and registry types live with the command registry (./cli/context.ts);
+// re-exported here because the dispatch seam is what callers wire.
+export type { DispatchRunners } from './cli/context.js';
+
+// Commands whose `--model <provider/id>` is the `cli`
+// config layer. The flag is an input to the ONE config load dispatch
+// performs before commander runs, so it is read from the raw argv here.
+const CLI_MODEL_COMMANDS: ReadonlySet<string> = new Set([
+  'run',
+  'tui',
+  'config',
+]);
+
+// Commands whose `--thinking <level>` is the `cli`
+// config layer — the same commands that own `--model`, read from the raw
+// argv for the same reason.
+const CLI_THINKING_COMMANDS: ReadonlySet<string> = new Set([
+  'run',
+  'tui',
+  'config',
+]);
+
+// The refused-config envelopes, keyed by command: the same
+// `--json` shape the command itself prints — `run`'s compact one-liner and
+// replay's pretty-printed document. `tui` has no --json and is absent.
+const REFUSAL_ENVELOPES: Readonly<
+  Record<string, (message: string, exitCode: number) => string>
+> = {
+  run: (message, exitCode) =>
+    JSON.stringify(buildRunEnvelope(refusedRunResult(message), exitCode)),
+  replay: (message) => formatJson(refusedReplayEnvelope(message)),
+};
+
+function tryParseCliModel(value: string): ModelSelection | undefined {
+  try {
+    return parseModelFlag(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function tryParseCliThinking(value: string): string | undefined {
+  try {
+    return parseThinkingFlag(value);
+  } catch {
+    return undefined;
+  }
+}
+
+// Read the session thinking override exactly once, from the raw argv, for
+// the commands that own the flag. Same contract as `cliModelFromArgs`: a
+// `--` ends the scan, only known levels are forwarded (a malformed one is
+// left to commander, whose own option rule refuses it with exit 2), and
+// later occurrences win. Both spellings are read: `--thinking <level>` and
+// `--thinking=<level>`.
+/** @internal */
+export function cliThinkingFromArgs(
+  command: string | undefined,
+  rest: readonly string[],
+): string | undefined {
+  if (command === undefined || !CLI_THINKING_COMMANDS.has(command)) {
+    return undefined;
+  }
+  let found: string | undefined;
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index] as string;
+    if (token === '--') break;
+    if (token === '--thinking') {
+      const value = rest[index + 1];
+      if (value !== undefined) {
+        const parsed = tryParseCliThinking(value);
+        if (parsed !== undefined) found = parsed;
+      }
+      continue;
+    }
+    if (token.startsWith('--thinking=')) {
+      const parsed = tryParseCliThinking(token.slice('--thinking='.length));
+      if (parsed !== undefined) found = parsed;
+    }
+  }
+  return found;
+}
+
+// Read the session model override exactly once, from the raw argv, for the
+// commands that own the flag. A `--` ends the scan (the rest are operands);
+// only well-formed `provider/id` values are forwarded — a malformed one is
+// left to commander, whose own option rule refuses it with exit 2 before any
+// runner runs. Later occurrences win, matching commander's repetition
+// behaviour, so the load sees the same value the parser will.
+/** @internal */
+export function cliModelFromArgs(
+  command: string | undefined,
+  rest: readonly string[],
+): ModelSelection | undefined {
+  if (command === undefined || !CLI_MODEL_COMMANDS.has(command)) {
+    return undefined;
+  }
+  let found: ModelSelection | undefined;
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index] as string;
+    if (token === '--') break;
+    if (token === '--model') {
+      const value = rest[index + 1];
+      if (value !== undefined) {
+        const parsed = tryParseCliModel(value);
+        if (parsed !== undefined) found = parsed;
+      }
+      continue;
+    }
+    if (token.startsWith('--model=')) {
+      const parsed = tryParseCliModel(token.slice('--model='.length));
+      if (parsed !== undefined) found = parsed;
+    }
+  }
+  return found;
+}
+
+// Every command module registers its own commander commands, so parallel
+// command migrations never edit the same file.
+const REGISTRARS: readonly CommandRegistrar[] = [
+  registerSessionCommands,
+  registerSetupCommands,
+  registerJournalCommands,
+  registerAnalysisCommands,
+];
+
+export interface DispatchDeps {
+  // The process's stdout channel (console.log in prod): the usage lines
+  // and the version line print through it.
+  readonly out: (line: string) => void;
+  // The stderr channel (console.error in prod): commander's one-line parse
+  // errors, the config refusal, and `error: …` lines from
+  // CliUsageError/CliExitError. Absent
+  // means stdout (the fakes in dispatch.test.ts capture one channel).
+  readonly err?: (line: string) => void;
+  // One config load for the whole process, injected so the dispatch can be
+  // exercised over loaded and refused results alike. The `cli` model input and
+  // the interactive trust decision are inputs to the same load — never a
+  // post-load patch.
+  readonly loadConfig: (options?: {
+    model?: ModelSelection;
+    thinking?: string;
+    projectTrusted?: boolean;
+  }) => CliConfigResult;
+  // The version half of `--version` (the license half is core's): the root
+  // reads this app's manifest through the exec FileBridge.
+  readonly version: () => string;
+  // `.kubic/` runtime ignore rules, shipped before the modes
+  // that create runtime state; injected because it touches the repo.
+  readonly ensureRuntimeExclude: (entries: readonly string[]) => void;
+  readonly runners: DispatchRunners;
+  // The stdout theme for the help: coloured on a TTY, the
+  // identity otherwise. Absent means plain (the fakes in dispatch.test.ts).
+  readonly helpTheme?: () => CliTheme;
+  // The stderr theme for a usage error — the error block on a
+  // colour terminal, `error:`/`hint:` lines otherwise. Absent means plain.
+  readonly errorTheme?: () => CliTheme;
+  // The first-run setup of a bare `kubic` on a terminal, run
+  // before the config load so the TUI boots on what it saved. Resolves to the
+  // result to stop with, or undefined to open the TUI.
+  readonly firstRunSetup?: () => Promise<CommandResult | undefined>;
+  // "interactive by default": true when stdin AND stdout are a TTY.
+  // Only consulted for the bare invocation; absent means non-interactive.
+  readonly isInteractive?: () => boolean;
+  // The interactive trust question for `kubic tui` / the
+  // bare interactive invocation, run once BEFORE the config load. `undefined`
+  // means "nothing to ask" (no project config, or a decision already
+  // recorded); true/false is the effective decision threaded into the load.
+  // Absent means the path asks nobody — a non-TTY caller keeps the refusal.
+  readonly resolveProjectTrust?: () => Promise<boolean | undefined>;
+  // Before a command that runs on the config loads it: fetch the
+  // organization's remote policy when the managed config names one and the
+  // cached copy is stale. Resolves to the warnings to print (an unreachable
+  // server keeps the last verified copy). Absent: nothing is fetched.
+  readonly refreshManagedPolicy?: () => Promise<string[]>;
+}
+
+const BARE_SKIP_FLAG = '--dangerously-skip-approvals';
+// The bare model pin, `--model <provider/id>` /
+// `--model=<provider/id>`.
+const BARE_MODEL_FLAG = '--model';
+
+// Words that are root flags, not commands: their hint points at
+// the flag instead of the prompt form ('' = only the closing help hint).
+const FLAG_WORD_HINTS: ReadonlyMap<string, string> = new Map([
+  ['help', ''],
+  ['version', '`kubic --version` prints the version'],
+]);
+
+// An unknown command or root option names what was typed,
+// the closest command when one is near (`kubic stauts` → `status`), the
+// prompt form for a word nothing resembles, and `kubic --help`. The
+// internal crash probe gets no prompt hint (it is not a user surface). A
+// quoted command gets its unquoted form and the prompt form.
+function reportUnknownCommand(command: string, deps: DispatchDeps): void {
+  const err = deps.err ?? deps.out;
+  const option = command.startsWith('-');
+  const quoted = !option && /\s/u.test(command) && isQuotedCommand(command);
+  const hints: string[] = [];
+  const flagWord = FLAG_WORD_HINTS.get(command);
+  if (quoted) {
+    hints.push(`run it unquoted: \`kubic ${command.trim()}\``);
+    hints.push(
+      `to send it as a prompt: \`kubic run -p ${shellQuote(command)}\``,
+    );
+  } else if (flagWord !== undefined) {
+    if (flagWord !== '') hints.push(flagWord);
+  } else if (!option) {
+    const [close] = suggest(command, [...COMMAND_NAMES]);
+    if (close !== undefined) {
+      hints.push(`did you mean \`kubic ${close}\`?`);
+    } else if (command !== '' && command !== CRASH_PROBE) {
+      hints.push(
+        `to run it as a prompt: \`kubic run -p ${shellQuote(command)}\``,
+      );
+    }
+  }
+  hints.push(
+    option
+      ? '`kubic --help` lists the commands and options'
+      : '`kubic --help` lists the commands',
+  );
+  const message = option
+    ? 'unknown option'
+    : quoted
+      ? 'quoted command'
+      : 'unknown command';
+  const theme = deps.errorTheme?.();
+  if (theme?.enabled === true) {
+    for (const line of errorBlock(theme, {
+      message,
+      subject: command,
+      hints,
+      exitCode: EXIT_USAGE,
+      code: 'usage',
+    })) {
+      err(line);
+    }
+    return;
+  }
+  err(`error: ${message} '${command}'`);
+  for (const hint of hints) err(`hint: ${hint.replaceAll('`', '')}`);
+}
+
+// What the user asked for, with the bare forms resolved. A bare `kubic` on
+// an interactive terminal IS `kubic tui` — the same refusal gate,
+// runtime-exclude shipping and runner. Off a TTY (a pipe, CI, a script) the
+// bare invocation keeps the POSIX usage + exit 1 posture pinned by
+// scripts/binary-contract.mjs. `kubic --model <provider/id>` on a TTY is
+// `kubic tui --model …` — the bare form takes the TUI's model pin too.
+// `kubic --dangerously-skip-approvals` is the bare invocation with the
+// session-scoped full-access flag — on a TTY it is
+// `kubic tui --dangerously-skip-approvals`; off a TTY it keeps the bare
+// usage + exit 1 posture.
+function resolveInvocation(
+  requested: string | undefined,
+  rest: readonly string[],
+  interactive: boolean,
+): { command: string | undefined; args: readonly string[] } {
+  // `kubic "<prompt>"` is the headline entry point.
+  // A single argv token that contains whitespace is a prompt; an unknown
+  // command word has no whitespace, so `kubic nosuch` stays the documented
+  // usage error with a hint naming the prompt form, and a quoted command
+  // (`kubic "sessions list"`) is a usage error too, never a model run. The
+  // prompt form behaves exactly like `kubic run -p "<prompt>"` — headless
+  // in both modes.
+  const barePrompt =
+    requested !== undefined &&
+    /\s/.test(requested) &&
+    !ROOT_OPTIONS.has(requested) &&
+    !COMMAND_NAMES.has(requested) &&
+    !isQuotedCommand(requested);
+  const bareModel =
+    requested !== undefined &&
+    (requested === BARE_MODEL_FLAG ||
+      requested.startsWith(`${BARE_MODEL_FLAG}=`)) &&
+    interactive;
+  const bareSkip = requested === BARE_SKIP_FLAG && interactive;
+  // One bare-flag form of the TUI: every bare flag is `kubic tui <flag>` on
+  // a terminal (and keeps the usage + exit 1 posture off one).
+  const bareFlag = bareSkip || bareModel;
+  const command = barePrompt
+    ? 'run'
+    : (requested === undefined && interactive) || bareFlag
+      ? 'tui'
+      : requested;
+  const args = barePrompt
+    ? ['-p', requested, ...rest]
+    : bareFlag
+      ? [String(requested), ...rest]
+      : rest;
+  return { command, args };
+}
+
+// The one config load for the whole process. The interactive trust gate runs
+// BEFORE it: only the interactive TUI path asks; the resolver persists the
+// answer and this same invocation loads on it, so the lane either boots
+// trusted or stops on the ordinary refusal — whose message names
+// `kubic trust` and KUBIC_TRUST_PROJECT=1. The load paths the project layer
+// behind the trust gate, applies the documented env overrides, and fails
+// closed on unknown/unsupported keys and secret refs. Commands consume it
+// through the injected runners; nothing re-derives a default by hand. The
+// `--model` and `--thinking` overrides are read from the raw argv and become
+// the `cli` layer of this same load — never a post-load patch.
+async function loadProcessConfig(
+  command: string | undefined,
+  args: readonly string[],
+  ask: boolean,
+  deps: DispatchDeps,
+): Promise<CliConfigResult> {
+  if (
+    command !== undefined &&
+    CONFIG_CONSUMING_COMMANDS.has(command) &&
+    !(command === 'policy' && (args[0] === 'pull' || args[0] === 'sign'))
+  ) {
+    for (const warning of (await deps.refreshManagedPolicy?.()) ?? []) {
+      (deps.err ?? deps.out)(`warning: ${warning}`);
+    }
+  }
+  const trust =
+    command !== undefined && ask && INTERACTIVE_TRUST_COMMANDS.has(command)
+      ? await deps.resolveProjectTrust?.()
+      : undefined;
+  const cliModel = cliModelFromArgs(command, args);
+  const cliThinking = cliThinkingFromArgs(command, args);
+  return deps.loadConfig(
+    cliModel === undefined && cliThinking === undefined && trust === undefined
+      ? undefined
+      : {
+          ...(cliModel === undefined ? {} : { model: cliModel }),
+          ...(cliThinking === undefined ? {} : { thinking: cliThinking }),
+          ...(trust === undefined ? {} : { projectTrusted: trust }),
+        },
+  );
+}
+
+// A refused config stops every command that consumes it:
+// the agent-executing modes plus clean, policy, eval and benchmark may
+// not run on built-in defaults while the user believes their config
+// file is in force. The reporting commands still run so the named
+// reason can be reported. Returns the exit code to stop with, if any.
+function stopOnRefusedConfig(
+  cliConfig: CliConfigResult,
+  command: string | undefined,
+  args: readonly string[],
+  deps: DispatchDeps,
+): ExitCode | undefined {
+  const refusalExit = configRefusalExit(cliConfig, command, args);
+  if (refusalExit === undefined) return undefined;
+  const reason = cliConfig.error ?? 'config refused';
+  // A diagnostic, so stderr.
+  (deps.err ?? deps.out)(`error: ${reason}`);
+  // Under `--json` the refusal is also the command's standard
+  // failure envelope on stdout, so a consumer still parses exactly one
+  // document instead of getting nothing. Commander has not parsed argv yet,
+  // so the raw tokens are scanned for the standalone flag.
+  const envelope =
+    command === undefined ? undefined : REFUSAL_ENVELOPES[command];
+  if (envelope !== undefined && args.includes('--json')) {
+    deps.out(envelope(reason, refusalExit));
+  }
+  return refusalExit;
+}
+
+export async function dispatchCommand(
+  requested: string | undefined,
+  rest: readonly string[],
+  deps: DispatchDeps,
+): Promise<ExitCode> {
+  const interactive = deps.isInteractive?.() === true;
+  const { command, args } = resolveInvocation(requested, rest, interactive);
+  // A bare `kubic` on a terminal with no global config yet runs
+  // the setup first (provider, default model, trust) — before the one config
+  // load below, so the TUI opens on the model it saved.
+  if (
+    requested === undefined &&
+    interactive &&
+    deps.firstRunSetup !== undefined
+  ) {
+    const stop = await deps.firstRunSetup();
+    if (stop !== undefined) return stop.exitCode;
+  }
+  // A help request is side-effect free: commander answers
+  // `--help`/`-h` before any action, so the trust question and the
+  // runtime-exclude write must not happen for it either.
+  const helpRequested = rest.some((token) => HELP_TOKENS.has(token));
+  const cliConfig = await loadProcessConfig(
+    command,
+    args,
+    interactive && !helpRequested,
+    deps,
+  );
+  const refusalExit = stopOnRefusedConfig(cliConfig, command, args, deps);
+  if (refusalExit !== undefined) return refusalExit;
+  installAuditSinks(cliConfig, deps.err ?? deps.out);
+  applySystemCertificates(cliConfig, process.env, deps.err ?? deps.out);
+  // `.kubic/` runtime state must never
+  // reach a user repo's commit path. Before either mode that creates it,
+  // ship the runtime ignore rules into the repo-local exclude file
+  // (idempotent, fail-open, never dirties a committed .gitignore) — so the
+  // first run leaves `git status` clean while `.kubic/roles`
+  // and `config.toml` stay trackable. Skipped outside a git repo.
+  if (
+    command !== undefined &&
+    STATE_CREATING_COMMANDS.has(command) &&
+    !helpRequested
+  ) {
+    deps.ensureRuntimeExclude(RUNTIME_EXCLUDE_ENTRIES);
+  }
+  // The bare invocation and a bare TUI flag off a TTY keep the POSIX
+  // usage-on-no-args posture: they are not bad invocations, they are the
+  // documented no-command form. Everything else that lands here — an unknown
+  // command word, an unknown root option, `help`, the ungated crash probe — is
+  // a usage error, so scripts can tell it from a task failure. Both print the
+  // one usage line on stdout rather than commander's stderr message.
+  const crashProbe = process.env.__KUBIC_CONTRACT_CRASH_PROBE === '1';
+  const helpTheme = deps.helpTheme?.();
+  const rootHelp =
+    helpTheme === undefined ? ROOT_HELP : renderRootHelp(helpTheme);
+  const known =
+    command !== undefined &&
+    (ROOT_OPTIONS.has(command) ||
+      COMMAND_NAMES.has(command) ||
+      (crashProbe && command === CRASH_PROBE));
+  if (!known) {
+    const bareOffTty =
+      command === undefined ||
+      command === BARE_SKIP_FLAG ||
+      command === BARE_MODEL_FLAG ||
+      command.startsWith(`${BARE_MODEL_FLAG}=`);
+    if (bareOffTty) {
+      deps.out(rootHelp);
+      return EXIT_FAILED;
+    }
+    reportUnknownCommand(command ?? '', deps);
+    return EXIT_USAGE;
+  }
+  const code = await runCommand(command, args, cliConfig, deps, {
+    rootHelp,
+    helpTheme,
+    crashProbe,
+  });
+  await flushAuditSinksAtExit();
+  return code;
+}
+
+// The commander program over every registrar, run on one command. A
+// registrar's result reaches the exit code through CommandContext.finish,
+// the only place a command sets it.
+function runCommand(
+  command: string,
+  args: readonly string[],
+  cliConfig: CliConfigResult,
+  deps: DispatchDeps,
+  view: {
+    rootHelp: string;
+    helpTheme: CliTheme | undefined;
+    crashProbe: boolean;
+  },
+): Promise<ExitCode> {
+  const io = { out: deps.out, err: deps.err ?? deps.out };
+  const program = createKubicProgram(io, {
+    versionLine: formatVersionLine(deps.version()),
+    rootHelp: view.rootHelp,
+    ...(view.helpTheme === undefined ? {} : { helpTheme: view.helpTheme }),
+    ...(deps.errorTheme === undefined ? {} : { errorTheme: deps.errorTheme() }),
+  });
+  let exitCode: ExitCode = EXIT_OK;
+  let finished = false;
+  const ctx: CommandContext = {
+    config: cliConfig,
+    runners: deps.runners,
+    rest: args,
+    out: io.out,
+    err: io.err,
+    finish: (result) => {
+      exitCode = result.exitCode;
+      finished = true;
+    },
+  };
+  for (const register of REGISTRARS) register(program, ctx);
+  if (view.crashProbe) {
+    // Deliberate failure seam for the shipped-artifact contract: throws a plain
+    // Error so the top-level catch-all's `error: <message>` / KUBIC_DEBUG
+    // behavior is asserted end to end against the real binary. Internal,
+    // hidden, and absent from the root help.
+    program
+      .command(CRASH_PROBE, { hidden: true })
+      .helpOption(false)
+      .allowUnknownOption()
+      .allowExcessArguments()
+      .action(() => {
+        throw new Error('injected probe failure');
+      });
+  }
+  return runKubicProgram(program, [command, ...args], io, {
+    code: () => exitCode,
+    finished: () => finished,
+  });
+}

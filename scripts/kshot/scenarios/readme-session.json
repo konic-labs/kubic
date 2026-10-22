@@ -1,0 +1,37 @@
+{
+  "provider": "demo",
+  "model": "scripted",
+  "replies": [
+    {
+      "text": "I'll read slugify first.",
+      "tools": [{ "name": "read", "arguments": { "path": "src/slug.js" } }],
+      "delay": 700
+    },
+    {
+      "text": "Accented letters fall through the replace. I'll split them into letter and mark, then drop the marks.",
+      "tools": [
+        {
+          "name": "edit",
+          "arguments": {
+            "path": "src/slug.js",
+            "oldText": "    .toLowerCase()\n",
+            "newText": "    .normalize('NFKD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n"
+          }
+        }
+      ],
+      "delay": 900,
+      "pace": 30
+    },
+    {
+      "tools": [
+        { "name": "bash", "arguments": { "command": "node test/slug.test.js" } }
+      ],
+      "delay": 600
+    },
+    {
+      "text": "slugify now strips accents: it splits each letter from its mark and drops the marks before the rest is replaced. Both tests pass.",
+      "delay": 700,
+      "pace": 30
+    }
+  ]
+}

@@ -3,8 +3,9 @@
 // `kubic run` makes a bash tool call — on Windows it runs through Git Bash —
 // that writes a file in the workspace; the file lands, the run writes its
 // trajectory, the journal records the file (`kubic log`), and `kubic doctor`
-// names the shell the bash tool runs through and the AGENTS.md the run
-// loads. No network, no key. Run after `npm run build`.
+// fails no check on the fresh HOME, names the shell the bash tool runs
+// through and the AGENTS.md the run loads. No network, no key. Run after
+// `npm run build`.
 
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -65,6 +66,15 @@ try {
   }
   const doctor = kubic(['doctor', '--json'], cwd, home);
   const report = JSON.parse(doctor.stdout);
+  const failing = (report.checks ?? []).filter(
+    (check) => check.status === 'fail',
+  );
+  if (failing.length > 0) {
+    fail(
+      `doctor fails on a fresh HOME: ${failing.map((check) => `${check.id}: ${check.detail}`).join('; ')}`,
+      doctor,
+    );
+  }
   const platform = (report.checks ?? []).find(
     (check) => check.id === 'platform:shell',
   );

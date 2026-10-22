@@ -107,8 +107,9 @@ function checkWorkspaceIgnoreSplitViaGit(
 }
 
 // `rev-parse --show-toplevel` prints absolute; `--git-path` prints
-// relative to the invocation cwd. No node:path import (this module stays
-// import-light like the `${cwd}/.git` probes above).
+// relative to the invocation cwd, or absolute (`/…`, or `C:/…` from Git
+// for Windows) in a linked worktree. No node:path import (this module
+// stays import-light like the `${cwd}/.git` probes above).
 function joinGitPath(cwd: string, out: string): string {
-  return out.startsWith('/') ? out : `${cwd}/${out}`;
+  return /^(?:[\\/]|[A-Za-z]:[\\/])/.test(out) ? out : `${cwd}/${out}`;
 }

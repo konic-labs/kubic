@@ -7,6 +7,7 @@
 // I/O confinement: this module never imports node:fs. The bridge is
 // injected, so tests drive fixtures while prod passes the real FileBridge.
 
+import * as nodePath from 'node:path';
 import type { PermissionClasses } from '@kubic/agent/permissions';
 import { DEFAULT_RUN_ROLE } from '@kubic/core/run-role';
 import type { FileBridge } from '@kubic/exec/file-bridge';
@@ -37,15 +38,25 @@ const ROLES_DIR = '.kubic/roles';
  * missing path, ENOTDIR for a component that is a file. Any other failure
  * (EACCES, EIO, a corrupt document) is a real problem and must propagate, so
  * this deliberately checks the code and the path rather than catching broadly.
+ * Both paths are resolved first: on Windows the error spells the directory
+ * with `\` whatever separators the caller used.
+ * @internal
  */
-function isAbsentDir(error: unknown, dir: string): boolean {
+export function isAbsentDir(
+  error: unknown,
+  dir: string,
+  path: Pick<typeof nodePath, 'resolve'> = nodePath,
+): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const code = (error as { code?: unknown }).code;
   if (code !== 'ENOENT' && code !== 'ENOTDIR') return false;
-  const path = (error as { path?: unknown }).path;
+  const missing = (error as { path?: unknown }).path;
   // Some fs errors carry no path; the code alone is still unambiguous here
   // because this try block wraps exactly one directory read.
-  return path === undefined || path === dir;
+  if (missing === undefined) return true;
+  return (
+    typeof missing === 'string' && path.resolve(missing) === path.resolve(dir)
+  );
 }
 
 /** @internal */
@@ -200,7 +211,7 @@ function listSourceDir(
 /** @internal */
 export function loadRoles(input: RolesDirInput): LoadedRoles {
   const root = input.projectRoot ?? input.cwd;
-  const dir = `${root}/${ROLES_DIR}`;
+  const dir = nodePath.join(root, ROLES_DIR);
   // The repo documents load only for a trusted
   // root — exactly like project skills. Builtins are unaffected.
   const repoTrusted =
@@ -220,7 +231,7 @@ export function loadRoles(input: RolesDirInput): LoadedRoles {
       ? []
       : readRoleDocuments(
           input.bridge,
-          listSourceDir(input.bridge, `${input.home}/.kubic/roles`),
+          listSourceDir(input.bridge, nodePath.join(input.home, ROLES_DIR)),
           invalid,
         );
   const repoDocs = repoTrusted

@@ -13,10 +13,10 @@
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { createNodeFileBridge } from '@kubic/exec/file-bridge';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadRoles, rolesDoctorProbe } from './roles-boot.js';
+import { isAbsentDir, loadRoles, rolesDoctorProbe } from './roles-boot.js';
 
 const roots: string[] = [];
 
@@ -207,5 +207,29 @@ describe('an absent roles directory is not an error', () => {
     expect(() =>
       loadRoles({ cwd: root, bridge: broken, trusted: true }),
     ).toThrow(/role document .*planner\.md is unreadable: EIO/);
+  });
+});
+
+describe('an absent directory reads the same in either path spelling', () => {
+  function fsError(code: string, path: string): NodeJS.ErrnoException {
+    return Object.assign(new Error(`${code}: scandir '${path}'`), {
+      code,
+      path,
+    });
+  }
+
+  it('matches a Windows error path against a forward-slash directory', () => {
+    const error = fsError('ENOENT', 'C:\\Users\\dev\\.kubic\\roles');
+    expect(isAbsentDir(error, 'C:\\Users\\dev/.kubic/roles', win32)).toBe(true);
+    expect(isAbsentDir(error, 'C:/Users/dev/.kubic/roles', win32)).toBe(true);
+  });
+
+  it('still refuses another directory, or an error that is not absence', () => {
+    const missing = fsError('ENOENT', 'C:\\Users\\dev\\.kubic\\roles');
+    expect(isAbsentDir(missing, 'C:/Users/other/.kubic/roles', win32)).toBe(
+      false,
+    );
+    const denied = fsError('EACCES', 'C:\\Users\\dev\\.kubic\\roles');
+    expect(isAbsentDir(denied, 'C:/Users/dev/.kubic/roles', win32)).toBe(false);
   });
 });

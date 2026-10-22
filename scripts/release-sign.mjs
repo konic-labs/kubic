@@ -5,7 +5,8 @@
 // checks for a managed policy, verifiable with `--verify` or OpenSSL.
 //
 // Usage: node scripts/release-sign.mjs [--key <private.pem>]
-//        node scripts/release-sign.mjs --verify --pub <public.pem>
+//        node scripts/release-sign.mjs --verify --pub <public.pem> [--dir <dir>]
+// `--dir` verifies files downloaded elsewhere, such as a GitHub Release.
 import {
   createHash,
   createPrivateKey,
@@ -88,7 +89,7 @@ function flag(name) {
 }
 
 if (import.meta.main) {
-  const dir = join(REPO_ROOT, 'release');
+  const dir = flag('--dir') ?? join(REPO_ROOT, 'release');
   if (process.argv.includes('--verify')) {
     const pub = flag('--pub');
     const problems = verifyRelease(

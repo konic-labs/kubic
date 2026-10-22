@@ -87,7 +87,7 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 | `faux-smoke.mjs` | Drives the built binary through a whole faux-provider run with a tool call. |
 | `release-stage.mjs` | Stages the npm package in `release/` (`npm run release:stage`): the bundle, a manifest generated from the root one, and a shrinkwrap resolved from the tested lockfile; then packs it and writes its CycloneDX SBOM beside the tarball. The root manifest stays private. |
 | `pack-install-contract.mjs` | Proves the packed release (`npm run release:contract`): its file list, a tarball install that runs, and a registry install that honours the shrinkwrap within the size budget. |
-| `dep-lint.mjs` | The import rules: package direction, no relative import across packages, test fixtures in tests only, `node:fs`/`node:child_process` only in `exec`, the two Pi boundary files, a host concern folder reached through its `index.ts`, and one argv parser. It reads `vi.mock` specifiers as imports too. dependency-cruiser, the standard tool, cannot parse TypeScript 7 sources. |
+| `dep-lint.mjs` | The import rules: package direction, no relative import across packages, test fixtures only in tests, `node:fs` and `node:child_process` only in `exec`, the two Pi boundary files, host folders through their `index.ts`, and one argv parser. `vi.mock` specifiers count as imports. |
 | `check-pinned-deps.mjs` | Every dependency in every manifest is one exact version, no manifest has `overrides` (npm ignores them when someone installs kubic), and every workspace dependency is declared by the root manifest with the same version. `.npmrc` sets `save-exact=true` for new installs; the check catches a hand edit. |
 | `check-docs-links.mjs` | Every relative link in `docs/` resolves, with no dependency to install. |
 | `gen-config-docs.mjs` | Generates the config key tables and `example.toml` from the config schema; `--check` fails when they are stale. |
@@ -98,6 +98,9 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 | `kshot/kshot.py` | Screenshots of the real TUI, driven by a scenario (`npm run kshot -- <scenario>`; see [Seeing the TUI](#seeing-the-tui)). Its tests are Python, and `kshot.test.mjs` runs them wherever `python3` is installed. |
 | `art/art.py` | Draws the README's brand art: the banner, the facts strip, the closing band and the feature icons (see [Docs images](#docs-images)). Its tests are Python too, run by `art.test.mjs`. |
 | `docs-images.mjs` | Regenerates every image under `docs/assets/` (`npm run docs:images`); its test checks that each image there has a generator. |
+
+dependency-cruiser, the standard tool for import rules, cannot parse TypeScript 7 sources,
+which is why `dep-lint.mjs` exists.
 
 ### Dead-code gate
 

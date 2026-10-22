@@ -69,15 +69,34 @@ a skipped stub, which names the tier it would run at).
 
 | Flag | Meaning |
 | --- | --- |
-| `--suite <id>` | **Required.** A built-in suite id — `swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover`, `review-diff` or `agentic-live` — or a **category alias** (`swe`, `repo-mod`, `bugfix`, `refactor`, `testgen`, `review`, `agentic`); `kubic eval` scores one record, so a category with more than one suite exits 2 (`ambiguous-suite`). `terminal-live` is a stub and refuses with exit 2. An unknown selector exits 2. |
-| `--task <prompt>` | Runs `<prompt>` through the real lane against the suite's fixture files and scores the trajectory it writes: the suite's gate command(s) decide the verdict, and the record carries the eval fields. Each suite also carries its own task — plain language for a real model, a scripted one for the faux provider, which cannot read prose — that `kubic benchmark` runs. Needs a reachable model (`--model`, default `faux/echo`) and `--worktree`; the suite's fixture is materialized in a temp directory (or a fresh checkout, with `--workspace worktree`). |
-| `--trajectory <file>` | Scores an existing trajectory export file, without re-running anything: the same file form `replay` and `export` take. `-` reads the export from stdin; a value starting with `{`/`[` is the pre inline-JSON form and still works. Fully live: exits 0 with the record, or 1 when the gates fail it. An unreadable file exits 2 (`trajectory-unreadable`), a file that is not JSON or not a valid export exits 2 (`trajectory-malformed`). |
+| `--suite <id>` | **Required.** A built-in suite id (`swe-bench-mini`, `repo-mod-rename`, `bugfix-repro`, `refactor-extract`, `testgen-cover`, `review-diff` or `agentic-live`) or a category alias (`swe`, `repo-mod`, `bugfix`, `refactor`, `testgen`, `review`, `agentic`). |
+| `--task <prompt>` | Run `<prompt>` against the suite's fixture files and score the trajectory it writes. Needs `--worktree` and a reachable model (`--model`, default `faux/echo`). |
+| `--trajectory <file>` | Score an existing trajectory export without running anything again; `-` reads it from stdin. |
 | `--worktree <path>` | The worktree the run executes in (`--workspace worktree` needs it clean). With `--task`, a record without it is refused with exit 2. With `--trajectory` it is read from `provenance.worktree`; a different value exits 2 (`provenance-mismatch`). |
 | `--size <smoke\|standard\|extended>` | The record's size class (how much was run) — an implementation-side label, not a tier. Published on every record; a missing or unknown size exits 2 on both paths. |
 | `--model <id>` | `provider/id` of the run. With `--task` it defaults to `faux/echo`. With `--trajectory` it is read from `provenance.model`, and a different value exits 2 (`provenance-mismatch`). |
-| `--workspace inline\|worktree` | `inline` (default) materializes the suite fixture in a temp directory. `worktree` refuses with exit 2 unless `git status --porcelain` in `--worktree` is clean, then runs each suite in a fresh detached checkout of that repo at its HEAD (`git worktree add --detach`), removed and pruned afterwards. Any other value exits 2. |
+| `--workspace inline\|worktree` | `inline` (default) uses a temp directory; `worktree` runs each suite in a fresh detached checkout of `--worktree` at its HEAD. Any other value exits 2. |
 | `--thinking <level>` | With `--task`, recorded on the record verbatim (default none). With `--trajectory` it is read from `model.thinking`, and a different value exits 2 (`provenance-mismatch`). |
 | `--json` | Prints one JSON envelope (`ok`, `exitCode`, and either `record` or `error`) instead of the text line. The exit code is the same either way. |
+
+- **Suites.** `kubic eval` scores one record, so a category with more than one
+  suite exits 2 (`ambiguous-suite`). `terminal-live` is a stub and refuses with
+  exit 2, and an unknown selector exits 2.
+- **`--task`.** The prompt runs through the real agent against the suite's
+  fixture, and the suite's gate commands decide the verdict; the record
+  carries the eval fields. Each suite also carries its own task, in plain
+  language for a real model and scripted for the faux provider, which cannot
+  read prose: that is what `kubic benchmark` runs. The fixture is set up in a
+  temp directory, or in a fresh checkout with `--workspace worktree`.
+- **`--trajectory`.** It takes the same file `replay` and `export` take; a
+  value starting with `{` or `[` is the inline-JSON form and still works. The
+  result is live: exit 0 with the record, or 1 when the gates fail it. An
+  unreadable file exits 2 (`trajectory-unreadable`), and a file that is not
+  JSON or not a valid export exits 2 (`trajectory-malformed`).
+- **`--workspace worktree`.** It refuses with exit 2 unless `git status
+  --porcelain` in `--worktree` is clean, then runs each suite in a fresh
+  detached checkout (`git worktree add --detach`), removed and pruned
+  afterwards.
 
 Text mode prints one `eval ok: suite …` line on stdout. A refusal prints
 `error: [<code>] <message>` on stderr.
@@ -169,8 +188,12 @@ id, exits 2 with one `error:` line.
 | --- | --- |
 | `kubic replay traj.json` | Recorded exact: log-only, never re-executes. Exits 0 and prints the tier. |
 | `... --tier deterministic --model <provider/id> --lockfile <file>` | Re-executes the recorded objective through the lane at the pinned model. Refuses with exit 2 unless both pins are given. A pin that is not registered exits 6 (`provider_probe_failed`); a model the lockfile does not pin refuses with `lockfile-mismatch` (exit 2). |
-| `... --tier live --role-config <file>` | Re-executes at the recorded model under the pinned role config — a JSON file `{"role": "<name>"}`. The role document `.kubic/roles/<name>.md` is loaded from the pinned worktree, so its tools and prompt apply. Refuses with exit 2 without the role config. `--model` and `--lockfile` are refused under live. |
+| `... --tier live --role-config <file>` | Re-executes at the recorded model under the pinned role config, a JSON file `{"role": "<name>"}`; refuses with exit 2 without it. |
 | `... --diff-against other.json` | Recorded compare: names the variables that changed (`model`, `worktree`, `diff`). Any difference exits 1 as the regression signal; identical trajectories exit 0. |
+
+Under `--tier live` the role document `.kubic/roles/<name>.md` is loaded from
+the pinned worktree, so its tools and prompt apply, and `--model` and
+`--lockfile` are refused.
 
 - **Worktree pin.** The re-execution lane is rooted at the pinned
   worktree — the `--worktree` override, or the trajectory's recorded

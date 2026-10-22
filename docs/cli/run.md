@@ -1,40 +1,118 @@
 # Running a task: `kubic run`
 
-> One prompt, headless: the lane runs it to the end and the command reports what
-> happened. `kubic attach` and `kubic resume` reopen a session. Back to the
-> [command index](commands.md).
+> One prompt, headless: the agent runs it to the end and the command reports
+> what happened. `kubic attach` and `kubic resume` reopen a session in the TUI.
 
-## `kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>] [--role <name>] [--model <provider/id>] [--thinking <level>] [--skill <path>]... [--invoke-skill <name>] [--no-skills] [--tools <a,b,...>] [--no-tools] [--debug] [--autonomous] [--json] [--dangerously-skip-approvals] [--pre-approvals <file>]`
+## `kubic run`
 
-Non-interactive run: no alt-screen, no prompt, consumable output.
+```text
+kubic run [-p] <prompt> [--session <id>] [--timeout <ms>] [--max-turns <n>]
+          [--role <name>] [--model <provider/id>] [--thinking <level>]
+          [--skill <path>]... [--invoke-skill <name>] [--no-skills]
+          [--tools <a,b,...>] [--no-tools] [--debug] [--autonomous] [--json]
+          [--dangerously-skip-approvals] [--pre-approvals <file>]
+```
+
+A non-interactive run: no screen, no questions, output a script can read.
+
+```sh
+kubic run "fix the failing test"
+kubic run -p "add tests for titleCase" --json
+```
+
+### Flags
 
 | Flag | Meaning |
 | --- | --- |
-| `-p`, `--prompt <text>` | The prompt to run. **Or pass it positionally** (`kubic run "fix the tests"`); exactly one of the two — `-p` together with a positional exits 2 naming both. The `-p` typo guard stays: a separate-token value that starts with `--` is a mistyped flag, so a prompt that really starts with `--` goes in the attached form (`--prompt=--text`), and a positional one after `--` (`kubic run -- --weird`). |
-| `--session <id>` | Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. **Model rule**: a resumed session runs its own stored lane model unless a model is *pinned* (`--model`, `KUBIC_MODEL` / `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux`) — a pin that differs switches the session to it (`model: session model '<a>' switched to '<b>' (explicit selection)` on stderr, compaction reserve re-clamped to the new window); the unpinned default pick never switches it (`model: session keeps its own model '<a>' …`). The prompt metadata, the `--json` `model` field and the usage rows all name the model the lane actually runs. A stored model that is not registered fails closed with `provider_probe_failed` (exit 6): `session model '<a>' is unavailable: …` — pin a model to move the session. |
-| `--timeout <ms>` | Wall-clock bound for the run's turn — settling the pending work plus the prompt's own run (positive integer ms, max `2147483647`). Default `300000` (5 minutes), or the config's `[run] timeoutMs` when it sets one; the flag wins over the config. A model that never settles is cut off and the run ends `timeout` with the ref triple intact — a wall-clock bound never claims the turn-limit status. When the bound fires mid-tool, the in-flight work is **aborted and killed, not abandoned**: the turn's context is cancelled, the run states a durable `conversation.abort()`, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. A provider that ignores cancellation cannot hang the run: the abort and the harness close are bounded, and the mapped result is reported either way. |
-| `--max-turns <n>` | Optional turn bound (positive integer). A turn is one committed model response, counted from the lane's own usage events; durable provider retries the harness performs inside a turn are not turns. Exceeding the bound ends the run `turn_limit` (exit 3) with the same abort-and-drain path as `--timeout`. Unset means the config's `[run] maxTurns`, and with neither there is no turn bound — the wall clock is the only limit. |
-| `--role <name>` | Boot as a role: the `.kubic/roles/<name>.md` document when the workspace has one, else `~/.kubic/roles/<name>.md`, else the preset of that name embedded in the binary. The document's prompt text, tool set and model pin apply either way. A project document loads only for a trusted project root (same gate as project skills): untrusted, `--role` naming it refuses with the trust message and `kubic doctor` warns what trust would unlock. The document may declare a `skills: [...]` list: only the named skills reach the role's prompt — merged with each skill's own `roles:` list, so both must admit. Skills outside the role, or needing tools the lane's classes deny, are withheld with reasons (debug log; `kubic doctor` warns each as `skill:<name>`) — never offered, never silently failing. The role's permission classes merge with the config's, most restrictive wins, and the role document (or a `[roles.<name>]` layer) may declare `requires: [...]` — tools that always require approval under the role. `kubic doctor` prints each role's effective classes under the run's config. Roles match by the declared `role:` name, not the filename: `review.md` declaring `role: reviewer` boots `--role reviewer` with review.md's own `## Prompt` body — the prompt is never re-read from `<name>.md`. Robustness: one malformed document never blocks the other roles — `--role` naming it refuses with that file's parse error, `kubic doctor` fails it as `role:<file-stem>`; two documents declaring the same `role:` name are refused by name everywhere (run refusal + doctor fail), both files listed, and neither copy wins. The name `default` is reserved: a run without `--role` records it as its role, so `--role default` is refused and a document declaring it is reported invalid. An unknown `--role` name lists the loaded roles and, on an untrusted root, the withheld document files (their declared names are never read). |
-| `--model <provider/id>` | Session model override: the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`), plus `; did you mean '<id>'?` when a registered provider or model is close; the flag is an input to the one config load, so `kubic config --model` reports the same selection. |
-| `--thinking <level>` | Session thinking-level override: the `cli` config layer — `--thinking` beats `KUBIC_MODEL_THINKING`, which beats `[model].thinking`, and a frozen enterprise `model.thinking` beats the flag (refused by name: `--thinking <level> refused: model.thinking is frozen by the enterprise layer`; the env override is silently not applied). The lane resolves it against the session's stored level and the role default (`--thinking` > env > session > role > config) and clamps it to the effective model — a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite. The applied level is committed to the session (a reattach keeps it) and recorded in `trajectory.json`. An unknown level exits 2 naming the levels that exist. |
-| `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first — a top-level `<root>/<name>` in any root, then a nested skill directory of that name — then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` — never against the sessions root — and an unresolvable value warns (`skill skipped (unknown skill '…')`) without needing `--debug`: on stderr for `run`, as a transcript notice for `tui`. |
-| `--invoke-skill <name>` | Invoke one booted skill by name (`run` only): its full content runs as the turn prompt — including skills hidden from the model — followed by `-p`/operand text as further instructions. An unknown name fails the run with `unknown skill '<name>'` (exit 1); a withheld skill (role gate, trust gate) resolves as unknown and fails the same way. |
+| `-p`, `--prompt <text>` | The prompt to run, or pass it as an operand (`kubic run "fix the tests"`). [More](#-p---prompt-text). |
+| `--session <id>` | Resume into an existing session. [More](#--session-id). |
+| `--timeout <ms>` | A wall-clock bound for the run: by default five minutes, or `[run] timeoutMs`. [More](#--timeout-ms). |
+| `--max-turns <n>` | End the run after this many model responses (`turn_limit`, exit 3). [More](#--max-turns-n). |
+| `--role <name>` | Start as a role. [More](#--role-name). |
+| `--model <provider/id>` | Use this model for the session. [More](#--model-providerid). |
+| `--thinking <level>` | Use this thinking level for the session. [More](#--thinking-level). |
+| `--skill <path>` | Add one skill explicitly (repeatable; applies even under `--no-skills`). [More](#--skill-path). |
+| `--invoke-skill <name>` | Run one skill by name as the turn's prompt. [More](#--invoke-skill-name). |
 | `--no-skills` | Turn layered skill discovery off. |
-| `--autonomous` | Run to completion without stopping for input: the mode is recorded on the run's session (`autonomous`, else `interactive` — off by default, never assumed), a `run:start` row naming the mode lands in the audit ledger, and the result and `--json` envelope carry `mode` (the `status` already names the stop condition that ended the run). Combines freely with `--dangerously-skip-approvals` — the combination is legitimate for a batch run on a throwaway checkout, and the session plus the ledger name it. |
-| `--debug` | Emit lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same debug-class vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. A retry backoff and a compaction are named too: `[lane] retry attempt <n> after error: <message>` when the harness schedules a retry of a transient model error and `[lane] retry attempt <n> settled` when it lands, `[lane] compaction started (<reason>)` / `[lane] compaction finished (<reason>)` around an automatic or manual compaction — the wait is never silent. Off by default; stdout stays consumable. |
-| `--dangerously-skip-approvals` | Full access for **this run's session only**: challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. Each challenged call the posture waives is recorded under its own capability (`trigger:<capability>`, posture `full-access`), one record per capability; an untriggered call is neither audited nor marked challenged. A later `kubic run --session <id>` on that session warns again on stderr. |
-| `--pre-approvals <file>` | A signed pre-approval file: the capabilities, tools and command patterns this job may run without an ask, checked against `[approvals] preApprovalKey` before the run starts (`KUBIC_PRE_APPROVALS` names the file when the flag is absent). An unsigned, altered, expired or malformed file — or one with no key configured to check it — exits 2 before a session exists. Each call it grants is recorded as approved by `pre-approval:<job>`. See [Headless approvals](enterprise.md#headless-approvals). |
-| `--tools <a,b,...>` | Narrow the run's tool set to these tools — comma-separated and repeatable (`--tools read,ls --tools grep`). The selection can only **narrow**: it is intersected with the permission classes, any `--role` set and the enterprise tool gate. An unknown name is refused by name; a tool the classes forbid (`--tools write` under `filesystem = "read"`) is refused with the reason — both exit 2 before any lane boots. |
+| `--autonomous` | Run to completion without stopping for input, recorded on the session and in the audit ledger. [More](#--autonomous). |
+| `--debug` | Write span and diagnostic lines to stderr. [More](#--debug). |
+| `--dangerously-skip-approvals` | Turn approvals off for this run's session only. [More](#--dangerously-skip-approvals). |
+| `--pre-approvals <file>` | A signed file of what this job may run without an ask. [More](#--pre-approvals-file). |
+| `--tools <a,b,...>` | Narrow the tool set (comma-separated, repeatable). [More](#--tools-ab). |
 | `--no-tools` | The empty tool set (a chat-only run). Mutually exclusive with `--tools` — both at once exits 2 naming both. |
-| `--json` | Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, `mode` — the mode the run resolved (`autonomous` with `--autonomous`, else `interactive`) —, `fallbacks` — each move along `[model] fallback` as `{from, to, reason}`, when one was made —, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the failure code with its retry remedy and strategy) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed), so a script can read it as the last stdout line. |
+| `--json` | Write one JSON envelope, on one line, instead of human lines. [More](#--json). |
 
-**Project instructions.** The trusted `AGENTS.md` files from the repository
+#### `-p`, `--prompt <text>`
+
+The prompt to run. **Or pass it positionally** (`kubic run "fix the tests"`); exactly one of the two — `-p` together with a positional exits 2 naming both. The `-p` typo guard stays: a separate-token value that starts with `--` is a mistyped flag, so a prompt that really starts with `--` goes in the attached form (`--prompt=--text`), and a positional one after `--` (`kubic run -- --weird`).
+
+#### `--session <id>`
+
+Resume into an existing session. Ids accept only `[A-Za-z0-9_-]` — anything else exits 2 before any store is touched. **Model rule**: a resumed session runs its own stored lane model unless a model is *pinned* (`--model`, `KUBIC_MODEL` / `[model]`, a role's `[roles.<name>].model`, or `KUBIC_PROVIDER=faux`) — a pin that differs switches the session to it (`model: session model '<a>' switched to '<b>' (explicit selection)` on stderr, compaction reserve re-clamped to the new window); the unpinned default pick never switches it (`model: session keeps its own model '<a>' …`). The prompt metadata, the `--json` `model` field and the usage rows all name the model the lane actually runs. A stored model that is not registered fails closed with `provider_probe_failed` (exit 6): `session model '<a>' is unavailable: …` — pin a model to move the session.
+
+#### `--timeout <ms>`
+
+Wall-clock bound for the run's turn — settling the pending work plus the prompt's own run (positive integer ms, max `2147483647`). Default `300000` (5 minutes), or the config's `[run] timeoutMs` when it sets one; the flag wins over the config. A model that never settles is cut off and the run ends `timeout` with the ref triple intact — a wall-clock bound never claims the turn-limit status. When the bound fires mid-tool, the in-flight work is **aborted and killed, not abandoned**: the turn's context is cancelled, the run states a durable `conversation.abort()`, drains the kill registry (detached bash children die with their process groups), and only then runs the end-of-run reconciliation sweep — so a late write from orphaned work cannot land outside the journal. A provider that ignores cancellation cannot hang the run: the abort and the harness close are bounded, and the mapped result is reported either way.
+
+#### `--max-turns <n>`
+
+Optional turn bound (positive integer). A turn is one committed model response, counted from the lane's own usage events; durable provider retries the harness performs inside a turn are not turns. Exceeding the bound ends the run `turn_limit` (exit 3) with the same abort-and-drain path as `--timeout`. Unset means the config's `[run] maxTurns`, and with neither there is no turn bound — the wall clock is the only limit.
+
+#### `--role <name>`
+
+Boot as a role: the `.kubic/roles/<name>.md` document when the workspace has one, else `~/.kubic/roles/<name>.md`, else the preset of that name embedded in the binary. The document's prompt text, tool set and model pin apply either way. A project document loads only for a trusted project root (same gate as project skills): untrusted, `--role` naming it refuses with the trust message and `kubic doctor` warns what trust would unlock. The document may declare a `skills: [...]` list: only the named skills reach the role's prompt — merged with each skill's own `roles:` list, so both must admit. Skills outside the role, or needing tools the lane's classes deny, are withheld with reasons (debug log; `kubic doctor` warns each as `skill:<name>`) — never offered, never silently failing. The role's permission classes merge with the config's, most restrictive wins, and the role document (or a `[roles.<name>]` layer) may declare `requires: [...]` — tools that always require approval under the role. `kubic doctor` prints each role's effective classes under the run's config. Roles match by the declared `role:` name, not the filename: `review.md` declaring `role: reviewer` boots `--role reviewer` with review.md's own `## Prompt` body — the prompt is never re-read from `<name>.md`. Robustness: one malformed document never blocks the other roles — `--role` naming it refuses with that file's parse error, `kubic doctor` fails it as `role:<file-stem>`; two documents declaring the same `role:` name are refused by name everywhere (run refusal + doctor fail), both files listed, and neither copy wins. The name `default` is reserved: a run without `--role` records it as its role, so `--role default` is refused and a document declaring it is reported invalid. An unknown `--role` name lists the loaded roles and, on an untrusted root, the withheld document files (their declared names are never read).
+
+#### `--model <provider/id>`
+
+Session model override: the `cli` config layer, above `KUBIC_MODEL` and every file layer — and never above a frozen enterprise key, which still wins (one stderr note names the ignored flag or `KUBIC_MODEL` pin: `note: --model x ignored: model pinned by enterprise policy (corp/approved)`; stdout and a `--json` envelope are untouched). An unknown provider/model exits 6 with the id and the input that carried the pin named (`--model`, `KUBIC_MODEL`, `[model] in <layer> config`, `role model`), plus `; did you mean '<id>'?` when a registered provider or model is close; the flag is an input to the one config load, so `kubic config --model` reports the same selection.
+
+#### `--thinking <level>`
+
+Session thinking-level override: the `cli` config layer — `--thinking` beats `KUBIC_MODEL_THINKING`, which beats `[model].thinking`, and a frozen enterprise `model.thinking` beats the flag (refused by name: `--thinking <level> refused: model.thinking is frozen by the enterprise layer`; the env override is silently not applied). The lane resolves it against the session's stored level and the role default (`--thinking` > env > session > role > config) and clamps it to the effective model — a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite. The applied level is committed to the session (a reattach keeps it) and recorded in `trajectory.json`. An unknown level exits 2 naming the levels that exist.
+
+#### `--skill <path>`
+
+Add one skill explicitly (repeatable; applies even under `--no-skills`). A directory, a `SKILL.md` file, or a bare name (discovery roots first — a top-level `<root>/<name>` in any root, then a nested skill directory of that name — then the cwd). Relative values resolve against the invoking cwd on both `run` and `tui` — never against the sessions root — and an unresolvable value warns (`skill skipped (unknown skill '…')`) without needing `--debug`: on stderr for `run`, as a transcript notice for `tui`.
+
+#### `--invoke-skill <name>`
+
+Invoke one booted skill by name (`run` only): its full content runs as the turn prompt — including skills hidden from the model — followed by `-p`/operand text as further instructions. An unknown name fails the run with `unknown skill '<name>'` (exit 1); a withheld skill (role gate, trust gate) resolves as unknown and fails the same way.
+
+#### `--autonomous`
+
+Run to completion without stopping for input: the mode is recorded on the run's session (`autonomous`, else `interactive` — off by default, never assumed), a `run:start` row naming the mode lands in the audit ledger, and the result and `--json` envelope carry `mode` (the `status` already names the stop condition that ended the run). Combines freely with `--dangerously-skip-approvals` — the combination is legitimate for a batch run on a throwaway checkout, and the session plus the ledger name it.
+
+#### `--debug`
+
+Emit lane/tool span lines on **stderr** (`[span]`, `[tool]`, `[lane]` … — one line per span close, the same debug-class vocabulary as the interactive TUI debug channel), plus the run's diagnostics on the same channel (as `[session] …` lines when they carry no class of their own): `reconcile:` notices (including the overlap warning below), `skills:` reports and drain failures. A retry backoff and a compaction are named too: `[lane] retry attempt <n> after error: <message>` when the harness schedules a retry of a transient model error and `[lane] retry attempt <n> settled` when it lands, `[lane] compaction started (<reason>)` / `[lane] compaction finished (<reason>)` around an automatic or manual compaction — the wait is never silent. Off by default; stdout stays consumable.
+
+#### `--dangerously-skip-approvals`
+
+Full access for **this run's session only**: challenged calls run without an ask. It is recorded in the session's `posture.json` and as one `posture:full-access` row in the audit ledger (session id and command), never in config, and a `warning: full-access approvals skipped for session <id> …` line goes to stderr. Each challenged call the posture waives is recorded under its own capability (`trigger:<capability>`, posture `full-access`), one record per capability; an untriggered call is neither audited nor marked challenged. A later `kubic run --session <id>` on that session warns again on stderr.
+
+#### `--pre-approvals <file>`
+
+A signed pre-approval file: the capabilities, tools and command patterns this job may run without an ask, checked against `[approvals] preApprovalKey` before the run starts (`KUBIC_PRE_APPROVALS` names the file when the flag is absent). An unsigned, altered, expired or malformed file — or one with no key configured to check it — exits 2 before a session exists. Each call it grants is recorded as approved by `pre-approval:<job>`. See [Headless approvals](enterprise.md#headless-approvals).
+
+#### `--tools <a,b,...>`
+
+Narrow the run's tool set to these tools — comma-separated and repeatable (`--tools read,ls --tools grep`). The selection can only **narrow**: it is intersected with the permission classes, any `--role` set and the enterprise tool gate. An unknown name is refused by name; a tool the classes forbid (`--tools write` under `filesystem = "read"`) is refused with the reason — both exit 2 before any lane boots.
+
+#### `--json`
+
+Emit one JSON envelope (`ok`, `exitCode`, `sessionId`, `status`, `result`, `journal`/`usage`/`trajectory` refs — `usage` also carries the run's `input`, `output`, `cacheRead`, `cacheWrite`, `costUsd` and `toolCalls` once a session exists —, `model` — the `provider/id` the lane actually ran, present once a lane booted —, `approvals.posture` — `approvals` or `full-access` — once the lane is installed, `mode` — the mode the run resolved (`autonomous` with `--autonomous`, else `interactive`) —, `fallbacks` — each move along `[model] fallback` as `{from, to, reason}`, when one was made —, optional `error`, and — on a classified failure — `failure: {code, remedy, strategy}`, the failure code with its retry remedy and strategy) instead of human lines. The envelope is deliberately **one compact line** (not pretty-printed), so a script can read it as the last stdout line.
+
+### Project instructions
+
+The trusted `AGENTS.md` files from the repository
 root down to the cwd are appended to the prompt; a file that is cut at 32 KiB
 or left out because its directory is untrusted is named on stderr
 (`project instructions: … not loaded: …`). See
 [Project instructions](configuration.md#project-instructions-agentsmd).
 
-**Skill paths the `read` tool may open.** Every skill
+### Skill paths the `read` tool may open
+
+Every skill
 advertised in the `<skills>` block names its absolute `<filePath>`. Paths
 outside the workspace are normally re-rooted under it, so one narrow,
 read-only exception applies to exactly the advertised skills that live
@@ -50,7 +128,9 @@ still re-rooted, and skills hidden from the model
 (`disable-model-invocation`) open nothing. `kubic tui` applies the same
 rule.
 
-**Interrupts.** `SIGINT` (Ctrl-C), `SIGTERM` and `SIGHUP` during a run
+### Interrupts
+
+`SIGINT` (Ctrl-C), `SIGTERM` and `SIGHUP` during a run
 are handled like the
 wall-clock guard (a signal during boot, before the prompt is admitted,
 cancels the boot — the lane never drives): the in-flight tool process groups are killed at once, the
@@ -62,6 +142,8 @@ closed, and the run prints its normal result with `status: cancelled`,
 A second signal while that cleanup
 runs takes the default path and ends the process immediately.
 
+### Output
+
 Text output prints `result:`, `session:`, `journal:` (`journal:<id>`),
 `usage:` (`usage:<id>`), `trajectory:` (the absolute path of the run's
 trajectory file) on stdout (the labels are dimmed and the result coloured
@@ -69,9 +151,10 @@ on a colour terminal; plain text under a pipe or `NO_COLOR`); on failure an
 `error:` line goes to stderr first. Exit code is the terminus map — see
 [exit codes](exit-codes.md).
 
-**On an interactive terminal** (stdout **and** stderr a colour
-TTY, no `--json`) the run shows its progress instead of those lines. On
-stderr: a heading (`■ kubic run · <role> · <provider/id> · <cwd>`, where
+### On an interactive terminal
+
+When stdout **and** stderr are a colour terminal and there is no `--json`,
+the run shows its progress instead of those lines. On stderr: a heading (`■ kubic run · <role> · <provider/id> · <cwd>`, where
 `<role>` is the `--role` name, cut to 20 columns, or `default`), the
 notice as one line (`○ Kubic has no isolation — approvals + journal are the
 controls · details: kubic doctor`, same opt-outs as the full block), a
@@ -84,7 +167,9 @@ and the next steps (`review kubic diff   revert kubic undo   continue kubic
 resume <id>`). A redirected stdout (`kubic run … > out.txt`), a pipe, CI or
 `--json` keeps the plain lines above byte for byte.
 
-**Trajectories.** Every run that attached a session writes
+### Trajectories
+
+Every run that attached a session writes
 `<sessions-root>/<id>/trajectory.json` when it settles, completed or not,
 and the `trajectory` ref (text line and `--json` envelope) is that file's
 absolute path. The file holds the session's latest settled run; a resumed
@@ -117,13 +202,17 @@ reported on stderr and never changes the run's exit code.
 that write (an unreadable audit ledger or journal) is a transcript notice
 there, not a stderr line: the screen owns the terminal.
 
-**Usage errors (exit 2, stderr, no lane).** commander parses the argv
-(`apps/kubic/src/commands/session.ts`): a missing `-p`, a flag without its
-value, an unknown option, an invalid `--session` id, a non-positive or
-non-integer `--timeout`/`--max-turns` (or a `--timeout` above
-`2147483647`), and a stray operand all exit 2 with one `error: …` line.
+### Usage errors
 
-**A refused config** stops `kubic run` before any lane: one
+The arguments are checked before anything starts. A missing `-p`, a flag
+without its value, an unknown option, an invalid `--session` id, a
+non-positive or non-integer `--timeout` or `--max-turns` (or a `--timeout`
+above `2147483647`), and a stray operand all exit 2 with one `error: …` line
+on stderr.
+
+### A refused config
+
+A refused config stops `kubic run` before any lane: one
 `error: <reason>` line on stderr, exit 1. Under `--json` stdout carries the
 same compact failure envelope every run emits (`ok:false`, `exitCode:1`,
 `status:"failed"`, the reason in `error.message`) — never plain text — so a
@@ -132,7 +221,9 @@ stdout stays empty. The same split holds for `kubic replay` (its own
 envelope shape) and for the `loaded models.json: …` receipt, which is a
 stderr diagnostic under both modes.
 
-**Prompt values.** `-p <text>`, `--prompt <text>`, `--prompt=<text>`,
+### Prompt values
+
+`-p <text>`, `--prompt <text>`, `--prompt=<text>`,
 `-p<text>` and the positional form `kubic run "<prompt>"` all work; pass
 exactly one — `-p` together with a positional exits 2 naming both, and two
 positionals exit 2. The `-p` typo guard stays: a separate-token value that
@@ -154,7 +245,9 @@ refused (`the prompt is empty`).
 `--help` anywhere after `run` is commander's help (exit 0); a literal
 `--help` prompt needs the attached form (or `--`).
 
-**Installed policy**. A run always boots the lane with a
+### Installed policy
+
+A run always boots the lane with a
 permission policy, whether or not a config names one: the five permission
 classes (`[permissions]` when configured, the documented defaults
 otherwise — `filesystem = workspace-write`, `shell = true`,
@@ -185,7 +278,9 @@ access for the session this run creates or resumes), or record it first
 with `kubic sessions create --dangerously-skip-approvals` — it is never
 implied.
 
-**Attaching a session with unfinished durable work**. A run
+### Attaching a session with unfinished work
+
+A run
 that died mid-turn (SIGKILL, OOM, power loss, orphan reaping) leaves its
 turn placed but unsettled in the session, and an unsettled turn refuses every new
 prompt. `kubic run --session X` therefore settles it first and names the
@@ -206,7 +301,9 @@ unsettled submission) — the storage-level probe in
 `packages/agent/src/lane/pending.ts` owns the format, so both surfaces
 name the same work.
 
-**Concurrent runs in one workspace**. A run drives one
+### Concurrent runs in one workspace
+
+A run drives one
 session, and a session takes one live attachment. `kubic run --session X`
 while X is held ends `workspace_unavailable` (exit 5) with the holder's pid
 named on the `error:` line; `kubic sessions attach X` prints the same

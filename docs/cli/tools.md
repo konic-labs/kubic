@@ -38,8 +38,8 @@ isolation: these tools act on the real workspace.
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |
-| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped; every line the edit does not touch keeps its own line ending, and the file keeps its BOM (see [Line endings and BOM](#line-endings-and-bom)). |
-| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh, on Linux and macOS; on Windows a POSIX bash — Git Bash, else WSL, or the bash `KUBIC_BASH` names — because the approval detectors read POSIX shell only, and the tool refuses to run without one; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
+| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | Replaces `oldText` exactly; see [`edit`](#edit-matching). |
+| `bash` | `command`, `timeout?` (seconds, > 0) | A POSIX bash on every platform; see [`bash`](#bash-shells-and-output). |
 | `git_status` | — | Branch (or detached HEAD), ahead/behind, staged/unstaged/untracked/conflicts, renames, the repo root, and one record per submodule. |
 | `git_diff` | `staged?`, `range?`, `path?` | Diff keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink); a clipped diff also carries a capped `--stat` summary (at most 40 lines, summary kept) saying what was cut. |
 | `git_log` | `max?` (default 20, cap 100), `path?` | Raw log is clipped to the last 64 KiB / 2000 lines before parsing (`truncated`, spilled in full when the lane provides a sink); a clipped log also carries a capped `--stat` summary. |
@@ -48,9 +48,21 @@ isolation: these tools act on the real workspace.
 | `git_commit` | `message`, `amend?` | Killed after 120 s (a hanging hook fails the call instead of hanging it); an abort mid-flight kills the child and fails the call. With `amend: true` it rewrites the last commit and raises `destructive-shell`, as `git commit --amend` does in bash. |
 | `git_branch` | `create?` | Omit to list; no checkout. |
 | `git_checkpoint` | `message` | `git stash create`; the tree is untouched. |
-| `git_merge` | `branch` | Local refs only, never fetches; a conflict returns `{merged: false, conflicts}` and leaves the merge state for the resolver. No remote mutation — `git_push` stays approval-gated through bash. Raises no capability: it changes files in the workspace, which the journal records and `kubic undo` restores, and rewrites no history, like `git merge` in bash. |
+| `git_merge` | `branch` | Local refs only; see [`git_merge`](#git_merge-conflicts). |
 | `git_conflict_status` | — | Lists paths with unresolved merge conflicts. |
 | `git_worktree_list` | — | Attached worktrees as `{path, head, branch, bare, detached}` rows. |
+
+### `edit` matching
+
+`oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped; every line the edit does not touch keeps its own line ending, and the file keeps its BOM (see [Line endings and BOM](#line-endings-and-bom)).
+
+### `bash` shells and output
+
+bash, else sh, on Linux and macOS; on Windows a POSIX bash — Git Bash, else WSL, or the bash `KUBIC_BASH` names — because the approval detectors read POSIX shell only, and the tool refuses to run without one; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits).
+
+### `git_merge` conflicts
+
+Local refs only, never fetches; a conflict returns `{merged: false, conflicts}` and leaves the merge state for the resolver. No remote mutation — `git_push` stays approval-gated through bash. Raises no capability: it changes files in the workspace, which the journal records and `kubic undo` restores, and rewrites no history, like `git merge` in bash.
 
 ## Result shapes
 

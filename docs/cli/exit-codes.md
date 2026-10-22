@@ -1,32 +1,66 @@
 # Exit codes
 
-> The table below covers the failure codes
-> (plus 0) and matches the `kubic doctor` fixture behaviour:
-> clean matrix → 0, provider-down → 6, any other fail → 1,
-> usage error → 2 (verified in `packages/host/src/doctor/doctor.test.ts`).
+> What each exit code means, and when you see it.
 
-## The failure codes
+## The codes
 
-`kubic run` derives its exit code from the settled lane outcome
-(`mapTerminusToExitCode` in `packages/host/src/run/run-cli.ts`); codes 0–6 are
-its six termini. `kubic doctor` exits through the same mapper shape
-(`limitsDoctorExit` in `packages/host/src/doctor/doctor-limits.ts`).
+`kubic run` exits with the code for how the run ended, and `kubic doctor`
+uses the same codes: 0 for a clean report, 6 when no provider is available,
+1 for any other failure, and 2 for a usage error.
 
-Two signal-driven exits sit outside the six codes, using the POSIX
-convention `kubic tui` also pins: a `kubic run` interrupted by
-`SIGINT`/`SIGTERM`/`SIGHUP` settles `status: cancelled` and exits
-`128+signo` — 129 `SIGHUP`, 130 `SIGINT`, 143 `SIGTERM`.
-
-| Code | Terminus / meaning | When you see it |
+| Code | Status | When you see it |
 | --- | --- | --- |
-| 0 | `completed` / ok | Run finished; doctor matrix fully passing (warn-only checks still exit 0). |
-| 1 | `failed` | Run failed without a more specific cause (including a headless `kubic run` that hit its wall-clock bound — `status: timeout` with `--timeout`, default 300000 ms; there is no separate timeout code); doctor fail on deps (`deps-missing`), policy (`policy-mismatch`), or any op failure; `kubic git` op failures (including outside a repo); `sessions` IO errors; journal IO failures; an `undo` that restored but skipped steps (the partial outcome has its own code, never the usage one). |
-| 2 | `usage` | Bad invocation: an unknown command or subcommand, unknown flags, missing flag values, an invalid `--session` id, `run` without a prompt (neither `-p` nor a positional), `doctor --skip` without a value or with an unknown check id, a stray operand. |
+| 0 | `completed` | The run finished; the doctor report passed (warnings still exit 0). |
+| 1 | `failed` | The run failed without a more specific cause (see [code 1](#1-failed)). |
+| 2 | `usage` | A bad invocation: an unknown command, subcommand or flag, a missing value, an invalid `--session` id, `run` without a prompt, `doctor --skip` without a value or with an unknown check id, or a stray operand. |
 | 3 | `turn_limit` | A headless `kubic run` hit its turn guard (`--max-turns`). The wall-clock `--timeout` is **not** here: it is `timeout`, exit 1. |
-| 3 | `spend_limit` | A `[policy]` spend cap stopped `kubic run`: the run reached `max_run_cost_usd`, or the machine's day reached `max_daily_cost_usd` (a run on a day already spent is refused before a session exists). See [Spend caps](enterprise.md#spend-caps). |
-| 4 | `approval_denied` / `approval_timed_out` | Approval denied, or a bounded wait elapsed — **both labels map to exit 4**. The `status` string distinguishes: `approval_denied` when the recorded denial reasons name a refusal (no approval surface, a policy route, a decider's no); `approval_timed_out` when the reason carries the timeout marker — or when a headless run suspends on an approval that cannot arrive without a TTY. |
-| 5 | `workspace_unavailable` | Session attach/store failures: missing session, `ENOENT`/`EACCES`-class store errors, worktree problems. Keywords that appear only inside a filesystem path (e.g. a checkout under `.claude/worktrees/` or `~/My workspace/`) do not count: a quoted string or a whitespace-delimited word containing `/` or `\` is ignored, an unquoted path with spaces whose final segment is the keyword (e.g. `/home/My workspace`) still counts; quote it. |
-| 6 | `provider_probe_failed` / provider-down | The **pre-run probe**: no reachable provider, or a resumed `--session` whose stored model is not registered (named: `session model '<id>' is unavailable: …`). A provider error **during** the run is not this code: it is exit 1 with `status: provider_transient` or `provider_auth` and the matching `failure.code`. Doctor exits 6 when any failing check has reason `provider-down`. |
+| 3 | `spend_limit` | A `[policy]` spend cap stopped `kubic run`: the run reached `max_run_cost_usd`, or the machine's day reached `max_daily_cost_usd` (a run on a day already spent is refused before a session exists). See [spend caps](enterprise.md#spend-caps). |
+| 4 | `approval_denied`, `approval_timed_out` | An approval was denied, or its bounded wait ran out (see [code 4](#4-approval-denied-or-timed-out)). |
+| 5 | `workspace_unavailable` | The session or its store cannot be used: a missing session, a store error, a worktree problem (see [code 5](#5-workspace-unavailable)). |
+| 6 | `provider_probe_failed` | No provider is available before the run starts (see [code 6](#6-no-provider)). |
+
+Two exits sit outside these codes, by the POSIX convention `kubic tui` also
+follows: a `kubic run` interrupted by `SIGINT`, `SIGTERM` or `SIGHUP` settles
+`status: cancelled` and exits `128 + signo` (129 `SIGHUP`, 130 `SIGINT`, 143
+`SIGTERM`).
+
+### 1: failed
+
+The run failed without a more specific cause. That includes a headless `kubic
+run` that hit its wall-clock bound (`status: timeout`, with `--timeout`,
+default 300000 ms; there is no separate timeout code), a doctor failure on
+the dependencies (`deps-missing`), the policy (`policy-mismatch`) or any
+operation, `kubic git` failures (outside a repository too), `sessions` and
+journal I/O errors, and an `undo` that restored some steps but skipped others:
+the partial outcome has its own code, never the usage one.
+
+### 4: approval denied or timed out
+
+Both statuses exit 4, and the `status` string tells them apart:
+`approval_denied` when the recorded denial reasons name a refusal (no
+approval surface, a policy route, a decider's no), and `approval_timed_out`
+when the reason carries the timeout marker, or when a headless run waits on
+an approval that cannot arrive without a terminal.
+
+### 5: workspace unavailable
+
+Attaching a session or using its store failed: a missing session,
+`ENOENT`- or `EACCES`-class store errors, worktree problems. A keyword that
+appears only inside a filesystem path, such as a checkout under
+`.claude/worktrees/` or `~/My workspace/`, does not count: a quoted string or
+a whitespace-delimited word containing `/` or `\` is ignored, while an
+unquoted path with spaces whose final segment is the keyword (`/home/My
+workspace`) still counts, so quote it.
+
+### 6: no provider
+
+The check before the run found no reachable provider, or a resumed
+`--session` whose stored model is not registered (`session model '<id>' is
+unavailable: …`). A provider error **during** the run is not this code: it is
+exit 1 with `status: provider_transient` or `provider_auth` and the matching
+`failure.code`. Doctor exits 6 when any failing check has the reason
+`provider-down`.
+
 ## Per-command notes
 
 - **Unknown command / subcommand**: exit 2, stdout empty,

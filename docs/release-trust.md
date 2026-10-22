@@ -59,5 +59,5 @@ openssl pkeyutl -verify -pubin -inkey kubic-release.pub -rawin \
 pull request and once a week, over the TypeScript, the GitHub workflows and
 the Python docs tooling. `.github/workflows/dependency-review.yml` refuses a
 pull request that adds or changes a dependency with a known high or critical
-advisory, or with a licence outside the allowed list. Both start once the
-repository is public; on a private repository they do nothing.
+advisory, or with a licence outside the allowed list. A pull request merges
+only when both pass and CodeQL reports no new high or critical alert.

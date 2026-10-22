@@ -357,22 +357,41 @@ to use it, plainly.
 
 ## CI
 
-A push runs the `test` job: `npm run check` first (once, on Node 22: the
+A pull request runs CI once, and so does every push to `main`; a branch
+without a pull request runs it by hand (`workflow_dispatch`). The `test` job
+runs `npm run check` first (once, on Node 22: the
 gates do not depend on the Node version), then `npm audit --omit=dev
 --audit-level=high`, the suite (with coverage on the Node 22 leg), the build
 and `npm run test:binary`. It runs on Node 22 (the lowest supported) on every ref and on
 Node 22 and 24 on `main`. After it, the `pack-contract` job stages, packs,
 installs and runs the npm package on Linux and macOS with Node 22.19.0 and
 24 (`npm run release:stage`, then `npm run release:contract`; its registry
-install uses the network). A newer push cancels the older run of the same
-ref; `main` is keyed by commit and never cancelled. Workflow permissions
+install uses the network). A newer push to a pull request cancels its older
+run; `main` is keyed by commit and never cancelled. Workflow permissions
 are read-only. A tag push does not run CI: the release workflow runs it.
 
 The last job, `ci`, needs every other job and fails unless each of them
 succeeded; a skipped or cancelled job fails it too. It is the one check a pull
 request needs from this workflow, so a change to the matrix never renames a
-required check. Once the repository is public, CodeQL and dependency review
-also run on every pull request ([code scanning](release-trust.md#code-scanning)).
+required check. CodeQL and dependency review also run on every pull request
+([code scanning](release-trust.md#code-scanning)).
+
+### What protects `main`
+
+`main` changes only through a pull request. Nobody, an administrator
+included, can push to it directly, force-push it or delete it. A pull request
+merges when:
+
+- the `ci` and `dependency review` checks pass on a branch that is up to date
+  with `main`;
+- CodeQL reports no new error, and no new high or critical security alert;
+- every review conversation is resolved;
+- a code owner other than the last pusher approves it. Maintainers may merge
+  their own pull request without that review; nobody skips the checks.
+
+No branch can be force-pushed, except Dependabot's, which it rebases itself.
+A `v*` tag cannot be moved or deleted. Workflow runs from a first-time or
+outside contributor's pull request wait for a maintainer's approval.
 
 ## Releasing
 

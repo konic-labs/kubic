@@ -50,6 +50,9 @@ trailing period. For example: `fix(journal): judge a blob's freshness in whole m
 Common types are `feat`, `fix`, `refactor`, `docs`, `test`, `chore` and `build`.
 A breaking change uses `type(scope)!:` and a `BREAKING CHANGE:` footer.
 
+A pull request's title is a Conventional Commits subject too: a squash merge
+makes it the commit's subject, and the pull request's description its body.
+
 ## Docs style
 
 Write in the present tense and describe what the code does now. Do not narrate

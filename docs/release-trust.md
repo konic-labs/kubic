@@ -20,7 +20,8 @@ from a version tag, never by hand. The GitHub Release for the tag carries:
 - `SHA256SUMS.sig`, the signature of `SHA256SUMS` by the release key.
 
 The release key's public half is [`kubic-release.pub`](kubic-release.pub) in
-this repository.
+this repository. Releases are immutable: once a release is published, its
+assets and its tag cannot change.
 
 ## Provenance
 
@@ -54,5 +55,9 @@ openssl pkeyutl -verify -pubin -inkey kubic-release.pub -rawin \
 
 ## Code scanning
 
-`.github/workflows/codeql.yml` runs CodeQL on every push and pull request
-once the repository is public; on a private repository it does nothing.
+`.github/workflows/codeql.yml` runs CodeQL on every push to `main`, every
+pull request and once a week, over the TypeScript, the GitHub workflows and
+the Python docs tooling. `.github/workflows/dependency-review.yml` refuses a
+pull request that adds or changes a dependency with a known high or critical
+advisory, or with a licence outside the allowed list. Both start once the
+repository is public; on a private repository they do nothing.

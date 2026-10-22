@@ -368,6 +368,12 @@ install uses the network). A newer push cancels the older run of the same
 ref; `main` is keyed by commit and never cancelled. Workflow permissions
 are read-only. A tag push does not run CI: the release workflow runs it.
 
+The last job, `ci`, needs every other job and fails unless each of them
+succeeded; a skipped or cancelled job fails it too. It is the one check a pull
+request needs from this workflow, so a change to the matrix never renames a
+required check. Once the repository is public, CodeQL and dependency review
+also run on every pull request ([code scanning](release-trust.md#code-scanning)).
+
 ## Releasing
 
 `.github/workflows/release.yml` publishes Kubic. Every step runs in CI; nobody
@@ -415,9 +421,17 @@ What the workflow needs:
 ### Supply chain
 
 - **Updates.** Dependabot (`.github/dependabot.yml`) proposes updates weekly
-  for the npm dependencies and for the GitHub Actions the workflows use. The
-  proposals keep the exact pins, and the `@earendil-works/*` packages arrive
-  as one grouped update, since they ship as a set. A Pi bump that leaves two
+  for the npm dependencies and for the GitHub Actions the workflows use, once
+  a release is 7 days old. The proposals keep the exact pins. The
+  `@earendil-works/*` packages arrive as one grouped update, since they ship as
+  a set, and so do `vitest` and `@vitest/*`.
+- **Alerts.** Dependabot alerts and security updates are on: a new advisory
+  against a dependency opens an alert, and a fix arrives as a pull request
+  without the 7-day wait.
+- **Actions.** Every `uses:` names a full commit SHA, with its version in a
+  comment, and Dependabot keeps both current. The repository allows only
+  GitHub's own actions and requires SHA pins. No checkout keeps its token in
+  `.git/config`. A Pi bump that leaves two
   copies of a Pi package in the lockfile fails `npm run check:gates`; run
   `npm dedupe` on its branch.
 - **Advisories.** CI runs `npm audit --omit=dev --audit-level=high`: a known

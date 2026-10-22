@@ -63,10 +63,24 @@ behaviour changes, document the new behaviour; the commit history already record
 the change. The full guide (terms, key notation, tables, screenshots) is
 [docs style](docs/contributing.md#docs-style).
 
+## Pull requests
+
+- One concern per pull request: a fix, a feature or a refactor, not several.
+- The title is a Conventional Commits subject (see [Commits](#commits)).
+- The tests and the docs change in the same pull request as the code, and
+  the checks above pass.
+
 ## Reporting bugs and asking for features
 
-Open an issue in this repository.
+Open an issue in this repository. Report a security vulnerability privately,
+as [SECURITY.md](SECURITY.md) describes, never in an issue.
+
+Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-Kubic is released under the MIT License (see [LICENSE](LICENSE)).
+Kubic is released under the MIT License (see [LICENSE](LICENSE)). By opening
+a pull request, you license your contribution under the same MIT License, as
+[GitHub's terms of
+service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#6-contributions-under-repository-license)
+provide. No contributor licence agreement or sign-off is required.

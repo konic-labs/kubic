@@ -231,7 +231,7 @@ How many sessions are recorded against this cwd in the local session store? Two 
 
 Is a live session in this workspace running with approvals off? One `warn` per session whose `posture.json` records `fullAccess` — the detail names the grant (`enabled <time> by <operator>`, when the posture recorded it) and the way back (`end the session or switch approvals back on; new sessions start enforced`). Only live sessions are listed (a released session's grant expired with it), so a quiet matrix means no live session has approvals off — an unlistable store warns once as `session:full-access` instead of crashing. `doctor --session <id>` checks exactly one session (workspace filter bypassed) and its `policy:installed` line reads that session's `posture.json`, so a full-access session reports `FULL ACCESS recorded for this session`. The same sessions appear under `doctor --json` as `session:full-access:<id>` checks.
 
-**What to do:** Nothing to fix unless the access is unintended — `warn` never flips the exit. Full access is operator intent (`--dangerously-skip-approvals` or the in-session toggle); to revoke it, end the session or switch approvals back on.
+**What to do:** Nothing to fix unless the access is unintended — `warn` never flips the exit. Approvals off is the operator's choice (`--dangerously-skip-approvals` or the in-session toggle); to undo it, end the session or switch approvals back on.
 
 ### `state:permissions`
 
@@ -309,7 +309,7 @@ The vocabulary is seven line classes (`[policy]`,
   (pi-durable `task_failed` — Pi 1.0 has no `handler_error` event)
   surfaces as `handler_error hook=<kind> error=<message> verdict=deny`.
 - **`kubic tui`** has no `--debug` flag, so its lines are dropped — with
-  two exceptions that always surface: a lane fault renders as a
+  two exceptions that always surface: a fault in the session renders as a
   transcript notice (the `handler_error …` line; the TUI has no other
   failure channel), and every settled turn appends its spans to the
   session's `spans.jsonl` exactly like a headless run. The per-response

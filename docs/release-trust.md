@@ -1,6 +1,6 @@
 # Release trust
 
-What a Kubic release carries so it can be verified, and how.
+> What a Kubic release carries so it can be verified, and how.
 
 ## Provenance
 

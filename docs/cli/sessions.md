@@ -32,14 +32,14 @@ Print session metadata, the approvals posture (`approvals enforced` or `full-acc
 
 ### `fork`
 
-Fork a session into a **new** one and print the new id — `--json` prints one `{id, source, at}` document (`at` is `null` for `--tree`). The id works at once with `kubic run --session` / `kubic tui --session`. A **branch fork** (the default) cuts *at* an entry, inclusive — `--at <entry>` names it (`kubic sessions attach <id> --ids` prints them), default the source's newest — and the new session's lane is a pi-durable fork of the source's: it sees the history through that entry and the agent (model, thinking level) as of it, and nothing after it. **`--tree`** copies the whole session instead: every conversation and branch tip, the lane unchanged. Either way the new session has its **own** directory, lock and an empty journal, starts with **no usage** (the copied `pi.usage` documents are emptied, so `kubic cost` never counts the source's spend twice), and starts with **approvals enforced** — the source's posture, approvals and journal are not copied. The source is only read, under its own lock: forking a session another process holds live is **refused** (the lock refusal naming the holder, exit 1, nothing written), as is a missing session (exit 1) and an `--at` entry the source does not have (exit 1). `--at` with `--tree` is a usage error (exit 2).
+Fork a session into a **new** one and print the new id — `--json` prints one `{id, source, at}` document (`at` is `null` for `--tree`). The id works at once with `kubic run --session` / `kubic tui --session`. A **branch fork** (the default) cuts *at* an entry, inclusive — `--at <entry>` names it (`kubic sessions attach <id> --ids` prints them), default the source's newest — and the new session is a pi-durable fork of the source's: it sees the history through that entry and the agent (model, thinking level) as of it, and nothing after it. **`--tree`** copies the whole session instead: every conversation and branch tip, unchanged. Either way the new session has its **own** directory, lock and an empty journal, starts with **no usage** (the copied `pi.usage` documents are emptied, so `kubic cost` never counts the source's spend twice), and starts with **approvals enforced** — the source's posture, approvals and journal are not copied. The source is only read, under its own lock: forking a session another process holds live is **refused** (the lock refusal naming the holder, exit 1, nothing written), as is a missing session (exit 1) and an `--at` entry the source does not have (exit 1). `--at` with `--tree` is a usage error (exit 2).
 
 ### `export`
 
 Print the session as a document to share for a review or a postmortem: Markdown (the default) or one self-contained HTML page, on stdout (`> session.md`). It holds the session's facts (workspace, start, mode, approvals posture, models, token usage and cost), the **whole** conversation on the session's branch — prompts, answers, each tool call with its arguments and each result (output past 200 lines or 16 KiB is cut with a marker), compactions and resets — the audit rows the session wrote to its workspace ledger (approval decisions, the run start, posture changes, gate commands) and the change journal's summary (one row per file: the newest change, the summed byte delta and what made it — a tool, the end-of-run sweep or an undo; contested files are marked). **Secrets are redacted throughout** with the persisted-text redactor (key shapes, PEM blocks, URL userinfo, authorization values and secret-named assignments, which it over-redacts on purpose), and terminal control sequences are stripped. The session is read without its lock and nothing is written; a session a live run holds is refused (exit 1), as is an unknown one. An unknown `--format` exits 2.
 
 A session can hold several **branches**: the TUI's `/tree` moves a session to
-an earlier point in place, as a pi-durable fork of its lane inside the same
+an earlier point in place, as a pi-durable fork of its conversation inside the same
 storage, and the branch it leaves stays in the session. `attach`, `run
 --session` and `tui --session` follow the branch the session is on, and
 `kubic cost` counts every branch. `fork` is the command that copies a session
@@ -56,7 +56,7 @@ only a transcript file, is an unknown session and exits 1 the same way.
 
 The transcript `attach` prints is the durable one, read through the shared
 pi-durable adapter (`packages/agent/src/lane/transcript.ts`)
-and never by booting a lane: a reader must be able to inspect a session it
+and never by starting a session: a reader must be able to inspect a session it
 may not run.
 
 ### Session storage
@@ -71,7 +71,7 @@ open reads it from the same durable state as the transcript. Session JSONL
 is not fsynced; the change journal is the fsync'd store. The directory is
 `0700` and every file in it `0600`.
 
-`kubic run` creates its session before it boots the lane, so a run that
+`kubic run` creates its session before the agent starts, so a run that
 fails before the model answers — no provider, a refused model — is still a
 recorded session: the `--json` envelope names its `session:`, `journal:`,
 `usage:` and `trajectory:` refs, `kubic sessions list` lists it, and
@@ -100,7 +100,7 @@ journal entries at read time (see the read-time self-heal note under
   `dry run: N session(s) would be pruned (NB) — pass --yes to delete`, and
   removes nothing. On an interactive terminal (stdin and stdout both a
   TTY) and without `--dry-run`, it asks once after the list —
-  `Delete N session(s) (NB)?` — and deletes only on yes; no, Ctrl-C or Esc
+  `Delete N session(s) (NB)?` — and deletes only on yes; no, Ctrl+C or Esc
   keeps everything and prints the dry-run summary. Off a terminal it
   never asks. `--dry-run` is the explicit synonym of that default;
   `--yes` deletes the listed set (`pruned <id> (<bytes>B)` per session,
@@ -149,3 +149,8 @@ journal entries at read time (see the read-time self-heal note under
   never anything outside the sessions root. A durable session's transcript lives INSIDE its state dir
   (`main.jsonl`), so pruning a session deletes its transcript with it.
   Folders that hold no session file are not part of this command.
+
+## See also
+
+- [The TUI](tui.md#sessions): `/new`, `/resume`, `/tree` and `/fork`.
+- [Reviewing and reverting changes](journal.md): each session's journal.

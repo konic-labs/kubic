@@ -1,5 +1,8 @@
 # Architecture overview
 
+> The system at a glance: one agent in your directory, the packages it is
+> built from, and how a run flows through them.
+
 Kubic is a terminal coding agent: a single agent working directly in the
 user's directory, in-process, with the user's own authority. Its safety
 controls are the VCS-independent change journal and user-decided

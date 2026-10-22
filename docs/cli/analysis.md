@@ -161,7 +161,7 @@ file is refused by name (exit 2).
 
 Every suite runs on every model of `--models a,b` (else `--model`),
 `--repeat` times each (1 to 20, default 1), each run in a fresh temporary
-workspace through the real lane and scored from its trajectory by the gates.
+workspace through the real agent and scored from its trajectory by the gates.
 The report puts the models side by side — runs, passes, pass rate, cost per
 run, median latency and tokens per run — followed by each suite's passes per
 model; `--json` prints `{ok, exitCode, models, suites, runs}`. The command
@@ -187,7 +187,7 @@ id, exits 2 with one `error:` line.
 | Invocation | Meaning |
 | --- | --- |
 | `kubic replay traj.json` | Recorded exact: log-only, never re-executes. Exits 0 and prints the tier. |
-| `... --tier deterministic --model <provider/id> --lockfile <file>` | Re-executes the recorded objective through the lane at the pinned model. Refuses with exit 2 unless both pins are given. A pin that is not registered exits 6 (`provider_probe_failed`); a model the lockfile does not pin refuses with `lockfile-mismatch` (exit 2). |
+| `... --tier deterministic --model <provider/id> --lockfile <file>` | Re-executes the recorded objective through the agent at the pinned model. Refuses with exit 2 unless both pins are given. A pin that is not registered exits 6 (`provider_probe_failed`); a model the lockfile does not pin refuses with `lockfile-mismatch` (exit 2). |
 | `... --tier live --role-config <file>` | Re-executes at the recorded model under the pinned role config, a JSON file `{"role": "<name>"}`; refuses with exit 2 without it. |
 | `... --diff-against other.json` | Recorded compare: names the variables that changed (`model`, `worktree`, `diff`). Any difference exits 1 as the regression signal; identical trajectories exit 0. |
 
@@ -195,9 +195,9 @@ Under `--tier live` the role document `.kubic/roles/<name>.md` is loaded from
 the pinned worktree, so its tools and prompt apply, and `--model` and
 `--lockfile` are refused.
 
-- **Worktree pin.** The re-execution lane is rooted at the pinned
+- **Worktree pin.** The re-execution is rooted at the pinned
   worktree — the `--worktree` override, or the trajectory's recorded
-  `worktree.path` when that path exists on this machine — so the lane's
+  `worktree.path` when that path exists on this machine — so its
   tools, journal, role document and project `models.json` resolve there.
   A recorded worktree absent on this machine falls back to the working
   directory; `--worktree` is existence-checked before the run, so an
@@ -235,10 +235,10 @@ the pinned worktree, so its tools and prompt apply, and `--model` and
 
 The re-execution tiers read the effective config the same way
 `kubic run` does: the configured permission classes and journal
-retention govern the re-executed lane, and so does the enterprise
+retention govern the re-executed run, and so does the enterprise
 `[policy]` — a re-execution model outside `allowed_models`/
 `allowed_providers` exits 6 with the named policy refusal before any
-provider call, and the re-executed lane's tools are the same allow/deny
+provider call, and the re-executed run's tools are the same allow/deny
 intersection. A refused config exits 1 with the config's named reason
 instead of running on defaults.
 
@@ -354,7 +354,7 @@ rows. Costs below $1 print at 4 decimals (`$0.0023`), $1 and above at 2.
 
 The numbers are the sessions' `pi.usage` documents, so they match what
 `Harness.usage()` reports for the same run. Reading is read-only and never
-boots a lane. `--by request` lists one row per assistant entry that
+starts a session. `--by request` lists one row per assistant entry that
 carries its response's usage (the model spend of that request — tools that
 report their own spend aggregate at the higher levels); `--by project`
 rolls each workspace to a single row. `--by user` and `--by team` group on
@@ -468,23 +468,23 @@ prints); a new ledger is created `0600` in a `0700` directory, and
 
 - `kubic run` and `kubic tui` append one record per resolved approval ask,
   approved or denied, with `posture` `approvals` or `full-access`. An
-  untriggered call raises no ask and writes nothing; a call full access
-  waives is recorded once per capability it raised
+  untriggered call raises no ask and writes nothing; a call that runs
+  unasked because approvals are off is recorded once per capability it raised
   (`trigger:<capability>`, posture `full-access`), so the trail names what
   ran unapproved instead of one opaque `trigger:full-access` row per tool
   call. A run from `<repo>/sub` writes the repo ledger, never
   `<repo>/sub/.kubic/`.
-- The model on every record is the model the lane runs: `kubic run` reads
+- The model on every record is the model the session runs: `kubic run` reads
   it after the stored-model rule (`--session` without a pin keeps the
   session's own model, and both the record and `trajectory.json` say so).
-  `model.thinking` is the thinking level the lane runs, read from the
+  `model.thinking` is the thinking level the session runs, read from the
   conversation's agent document (a `/thinking` change mid-session is read
   at record time, so later rows name the new level).
 - `process.pid` names the process that made the decision.
 - `workspace.base` is the base revision the run started from: `HEAD` at
   run start, `none` outside git. A row that genuinely knows no better keeps
   the honest `unknown` instead of inventing a value.
-- Enabling full access (`--dangerously-skip-approvals` on `kubic`, `tui`,
+- Turning approvals off (`--dangerously-skip-approvals` on `kubic`, `tui`,
   `run` or `sessions create`, or the in-session `Alt+A` / `/approvals off`)
   appends one `posture:full-access` row naming the session and the
   command; turning approvals back on (`Alt+A` again, or `/approvals on`) appends

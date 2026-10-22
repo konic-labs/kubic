@@ -61,7 +61,7 @@ internal to the package.
   and a re-applied snapshot keeps every unchanged cell object;
   `transcript-steady.test.ts` counts the helpers a steady frame calls.
 - **Esc never quits.** It closes a dropdown, an overlay or an open panel,
-  else interrupts the turn. Ctrl-C cancels, clears or arms a quit; Ctrl-D quits on an empty
+  else interrupts the turn. Ctrl+C cancels, clears or arms a quit; Ctrl+D quits on an empty
   draft; plain characters always belong to the editor.
 
 ## Neighbours

@@ -171,7 +171,7 @@ exit 1 with `status: provider_transient` or `provider_auth` and the matching
 - **`kubic run`**: 2 for every usage error (missing `-p`/positional prompt,
   unknown option, missing or invalid value, stray operand, an unknown
   `--tools` name or one the permission classes forbid, `--tools` with
-  `--no-tools`), before any lane boots.
+  `--no-tools`), before any session starts.
   `KUBIC_PROVIDER` set to anything but `faux` ends `provider_probe_failed`
   (6). `--json`: the envelope's `ok` field is `exitCode === 0`.
   A wall-clock `--timeout` elapse is `status: timeout`, exit 1;
@@ -180,7 +180,7 @@ exit 1 with `status: provider_transient` or `provider_auth` and the matching
   carries an additive `failure: {code, remedy, strategy}` in the `--json`
   envelope (a failure code such as `tool_failed`, `model_failed`,
   `provider_transient`, `run_limit`, plus the retry remedy and
-  strategy). The lane's own detail decides the code — the durable
+  strategy). The run's own detail decides the code — the durable
   `model_error` reason is generic, so a rate-limit or tool-fault detail
   keeps its own code instead of collapsing into `model_failed`. A mid-run
   provider error is `provider_transient`/`provider_auth` (exit 1), never
@@ -196,7 +196,7 @@ exit 1 with `status: provider_transient` or `provider_auth` and the matching
 - **`kubic tui`**: 0 clean quit (final document printed), 2 usage
   errors (unknown options, missing values, operands, bad `--session`), 5
   missing session, 6 no reachable provider (a `KUBIC_PROVIDER` other than
-  `faux` included), 1 any other lane boot failure.
+  `faux` included), 1 any other failure to start.
   A signalled quit exits `128+signo` after the same drain, restore and
   session close as a keyboard quit: 129 `SIGHUP`, 130 `SIGINT`, 143
   `SIGTERM`. An exception in input or render, or an unhandled rejection,

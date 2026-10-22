@@ -226,7 +226,7 @@ read side:
 Interception alone has holes: a file moved by `bash`
 (`sed -i`, a formatter, `npm install` fallout, a build) never passes through
 Kubic's own `write`/`edit` operations, so nothing journals it. The run and TUI
-composition paths therefore capture a **baseline** when the lane boots and
+composition paths therefore capture a **baseline** when the session starts and
 **sweep** the workspace when it ends:
 
 - A path the walk could SEE but not READ is stored as the sentinel `unreadable`
@@ -238,7 +238,7 @@ composition paths therefore capture a **baseline** when the lane boots and
   recorded as deletes like any other disappearance.
 - **In `kubic tui` every prompt is a run**. The baseline
   is re-captured when each turn starts, a turn that used `bash` is swept when
-  it settles (so `Ctrl-O` / `Ctrl-R` and `kubic diff` from another terminal
+  it settles (so `Ctrl+O` / `Ctrl+R` and `kubic diff` from another terminal
   show the shell's change at once), and the baseline is re-captured again
   once no turn is running and before an idle quit. An edit you make in your
   own editor **between prompts** is therefore absorbed, never journaled as
@@ -249,7 +249,7 @@ composition paths therefore capture a **baseline** when the lane boots and
   quit-time sweep still catches a turn the quit interrupted and appends
   nothing for one that already settled.
 - The baseline is a metadata walk — sha256 per file, **no content copied** — of
-  the lane's workspace root, persisted as
+  the session's workspace root, persisted as
   `<sessions-root>/<id>/journal/baseline-<id>.json` beside that run's journal.
 - The sweep compares each path against its **expected state**: the last
   entry journaled for it during *this* run (the journal position is recorded
@@ -439,3 +439,8 @@ prune <time> <op> <path>`) and deletes nothing.
 kubic journal prune --keep-days 30
 kubic journal prune --session 3f2a --keep-days 30 --yes
 ```
+
+## See also
+
+- [The TUI](tui.md#panels): the diff and journal panels, and `/undo`.
+- [Journal and safety](../architecture/journal-and-safety.md): how the journal works.

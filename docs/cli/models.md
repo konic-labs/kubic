@@ -97,7 +97,7 @@ under a minute.
 A frozen enterprise `[model]` (`/etc/kubic/config.toml`) asks no model
 question: the step names the pinned model and nothing is written. With no
 provider key at all, setup names the variables to set (and `models.json`)
-and exits **6** without writing. A cancelled question (Ctrl-C / Esc) writes
+and exits **6** without writing. A cancelled question (Ctrl+C / Esc) writes
 nothing and exits **130**. Off a terminal (stdin or stdout not a TTY) setup
 refuses with `error: kubic setup is interactive: …` and the manual
 alternative (`[model]` in `~/.kubic/config.toml` or `KUBIC_MODEL`), exit
@@ -316,3 +316,8 @@ pass through Kubic: Pi hands the SDK the path, and the SDK reads the file.
 Anthropic counts as **configured** in `kubic models` and `kubic doctor` when
 the three required variables are present (the two ids are optional), while an
 API key or `ANTHROPIC_AUTH_TOKEN`, when set, wins as it does in Pi.
+
+## See also
+
+- [Configuration](configuration.md): `[model]`, `[providers]` and the layers.
+- [For teams](enterprise.md#keys-and-workload-identity): keys and workload identity.

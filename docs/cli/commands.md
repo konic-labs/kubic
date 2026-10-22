@@ -61,7 +61,7 @@ titles and option terms are styled, and the text is otherwise unchanged. `kubic 
 
 **Every command's own `--help`/`-h` is side-effect free**:
 commander answers it before the action runs, so `kubic run|tui --help`
-prints that command's usage and exits 0 without booting a lane or writing
+prints that command's usage and exits 0 without starting a session or writing
 the runtime exclude rules.
 
 Build first (`npm run build`), then invoke `./bin/kubic.js` (or
@@ -104,3 +104,8 @@ isolation, no containment — approvals plus the journal are the controls.
 | [The GitHub Action](github-action.md) | `uses: konic-labs/kubic@…` in a workflow |
 | [Skills](skills.md) | `kubic skills` |
 | [Analysis](analysis.md) | `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy`, `audit` |
+
+## See also
+
+- [Getting started](../getting-started.md): install Kubic and run a first task.
+- [Exit codes](exit-codes.md): what each code means.

@@ -6,6 +6,8 @@
 
 ## The approval card
 
+![The approval card for rm -rf dist: marked destructive, with the working directory and the keys to allow once, allow for the session, deny, deny with a comment, edit the command or ask for an explanation.](../assets/tui/approval-card.svg)
+
 A challenged call turns the editor into an **approval card** instead of being
 refused: an amber frame with the
 `APPROVAL` badge, the tool and `1 of N`; the exact command (`$ …`, its
@@ -64,7 +66,7 @@ on an edit, `v` opens the whole diff (twelve rows show by default). When the
 card does not fit — it needs its own rows plus six more for the header, the
 status line, the key hints and three rows of transcript — it **fails closed**:
 it says `the terminal is too short to show this command — enlarge it` and
-every allow key (`a`, `Ctrl-S`) is inert until the terminal is tall enough, so
+every allow key (`a`, `Ctrl+S`) is inert until the terminal is tall enough, so
 you can never allow what you cannot see. `d` (after arming) and `Esc` (at
 once) still deny, and the card re-checks on every frame and key, so enlarging
 the terminal restores it. The card is the same at every width; below 60
@@ -76,8 +78,8 @@ cannot strand the turn.
 An approval is consent to run code with your authority, so keys typed for
 the editor can never produce one. Asks arrive while you may be typing the
 next prompt, so the card is a capturing modal: while it shows, printable
-keys are dropped instead of reaching your draft (the global keys `Ctrl-C`,
-`Ctrl-D`, `Ctrl-T`, `Ctrl-O`, `Ctrl-R` and `Ctrl-X` still work). Three rules keep type-ahead and a held key from answering:
+keys are dropped instead of reaching your draft (the global keys `Ctrl+C`,
+`Ctrl+D`, `Ctrl+T`, `Ctrl+O`, `Ctrl+R` and `Ctrl+X` still work). Three rules keep type-ahead and a held key from answering:
 
 - **Arming delay, 400 ms.** Each request — including the next queued one —
   starts with decision keys ignored and the hint row reading
@@ -97,7 +99,7 @@ keys are dropped instead of reaching your draft (the global keys `Ctrl-C`,
   quiet period. `Esc` is exempt.
 
 Once armed the hint row shows the live keys:
-`a` allows once, `Ctrl-S` allows for the session — a key ordinary typing
+`a` allows once, `Ctrl+S` allows for the session — a key ordinary typing
 cannot produce — and `d` or `Esc` denies. The keys live in the approval key
 registry, which refuses a map where two actions share a key, allow-session
 is a prose key, or an approval key shadows one of the global keys.
@@ -186,7 +188,7 @@ Changes to running infrastructure: `kubectl apply/create/delete/rollout/patch/re
 
 ### `outside-write`
 
-A write outside the workspace in bash: any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), and the paths the shell writers name (listed below, under the heuristics). A delete outside the workspace (`rm`, `rmdir`, `find -delete`) raises `destructive-shell` instead. The `write` and `edit` tools never write outside the workspace: such a path is refused by name before any ask — full access and `autoApprove` included — so no card offers an allow the call could not honour, and a change outside the workspace goes through bash. A `write`/`edit` path under `~/.kubic` still raises `outside-write` when the workspace is the home directory.
+A write outside the workspace in bash: any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), and the paths the shell writers name (listed below, under the heuristics). A delete outside the workspace (`rm`, `rmdir`, `find -delete`) raises `destructive-shell` instead. The `write` and `edit` tools never write outside the workspace: such a path is refused by name before any ask — with approvals off and `autoApprove` too — so no card offers an allow the call could not honour, and a change outside the workspace goes through bash. A `write`/`edit` path under `~/.kubic` still raises `outside-write` when the workspace is the home directory.
 
 ### `privilege-escalation`
 
@@ -194,7 +196,7 @@ A write outside the workspace in bash: any redirect target (`>`, `>>`, `2>`, `&>
 
 ### `kubic-state-write`
 
-A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (the project's, from a subdirectory) or `~/.kubic/` (the global `config.toml`) — or into the workspace's own `.git/` (hooks, `config`): a planted hook runs on the host's later git commands, so it asks too: the `write`/`edit` tools, any redirect target (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), the paths the shell writers name (the same table as `outside-write`), or an `rm`/`rmdir`/`mv` operand and what `find -delete` walks (deleting or moving control-plane state is tampering; a `cp` source is only read). Relative targets resolve against a preceding `cd`/`pushd`, quote-split and backslash-escaped segments are read as the shell reads them (`".kubic"/roles/r.md`), and `$HOME/`/`${HOME}/` count exactly like `~/`. **Always asks**: `autoApprove` and `--full-access` never answer it (an `autoApprove` entry naming it is ignored and warned about by `kubic doctor`). Writes into `.kubic/journal/`, `.kubic/audit/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (see [journal and safety](../architecture/journal-and-safety.md)).
+A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (the project's, from a subdirectory) or `~/.kubic/` (the global `config.toml`) — or into the workspace's own `.git/` (hooks, `config`): a planted hook runs on the host's later git commands, so it asks too: the `write`/`edit` tools, any redirect target (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), the paths the shell writers name (the same table as `outside-write`), or an `rm`/`rmdir`/`mv` operand and what `find -delete` walks (deleting or moving control-plane state is tampering; a `cp` source is only read). Relative targets resolve against a preceding `cd`/`pushd`, quote-split and backslash-escaped segments are read as the shell reads them (`".kubic"/roles/r.md`), and `$HOME/`/`${HOME}/` count exactly like `~/`. **Always asks**: `autoApprove` and approvals off never answer it (an `autoApprove` entry naming it is ignored and warned about by `kubic doctor`). Writes into `.kubic/journal/`, `.kubic/audit/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (see [journal and safety](../architecture/journal-and-safety.md)).
 
 ## How detection works
 

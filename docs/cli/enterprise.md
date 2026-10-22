@@ -1,7 +1,9 @@
-# Enterprise policy
+# Teams and enterprise
 
-> The managed `[policy]` layer an organization deploys, and the audit sinks it
-> requires. Back to [configuration](configuration.md).
+> What an organization can manage: the policy layer, telemetry, data loss
+> prevention, spend caps, the bash sandbox, the egress proxy, MCP servers,
+> keys and identity, regions, corporate networks, headless approvals, admin
+> hooks and audit.
 
 An enterprise admin can put a `[policy]` section in the managed
 `config.toml` — `/etc/kubic/config.toml`, or the platform's
@@ -42,7 +44,7 @@ them:
   tiers of `kubic replay` (the explicit `--model` pin, `[model]`,
   `KUBIC_MODEL`, a role pin, and the implicit first-available pick) before
   any provider call.
-- `allowed_tools` / `denied_tools` — the lane's tool intersection. The
+- `allowed_tools` / `denied_tools` — the tool intersection. The
   system prompt's `tools:` line and the active tool set are the same set;
   a tool named in `denied_tools` cannot be re-enabled by a project config,
   a role document or the model.
@@ -182,7 +184,7 @@ With `enabled = true`, Kubic sends every `kubic run` — and every settled
 `kubic tui` turn — to an OpenTelemetry collector over OTLP/HTTP (JSON), once,
 when it settles:
 
-- **Traces.** One trace per run: the `kubic.agent.run` span, the lane phases
+- **Traces.** One trace per run: the `kubic.agent.run` span, the phases of the run
   under it (`kubic.lane.accept`, `kubic.lane.drive`) and one
   `pi.tool.execute` span per tool call, with its error status. The run span
   carries the GenAI attributes — `gen_ai.provider.name`,
@@ -757,7 +759,7 @@ target = "/var/log/kubic.jsonl"
   record appended at the exact `target` path), or `memory`
   (process-scoped, for embedders and tests).
 - `level`: `privileged` keeps approval decisions (`tool:<name>`), run
-  starts (`run:start`), posture changes — the full-access grant
+  starts (`run:start`), posture changes — turning approvals off
   (`posture:full-access`), its revoke (`posture:approvals`) and a refused
   mid-session change to `posture.json` (`posture:changed-mid-session`) —
   undo restores (`undo-restore`), gate commands (`verify:<gate>`) and
@@ -840,3 +842,8 @@ Unknown keys inside `[policy]` fail closed and are named. `kubic policy
 --tool <name>` answers from the merged enterprise and installed policy and
 names the deciding layer (`deny bash (enterprise)`), so the offer and
 `kubic run` cannot disagree.
+
+## See also
+
+- [Configuration](configuration.md): the layers and every key.
+- [Threat model](../architecture/threat-model.md): what these controls defend.

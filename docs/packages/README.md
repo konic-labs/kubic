@@ -1,5 +1,8 @@
 # Package pages
 
+> One page per package: its entry points, the invariants it keeps and its
+> neighbours.
+
 One page per package. Each page names the package's entry points, the
 invariants it keeps and its neighbours; architecture rationale and CLI
 usage live elsewhere.

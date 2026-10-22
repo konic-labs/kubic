@@ -1,10 +1,7 @@
 # Project trust
 
-> Project-local configuration requires project trust (`.kubic/config.toml`
-> is committed). Implementation:
-> `packages/host/src/config/trust-store.ts` (the store + the one trust
-> report), `packages/host/src/config/trust-cli.ts` (`kubic trust`),
-> `apps/kubic/src/config/load.ts` (the prompt and the load gate).
+> When a project's own files take effect, what a grant covers, and `kubic
+> trust`.
 
 A repository can commit `.kubic/config.toml`, and that file is
 configuration: it can change the model, the approval policy, the permission
@@ -21,7 +18,7 @@ error: project-local config refused pre-trust: <path>/.kubic/config.toml — run
 The same gate covers the project `models.json`, ancestor project skills,
 the project role documents and the project's `AGENTS.md` files, so a
 repository cannot point a provider — and your API key — at its own URL, nor
-inject lane instructions, either. The flip side is what a grant means:
+inject instructions for the agent, either. The flip side is what a grant means:
 **one `yes` covers all five**. A trusted project's `models.json` may name
 any `*_API_KEY` (or `KUBIC_*`) variable as its provider's key, and that key
 — the real one, if you have it set — is sent to the provider URL the file
@@ -204,20 +201,20 @@ A project whose files changed since its grant is asked about the same way,
 headed `<project> changed since you trusted it — load its project config
 again?`, with a fourth key, `d  view changes`, that prints the review.
 
-- **`y` yes** records a grant for the project as it is now and boots the
-  lane with the project layer; the first screen's trust row then reads
+- **`y` yes** records a grant for the project as it is now and starts the
+  session with the project layer; the first screen's trust row then reads
   `.kubic/config.toml loaded`.
 - **`v` view file** prints the config (its first 40 lines, control bytes
   removed) and asks again.
-- **`n` not now** records nothing: the lane stops on the refusal (exit 1),
+- **`n` not now** records nothing: the session stops on the refusal (exit 1),
   and the next `kubic tui` asks again.
-- **Cancel** (Ctrl-C / Esc) records nothing and fails closed the same way.
+- **Cancel** (Ctrl+C / Esc) records nothing and fails closed the same way.
 - A recorded decision is not asked again while the project's files stay as
   they were. A grant whose files changed is asked again, and the question
   says the project changed since you trusted it. `kubic trust --revoke`
   removes a decision if you want the question back; `kubic trust` records a
   grant without the question.
-- `kubic run` never prompts: it is the non-interactive lane, so an
+- `kubic run` never prompts: it has no terminal to ask on, so an
   untrusted project config refuses with the remedies named. Scripts use
   `KUBIC_TRUST_PROJECT=1` or a prior `kubic trust`.
 
@@ -255,3 +252,8 @@ per-path decision. An organization can still bound what a trusted project may
 set with `[policy] project_policy = "restricted"` — see
 [Restricting project configuration](enterprise.md#restricting-project-configuration). See [configuration](configuration.md) for the layer
 precedence and [exit codes](exit-codes.md) for the code table.
+
+## See also
+
+- [Configuration](configuration.md#project-trust): the project layer and its root.
+- [Models and providers](models.md#modelsjson): the project `models.json`.

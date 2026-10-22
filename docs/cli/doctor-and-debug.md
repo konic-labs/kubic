@@ -25,7 +25,7 @@ exits 2.
 totals line, the checks grouped by area (RUNTIME, PROVIDERS, PROJECT, POLICY,
 LIMITS, ROLES, SKILLS, and OTHER for anything new) with `✓`, `▲`, `✕` or `○`,
 passing checks packed onto shared lines, every warning on its own short line,
-a failure always in full, and the five honest-limit warnings folded into one
+a failure always in full, and the five limit warnings folded into one
 `▲ honest limits: …` line. For example:
 
 ```text
@@ -117,7 +117,7 @@ the exit code.
 | [`policy:enforceability`](#policyenforceability) | Can this version honor the policy? |
 | [`limit:provider-availability`](#limitprovider-availability) | Is at least one provider available? |
 | [`limit:deps-present`](#limitdeps-present) | Are all the dependencies present? |
-| [`limit:<…>` (five static notices)](#limit-five-static-notices) | The honest limits, always stated. |
+| [`limit:<…>` (five static notices)](#limit-five-static-notices) | The limits Kubic states, always as a warning. |
 
 ### `provider:<id>`
 
@@ -277,7 +277,7 @@ Are all dep probes present?
 
 ### `limit:<…>` (five static notices)
 
-Honest limits, always `warn`: no isolation, no injection prevention, policy is an offer not enforcement, journal is not a backup, an MCP server's own reach is outside Kubic's interceptors.
+Always `warn`: no isolation, no injection prevention, policy is an offer not enforcement, journal is not a backup, an MCP server's own reach is outside Kubic's interceptors.
 
 **What to do:** Nothing to fix — they are disclosures, not failures. If your matrix is all-green except warns, you are healthy (exit 0).
 

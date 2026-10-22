@@ -20,38 +20,38 @@ spend caps on top.
 
 <table>
   <tr>
-    <td width="33%" valign="top">
+    <td width="33%" valign="top"><dl><dd><br>
       <img src="docs/assets/readme/icon-models.svg" width="24" height="24" alt=""><br>
       <b>Any model</b><br>
-      Anthropic, OpenAI, Google, Bedrock, OpenRouter, or any OpenAI-compatible endpoint, local ones included.
-    </td>
-    <td width="33%" valign="top">
+      Anthropic, OpenAI, Google, Bedrock, OpenRouter or your own endpoint.
+    </dd></dl></td>
+    <td width="33%" valign="top"><dl><dd><br>
       <img src="docs/assets/readme/icon-journal.svg" width="24" height="24" alt=""><br>
       <b>Undo any turn</b><br>
-      Every file change is journaled. <code>kubic diff</code> and <code>/undo</code> work with or without git.
-    </td>
-    <td width="33%" valign="top">
+      Every change is journaled; <code>/undo</code> works with or without git.
+    </dd></dl></td>
+    <td width="33%" valign="top"><dl><dd><br>
       <img src="docs/assets/readme/icon-approvals.svg" width="24" height="24" alt=""><br>
       <b>Approvals</b><br>
-      Destructive, networked and out-of-workspace actions ask first. Headless runs use a broker or signed pre-approvals.
-    </td>
+      Risky actions ask first, in the TUI or through a broker.
+    </dd></dl></td>
   </tr>
   <tr>
-    <td valign="top">
+    <td width="33%" valign="top"><dl><dd><br>
       <img src="docs/assets/readme/icon-sessions.svg" width="24" height="24" alt=""><br>
       <b>Sessions that branch</b><br>
-      Sessions are durable. <code>/tree</code> branches from any earlier prompt and keeps both.
-    </td>
-    <td valign="top">
+      Durable sessions; <code>/tree</code> branches from any prompt.
+    </dd></dl></td>
+    <td width="33%" valign="top"><dl><dd><br>
       <img src="docs/assets/readme/icon-sandbox.svg" width="24" height="24" alt=""><br>
       <b>A sandbox for bash</b><br>
-      Opt in to Seatbelt or bubblewrap: commands write only inside the workspace and reach no network unless allowed.
-    </td>
-    <td valign="top">
+      Opt in to Seatbelt or bubblewrap to confine commands.
+    </dd></dl></td>
+    <td width="33%" valign="top"><dl><dd><br>
       <img src="docs/assets/readme/icon-policy.svg" width="24" height="24" alt=""><br>
       <b>Built for teams</b><br>
-      Signed managed policy, OIDC and keychain keys, an MCP allowlist, an audit ledger and spend caps.
-    </td>
+      Managed policy, an audit ledger, spend caps and OIDC.
+    </dd></dl></td>
   </tr>
 </table>
 
@@ -72,18 +72,6 @@ key, `KUBIC_PROVIDER=faux ./bin/kubic.js` opens the TUI on a built-in model that
 echoes your prompts.
 
 [Getting started](docs/getting-started.md) walks through a first session.
-
-## Honest limits
-
-- **No isolation.** Kubic acts with your authority: your files, your network and
-  your credentials. Approvals, the journal and the opt-in bash sandbox are the controls.
-- **No prompt-injection prevention.** Tool output is treated as data, never as
-  instructions, but a model can still be steered by what it reads.
-- **The journal is an undo log, not a backup.** It restores files in the workspace,
-  not what a command changed elsewhere.
-
-`kubic doctor` reports these and the rest; the
-[threat model](docs/architecture/threat-model.md) has the detail.
 
 ## Documentation
 

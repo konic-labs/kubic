@@ -681,7 +681,4 @@ room.
 - [Project trust](trust.md): the trust store and what a grant covers.
 - [Models and providers](models.md): `models.json` and provider keys.
 - [For teams](enterprise.md): the managed layers, policy and audit.
-- [Doctor and debug](doctor-and-debug.md): the `kubic doctor` checks, including
-  the honest limits it states: Kubic runs in-process with your authority, the
-  approval policy routes asks rather than enforcing them, and the journal is a
-  review and undo log, not a backup.
+- [Doctor and debug](doctor-and-debug.md): the `kubic doctor` checks.

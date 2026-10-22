@@ -343,7 +343,7 @@ to use it, plainly.
   image has alt text that says what it shows (`alt=""` for a decorative one),
   stays under 300 KB, and is used by some page; `npm run docs:check` checks all
   three.
-- **Honest limits.** Kubic has no isolation: never imply otherwise.
+- **No isolation.** Kubic has none: never imply otherwise.
 
 ## CI
 

@@ -2,7 +2,7 @@
 
 > When a tool call needs your decision, how you answer it in the TUI, and
 > what each trigger detects. The policy keys are on
-> [configuration](configuration.md). Back to the [command index](commands.md).
+> [configuration](configuration.md).
 
 ## The approval card
 
@@ -102,70 +102,105 @@ cannot produce — and `d` or `Esc` denies. The keys live in the approval key
 registry, which refuses a map where two actions share a key, allow-session
 is a prose key, or an approval key shadows one of the global keys.
 
-These keys are classified by the terminal library's key decoder, not by
-matching raw bytes, so they work on terminals that negotiate the Kitty
-keyboard protocol (`Esc` arrives as `\x1b[27u` rather than `\x1b`, `Ctrl-D`
-as `\x1b[100;5u`, `Ctrl-C` as `\x1b[27;5;99~`) as well as on terminals that
-send the legacy control bytes. On terminals that also report key-release
-and key-repeat events (Kitty, Ghostty, WezTerm, foot, recent iTerm2), each
-key acts on its press only: a release is ignored, so a toggle never
-cancels itself on key-up and a `Ctrl-C` cancel or an `Esc` deny never
-becomes a quit. A held key repeats in the editor (held `Backspace` keeps
-deleting), but repeats of the global keys and the approval keys are
-ignored — a held `Ctrl-O` does not strobe the panel. Every key repaints
-the screen at once, including while no turn is running. A refused cancel is reported in the editor
-footer (`cancel failed: …`) instead of being swallowed — the turn keeps
-running and the key is never a silent no-op.
+### The card's keys
 
-Quitting leaves the alternate screen first (autowrap, cursor, mouse and
-keyboard modes restored) and **then** prints the final document on your
-main screen, so it stays in your scrollback: the whole last frame at the
-terminal's width — header, tree, the transcript including the last
-assistant answer, notice row, editor, status line and key hints — on stdout,
-without the
-editor's cursor artifacts (the hardware-cursor marker and the inverse-video
-cursor cell are stripped, as Pi's own stop path strips the marker). A crash
-restore (see **Signals and crashes** below) prints no document. **Quitting mid-turn aborts the turn** — `Ctrl-D`, `SIGINT` or stdin EOF while a turn runs (and `Esc`/`Ctrl-C` from their *second* press: the first one cancels the turn and keeps the session): the turn
-is aborted (durably recorded in the session, so a resumed session shows no
-unfinished work), every tool process group it started is killed, and
-the loop waits for it to settle (footer: `cancelling…`, at most 3 s) before
-the end-of-run reconciliation sweep and the session close — so a killed
-tool's last write is still journaled and no child keeps running after the
-TUI exits. A further `Ctrl-C` (or `SIGINT`) during that wait exits at once — a real press only: the repeat and release events a
-Kitty-class terminal reports for a held `Ctrl-C` are ignored, like every
-other repeat of a global key. The 3 s bound covers the whole drain, the abort request included: an abort that never answers does not block the quit (the registered kills still run, and a kill registered after
-that drain is run once more when the session closes).
-Before the screen is restored the quit drains stdin for a moment (the Kitty
-keyboard protocol is popped first), so the release of the quitting key —
-which can arrive late over SSH — is swallowed instead of printing as
-`[27;1:3u` in your shell.
+- **`a`, allow once**: this call only, after the arming delay and the quiet
+  period, and only while the card can show the whole command. Nothing is
+  stored: the next identical call asks again.
+- **`Ctrl+S`, allow for the session**: after the arming delay and the quiet
+  period, and only while the card can show the whole command; never a bare
+  letter. It is latched in `<session>/approvals.json`, so identical calls in
+  this session are not asked again, after a re-attach too.
+- **`A`, allow all edits this turn**: for an edit or write ask that a role's
+  `requires` raised inside the workspace, this call and every such ask until
+  the turn ends. Never another capability: a write outside the workspace,
+  into `.kubic/` or onto credentials still asks. The status line says `edits
+  auto-approved this turn` while it applies, and nothing is latched.
+- **`d` or `Esc`, deny**: `Esc` acts at once, the only immediate key, and `d`
+  after the arming delay. A denial latches for the session like `Ctrl+S`, so
+  the same operation is refused without asking again.
+- **`c`, deny with a comment**: opens a one-line input on the card. `Enter`
+  denies with `denied by the user: <comment>` as the reason the model reads
+  (an empty comment is a plain deny), and `Esc` goes back to the card. At most
+  500 characters, recorded in the ledger as the denial's reason; like `d`, the
+  denial latches for the session.
+- **`e`, edit the command, then allow it** (shell asks only): opens the
+  proposed command in a one-line input, and `Enter` runs what you typed
+  instead. The edited command is judged again from the start, so an edit that
+  is itself destructive asks again; an unchanged command is a plain allow
+  once, and an emptied one is not accepted. The call's result opens with
+  `[edited by the user — ran: <yours> (proposed: <the model's>)]`, so neither
+  the model nor the transcript takes it for the proposed command's output.
+  Nothing is latched; the ledger records both commands.
+- **`v`**: shows the next page of a command too tall for the card, or an
+  edit's whole diff. It never decides.
+- **`?`**: opens and closes the model's explanation for the ask. It never
+  decides.
 
-## `autoApprove` capabilities
+## What asks
 
-`autoApprove` entries name capabilities — the strings `detectTriggers`
+Each challenged call names the capability it raises, and `autoApprove`
+entries name the same capabilities: the strings `detectTriggers`
 (`packages/host/src/approvals/triggers.ts`) raises on tool calls. The known set
 (`CAPABILITIES`):
 
 | Capability | Raised by |
 | --- | --- |
-| `network` | A network command under `network = "none"`, including one hidden inside `$(…)` (nested substitutions included), backticks, or after `eval`. The transfer clients raise wherever their name appears: `curl`, `wget`, `ssh`, `scp`, `sftp`, `ftp`, `lftp`, `telnet`, `nc`, `ncat`, `netcat`, `socat`, `aria2c`. These raise by subcommand, read for the command a segment runs (past its wrappers and the tool's own options): `git clone`/`fetch`/`pull`/`ls-remote`, `git remote update`, `git submodule update`/`sync`, `git lfs fetch`/`pull`/`push`/`clone`; `gh` (anything but `help`, `version`, `completion`, `alias`, `config`); `docker`/`podman` `pull`/`push`/`login`/`search`/`build`/`buildx`; `cargo fetch`/`update`/`search`/`publish`/`login`; `go get`, `go mod download`; `npm`/`pnpm`/`yarn` `view`/`info`/`show`/`search`/`audit`/`publish`/`login`/`adduser`/`ping`/`outdated`/`whoami`; `pip`/`pip3` `download`/`index`/`search`; `openssl s_client`/`s_time`; and `rsync` with a remote operand (`host:path`, `rsync://`). Remote for everything they do except their own help or version: database clients (`psql`, `mysql`, `mariadb`, `mongosh`, `redis-cli`, `cqlsh`, `sqlcmd`, `clickhouse-client`, `bq`, …), deploy CLIs (`fly`/`flyctl`, `vercel`, `netlify`, `heroku`, `wrangler`, `firebase`, `supabase`, `railway`, `doctl`, `eksctl`, `serverless`, `cdk`, `sam`, …), `gsutil`, network diagnostics (`dig`, `nslookup`, `ping`, `traceroute`, `nmap`, `whois`) and HTTP clients (`http`/`https`, `xh`, `grpcurl`, `websocat`, `huggingface-cli`/`hf`). Remote except for their local configuration and rendering subcommands: `aws` (not `configure`), `gcloud` (not `config`, `info`), `az` (not `config`), `kubectl` (not `config`, `completion`, `kustomize`, `plugin`, `version --client`), `helm` (not `template`, `lint`, `create`, `package`, `verify`), `terraform`/`tofu` (not `fmt`, `validate`, `version`, `console`, `graph`) and `pulumi`. By subcommand also: `docker run`/`create` and `docker compose up`/`pull`/`push`/`build`/`run`/`create` (they pull images), `git submodule add`, `rclone` with a `remote:` operand, `deno` with a URL, publishing (`npm unpublish`/`deprecate`/`owner`/`dist-tag`/`token`/`access`, `cargo yank`/`owner`, `gem push`/`yank`/`owner`, `twine upload`, `poetry`/`uv`/`hatch`/`flit publish`, `dotnet nuget push`, `mvn deploy`, `gradle publish…`) and `ollama pull`/`push`/`run`. `git push` is `git-push`'s to raise. Stated misses: an interpreter (`python3 -c`, `node -e`), a build or install script (`go build`, `cargo build` fetching dependencies), and a tool this list does not name. |
-| `credentials` | An access to a listed credential location, under the effective `credentials` class — which enforces as `none`, `allowlist` included. Bash: home credential paths (`~/.aws/`, `~/.ssh/` — every child except the known-public `known_hosts*`, `authorized_keys*` and `*.pub`, so `~/.ssh/github` and `~/.ssh/*` raise, `~/.config/gh/`, `~/.config/gcloud/`, `~/.docker/config.json`, `~/.kube/config`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, `~/.azure/`) spelled `~`, `$HOME`, `${HOME}`, `/Users/<user>` or `/home/<user>`, reads of the OS credential store (`security find-generic-password`, `find-internet-password`, `dump-keychain` and `export` on macOS, `secret-tool lookup` and `search` on Linux), plus workspace credential files (`.env`, `.env.*` except `.env.example`/`.env.sample`/`.env.template`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*` — the public `*.pub` halves excluded). Read-family tools (`read`, `ls`, `find`, `grep`): the same names in the `path`/`root` argument, as typed before the confine rewrite (a home path is rewritten before the tool opens it, but the ask sees it), and the name filters `grep.include` / `find.nameContains` when the filter is a substring of a credential name or contains one (`include: "env"` reaches `.env`, `include: "src/.env.local"` too) — filters shorter than 3 characters are not treated as credential selectors. Matching is case-folded, like the default macOS/Windows volumes. Lexical detection, not enforcement: an obfuscated or built-up path is a stated miss. Also fires via `requires:<tool>`. |
-| `git-push` | `git push`, `git remote add/set-url/remove/rename` — in any command segment (`ls; git push`, `cd x && git push`), after git global options (`git -C . push`, `git -c k=v push`, `--git-dir=…`, `--work-tree=…`, `--no-pager`; an option argument may be quoted: `git -C "my dir" push`) and after any command-position boundary: whitespace, `\| ; &`, `(` (`$(git push)`), a path (`/usr/bin/git push`), a backslash (`\git push`), a quote (`bash -c 'git push'`, `sh -c "git push"`) or a backtick. The word must be exactly `git` followed by whitespace — `mygit push`, `digit push`, `gitpush` and `git-lfs push` do not raise. |
-| `destructive-shell` | The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, an amended commit — `git commit --amend`, and the `git_commit` tool with `amend` — `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive, and a merge — `git merge` or the `git_merge` tool — is a workspace write the journal records). History and refs the journal never sees, because its sweep skips `.git/`: a forced branch delete or move (`git branch -D`, `--delete --force`, `-f`), a dropped or cleared stash, `git reflog expire`/`delete`, `git gc --prune`, `git prune`, `git update-ref -d`, `git tag -d`, `git filter-branch`/`filter-repo`, a rebase (not `--abort`, `--continue`, `--skip` or `--quit`), a reset to another commit (`--soft`, `--mixed`, `--keep`, `--merge`, `HEAD~n`, a commit id), `git checkout -B`, `git switch -C`/`--discard-changes`/`-f` and `git worktree remove`. Teardown the journal cannot restore: `terraform`/`tofu destroy` (and `apply -destroy`, `state rm`, `workspace delete`), `pulumi destroy`, `helm uninstall`, `aws … delete-*`/`terminate-*`/`s3 rm`/`s3 rb`, `gsutil rm`/`rb`, `gcloud … delete`, `az … delete`, `gh … delete`, a container prune or `volume rm`, `npm unpublish`, `dropdb`, `crontab -r`, and SQL that drops, truncates or deletes data (`DROP TABLE`, `TRUNCATE`, `DELETE FROM`, `FLUSHALL`, …) in a command that runs a database client, here-documents included. The quiet forms stay quiet: `git branch -d`, `git stash list`/`pop`, bare `git reset`, `git reset -- <path>`, `git rebase --abort`. including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. `rm`/`rmdir` counts wherever it is the command that runs: at a command start or after `then`, `do`, `else`, `{`, `!` or a subshell `(`; behind `sudo`, `doas`, `env`, `nice`, `ionice`, `timeout`, `time`, `nohup`, `command`, `builtin`, `exec`, `stdbuf` or a `NAME=value` assignment; spelled `\rm`, `'rm'` or `/bin/rm`. It raises when it is recursive or forced, or names a target outside the workspace or on a sensitive path; run by `xargs` or by `find -exec`/`-execdir`/`-ok`/`-okdir` it is a bulk delete and raises whatever its flags. Stated misses: a delete inside a string another interpreter runs (`bash -c 'rm …'`, `python3 -c`, `node -e`). |
-| `install` | Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv sync`, `uv pip install`, `uv tool install`, `uvx`, `poetry add/install`, `pdm add/install`, `pipenv install`, `conda`/`mamba`/`micromamba install/create`, `gem install`, `bundle install/add`, `composer require/install`, `brew install`, `port install`, `apt install`, `yum`/`dnf`/`zypper install`, `apk add`, `pacman -S…`, `snap install`, `deno install/add`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs. |
-| `deploy` | Changes to running infrastructure: `kubectl apply/create/delete/rollout/patch/replace/scale/edit/set/label/annotate/drain/cordon/uncordon/taint/expose/autoscale`, `helm install/upgrade/rollback/uninstall`, `terraform`/`tofu apply/destroy/import`, `pulumi up/destroy/refresh`, `docker push`, `gh release create`, and platform deploys (`fly deploy`, `vercel deploy`/`--prod`, `netlify deploy`, `wrangler deploy`, `firebase deploy`, `serverless`/`sls`/`cdk`/`sam deploy`, `railway up`, `supabase db push`/`functions deploy`, `gcloud app/run/functions deploy`, `az webapp/functionapp deploy/up`). |
-| `outside-write` | A write outside the workspace in bash: any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), and the paths the shell writers name (listed below, under the heuristics). A delete outside the workspace (`rm`, `rmdir`, `find -delete`) raises `destructive-shell` instead. The `write` and `edit` tools never write outside the workspace: such a path is refused by name before any ask — full access and `autoApprove` included — so no card offers an allow the call could not honour, and a change outside the workspace goes through bash. A `write`/`edit` path under `~/.kubic` still raises `outside-write` when the workspace is the home directory. |
-| `privilege-escalation` | `sudo` anywhere in the command. |
-| `kubic-state-write` | A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (the project's, from a subdirectory) or `~/.kubic/` (the global `config.toml`) — or into the workspace's own `.git/` (hooks, `config`): a planted hook runs on the host's later git commands, so it asks too: the `write`/`edit` tools, any redirect target (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), the paths the shell writers name (the same table as `outside-write`), or an `rm`/`rmdir`/`mv` operand and what `find -delete` walks (deleting or moving control-plane state is tampering; a `cp` source is only read). Relative targets resolve against a preceding `cd`/`pushd`, quote-split and backslash-escaped segments are read as the shell reads them (`".kubic"/roles/r.md`), and `$HOME/`/`${HOME}/` count exactly like `~/`. **Always asks**: `autoApprove` and `--full-access` never answer it (an `autoApprove` entry naming it is ignored and warned about by `kubic doctor`). Writes into `.kubic/journal/`, `.kubic/audit/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (see [journal and safety](../architecture/journal-and-safety.md)). |
+| [`network`](#network) | A command that reaches the network while `network = "none"`. |
+| [`credentials`](#credentials) | Reaching a known credential location: `~/.ssh`, `~/.aws`, `.env` files, the system keychain. |
+| [`git-push`](#git-push) | `git push`, and changes to the remotes. |
+| [`destructive-shell`](#destructive-shell) | Deleting or rewriting what the journal cannot restore: `rm -rf`, force pushes, history rewrites, infrastructure teardown. |
+| [`install`](#install) | Package installs and fetch-and-run launchers (`npm install`, `npx`, `pip install`, …). |
+| [`deploy`](#deploy) | Changes to running infrastructure (`kubectl apply`, `terraform apply`, platform deploys). |
+| [`outside-write`](#outside-write) | A `bash` write outside the workspace. |
+| [`privilege-escalation`](#privilege-escalation) | `sudo` anywhere in the command. |
+| [`kubic-state-write`](#kubic-state-write) | A write into Kubic's own state or the workspace's `.git/`. Always asks. |
 
 `requires:<tool>` is accepted alongside them (the per-tool trigger). A name
 outside this set is reported by `kubic doctor` (`policy:approvals`), never
 silently ignored.
 
+### `network`
+
+A network command under `network = "none"`, including one hidden inside `$(…)` (nested substitutions included), backticks, or after `eval`. The transfer clients raise wherever their name appears: `curl`, `wget`, `ssh`, `scp`, `sftp`, `ftp`, `lftp`, `telnet`, `nc`, `ncat`, `netcat`, `socat`, `aria2c`. These raise by subcommand, read for the command a segment runs (past its wrappers and the tool's own options): `git clone`/`fetch`/`pull`/`ls-remote`, `git remote update`, `git submodule update`/`sync`, `git lfs fetch`/`pull`/`push`/`clone`; `gh` (anything but `help`, `version`, `completion`, `alias`, `config`); `docker`/`podman` `pull`/`push`/`login`/`search`/`build`/`buildx`; `cargo fetch`/`update`/`search`/`publish`/`login`; `go get`, `go mod download`; `npm`/`pnpm`/`yarn` `view`/`info`/`show`/`search`/`audit`/`publish`/`login`/`adduser`/`ping`/`outdated`/`whoami`; `pip`/`pip3` `download`/`index`/`search`; `openssl s_client`/`s_time`; and `rsync` with a remote operand (`host:path`, `rsync://`). Remote for everything they do except their own help or version: database clients (`psql`, `mysql`, `mariadb`, `mongosh`, `redis-cli`, `cqlsh`, `sqlcmd`, `clickhouse-client`, `bq`, …), deploy CLIs (`fly`/`flyctl`, `vercel`, `netlify`, `heroku`, `wrangler`, `firebase`, `supabase`, `railway`, `doctl`, `eksctl`, `serverless`, `cdk`, `sam`, …), `gsutil`, network diagnostics (`dig`, `nslookup`, `ping`, `traceroute`, `nmap`, `whois`) and HTTP clients (`http`/`https`, `xh`, `grpcurl`, `websocat`, `huggingface-cli`/`hf`). Remote except for their local configuration and rendering subcommands: `aws` (not `configure`), `gcloud` (not `config`, `info`), `az` (not `config`), `kubectl` (not `config`, `completion`, `kustomize`, `plugin`, `version --client`), `helm` (not `template`, `lint`, `create`, `package`, `verify`), `terraform`/`tofu` (not `fmt`, `validate`, `version`, `console`, `graph`) and `pulumi`. By subcommand also: `docker run`/`create` and `docker compose up`/`pull`/`push`/`build`/`run`/`create` (they pull images), `git submodule add`, `rclone` with a `remote:` operand, `deno` with a URL, publishing (`npm unpublish`/`deprecate`/`owner`/`dist-tag`/`token`/`access`, `cargo yank`/`owner`, `gem push`/`yank`/`owner`, `twine upload`, `poetry`/`uv`/`hatch`/`flit publish`, `dotnet nuget push`, `mvn deploy`, `gradle publish…`) and `ollama pull`/`push`/`run`. `git push` is `git-push`'s to raise. Stated misses: an interpreter (`python3 -c`, `node -e`), a build or install script (`go build`, `cargo build` fetching dependencies), and a tool this list does not name.
+
+### `credentials`
+
+An access to a listed credential location, under the effective `credentials` class — which enforces as `none`, `allowlist` included. Bash: home credential paths (`~/.aws/`, `~/.ssh/` — every child except the known-public `known_hosts*`, `authorized_keys*` and `*.pub`, so `~/.ssh/github` and `~/.ssh/*` raise, `~/.config/gh/`, `~/.config/gcloud/`, `~/.docker/config.json`, `~/.kube/config`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.git-credentials`, `~/.azure/`) spelled `~`, `$HOME`, `${HOME}`, `/Users/<user>` or `/home/<user>`, reads of the OS credential store (`security find-generic-password`, `find-internet-password`, `dump-keychain` and `export` on macOS, `secret-tool lookup` and `search` on Linux), plus workspace credential files (`.env`, `.env.*` except `.env.example`/`.env.sample`/`.env.template`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*` — the public `*.pub` halves excluded). Read-family tools (`read`, `ls`, `find`, `grep`): the same names in the `path`/`root` argument, as typed before the confine rewrite (a home path is rewritten before the tool opens it, but the ask sees it), and the name filters `grep.include` / `find.nameContains` when the filter is a substring of a credential name or contains one (`include: "env"` reaches `.env`, `include: "src/.env.local"` too) — filters shorter than 3 characters are not treated as credential selectors. Matching is case-folded, like the default macOS/Windows volumes. Lexical detection, not enforcement: an obfuscated or built-up path is a stated miss. Also fires via `requires:<tool>`.
+
+### `git-push`
+
+`git push`, `git remote add/set-url/remove/rename` — in any command segment (`ls; git push`, `cd x && git push`), after git global options (`git -C . push`, `git -c k=v push`, `--git-dir=…`, `--work-tree=…`, `--no-pager`; an option argument may be quoted: `git -C "my dir" push`) and after any command-position boundary: whitespace, `| ; &`, `(` (`$(git push)`), a path (`/usr/bin/git push`), a backslash (`\git push`), a quote (`bash -c 'git push'`, `sh -c "git push"`) or a backtick. The word must be exactly `git` followed by whitespace — `mygit push`, `digit push`, `gitpush` and `git-lfs push` do not raise.
+
+### `destructive-shell`
+
+The destructive matcher (`rm -rf`, `mkfs`, `dd of=/dev/…`, `shred`, `git clean -f`, `chmod/chown -R`, force pushes — `git push --force`/`-f`/`--force-with-lease`/`--force-if-includes`/`+refspec` — `find … -delete`, `git reset --hard`, an amended commit — `git commit --amend`, and the `git_commit` tool with `amend` — `git checkout -- <path>`/`.`/`-f`, and `git restore` of the working tree; a staged-only `git restore --staged` is not destructive, and a merge — `git merge` or the `git_merge` tool — is a workspace write the journal records). History and refs the journal never sees, because its sweep skips `.git/`: a forced branch delete or move (`git branch -D`, `--delete --force`, `-f`), a dropped or cleared stash, `git reflog expire`/`delete`, `git gc --prune`, `git prune`, `git update-ref -d`, `git tag -d`, `git filter-branch`/`filter-repo`, a rebase (not `--abort`, `--continue`, `--skip` or `--quit`), a reset to another commit (`--soft`, `--mixed`, `--keep`, `--merge`, `HEAD~n`, a commit id), `git checkout -B`, `git switch -C`/`--discard-changes`/`-f` and `git worktree remove`. Teardown the journal cannot restore: `terraform`/`tofu destroy` (and `apply -destroy`, `state rm`, `workspace delete`), `pulumi destroy`, `helm uninstall`, `aws … delete-*`/`terminate-*`/`s3 rm`/`s3 rb`, `gsutil rm`/`rb`, `gcloud … delete`, `az … delete`, `gh … delete`, a container prune or `volume rm`, `npm unpublish`, `dropdb`, `crontab -r`, and SQL that drops, truncates or deletes data (`DROP TABLE`, `TRUNCATE`, `DELETE FROM`, `FLUSHALL`, …) in a command that runs a database client, here-documents included. The quiet forms stay quiet: `git branch -d`, `git stash list`/`pop`, bare `git reset`, `git reset -- <path>`, `git rebase --abort`. including a destructive verb unwrapped through `$(…)` (nested substitutions included), backticks, or after `eval`. `rm`/`rmdir` counts wherever it is the command that runs: at a command start or after `then`, `do`, `else`, `{`, `!` or a subshell `(`; behind `sudo`, `doas`, `env`, `nice`, `ionice`, `timeout`, `time`, `nohup`, `command`, `builtin`, `exec`, `stdbuf` or a `NAME=value` assignment; spelled `\rm`, `'rm'` or `/bin/rm`. It raises when it is recursive or forced, or names a target outside the workspace or on a sensitive path; run by `xargs` or by `find -exec`/`-execdir`/`-ok`/`-okdir` it is a bulk delete and raises whatever its flags. Stated misses: a delete inside a string another interpreter runs (`bash -c 'rm …'`, `python3 -c`, `node -e`).
+
+### `install`
+
+Package installs and fetch-and-run launchers, in any segment: `npm install/i/add/ci/exec/x`, `npx`, `pnpm install/i/add/dlx`, `yarn` (bare), `yarn add/install/dlx/global add`, `bun install/i/add`, `bunx`, `pip install`, `pipx install/run`, `uv add`, `uv sync`, `uv pip install`, `uv tool install`, `uvx`, `poetry add/install`, `pdm add/install`, `pipenv install`, `conda`/`mamba`/`micromamba install/create`, `gem install`, `bundle install/add`, `composer require/install`, `brew install`, `port install`, `apt install`, `yum`/`dnf`/`zypper install`, `apk add`, `pacman -S…`, `snap install`, `deno install/add`, `cargo install/add`, `go install`. Scripts such as `npm test`, `npm run build`, `yarn build` and `uv run` are not installs.
+
+### `deploy`
+
+Changes to running infrastructure: `kubectl apply/create/delete/rollout/patch/replace/scale/edit/set/label/annotate/drain/cordon/uncordon/taint/expose/autoscale`, `helm install/upgrade/rollback/uninstall`, `terraform`/`tofu apply/destroy/import`, `pulumi up/destroy/refresh`, `docker push`, `gh release create`, and platform deploys (`fly deploy`, `vercel deploy`/`--prod`, `netlify deploy`, `wrangler deploy`, `firebase deploy`, `serverless`/`sls`/`cdk`/`sam deploy`, `railway up`, `supabase db push`/`functions deploy`, `gcloud app/run/functions deploy`, `az webapp/functionapp deploy/up`).
+
+### `outside-write`
+
+A write outside the workspace in bash: any redirect target (`>`, `>>`, `2>`, `&>`, `&>>`, `>|`, `>& file` — every one in the command, not only the first), and the paths the shell writers name (listed below, under the heuristics). A delete outside the workspace (`rm`, `rmdir`, `find -delete`) raises `destructive-shell` instead. The `write` and `edit` tools never write outside the workspace: such a path is refused by name before any ask — full access and `autoApprove` included — so no card offers an allow the call could not honour, and a change outside the workspace goes through bash. A `write`/`edit` path under `~/.kubic` still raises `outside-write` when the workspace is the home directory.
+
+### `privilege-escalation`
+
+`sudo` anywhere in the command.
+
+### `kubic-state-write`
+
+A write into Kubic's control plane — `<workspace>/.kubic/` (`config.toml`, `roles/`, …) and, for a target outside the workspace, any ancestor's `.kubic/` (the project's, from a subdirectory) or `~/.kubic/` (the global `config.toml`) — or into the workspace's own `.git/` (hooks, `config`): a planted hook runs on the host's later git commands, so it asks too: the `write`/`edit` tools, any redirect target (`>`, `>>`, `>|`, `>&`, `&>`, `&>>`, `N>`), the paths the shell writers name (the same table as `outside-write`), or an `rm`/`rmdir`/`mv` operand and what `find -delete` walks (deleting or moving control-plane state is tampering; a `cp` source is only read). Relative targets resolve against a preceding `cd`/`pushd`, quote-split and backslash-escaped segments are read as the shell reads them (`".kubic"/roles/r.md`), and `$HOME/`/`${HOME}/` count exactly like `~/`. **Always asks**: `autoApprove` and `--full-access` never answer it (an `autoApprove` entry naming it is ignored and warned about by `kubic doctor`). Writes into `.kubic/journal/`, `.kubic/audit/` and `.kubic/sessions/` at any of those roots, and into the session root in use, are refused outright as a tool error (see [journal and safety](../architecture/journal-and-safety.md)).
+
+## How detection works
+
 Detection is a literal-pattern heuristic over the command string and the
-read-family tool paths, not
-sandbox-grade shell parsing — the posture is stated, not silent. Documented
-heuristics:
+read-family tool paths, not sandbox-grade shell parsing, and it says so. The
+documented heuristics:
 
 - **Command segments** — a command ends at `|`, `;`, `&` or a line break
   (a CRLF line ending included), so each line of a multi-line script is its
@@ -327,7 +362,9 @@ heuristics:
   directory name also matches the network verb scan, so those commands raise
   `network` as well.
 
-What remains out of scope — documented gaps, not silently handled:
+### What it does not catch
+
+These are documented gaps, not silently handled:
 interpreter-based verbs (`bash -c "rm -rf …"`, `python3 -c`, `node -e` —
 the command is data to the literal patterns; a `git push` inside `bash -c '…'`
 is the one exception, caught because a quote is a boundary for the `git` word), network use through
@@ -343,8 +380,17 @@ not listed above, and installs run by a build script (`npm run setup`).
 The literal verb scan over-triggers on quoted text: `echo "git push
 later"` raises `git-push` (an ask, never a silent grant).
 
+## MCP server tools
+
 An MCP server's tools go through the same pipeline: a tool its allowlist
 entry lists under `approve` always asks (`requires:mcp__<server>__<tool>`,
 answerable by `autoApprove`, the broker or a pre-approval file like any
 other), and the others run as untriggered calls. See
 [MCP servers](enterprise.md#mcp-servers).
+
+## See also
+
+- [TUI keys](tui-keys.md): the card's keys among the others.
+- [Configuration](configuration.md): `[approvals]` and `[permissions]`.
+- [For teams](enterprise.md#headless-approvals): the approval broker and
+  pre-approval files for runs nobody watches.

@@ -95,6 +95,6 @@
     }
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "1.0.2"
+    "@earendil-works/pi-tui": "1.2.0"
   }
 }

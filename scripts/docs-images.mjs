@@ -1,6 +1,10 @@
 // Regenerates every image the README and docs/ show, into docs/assets/: the
 // TUI's screens, each a snap (or the film) of a kshot scenario, and the brand
-// art from scripts/art/art.py. Needs tmux and python3 with Pillow and
+// art from scripts/art/art.py. A page shows an SVG through a <picture> whose
+// <img> is its PNG twin, for viewers that draw no SVG (GitHub's mobile apps).
+// A snap writes both, drawn at twice the size so a phone shows them sharp,
+// and the README's film falls back to the docs tour's finished turn
+// (tui/session.png), the same screen. Needs tmux and python3 with Pillow and
 // fontTools; the art fetches its two fonts once. PYTHON names another
 // interpreter (a virtualenv's, for example).
 //
@@ -18,20 +22,24 @@ const ASSETS = join(ROOT, 'docs', 'assets');
 // Scenario -> {file kshot writes: path under docs/assets}.
 export const SHOTS = {
   'readme-session': { 'film.svg': 'readme/session.svg' },
-  'docs-tour': {
-    'first-screen.svg': 'tui/first-screen.svg',
-    'session.svg': 'tui/session.svg',
-    'diff-panel.svg': 'tui/diff-panel.svg',
-    'journal-panel.svg': 'tui/journal-panel.svg',
-    'approval-card.svg': 'tui/approval-card.svg',
-    'session-tree.svg': 'tui/session-tree.svg',
-    'palette.svg': 'tui/palette.svg',
-  },
+  'docs-tour': Object.fromEntries(
+    [
+      'first-screen',
+      'session',
+      'diff-panel',
+      'journal-panel',
+      'approval-card',
+      'session-tree',
+      'palette',
+    ].flatMap((snap) =>
+      ['svg', 'png'].map((ext) => [`${snap}.${ext}`, `tui/${snap}.${ext}`]),
+    ),
+  ),
 };
 
 // What scripts/art/art.py draws into docs/assets/readme.
 export const ART =
-  /^(?:(?:banner|facts|footer)-(?:dark|light)|icon-[a-z]+)\.svg$/;
+  /^(?:(?:banner|facts|footer)-(?:dark|light)|icon-[a-z]+)\.(?:svg|png)$/;
 
 function run(command, args) {
   const result = spawnSync(command, args, {
@@ -52,7 +60,14 @@ function screens(python) {
   try {
     for (const [scenario, files] of Object.entries(SHOTS)) {
       const out = join(scratch, scenario);
-      run(python, ['scripts/kshot/kshot.py', scenario, '--out', out]);
+      run(python, [
+        'scripts/kshot/kshot.py',
+        scenario,
+        '--out',
+        out,
+        '--scale',
+        '2',
+      ]);
       for (const [from, to] of Object.entries(files)) {
         mkdirSync(dirname(join(ASSETS, to)), { recursive: true });
         copyFileSync(join(out, from), join(ASSETS, to));

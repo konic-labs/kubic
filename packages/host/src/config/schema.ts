@@ -180,7 +180,7 @@ export const CONFIG_SECTIONS = [
     docs: [
       {
         keys: ['agent.name'],
-        text: "The lane's agent id: journal entries are attributed to it. Unset ⇒ `root`, unchanged.",
+        text: "The agent's id: journal entries are attributed to it. Unset ⇒ `root`, unchanged.",
       },
       {
         keys: ['agent.systemPromptFile'],
@@ -290,7 +290,7 @@ export const CONFIG_SECTIONS = [
           'model.maxEscalations',
           'roles.<name>.escalate',
         ],
-        text: "The escalation ladder: `escalate` lists the rungs as concrete `provider/id` refs in climbing order (wildcards refused per entry at load); a role's `escalate` wins outright for runs as that role, even an empty list (which freezes every `/model` switch — opting out of climbing, not of the gate). `maxEscalations` bounds the climbs per run, unset meaning the ladder length. Climbs are one-way (a down-step or off-ladder target is refused by name with the live model untouched) and recorded: `/model <ref>` climbs the ladder silently, `/escalate <ref> [reason]` climbs naming why, and three consecutive tool-failure turns climb one rung automatically — once per run, never back (`kubic run` settles one turn per invocation, so the automatic trigger lives on the `kubic tui` lane). Every climb appends an `escalation: <from> → <to> (<reason>)` transcript row and lands on the trajectory's `model.escalations` (per-model usage already attributes the spend each side of the move).",
+        text: "The escalation ladder: `escalate` lists the rungs as concrete `provider/id` refs in climbing order (wildcards refused per entry at load); a role's `escalate` wins outright for runs as that role, even an empty list (which freezes every `/model` switch — opting out of climbing, not of the gate). `maxEscalations` bounds the climbs per run, unset meaning the ladder length. Climbs are one-way (a down-step or off-ladder target is refused by name with the live model untouched) and recorded: `/model <ref>` climbs the ladder silently, `/escalate <ref> [reason]` climbs naming why, and three consecutive tool-failure turns climb one rung automatically — once per run, never back (`kubic run` settles one turn per invocation, so the automatic trigger lives in `kubic tui`). Every climb appends an `escalation: <from> → <to> (<reason>)` transcript row and lands on the trajectory's `model.escalations` (per-model usage already attributes the spend each side of the move).",
       },
       {
         keys: ['model.fallback'],
@@ -298,7 +298,7 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['model.thinking'],
-        text: "The file-layer thinking default. The lane boots with the winner of `--thinking` > `KUBIC_MODEL_THINKING` > session record > role default > this key, clamped to the effective model's supported levels (a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite); the applied level is committed to the session and recorded in `trajectory.json`. A level the vocabulary does not know is refused by name at load.",
+        text: "The file-layer thinking default. A session starts with the winner of `--thinking` > `KUBIC_MODEL_THINKING` > session record > role default > this key, clamped to the effective model's supported levels (a clamp is one stderr notice naming the model, the request and the level applied, never a silent rewrite); the applied level is committed to the session and recorded in `trajectory.json`. A level the vocabulary does not know is refused by name at load.",
       },
       {
         keys: [
@@ -307,7 +307,7 @@ export const CONFIG_SECTIONS = [
           'model.maxRetryDelayMs',
           'model.cacheRetention',
         ],
-        text: 'Request options on the lane (`settings.stream`): `timeoutMs` bounds one provider request (a positive integer of milliseconds), `maxRetries` caps the provider/SDK retries inside one request attempt and `maxRetryDelayMs` caps the delay a server may ask for before a retry (non-negative integers: `0` disables retries / the cap), and `cacheRetention` is the prompt cache preference (`none`, `short`, `long`). `[roles.<name>]` layers each of them per key for runs as that role. A mistyped value is refused by name at load.',
+        text: 'Request options for every model request (`settings.stream`): `timeoutMs` bounds one provider request (a positive integer of milliseconds), `maxRetries` caps the provider/SDK retries inside one request attempt and `maxRetryDelayMs` caps the delay a server may ask for before a retry (non-negative integers: `0` disables retries / the cap), and `cacheRetention` is the prompt cache preference (`none`, `short`, `long`). `[roles.<name>]` layers each of them per key for runs as that role. A mistyped value is refused by name at load.',
       },
     ],
   },
@@ -387,7 +387,7 @@ export const CONFIG_SECTIONS = [
     docs: [
       {
         keys: ['approvals.route'],
-        text: "Approval routing (`ask-user` \\| `deny`), installed by `kubic run`, `kubic tui`, `kubic replay` and reported by doctor's `policy:installed` line. `deny` refuses every challenged call with `denied by policy route` (exit 4) and never opens the TUI overlay — `autoApprove` entries never apply under it (the lane denies them too, and doctor fails `policy:approvals` for the combination). `KUBIC_APPROVALS_ROUTE` overrides it.",
+        text: "Approval routing (`ask-user` | `deny`), installed by `kubic run`, `kubic tui`, `kubic replay` and reported by doctor's `policy:installed` line. `deny` refuses every challenged call with `denied by policy route` (exit 4) and never opens the TUI overlay — `autoApprove` entries never apply under it (they are denied too, and doctor fails `policy:approvals` for the combination). `KUBIC_APPROVALS_ROUTE` overrides it.",
       },
       {
         keys: [
@@ -407,7 +407,7 @@ export const CONFIG_SECTIONS = [
         ],
         label:
           '`approvals.maxPendingMs`, `autoApprove`, `sessionScoped`, `requireJustification`',
-        text: "Installed on the lane (`run`, `tui`, `replay`) from the same projection doctor prints, so `policy:approvals` and `policy:installed` always show the same route and bound (doctor fails `policy-mismatch` if they ever differ). `maxPendingMs` bounds the TUI overlay: an unanswered ask denies on timeout. `autoApprove` is explicit-only and applies headless too (the audit record says `approved by autoApprove`), except for an always-ask capability (`kubic-state-write`): naming it is accepted but ignored — it takes the normal ask path (the TUI seat, or the instant no-surface refusal headless, never a `maxPendingMs` stall), `kubic doctor`'s `policy:approvals` line warns by name and `kubic config` counts it as not auto-approved. `requireJustification = true` denies any approval that carries no justification (the TUI overlay and `autoApprove` supply none, so every challenged call is refused). `sessionScoped = false` is refused by the config load: decisions are always stored per session. Only real answers (user, route, autoApprove) persist to `approvals.json` — a timeout denies the call but stores nothing, so a later surface can still ask about the same operation.",
+        text: "Applied to `kubic run`, `kubic tui` and `kubic replay` from the same projection doctor prints, so `policy:approvals` and `policy:installed` always show the same route and bound (doctor fails `policy-mismatch` if they ever differ). `maxPendingMs` bounds the TUI overlay: an unanswered ask denies on timeout. `autoApprove` is explicit-only and applies headless too (the audit record says `approved by autoApprove`), except for an always-ask capability (`kubic-state-write`): naming it is accepted but ignored — it takes the normal ask path (the TUI seat, or the instant no-surface refusal headless, never a `maxPendingMs` stall), `kubic doctor`'s `policy:approvals` line warns by name and `kubic config` counts it as not auto-approved. `requireJustification = true` denies any approval that carries no justification (the TUI overlay and `autoApprove` supply none, so every challenged call is refused). `sessionScoped = false` is refused by the config load: decisions are always stored per session. Only real answers (user, route, autoApprove) persist to `approvals.json` — a timeout denies the call but stores nothing, so a later surface can still ask about the same operation.",
       },
     ],
   },
@@ -456,7 +456,7 @@ export const CONFIG_SECTIONS = [
           'permissions.credentials',
         ],
         label: '`permissions.*`',
-        text: 'Permission classes → the lane\'s derived tool allowlist. `shell = "read-only-allowlist"` keeps `bash` but enforces an explicit read-only command allowlist at the guard: every `|`/`||`/`&&`/`;`/`&`/newline segment must head with `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` or `git`, and then only in its read-only form — `git status`/`diff`/`log`/`show` (after global options like `-C`/`--no-pager`, without `--output`, and never `-c`/`--config-env`/`--exec-path`/`--upload-pack`/`--receive-pack`, which can execute code), `find` without `-exec*`/`-ok*`/`-delete`/`-fprint*`/`-fls`, `rg` without `--pre`/`--hostname-bin`. Redirection (`>`, `>>`, any fd form) is refused, `sed`/`perl` with `-i`/`--in-place` are refused, and any other verb (`tee`, `rm`, `npm`, `node`, `cp`, …) is blocked by name. Expansion and substitution are never interpreted and are refused outright — `$(…)`, backticks, `<(...)` process substitution and any unquoted `$` (single-quoted text is literal and stays readable) — because an allowed head verb could otherwise launder another command. The parser is lexical, so it over-blocks rather than under-blocks; `shell = true` is unchanged (no allowlist).',
+        text: 'Permission classes → the tool allowlist they derive. `shell = "read-only-allowlist"` keeps `bash` but enforces an explicit read-only command allowlist at the guard: every `|`/`||`/`&&`/`;`/`&`/newline segment must head with `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find` or `git`, and then only in its read-only form — `git status`/`diff`/`log`/`show` (after global options like `-C`/`--no-pager`, without `--output`, and never `-c`/`--config-env`/`--exec-path`/`--upload-pack`/`--receive-pack`, which can execute code), `find` without `-exec*`/`-ok*`/`-delete`/`-fprint*`/`-fls`, `rg` without `--pre`/`--hostname-bin`. Redirection (`>`, `>>`, any fd form) is refused, `sed`/`perl` with `-i`/`--in-place` are refused, and any other verb (`tee`, `rm`, `npm`, `node`, `cp`, …) is blocked by name. Expansion and substitution are never interpreted and are refused outright — `$(…)`, backticks, `<(...)` process substitution and any unquoted `$` (single-quoted text is literal and stays readable) — because an allowed head verb could otherwise launder another command. The parser is lexical, so it over-blocks rather than under-blocks; `shell = true` is unchanged (no allowlist).',
       },
     ],
   },
@@ -549,13 +549,13 @@ export const CONFIG_SECTIONS = [
         ],
         label:
           '`roles.<name>.model`, `roles.<name>.tools`, `roles.<name>.thinking`, `roles.<name>.requires`, `roles.<name>.models`',
-        text: "Per-role defaults layered under the role document for `kubic run --role <name>`: `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list, `thinking` is the role's thinking default — below the session's stored level and any `--thinking`/`KUBIC_MODEL_THINKING` override, above the `[model].thinking` file default — `requires` names tools that always require approval under the role — unioned with the document's own `requires:` list, never subtracted. `models` is the role's allowed model set: entries are `\"provider/id\"` or `\"provider/*\"` strings, or `{ id, thinking? }` tables whose thinking beats the flat role default for the matched model — an empty set (or none) allows every registered model, a malformed entry is refused by name at load, and selection plus every `/model` switch resolve against it, refusing out-of-set by name (`kubic config` renders the winning layer's list with provenance; `/scoped-models` reports the resolved set on the TUI lane). Each leaf is attributed to the layer that set it (enterprise > product > global > project > session > agent). A malformed model ref, an unknown thinking level, a malformed set entry, or a mistyped request option is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools + thinking + requires + models) and install the most restrictive merge of the config classes and the role's (a role declaring `network: none` runs under it even when config allows full); the TUI also takes the `[agent].name` agent id. No role, model or provider is invented when none of those levels sets one. `timeoutMs`/`maxRetries`/`maxRetryDelayMs`/`cacheRetention` layer over the `[model]` request tuning per key for runs as that role.",
+        text: "Per-role defaults layered under the role document for `kubic run --role <name>`: `model` is a `provider/id` pin the run selects unless an explicit `--model`/`[model]` pin wins, `tools` replaces the document's own list, `thinking` is the role's thinking default — below the session's stored level and any `--thinking`/`KUBIC_MODEL_THINKING` override, above the `[model].thinking` file default — `requires` names tools that always require approval under the role — unioned with the document's own `requires:` list, never subtracted. `models` is the role's allowed model set: entries are `\"provider/id\"` or `\"provider/*\"` strings, or `{ id, thinking? }` tables whose thinking beats the flat role default for the matched model — an empty set (or none) allows every registered model, a malformed entry is refused by name at load, and selection plus every `/model` switch resolve against it, refusing out-of-set by name (`kubic config` renders the winning layer's list with provenance; `/scoped-models` reports the resolved set in the TUI). Each leaf is attributed to the layer that set it (enterprise > product > global > project > session > agent). A malformed model ref, an unknown thinking level, a malformed set entry, or a mistyped request option is refused by name at load. Scope: `kubic run --role` and `kubic tui --role` both apply the whole layer (model pin + tools + thinking + requires + models) and install the most restrictive merge of the config classes and the role's (a role declaring `network: none` runs under it even when config allows full); the TUI also takes the `[agent].name` agent id. No role, model or provider is invented when none of those levels sets one. `timeoutMs`/`maxRetries`/`maxRetryDelayMs`/`cacheRetention` layer over the `[model]` request tuning per key for runs as that role.",
       },
       {
         keys: [],
         label:
           '`.kubic/roles/<name>.md` frontmatter `name`, `description`, `model`',
-        text: "The role document's own Pi-agent keys: `name` aliases `role` (a document disagreeing with itself is refused by name), `description` is shown by `kubic doctor` in the role detail, and `model` is a `provider/id` pin validated at parse (a malformed ref is refused with its reason before any lane boots). Precedence for the model pin: an explicit CLI pin beats `[roles.<name>].model`, which beats the document pin (a layer winning over the document is precedence, never an overridden attempt); the winning pin reaches `kubic run --role`/`kubic tui --role` through the existing role-model selection.",
+        text: "The role document's own Pi-agent keys: `name` aliases `role` (a document disagreeing with itself is refused by name), `description` is shown by `kubic doctor` in the role detail, and `model` is a `provider/id` pin validated at parse (a malformed ref is refused with its reason before any session starts). Precedence for the model pin: an explicit CLI pin beats `[roles.<name>].model`, which beats the document pin (a layer winning over the document is precedence, never an overridden attempt); the winning pin reaches `kubic run --role`/`kubic tui --role` through the existing role-model selection.",
       },
     ],
   },
@@ -674,15 +674,15 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['session.autoCompact'],
-        text: 'Threshold compaction on the lane (`run`, `tui`): `false` disables it, `true` (and unset) keeps the automatic default. A non-boolean is refused by name.',
+        text: 'Threshold compaction in `kubic run` and `kubic tui`: `false` disables it, `true` (and unset) keeps the automatic default. A non-boolean is refused by name.',
       },
       {
         keys: ['session.reserveTokens'],
-        text: 'Reserved-room tokens before the lane compacts: unset ⇒ 16384. A value that is not a positive integer is refused by name. The effective reserve is clamped per model to at most a quarter of its context window (an 8192-token model reserves 2048), so a small-window model compacts sooner than the configured figure; `kubic config` and `kubic doctor` print the effective reserve.',
+        text: 'Reserved-room tokens before a session compacts: unset ⇒ 16384. A value that is not a positive integer is refused by name. The effective reserve is clamped per model to at most a quarter of its context window (an 8192-token model reserves 2048), so a small-window model compacts sooner than the configured figure; `kubic config` and `kubic doctor` print the effective reserve.',
       },
       {
         keys: ['session.keepRecentTokens'],
-        text: 'Verbatim recent-context window the lane keeps across a compaction: unset ⇒ 20000. A value that is not a positive integer is refused by name. The effective window is capped per model to a quarter of the room below its reserve (window − reserve), so it scales with the model: an 8192-token model keeps 1536, a 16384-token model 3072, a 32768-token model 6144, and the configured 20000 applies from a 96384-token window up. A `/compact` keeps at most 2000 tokens verbatim, whatever the window.',
+        text: 'Verbatim recent-context window a session keeps across a compaction: unset ⇒ 20000. A value that is not a positive integer is refused by name. The effective window is capped per model to a quarter of the room below its reserve (window − reserve), so it scales with the model: an 8192-token model keeps 1536, a 16384-token model 3072, a 32768-token model 6144, and the configured 20000 applies from a 96384-token window up. A `/compact` keeps at most 2000 tokens verbatim, whatever the window.',
       },
     ],
   },
@@ -812,7 +812,7 @@ export const CONFIG_SECTIONS = [
     docs: [
       {
         keys: ['telemetry.enabled', 'telemetry.endpoint', 'telemetry.content'],
-        text: 'OpenTelemetry export, off by default. With `enabled = true`, every `kubic run` and every settled `kubic tui` turn is sent to an OTLP/HTTP collector: the spans (`kubic.agent.run`, the lane phases, `pi.tool.execute` per tool call) with the GenAI attributes — model, input and output tokens, cost — and the metrics `gen_ai.client.token.usage`, `kubic.cost`, `kubic.tool.errors` and `kubic.approvals`. The standard variables apply: `OTEL_EXPORTER_OTLP_ENDPOINT` (when `endpoint` is unset), `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` and `OTEL_SDK_DISABLED`. No prompt, argument or output leaves unless `content = true`. See [OpenTelemetry](enterprise.md#opentelemetry).',
+        text: 'OpenTelemetry export, off by default. With `enabled = true`, every `kubic run` and every settled `kubic tui` turn is sent to an OTLP/HTTP collector: the spans (`kubic.agent.run`, the phases of the run, `pi.tool.execute` per tool call) with the GenAI attributes — model, input and output tokens, cost — and the metrics `gen_ai.client.token.usage`, `kubic.cost`, `kubic.tool.errors` and `kubic.approvals`. The standard variables apply: `OTEL_EXPORTER_OTLP_ENDPOINT` (when `endpoint` is unset), `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` and `OTEL_SDK_DISABLED`. No prompt, argument or output leaves unless `content = true`. See [OpenTelemetry](enterprise.md#opentelemetry).',
       },
     ],
   },
@@ -1107,7 +1107,7 @@ export const CONFIG_SECTIONS = [
         field: 'filesystemPolicy',
         check: 'filesystemPolicy',
         runtime: {
-          kept: 'resolved into the effective policy but NOT enforced as its own gate: the lane derives filesystem reach from the [permissions] classes',
+          kept: 'resolved into the effective policy but NOT enforced as its own gate: Kubic derives filesystem reach from the [permissions] classes',
         },
         example: '"workspace-only"',
       },
@@ -1176,7 +1176,7 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['policy.allowed_tools', 'policy.denied_tools'],
-        text: "The lane tool intersection: `kubic run`/`kubic tui` (and the re-executing tiers of `kubic replay`) activate only tools that survive it, and the system prompt's `tools:` line names exactly that set. A deny holds against every lower layer, a role document and the model — a role that declares a denied tool is refused by name, while a role that declares none of them is unaffected by a deny-only policy. With no allow list, only the deny list narrows; with one, anything outside it is refused.",
+        text: "The tool intersection: `kubic run`/`kubic tui` (and the re-executing tiers of `kubic replay`) activate only tools that survive it, and the system prompt's `tools:` line names exactly that set. A deny holds against every lower layer, a role document and the model — a role that declares a denied tool is refused by name, while a role that declares none of them is unaffected by a deny-only policy. With no allow list, only the deny list narrows; with one, anything outside it is refused.",
       },
       {
         keys: ['policy.network_policy', 'policy.allowed_domains'],
@@ -1184,7 +1184,7 @@ export const CONFIG_SECTIONS = [
       },
       {
         keys: ['policy.filesystem_policy'],
-        text: "Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). The lane derives filesystem reach from the `[permissions]` classes, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it.",
+        text: "Parsed and resolved (`workspace-only` is the engine's `workspace-write`; the engine level names are accepted). Kubic derives filesystem reach from the `[permissions]` classes, so this value is **not enforced** as a gate of its own; `kubic config` lists it (`kept`), `kubic doctor` does not report it.",
       },
       {
         keys: ['policy.max_run_cost_usd', 'policy.max_daily_cost_usd'],
@@ -1238,7 +1238,7 @@ export const CONFIG_SECTIONS = [
           'hooks.timeoutMs',
         ],
         label: '`hooks` (`[[hooks]]`)',
-        text: 'Admin hooks: `event` = `beforeTool` \\| `afterTool` \\| `runEnd`, `command` (run as `sh -c` with a JSON payload on stdin and the tool environment, so no provider key), optional `tools` (the tool names a tool hook applies to; all when absent) and `timeoutMs` (default 5000). A `beforeTool` hook that exits non-zero refuses the call, naming the reason from its output; one that times out refuses it too (fails closed). Every hook run is audited (`hook:<event>`). Read from the enterprise, product and global layers, all of them; a project config declaring hooks is refused. See [Admin hooks](enterprise.md#admin-hooks).',
+        text: 'Admin hooks: `event` = `beforeTool` | `afterTool` | `runEnd`, `command` (run as `sh -c` with a JSON payload on stdin and the tool environment, so no provider key), optional `tools` (the tool names a tool hook applies to; all when absent) and `timeoutMs` (default 5000). A `beforeTool` hook that exits non-zero refuses the call, naming the reason from its output; one that times out refuses it too (fails closed). Every hook run is audited (`hook:<event>`). Read from the enterprise, product and global layers, all of them; a project config declaring hooks is refused. See [Admin hooks](enterprise.md#admin-hooks).',
       },
     ],
   },
@@ -1270,7 +1270,7 @@ export const CONFIG_SECTIONS = [
           'audit.tokenEnv',
         ],
         label: '`audit` (`[[audit]]`)',
-        text: 'Sink tables (`sink` = `syslog` \\| `https` \\| `otlp` \\| `file` \\| `memory`, `level` = `privileged` \\| `all`, optional `target`, `facility`, `ca` and `tokenEnv`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory, hash-chained repo ledger. A collector over the network (`tcp://`/`tls://` syslog, `https`, `otlp`) is spooled on disk and drained when it answers (see [Audit sinks](enterprise.md#audit-sinks-audit)).',
+        text: 'Sink tables (`sink` = `syslog` | `https` | `otlp` | `file` | `memory`, `level` = `privileged` | `all`, optional `target`, `facility`, `ca` and `tokenEnv`). Parsed and validated fail-closed (an unknown kind, level or key is named); every audit row fans out to the configured sinks plus the mandatory, hash-chained repo ledger. A collector over the network (`tcp://`/`tls://` syslog, `https`, `otlp`) is spooled on disk and drained when it answers (see [Audit sinks](enterprise.md#audit-sinks-audit)).',
       },
     ],
   },
@@ -1296,7 +1296,7 @@ export const CONFIG_SECTIONS = [
     docs: [
       {
         keys: ['skills'],
-        text: 'Settings skills: files or directories loaded with source `settings` on every lane a command boots — `kubic run`, `kubic tui`, the suite runs of `kubic eval`/`kubic benchmark` and the re-executing tiers of `kubic replay` (see [Settings skills](#settings-skills)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load.',
+        text: 'Settings skills: files or directories loaded with source `settings` in every session a command starts — `kubic run`, `kubic tui`, the suite runs of `kubic eval`/`kubic benchmark` and the re-executing tiers of `kubic replay` (see [Settings skills](#settings-skills)). Project-layer entries apply only for a trusted project; a non-string or blank entry is refused by name at load.',
       },
     ],
   },

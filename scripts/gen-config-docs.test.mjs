@@ -1,10 +1,10 @@
-// The config docs generator over a small schema: the key table, the section
-// list, the example config and the markers it writes between.
+// The config docs generator over a small schema: the key reference, the
+// section list, the example config and the markers it writes between.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   renderExample,
-  renderKeyTable,
+  renderKeyReference,
   renderSectionList,
   replaceBetween,
 } from './gen-config-docs.mjs';
@@ -42,15 +42,21 @@ const SECTIONS = [
 ];
 
 describe('gen-config-docs', () => {
-  it('renders one table row per docs row, the label overriding the keys', () => {
+  it('renders one subsection per docs row, the label overriding the keys', () => {
     assert.equal(
-      renderKeyTable(SECTIONS),
+      renderKeyReference(SECTIONS),
       [
-        '| Key | Effect |',
-        '| --- | --- |',
-        '| `agent.name` | The agent id. |',
-        '| `roles.*` | Pins. |',
-        '| `skills` | Skills. |',
+        '### `agent.name`',
+        '',
+        'The agent id.',
+        '',
+        '### `roles.*`',
+        '',
+        'Pins.',
+        '',
+        '### `skills`',
+        '',
+        'Skills.',
       ].join('\n'),
     );
   });

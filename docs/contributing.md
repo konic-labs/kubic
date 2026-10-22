@@ -89,6 +89,8 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 | `faux-smoke.mjs` | Drives the built binary through a whole faux-provider run with a tool call. |
 | `release-stage.mjs` | Stages the npm package in `release/` (`npm run release:stage`): the bundle, a manifest generated from the root one, and a shrinkwrap resolved from the tested lockfile; then packs it and writes its CycloneDX SBOM beside the tarball. The root manifest stays private. |
 | `pack-install-contract.mjs` | Proves the packed release (`npm run release:contract`): its file list, a tarball install that runs, and a registry install that honours the shrinkwrap within the size budget. |
+| `release-sign.mjs` | Writes the release's `SHA256SUMS` and, given an Ed25519 key, its signature (`npm run release:sign`); `--verify` checks them. |
+| `release-check.mjs` | The release workflow's checks: the tag names the manifest version, and the registry serves a published version with its shrinkwrap, its provenance and its dist-tag. |
 | `dep-lint.mjs` | The import rules: package direction, no relative import across packages, test fixtures only in tests, `node:fs` and `node:child_process` only in `exec`, the two Pi boundary files, host folders through their `index.ts`, and one argv parser. `vi.mock` specifiers count as imports. |
 | `check-pinned-deps.mjs` | Every dependency in every manifest is one exact version, no manifest has `overrides` (npm ignores them when someone installs kubic), and every workspace dependency is declared by the root manifest with the same version. `.npmrc` sets `save-exact=true` for new installs; the check catches a hand edit. |
 | `check-docs-links.mjs` | Every relative link in `docs/` resolves, with no dependency to install. |
@@ -364,7 +366,51 @@ installs and runs the npm package on Linux and macOS with Node 22.19.0 and
 24 (`npm run release:stage`, then `npm run release:contract`; its registry
 install uses the network). A newer push cancels the older run of the same
 ref; `main` is keyed by commit and never cancelled. Workflow permissions
-are read-only.
+are read-only. A tag push does not run CI: the release workflow runs it.
+
+## Releasing
+
+`.github/workflows/release.yml` publishes Kubic. Every step runs in CI; nobody
+publishes from a laptop.
+
+1. Set the new version in the root `package.json` (`npm version <version>
+   --no-git-tag-version`) and merge it to `main`.
+2. Push the tag `v<version>` on that commit of `main`. The workflow refuses a
+   tag that is not the manifest's version, or a commit that is not on `main`,
+   before it builds anything.
+3. The workflow runs every CI job on the tagged commit, then stages the
+   package, proves it (`npm run release:contract`) and audits its production
+   tree.
+4. The `publish` job runs in the `release` environment, which needs a
+   maintainer's approval. It signs `SHA256SUMS` with the release key, verifies
+   the signature against [`kubic-release.pub`](kubic-release.pub), and
+   publishes to the `next` dist-tag with provenance (npm trusted publishing:
+   no token). It then fails unless the registry serves the version with its
+   shrinkwrap, its provenance attestation and the `next` tag.
+5. A GitHub Release for the tag carries the tarball, the SBOM, `SHA256SUMS`
+   and `SHA256SUMS.sig`, marked as a pre-release.
+6. Once the version on `next` has been checked, run the workflow by hand with
+   `promote` set to the version. That job also needs the `release`
+   environment's approval; it moves the version to `latest` with the
+   `NPM_TOKEN` secret and marks the GitHub Release as the latest.
+
+A manual run with no input is a dry run: it runs the same gates, stages,
+proves and audits the package, signs it with a throwaway key and runs
+`npm publish --dry-run`. It publishes nothing, and it fails when the
+manifest's version is already on npm, so run it after step 1.
+
+What the workflow needs:
+
+- **The `release` environment**, with the maintainers as required reviewers.
+  It holds the secrets below.
+- **`RELEASE_SIGNING_KEY`**: the Ed25519 private key (PEM) whose public half
+  is `docs/kubic-release.pub`. The key is written to a temporary file for one
+  step and removed whatever the outcome.
+- **`NPM_TOKEN`**: a granular npm token that can change the `kubic` package's
+  dist-tags, used only by the promotion job.
+- **Trusted publishing** set up for the `kubic` package on npmjs.com, naming
+  this repository and `release.yml`. npm gives provenance only from a public
+  repository.
 
 ### Supply chain
 

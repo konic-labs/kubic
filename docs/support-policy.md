@@ -38,7 +38,7 @@ privately to the maintainers, never in a public issue.
 
 Every version on npm is signed by the registry, and a version published from
 CI also carries a provenance attestation naming its source commit and
-workflow; `npm audit signatures` checks both. The release tooling also writes
-each package's CycloneDX SBOM and the SHA-256 checksums of its artifacts,
-which it signs with an Ed25519 key when given one — see
+workflow; `npm audit signatures` checks both. Each release's GitHub Release
+also carries the package's CycloneDX SBOM and the SHA-256 checksums of its
+artifacts, signed with the release key — see
 [release trust](release-trust.md).

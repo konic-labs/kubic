@@ -9,12 +9,25 @@ Kubic (`npm install kubic`), `npm audit signatures` checks the signature of
 every installed package, and the provenance attestation of each version that
 has one.
 
+## What a release attaches
+
+A release is published by the [release workflow](contributing.md#releasing)
+from a version tag, never by hand. The GitHub Release for the tag carries:
+
+- `kubic-<version>.tgz`, the exact tarball on npm;
+- `kubic-<version>.cdx.json`, its SBOM;
+- `SHA256SUMS`, the checksums of both;
+- `SHA256SUMS.sig`, the signature of `SHA256SUMS` by the release key.
+
+The release key's public half is [`kubic-release.pub`](kubic-release.pub) in
+this repository.
+
 ## Provenance
 
 The staged package's manifest sets `publishConfig.provenance`, so a publish
-from CI attaches npm's provenance attestation: the package names the source
-commit and the workflow that built it. Check an installed package with
-`npm audit signatures`.
+from the release workflow attaches npm's provenance attestation: the package
+names the source commit and the workflow that built it. Check an installed
+package with `npm audit signatures`.
 
 ## The SBOM
 
@@ -28,12 +41,12 @@ misses a package the shrinkwrap pins.
 packed tarball and the SBOM — and, with `-- --key <private.pem>` (an Ed25519
 key), `release/SHA256SUMS.sig`, the base64 signature of that file: the same
 detached form Kubic checks for a [signed managed
-policy](cli/enterprise.md#signed-managed-files). Verify a release with the
-published public key:
+policy](cli/enterprise.md#signed-managed-files). Verify a downloaded GitHub
+Release with the public key, from a checkout of this repository:
 
 ```sh
-node scripts/release-sign.mjs --verify --pub kubic-release.pub
-# or with standard tools:
+node scripts/release-sign.mjs --verify --pub docs/kubic-release.pub --dir <download dir>
+# or with standard tools, in the download directory:
 sha256sum --check SHA256SUMS
 openssl pkeyutl -verify -pubin -inkey kubic-release.pub -rawin \
   -in SHA256SUMS -sigfile <(base64 --decode SHA256SUMS.sig)

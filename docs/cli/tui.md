@@ -5,7 +5,10 @@
 > Every key is on [TUI keys](tui-keys.md), and the approval card on
 > [approvals](approvals.md).
 
-![A finished turn: the agent read src/slug.js, edited it and ran the test, and the receipt under the turn sums it up.](../assets/tui/session.svg)
+<picture>
+  <source srcset="../assets/tui/session.svg" type="image/svg+xml">
+  <img src="../assets/tui/session.png" alt="A finished turn: the agent read src/slug.js, edited it and ran the test, and the receipt under the turn sums it up.">
+</picture>
 
 ## Starting it
 
@@ -61,7 +64,10 @@ as for `kubic run` (see [command-line flags](configuration.md#command-line-flags
 
 ## The first screen
 
-![The first screen: the wordmark, preflight rows for the provider, project, journal and isolation, and the keys to start.](../assets/tui/first-screen.svg)
+<picture>
+  <source srcset="../assets/tui/first-screen.svg" type="image/svg+xml">
+  <img src="../assets/tui/first-screen.png" alt="The first screen: the wordmark, preflight rows for the provider, project, journal and isolation, and the keys to start.">
+</picture>
 
 An empty session opens on a preflight instead of a wall of keys:
 
@@ -317,7 +323,10 @@ calls appear as cards and in the tree, and the status line fills with usage.
 
 ## Panels
 
-![The diff panel over the last change: src/slug.js, two lines added.](../assets/tui/diff-panel.svg)
+<picture>
+  <source srcset="../assets/tui/diff-panel.svg" type="image/svg+xml">
+  <img src="../assets/tui/diff-panel.png" alt="The diff panel over the last change: src/slug.js, two lines added.">
+</picture>
 
 `Ctrl+O` opens the **diff panel**, on the last tool call that changed files
 (or, when a `bash` call changed something the file tools did not journal, that
@@ -333,7 +342,10 @@ the session journal, including changes made with `bash`, one row per file
 diff panel draws them. `Alt+↓` and `Alt+↑` page through it. To filter by path,
 use `kubic diff --path` in a shell.
 
-![The journal panel: the session's one change, to src/slug.js.](../assets/tui/journal-panel.svg)
+<picture>
+  <source srcset="../assets/tui/journal-panel.svg" type="image/svg+xml">
+  <img src="../assets/tui/journal-panel.png" alt="The journal panel: the session's one change, to src/slug.js.">
+</picture>
 
 Each panel opens in its own box between the transcript and the editor, sized
 to its content up to half the terminal, and scrolls: the mouse wheel over the
@@ -502,7 +514,10 @@ chosen. Choosing one attaches to it and loads its transcript in the same
 screen. The picker needs a wide enough terminal, and the footer says so
 otherwise.
 
-![The session tree: the prompts, answers and tool calls of a session, the latest selected.](../assets/tui/session-tree.svg)
+<picture>
+  <source srcset="../assets/tui/session-tree.svg" type="image/svg+xml">
+  <img src="../assets/tui/session-tree.png" alt="The session tree: the prompts, answers and tool calls of a session, the latest selected.">
+</picture>
 
 `/tree` opens the **session tree** in the editor's place: every entry of the
 session's branches, one row each (`user:` and `assistant:` rows, a tool call
@@ -535,7 +550,10 @@ already admitted (`— interrupted prompt: <text>`), when there was one.
 
 ## The palette
 
-![The command palette over the dimmed screen: the commands, each with its summary and key.](../assets/tui/palette.svg)
+<picture>
+  <source srcset="../assets/tui/palette.svg" type="image/svg+xml">
+  <img src="../assets/tui/palette.png" alt="The command palette over the dimmed screen: the commands, each with its summary and key.">
+</picture>
 
 `Ctrl+P` opens one fuzzy search over four groups, in this order:
 **COMMANDS** (each with its summary and the key the bindings give it now),
@@ -564,7 +582,10 @@ project's files, at most 2,000).
 
 ## Approvals
 
-![The approval card for rm -rf dist, marked destructive, with its keys.](../assets/tui/approval-card.svg)
+<picture>
+  <source srcset="../assets/tui/approval-card.svg" type="image/svg+xml">
+  <img src="../assets/tui/approval-card.png" alt="The approval card for rm -rf dist, marked destructive, with its keys.">
+</picture>
 
 The TUI applies the same policy as `kubic run` (see [installed
 policy](run.md)): the permission classes, the tool allowlist they derive, and

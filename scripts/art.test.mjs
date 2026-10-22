@@ -1,6 +1,7 @@
-// The brand art's tests are Python (scripts/art/test_art.py): its wordmark,
-// dither field and icons, none of which needs fontTools or the fonts. This
-// gate runs them wherever python3 is installed.
+// The brand art's tests are Python (scripts/art/test_*.py): its wordmark,
+// dither field and icons, and how raster.py reads styles and covers pixels,
+// none of which needs fontTools, Pillow or the fonts (drawing a PNG is
+// skipped without them). This gate runs them wherever python3 is installed.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -11,7 +12,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const python = spawnSync('python3', ['--version']);
 
-it('the brand art reads the wordmark and draws its field and icons', {
+it('the brand art reads the wordmark and draws its field, icons and PNGs', {
   skip: python.status === 0 ? false : 'python3 is not installed',
 }, () => {
   const result = spawnSync(

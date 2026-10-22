@@ -1,8 +1,10 @@
 // Stages the npm package in release/ and packs it. The root package.json stays
 // private (so `npm publish` cannot run from the monorepo by accident); what
 // ships is generated here:
-//   - the bundle (dist/kubic.js and its map), the bin wrapper, README.md,
-//     LICENSE and NOTICE.md;
+//   - the bundle (dist/kubic.js and its map), the bin wrapper, LICENSE and
+//     NOTICE.md;
+//   - README.md as the package page shows it (see npmReadme), with the images
+//     it shows;
 //   - a package.json with the published fields of the root manifest only (no
 //     workspaces, scripts or devDependencies) and a `files` allow-list;
 //   - npm-shrinkwrap.json, the production tree pinned to the versions the
@@ -69,20 +71,81 @@ const COPIED = [
   'bin/env-proxy.mjs',
   'dist/kubic.js',
   'dist/kubic.js.map',
-  'README.md',
   'LICENSE',
   'NOTICE.md',
 ];
 
-export function releaseManifest(root) {
+// IMAGES are the README's, which ship beside it (see npmReadme).
+export function releaseManifest(root, images = []) {
   const manifest = {};
   for (const field of RELEASE_FIELDS) {
     if (root[field] !== undefined) manifest[field] = root[field];
   }
-  manifest.files = RELEASE_FILES;
+  manifest.files = [...RELEASE_FILES, ...images];
   // A publish from CI attaches the build's provenance attestation.
   manifest.publishConfig = { access: 'public', provenance: true };
   return manifest;
+}
+
+const ABSOLUTE = /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i;
+
+// The repository's web address, from the manifest's `repository` field.
+export function repositoryUrl(repository) {
+  const url = typeof repository === 'string' ? repository : repository?.url;
+  const match =
+    /^(?:git\+)?(https:\/\/github\.com\/[^/]+\/[^/]+?)(?:\.git)?$/.exec(
+      url ?? '',
+    );
+  if (match === null) {
+    throw new Error(
+      `the manifest's repository is not a GitHub URL: ${JSON.stringify(repository)}`,
+    );
+  }
+  return match[1];
+}
+
+// The README the package page shows. npm resolves a relative link against
+// the repository, which a reader may not be able to open, so every link is
+// made absolute: a <picture> becomes its <img>, whose PNG ships in the
+// package and loads from jsDelivr at this version; any other relative link
+// goes to the repository on GitHub; and the badge line, which shows the
+// state of main rather than of this release, is left out. Returns the README
+// and the images to ship.
+export function npmReadme(markdown, manifest) {
+  const repo = repositoryUrl(manifest.repository);
+  const cdn = `https://cdn.jsdelivr.net/npm/${manifest.name}@${manifest.version}`;
+  const images = new Set();
+  const image = (src) => {
+    if (ABSOLUTE.test(src)) return src;
+    images.add(src);
+    return `${cdn}/${src}`;
+  };
+  const link = (target) =>
+    ABSOLUTE.test(target) ? target : `${repo}/blob/main/${target}`;
+  const readme = markdown
+    .replace(/<picture>[\s\S]*?<\/picture>/g, (picture) => {
+      const img = /<img\b[^>]*>/.exec(picture);
+      if (img === null) throw new Error(`a <picture> without an <img>`);
+      return img[0];
+    })
+    .replace(/^(?:\[!\[[^\]]*\]\([^)\s]+\)\]\([^)\s]+\) *)+\n/gm, '')
+    .replace(
+      /(<img\b[^>]*\ssrc=")([^"]+)"/g,
+      (_, head, src) => `${head}${image(src)}"`,
+    )
+    .replace(
+      /(<a\b[^>]*\shref=")([^"]+)"/g,
+      (_, head, href) => `${head}${link(href)}"`,
+    )
+    .replace(
+      /!\[([^\]]*)\]\(([^)\s]+)\)/g,
+      (_, alt, src) => `![${alt}](${image(src)})`,
+    )
+    .replace(
+      /(^|[^!])\[([^\]]*)\]\(([^)\s]+)\)/gm,
+      (_, before, text, target) => `${before}[${text}](${link(target)})`,
+    );
+  return { readme, images: [...images] };
 }
 
 // A lockfile for the release package: the root lock's installed packages,
@@ -238,11 +301,17 @@ function stage(root = REPO_ROOT) {
   });
   const out = join(root, RELEASE_DIR);
   rmSync(out, { recursive: true, force: true });
-  for (const file of COPIED) {
+  const rootManifest = readJson(join(root, 'package.json'));
+  const { readme, images } = npmReadme(
+    readFileSync(join(root, 'README.md'), 'utf8'),
+    rootManifest,
+  );
+  for (const file of [...COPIED, ...images]) {
     mkdirSync(dirname(join(out, file)), { recursive: true });
     cpSync(join(root, file), join(out, file));
   }
-  const manifest = releaseManifest(readJson(join(root, 'package.json')));
+  writeFileSync(join(out, 'README.md'), readme);
+  const manifest = releaseManifest(rootManifest, images);
   const rootLock = readJson(join(root, 'package-lock.json'));
   writeFileSync(
     join(out, 'package.json'),

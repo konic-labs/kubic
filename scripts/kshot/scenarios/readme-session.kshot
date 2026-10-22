@@ -15,9 +15,11 @@ waitfor PREFLIGHT
 idle
 frame 2200
 type make slugify
+waitfor make slugify
 frame 140
 key Space
 type handle accents,
+waitfor handle accents,
 frame 140
 key Space
 type then run the tests
@@ -42,6 +44,7 @@ snap diff
 key Escape
 idle
 type /undo
+idle
 frame 700
 key Enter
 waitfor restored

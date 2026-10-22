@@ -3,10 +3,9 @@
 > The commands, keys, configuration and diagnostics you use Kubic through.
 > Package internals live on the [packages pages](../packages/README.md).
 
-Examples write `kubic`. From a source checkout that is `bin/kubic.js`, or
-`kubic` after `npm link` (see [install](../getting-started.md#install)). Every
-command answers `--help`, and [commands](commands.md) lists the rules they
-all follow.
+Examples write `kubic`, the command `npm install -g kubic` puts on your `PATH`
+(see [install](../getting-started.md#install)). Every command answers
+`--help`, and [commands](commands.md) lists the rules they all follow.
 
 - [commands.md](commands.md): the command index and the rules every command follows
 - [run.md](run.md): `kubic run`, `attach` and `resume`

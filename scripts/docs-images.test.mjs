@@ -16,7 +16,10 @@ describe('docs images', () => {
     for (const [scenario, files] of Object.entries(SHOTS)) {
       const text = readFileSync(join(SCENARIOS, `${scenario}.kshot`), 'utf8');
       const snaps = new Set(
-        [...text.matchAll(/^snap (\S+)$/gm)].map((m) => `${m[1]}.svg`),
+        [...text.matchAll(/^snap (\S+)$/gm)].flatMap((m) => [
+          `${m[1]}.svg`,
+          `${m[1]}.png`,
+        ]),
       );
       if (/^frame \d+$/m.test(text)) snaps.add('film.svg');
       for (const from of Object.keys(files)) {

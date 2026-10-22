@@ -8,12 +8,14 @@ code, docs, or CLI text.
 
 ## Getting set up
 
-Node >= 22.19 is the only requirement:
+Users install Kubic with `npm install -g kubic`; working on Kubic itself
+starts from a clone. Node >= 22.19 is the only requirement:
 
 ```sh
 npm ci
 npm run build                # esbuild bundle -> gitignored dist/kubic.js
 ./bin/kubic.js --version
+npm link                     # optional: `kubic` on your PATH runs this build
 ```
 
 Kubic runs on the Pi agent harness (`@earendil-works/*` **1.0.2**, exact
@@ -96,7 +98,7 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 | `license.test.mjs` | MIT on every manifest, the NOTICE attributions, and a permissive license for every runtime dependency in the lockfile. |
 | `build-contract.test.mjs` | The packaging story: the ESM root manifest, the `kubic` bin wrapper loading `dist/kubic.js`, `dist/` ignored, the Node floor. |
 | `kshot/kshot.py` | Screenshots of the real TUI, driven by a scenario (`npm run kshot -- <scenario>`; see [Seeing the TUI](#seeing-the-tui)). Its tests are Python, and `kshot.test.mjs` runs them wherever `python3` is installed. |
-| `art/art.py` | Draws the README's brand art: the banner, the facts strip, the closing band and the feature icons (see [Docs images](#docs-images)). Its tests are Python too, run by `art.test.mjs`. |
+| `art/art.py` | Draws the README's brand art: the banner, the facts strip, the closing band and the feature icons, with PNG twins drawn by `art/raster.py` (see [Docs images](#docs-images)). Its tests are Python too, run by `art.test.mjs`. |
 | `docs-images.mjs` | Regenerates every image under `docs/assets/` (`npm run docs:images`); its test checks that each image there has a generator. |
 
 dependency-cruiser, the standard tool for import rules, cannot parse TypeScript 7 sources,
@@ -224,6 +226,7 @@ A step that fails writes the screen at that moment as `error.png`.
 The PNG redraws the terminal's grid with a monospace font (JetBrains Mono,
 Menlo, DejaVu Sans Mono or Liberation Mono, or `--font FILE`): layout, glyphs
 and colours are exact, while font rendering can differ from your terminal's.
+`--scale 2` draws it twice as large, as the docs' copies are.
 The SVG keeps the text as text in the reader's own monospace font, with each
 run stretched to its cells so the columns stay in line.
 
@@ -244,12 +247,29 @@ npm run docs:images    # builds, runs the kshot scenarios, draws the brand art
   Konic red on a black field (white under GitHub's light theme), the TUI's own
   half-block wordmark and Konic's dither field. Its type is outlined from Inter
   Tight and Space Mono, which the script fetches once from the Google Fonts
-  repository at pinned hashes; it needs fontTools
-  (`python3 -m pip install fonttools`).
+  repository at pinned hashes; it needs fontTools, and Pillow for the PNGs
+  (`python3 -m pip install fonttools Pillow`).
 
 `PYTHON` names another interpreter, such as a virtualenv that has Pillow and
 fontTools. `scripts/docs-images.test.mjs` fails on an image that no generator
 makes.
+
+A page never shows an SVG as an image of its own. GitHub's mobile apps show
+only a `<picture>`'s `<img>`, and they do not draw these SVGs, so each SVG
+sits in a `<source>` and the `<img>` names its PNG twin:
+
+```html
+<picture>
+  <source srcset="assets/tui/session.svg" type="image/svg+xml">
+  <img src="assets/tui/session.png" alt="A finished turn: …">
+</picture>
+```
+
+A kshot snap writes both (at `--scale 2` here, so a phone shows them sharp).
+`art.py` draws PNGs of the light-theme art and of the icons from their SVGs,
+with `scripts/art/raster.py`: the still a browser shows when motion is
+reduced. The README's film falls back to `tui/session.png`, the same finished
+turn. `npm run docs:check` fails on a local SVG shown any other way.
 
 ## Code conventions
 
@@ -328,8 +348,8 @@ to use it, plainly.
   architecture pages, not in the user docs.
 - **Keys** are written `Ctrl+O`, `Alt+M`, `Shift+Enter`, `Esc`, `Enter` and
   `Tab`. Quote the TUI's own hint text as it appears (`^O review diff`).
-- **Commands.** Examples write `kubic`; the [docs index](README.md) says once
-  that a source checkout runs `bin/kubic.js`. Show output where it helps, and
+- **Commands.** Examples write `kubic`, the command an install puts on the
+  `PATH`; the [docs index](README.md) says so once. Show output where it helps, and
   label sample output as an example.
 - **Tables or sections.** A table suits short, parallel facts: a flag and one
   line. When a cell needs more than a sentence or two, keep a one-line summary
@@ -341,8 +361,9 @@ to use it, plainly.
   from kshot scenarios and the brand art from `scripts/art/art.py`, all
   remade by `npm run docs:images` (see [docs images](#docs-images)). Every
   image has alt text that says what it shows (`alt=""` for a decorative one),
-  stays under 300 KB, and is used by some page; `npm run docs:check` checks all
-  three.
+  stays under 300 KB, and is used by some page, and an SVG is shown through a
+  `<picture>` with a PNG twin ([docs images](#docs-images));
+  `npm run docs:check` checks all four.
 - **No isolation.** Kubic has none: never imply otherwise.
 
 ## CI

@@ -64,9 +64,8 @@ commander answers it before the action runs, so `kubic run|tui --help`
 prints that command's usage and exits 0 without starting a session or writing
 the runtime exclude rules.
 
-Build first (`npm run build`), then invoke `./bin/kubic.js` (or
-`npm run kubic -- …`); anything else dispatches below; an unknown command
-is a usage error (exit **2**) reported on stderr:
+Any other first argument dispatches to the commands below, and an unknown
+command is a usage error (exit **2**) reported on stderr:
 `error: unknown command '<name>'`, then `hint: did you mean kubic
 <command>?` for a near miss or `hint: to run it as a prompt: kubic run -p
 '<word>'` for any other word, then `hint: kubic --help lists the commands`

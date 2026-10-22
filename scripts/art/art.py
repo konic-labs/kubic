@@ -13,13 +13,18 @@ reader who asks for reduced motion.
   footer-dark.svg, footer-light.svg   the closing band
   icon-NAME.svg                       the feature grid's 12-pixel icons
 
+Each light-theme file and each icon has a PNG twin beside it, drawn by
+raster.py, for a viewer that shows a <picture>'s <img> and no SVG, such as
+GitHub's mobile apps.
+
 Usage: art.py [--out DIR] [--fonts DIR]
 
 The type is Inter Tight and Space Mono (SIL Open Font License 1.1), fetched
 once from the Google Fonts repository at a pinned commit, checked against its
 SHA-256 and kept in .cache/art-fonts/ in the checkout; --fonts names a
-directory that already holds both files. Outlining the type needs fontTools
-(python3 -m pip install fonttools).
+directory that already holds both files. Outlining the type needs fontTools,
+and drawing the PNGs needs Pillow too (python3 -m pip install fonttools
+Pillow).
 """
 
 import argparse
@@ -29,6 +34,8 @@ import os
 import re
 import sys
 import urllib.request
+
+import raster
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 PREFLIGHT = os.path.join(REPO, 'packages', 'tui', 'src', 'preflight.ts')
@@ -60,9 +67,9 @@ THEMES = {
 EYEBROW = 'Agentic coding, in your control'
 TAGLINE = 'Built for teams and enterprise'
 SIGNATURE = 'Konic'
-FACTS = ('MIT license', 'Node 22.19+', 'Any model', 'Not on npm yet')
-# How many leading facts are stated plainly; the rest are muted.
-FACTS_PLAIN = 3
+FACTS = ('MIT license', 'Node 22.19+', 'Any model', 'npm i -g kubic')
+# The facts set as typed rather than in capitals: a command to copy.
+FACTS_TYPED = {'npm i -g kubic'}
 
 # The Konic mark: a disc split by a gap at 60 degrees, on a 512 grid.
 MARK = ('M169.748 476.331L403.686 71.138A16.384 16.384 0 0 1 428.944 67.25'
@@ -340,9 +347,12 @@ class Type:
             glyphs[glyph].draw(transform_pen(pen, (scale, 0, 0, -scale, x + offset, y)))
         return pen.getCommands(), width
 
-    def label(self, text, x, y, size, fill, anchor='start', cls=None, delay=None):
-        """Space Mono in capitals, tracked out: Konic's small labels."""
-        d, width = self.path(text.upper(), LABEL, size, x, y, tracking=0.1, anchor=anchor)
+    def label(self, text, x, y, size, fill, anchor='start', cls=None, delay=None,
+              capitals=True):
+        """Space Mono, tracked out and in capitals unless CAPITALS is false:
+        Konic's small labels."""
+        d, width = self.path(text.upper() if capitals else text, LABEL, size, x, y,
+                             tracking=0.1, anchor=anchor)
         return f'<path{motion(cls, delay)} fill="{fill}" d="{d}"/>', width
 
     def words(self, text, x, y, size, fill, weight=500, cls=None, delay=None):
@@ -398,8 +408,8 @@ def facts(theme, type_):
         if i:
             parts.append(f'<path d="M{num(x)} 0V{height}" stroke="{t["rule"]}"/>')
         parts.append(f'<rect x="{num(x + 28)}" y="{height // 2 - 5}" width="10" height="10" fill="{RED}"/>')
-        text, _ = type_.label(fact, x + 50, height / 2 + 6, 17,
-                              t['fg'] if i < FACTS_PLAIN else t['muted'])
+        text, _ = type_.label(fact, x + 50, height / 2 + 6, 17, t['fg'],
+                              capitals=fact not in FACTS_TYPED)
         parts.append(text)
     parts.append(f'<rect x=".5" y=".5" width="{width - 1}" height="{height - 1}" '
                  f'fill="none" stroke="{t["rule"]}"/>')
@@ -429,8 +439,19 @@ def icon(name):
             f'<path fill="{RED}" d="{d}"/></svg>\n')
 
 
+def png_scale(name):
+    """How many times its size a file's PNG twin is drawn, or None for no
+    twin: a <picture>'s <img> shows the light theme's art, at twice its size
+    for sharp type, and an icon at its own."""
+    if name.startswith('icon-'):
+        return 1
+    if name.endswith('-light.svg'):
+        return 2
+    return None
+
+
 def write_all(out_dir, fonts_dir=None):
-    """Draw every file into OUT_DIR; return their paths."""
+    """Draw every file and its PNG twin into OUT_DIR; return their paths."""
     with open(PREFLIGHT, encoding='utf-8') as handle:
         wordmark = wordmark_pixels(wordmark_rows(handle.read()))
     type_ = Type(ensure_fonts(fonts_dir))
@@ -448,12 +469,18 @@ def write_all(out_dir, fonts_dir=None):
         with open(path, 'w', encoding='utf-8') as handle:
             handle.write(content)
         written.append(path)
+        scale = png_scale(name)
+        if scale is not None:
+            png = f'{path[:-len(".svg")]}.png'
+            raster.write_png(content, png, scale)
+            written.append(png)
     return written
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog='art', description="Draw the README's brand art as SVG files.")
+        prog='art', description="Draw the README's brand art as SVG files "
+                                "and their PNG twins.")
     parser.add_argument('--out', default=DEFAULT_OUT,
                         help='where the files go (default: docs/assets/readme)')
     parser.add_argument('--fonts', help='a directory holding '
@@ -463,7 +490,7 @@ def main(argv=None):
     try:
         for path in write_all(args.out, args.fonts):
             print(f'{os.path.relpath(path, REPO)}: {os.path.getsize(path)} bytes')
-    except ArtError as error:
+    except (ArtError, raster.RasterError) as error:
         print(f'art: {error}', file=sys.stderr)
         return 1
     return 0

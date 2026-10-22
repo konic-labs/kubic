@@ -4,7 +4,28 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "Kubic — model-agnostic terminal coding agent",
+  "description": "Agentic coding, in your control: any model, every change journaled and undoable, built for teams and enterprise.",
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "llm",
+    "cli",
+    "tui",
+    "terminal",
+    "anthropic",
+    "openai",
+    "gemini"
+  ],
+  "homepage": "https://github.com/konic-labs/kubic#readme",
+  "bugs": {
+    "url": "https://github.com/konic-labs/kubic/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/konic-labs/kubic.git"
+  },
+  "author": "Konic Labs",
   "bin": {
     "kubic": "bin/kubic.js"
   },

@@ -84,17 +84,19 @@ const DENIED = [
 ];
 
 // Entries of `tar -tzf` (each under `package/`), checked against the
-// allow-list: every required file present, nothing else.
-export function fileListProblems(entries) {
+// allow-list: every required file present, and the images the README shows
+// (IMAGES, the manifest's `files` under docs/), nothing else.
+export function fileListProblems(entries, images = []) {
   const files = entries
     .filter((entry) => !entry.endsWith('/'))
     .map((entry) => entry.replace(/^package\//, ''));
+  const required = [...REQUIRED_FILES, ...images];
   const problems = [];
-  for (const file of REQUIRED_FILES) {
+  for (const file of required) {
     if (!files.includes(file)) problems.push(`missing ${file}`);
   }
   for (const file of files) {
-    if (REQUIRED_FILES.includes(file) || OPTIONAL_FILES.includes(file)) {
+    if (required.includes(file) || OPTIONAL_FILES.includes(file)) {
       continue;
     }
     const denied = DENIED.find(([pattern]) => pattern.test(file));
@@ -404,7 +406,10 @@ async function main(argv) {
   })
     .split('\n')
     .filter((entry) => entry !== '');
-  const problems = fileListProblems(listing);
+  const problems = fileListProblems(
+    listing,
+    manifest.files.filter((file) => file.startsWith('docs/')),
+  );
   const scratch = mkdtempSync(join(tmpdir(), 'kubic-pack-contract-'));
   try {
     problems.push(

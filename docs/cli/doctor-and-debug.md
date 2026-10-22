@@ -343,7 +343,7 @@ Error: <message>
 error: <message>
 ```
 
-The launcher carries a first check of its own: below Node 22.19 `./bin/kubic.js` refuses before loading
+The launcher carries a first check of its own: below Node 22.19 `kubic` (`bin/kubic.js`) refuses before loading
 anything — `kubic: node >= 22.19 required (running <version>) — see the
 README install section`, exit 1 — because on an older runtime the entry
 import could only fail as a raw parser error.

@@ -2,6 +2,13 @@
 
 > What a Kubic release carries so it can be verified, and how.
 
+## Verifying a package
+
+Every version on npm is signed by the registry. In a project that depends on
+Kubic (`npm install kubic`), `npm audit signatures` checks the signature of
+every installed package, and the provenance attestation of each version that
+has one.
+
 ## Provenance
 
 The staged package's manifest sets `publishConfig.provenance`, so a publish

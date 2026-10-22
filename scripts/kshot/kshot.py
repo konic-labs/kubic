@@ -11,11 +11,12 @@ writes the screen four ways:
   NAME.txt   the plain text of the screen
   NAME.ansi  the screen with its SGR colour sequences
 
-Usage: kshot.py SCENARIO [--out DIR] [--keep] [--font PATH]
+Usage: kshot.py SCENARIO [--out DIR] [--keep] [--font PATH] [--scale N]
 
 SCENARIO is a file, or the name of one in scripts/kshot/scenarios (`panels`
 for scenarios/panels.kshot). The snapshots go to .kshot/NAME/ in the
-checkout unless --out names another directory.
+checkout unless --out names another directory. --scale draws each PNG N
+times as large, for high-density screens.
 
 A scenario has one step per line; '#' starts a comment. $WORK, $KHOME and
 $REPO expand to a fresh workspace, a fresh HOME and the Kubic checkout.
@@ -482,15 +483,17 @@ def choose_faces(index, override=None):
 class Fonts:
     """The faces a screen is drawn with, and the cell they make."""
 
-    def __init__(self, faces, symbols):
+    def __init__(self, faces, symbols, scale=1):
         _, _, image_font = pillow()
+        self.scale = scale
+        size = FONT_SIZE * scale
         self.main = {}
         for key, (path, face) in zip(((False, False), (True, False),
                                       (False, True), (True, True)), faces):
-            self.main[key] = image_font.truetype(path, FONT_SIZE, index=face)
+            self.main[key] = image_font.truetype(path, size, index=face)
         # Without a bold face, bold text is drawn twice, one pixel apart.
         self.synthetic_bold = faces[1] == faces[0]
-        self.fallbacks = [image_font.truetype(path, FONT_SIZE)
+        self.fallbacks = [image_font.truetype(path, size)
                           for path in symbols]
         regular = self.main[(False, False)]
         self.cell_w = round(regular.getlength('M'))
@@ -531,11 +534,14 @@ def blend(a, b, t):
 
 
 def render_png(grid, cursor, path, fonts):
-    """Draw the cells, then a box on the cursor cell."""
+    """Draw the cells, then a box on the cursor cell; lines and the padding
+    grow with the fonts' scale."""
     image_module, draw_module, _ = pillow()
+    s = fonts.scale
+    pad = PAD * s
     cols = len(grid[0]) if grid else 0
-    image = image_module.new('RGB', (cols * fonts.cell_w + 2 * PAD,
-                                     len(grid) * fonts.cell_h + 2 * PAD),
+    image = image_module.new('RGB', (cols * fonts.cell_w + 2 * pad,
+                                     len(grid) * fonts.cell_h + 2 * pad),
                              DEFAULT_BG)
     draw = draw_module.Draw(image)
     for y, row in enumerate(grid):
@@ -550,8 +556,8 @@ def render_png(grid, cursor, path, fonts):
             if style.dim:
                 fg = blend(fg, bg, 0.45)
             wide = x + 1 < cols and row[x + 1] is None
-            left = PAD + x * fonts.cell_w
-            top = PAD + y * fonts.cell_h
+            left = pad + x * fonts.cell_w
+            top = pad + y * fonts.cell_h
             right = left + fonts.cell_w * (2 if wide else 1) - 1
             bottom = top + fonts.cell_h - 1
             if bg != DEFAULT_BG:
@@ -560,17 +566,17 @@ def render_png(grid, cursor, path, fonts):
                 font = fonts.font_for(ch, style.bold, style.italic)
                 draw.text((left, top), ch, font=font, fill=fg)
                 if style.bold and fonts.synthetic_bold:
-                    draw.text((left + 1, top), ch, font=font, fill=fg)
+                    draw.text((left + s, top), ch, font=font, fill=fg)
             if style.underline:
-                draw.line([left, bottom - 1, right, bottom - 1], fill=fg)
+                draw.rectangle([left, bottom - 2 * s + 1, right, bottom - s], fill=fg)
             if style.strike:
                 middle = top + fonts.cell_h // 2
-                draw.line([left, middle, right, middle], fill=fg)
+                draw.rectangle([left, middle, right, middle + s - 1], fill=fg)
     if cursor is not None:
-        left = PAD + cursor[0] * fonts.cell_w
-        top = PAD + cursor[1] * fonts.cell_h
+        left = pad + cursor[0] * fonts.cell_w
+        top = pad + cursor[1] * fonts.cell_h
         draw.rectangle([left, top, left + fonts.cell_w - 1,
-                        top + fonts.cell_h - 1], outline=CURSOR)
+                        top + fonts.cell_h - 1], outline=CURSOR, width=s)
     image.save(path)
 
 
@@ -706,12 +712,12 @@ def wait_for_idle(tmux, quiet_ms):
         time.sleep(POLL_S)
 
 
-def run(scenario, out_dir, keep, font=None):
+def run(scenario, out_dir, keep, font=None, scale=1):
     with open(scenario) as handle:
         steps = parse_scenario(handle.read())
     fonts = Fonts(choose_faces(font_index(), font),
                   [path for name, path in sorted(font_index().items())
-                   if name in SYMBOL_FONTS])
+                   if name in SYMBOL_FONTS], scale)
     tmux = Tmux()
     os.makedirs(out_dir, exist_ok=True)
     for ext in ('png', 'txt', 'ansi'):
@@ -805,12 +811,15 @@ def main(argv=None):
                              'are used when present (default: $KSHOT_FONT, '
                              'else the first of JetBrains Mono, Menlo, DejaVu '
                              'Sans Mono and Liberation Mono found)')
+    parser.add_argument('--scale', type=int, choices=(1, 2, 3), default=1,
+                        help='draw each PNG this many times as large, for '
+                             'high-density screens (default: 1)')
     args = parser.parse_args(argv)
     try:
         scenario = resolve_scenario(args.scenario)
         name = os.path.splitext(os.path.basename(scenario))[0]
         out_dir = args.out or os.path.join(REPO, '.kshot', name)
-        run(scenario, out_dir, args.keep, args.font)
+        run(scenario, out_dir, args.keep, args.font, args.scale)
     except KshotError as error:
         print(f'kshot: {error}', file=sys.stderr)
         return 1

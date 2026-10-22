@@ -2,8 +2,8 @@
 
 > Start with the guide, then look things up in the reference.
 
-Examples write `kubic`. From a source checkout that is `bin/kubic.js`, or
-`kubic` after `npm link` (see [install](getting-started.md#install)).
+Examples write `kubic`, the command `npm install -g kubic` puts on your `PATH`
+(see [install](getting-started.md#install)).
 
 ## Start here
 

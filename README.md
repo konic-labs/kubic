@@ -1,143 +1,103 @@
-# Kubic
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/banner-dark.svg">
+  <img src="docs/assets/readme/banner-light.svg" width="100%" alt="Kubic. Agentic coding, in your control. Built for teams and enterprise.">
+</picture>
 
-Kubic is Konic's open-source terminal coding agent. It is model-agnostic, built on
-the Pi agent harness, and runs one agent directly in your directory. Every change
-the agent makes is recorded in a journal that does not depend on version control,
-so `kubic diff` and `kubic undo` work in a monorepo and in `~/Downloads` alike.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/facts-dark.svg">
+  <img src="docs/assets/readme/facts-light.svg" width="100%" alt="MIT license. Node 22.19+. Any model. Not on npm yet.">
+</picture>
 
-**Status: implemented, not yet published.** A fresh clone plus Node >= 22.19 builds a
-working `kubic` binary, and every command listed below is implemented. Kubic is not
-on npm yet.
+**Kubic is Konic's open-source coding agent.** It runs in your terminal with the
+model you choose, records every file change in a journal you can review and undo,
+and asks before anything risky runs. Teams get managed policy, an audit ledger and
+spend caps on top.
+[![CI](https://github.com/konic-labs/kubic/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/konic-labs/kubic/actions/workflows/ci.yml)
+
+<img src="docs/assets/readme/session.svg" width="100%" alt="A Kubic session: asked to make slugify handle accents, the agent reads src/slug.js, edits it and runs the test; the diff panel shows the change, and /undo restores the file.">
+
+## Why Kubic
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <img src="docs/assets/readme/icon-models.svg" width="24" height="24" alt=""><br>
+      <b>Any model</b><br>
+      Anthropic, OpenAI, Google, Bedrock, OpenRouter, or any OpenAI-compatible endpoint, local ones included.
+    </td>
+    <td width="33%" valign="top">
+      <img src="docs/assets/readme/icon-journal.svg" width="24" height="24" alt=""><br>
+      <b>Undo any turn</b><br>
+      Every file change is journaled. <code>kubic diff</code> and <code>/undo</code> work with or without git.
+    </td>
+    <td width="33%" valign="top">
+      <img src="docs/assets/readme/icon-approvals.svg" width="24" height="24" alt=""><br>
+      <b>Approvals</b><br>
+      Destructive, networked and out-of-workspace actions ask first. Headless runs use a broker or signed pre-approvals.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/assets/readme/icon-sessions.svg" width="24" height="24" alt=""><br>
+      <b>Sessions that branch</b><br>
+      Sessions are durable. <code>/tree</code> branches from any earlier prompt and keeps both.
+    </td>
+    <td valign="top">
+      <img src="docs/assets/readme/icon-sandbox.svg" width="24" height="24" alt=""><br>
+      <b>A sandbox for bash</b><br>
+      Opt in to Seatbelt or bubblewrap: commands write only inside the workspace and reach no network unless allowed.
+    </td>
+    <td valign="top">
+      <img src="docs/assets/readme/icon-policy.svg" width="24" height="24" alt=""><br>
+      <b>Built for teams</b><br>
+      Signed managed policy, OIDC and keychain keys, an MCP allowlist, an audit ledger and spend caps.
+    </td>
+  </tr>
+</table>
 
 ## Quick start
 
-From a fresh clone, run these commands from the repository root:
+Kubic is not on npm yet. Build it from source with Node 22.19 or later:
 
 ```bash
-npm ci
-npm run build
-KUBIC_PROVIDER=faux ./bin/kubic.js run -p "hello"
+git clone https://github.com/konic-labs/kubic.git
+cd kubic && npm ci && npm run build
+export ANTHROPIC_API_KEY=...    # or OPENAI_API_KEY, GEMINI_API_KEY, ...
+./bin/kubic.js                  # the first launch picks a default model
 ```
 
-Run exactly as shown on a fresh clone with no configuration, the last command exits 0
-and prints `result: faux echo: hello`, then `session`, `journal`, `usage` and
-`trajectory` references. It also writes three honest-limit warnings and a
-`provider: faux/echo` line to stderr; those are expected. `KUBIC_PROVIDER=faux` selects
-the built-in test model, which answers without a network connection or an API key.
-To use a real model, export a provider key (for example `ANTHROPIC_API_KEY`) and run
-`./bin/kubic.js setup` to choose a default. On a terminal, a bare `./bin/kubic.js`
-runs setup on first launch and then opens the interactive TUI.
+Describe a task, review the change with `Ctrl+O`, and type `/undo` to put a turn
+back. Run `npm link` once to use `kubic` in any directory. To try Kubic without a
+key, `KUBIC_PROVIDER=faux ./bin/kubic.js` opens the TUI on a built-in model that
+echoes your prompts.
 
-## What it does
-
-- **One agent in your directory.** It reads, writes and edits files, searches with
-  `grep`, `find` and `ls`, and runs `bash`. There is no delegation mode: one agent
-  does the work.
-- **Approvals.** Destructive and network-raising actions need your approval. The
-  TUI shows an approval card. `kubic run` cannot ask, so it refuses a challenged
-  action instead of running it.
-- **A change journal.** `kubic diff` shows what changed, `kubic undo` restores it,
-  and `kubic log` and `kubic status` show the record. The journal works without git.
-- **Sessions.** Each run belongs to a session. `kubic sessions` lists them;
-  attach, fork and resume them with `kubic sessions attach`, `kubic sessions fork`,
-  `kubic run --session` and `kubic tui --session`.
-- **Models.** `kubic models` reads the built-in model catalogue, and `kubic setup`
-  picks a default. Provider keys come from your environment.
-- **Analysis.** `kubic eval`, `kubic benchmark`, `kubic replay` and `kubic export`
-  work on suites, runs and trajectories. `kubic cost` reads usage rows from the
-  session store, `kubic policy` answers tool-policy queries, and `kubic audit`
-  queries the audit ledger.
-
-The full command reference is in [`docs/cli/`](docs/cli/).
+[Getting started](docs/getting-started.md) walks through a first session.
 
 ## Honest limits
 
-Kubic is not a sandbox, and its documentation says so plainly. `kubic doctor` reports
-the same limits.
-
-- **No isolation.** Kubic runs with your user's authority: your files, your network
-  access and your credentials. Approvals and the change journal are the controls.
+- **No isolation.** Kubic acts with your authority: your files, your network and
+  your credentials. Approvals, the journal and the opt-in bash sandbox are the controls.
 - **No prompt-injection prevention.** Tool output is treated as data, never as
-  instructions, but nothing guarantees that a model will not be steered by what it reads.
-- **Policy is routing, not enforcement.** An approval policy decides which actions
-  ask. Values it cannot enforce are reported, never honoured.
-- **The journal is not a backup.** It is an undo log, and it cannot restore state
-  outside the workspace.
-- **No third-party tools or MCP servers.** Requests for them are refused.
+  instructions, but a model can still be steered by what it reads.
+- **The journal is an undo log, not a backup.** It restores files in the workspace,
+  not what a command changed elsewhere.
 
-See [`docs/architecture/in-process.md`](docs/architecture/in-process.md) and
-[`docs/architecture/journal-and-safety.md`](docs/architecture/journal-and-safety.md)
-for the details.
+`kubic doctor` reports these and the rest; the
+[threat model](docs/architecture/threat-model.md) has the detail.
 
-## Install
+## Documentation
 
-Prerequisites: Node >= 22.19 (`node --version`) on Linux, macOS or Windows.
-On Windows the `bash` tool runs its commands through Git Bash (Git for
-Windows), else WSL, because the approval detectors read POSIX shell
-commands only; without either it refuses to run.
-
-From npm, once Kubic is published there, install it globally or run it
-without installing:
-
-```bash
-npm install -g kubic
-kubic --version
-npx kubic --version
-```
-
-The package carries an `npm-shrinkwrap.json`, so an install gets the
-dependency versions Kubic was tested with.
-
-From a fresh clone, run these commands from the repository root:
-
-```bash
-npm ci
-npm run build
-./bin/kubic.js --version
-```
-
-The last command prints `kubic 0.1.2 (license: MIT)` and exits 0. Equivalent
-invocations: `npx kubic --version` (the `bin` entry, no install needed),
-`npm run kubic -- --version` (the same binary through npm), and
-`node dist/kubic.js --version` (the bundled build output directly).
-
-On a fresh clone with no provider configured, `./bin/kubic.js doctor` exits 6 and
-prints `doctor: 17 pass, 6 warn, 1 fail, 0 skip`. Its one failure is
-`FAIL limit:provider-availability (provider-down)`; the six warnings are the five
-honest limits and the detection-only policy note. See
-[`docs/cli/doctor-and-debug.md`](docs/cli/doctor-and-debug.md). With a provider key
-in your environment, `./bin/kubic.js setup` saves a default model to
-`~/.kubic/config.toml`; see [`docs/cli/models.md`](docs/cli/models.md#kubic-setup).
-
-`dist/` is gitignored build output: `npm run build` bundles the CLI into one
-file, `dist/kubic.js`, with esbuild (`scripts/build.mjs`). Third-party packages
-stay external, so the bundle carries only Kubic's own code. Rebuilding is
-byte-equivalent.
-
-## Where things are
-
-| Path | What it is |
-| --- | --- |
-| [`bin/kubic.js`](bin/kubic.js) | Committed `kubic` executable, a wrapper over the `dist/` build output. |
-| [`apps/kubic/`](apps/kubic/) | CLI composition root: `src/main.ts` wires the host and the TUI, and `test/` holds the end-to-end tests. |
-| [`packages/`](packages/) | The packages: `core`, `exec`, `agent`, `host`, `trajectory`, `eval` and `tui`, each with an overview page under [`docs/packages/`](docs/packages/README.md). |
-| [`scripts/`](scripts/) | The build and the repository gates, each gate with its own `node --test` test. |
-| [`test/`](test/) | Fixtures shared by every package's tests: the fake terminal, temp directories and the hermetic environment. |
-| [`docs/`](docs/README.md) | Reference docs: the CLI, the architecture, the packages and the contributor guide. |
-
-Session state lives in `~/.kubic/sessions/`, one directory per session: the
-session's durable storage, its journal, spans, approvals posture and lock. Nothing prunes these for you: `kubic sessions prune` lists
-candidates by default and deletes only with `--yes` or a yes at its terminal
-prompt. A session that is locked by a live process is never touched.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks to run, and the commit
-and docs conventions.
+| Start here | Reference | Inside Kubic |
+| --- | --- | --- |
+| [Getting started](docs/getting-started.md) | [Commands](docs/cli/README.md) | [Architecture](docs/architecture/README.md) |
+| [The TUI](docs/cli/tui.md) | [Configuration](docs/cli/configuration.md) | [Threat model](docs/architecture/threat-model.md) |
+| [For teams](docs/cli/enterprise.md) | [TUI keys](docs/cli/tui-keys.md) | [Contributing](CONTRIBUTING.md) |
 
 ## License
 
-MIT. See [LICENSE](LICENSE) (Copyright (c) 2026 Konic Labs). Third-party attribution
-for the Pi agent harness is in [NOTICE.md](NOTICE.md). Every `package.json` declares
-`"license": "MIT"`, and the CLI reports the license through `kubic --version` and the
-`license:kubic` doctor check.
+MIT, © 2026 Konic Labs. Kubic runs on the [Pi](NOTICE.md) agent harness.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/footer-dark.svg">
+  <img src="docs/assets/readme/footer-light.svg" width="100%" alt="Konic">
+</picture>

@@ -1,10 +1,7 @@
 # Skills
 
-> Skills discovery, gating and prompt injection.
-> Implementation: `packages/agent/src/skills/` (the loader),
-> `packages/host/src/skills/skills-boot.ts` (lane boot + listing summary),
-> `packages/host/src/skills/skills-cli.ts` (`kubic skills`),
-> `apps/kubic/src/runners/setup.ts` (prod wiring).
+> Which skills a session loads, which a role or trust leaves out, and why;
+> `kubic skills` shows the result.
 
 Skills are markdown documents (`SKILL.md`) the agent can read: reusable
 instructions that land on the system prompt as `<skill>` blocks. Discovery
@@ -21,8 +18,8 @@ every skill and why it was left out.
 
 ## `kubic skills [--role <name>] [--json]`
 
-Runs the same discovery plus role gating the lane boots (a summary of the
-boot, never a reimplementation) and prints one row per skill: name,
+Runs the same discovery and role gating a session starts with (a summary
+of that start, never a reimplementation) and prints one row per skill: name,
 source (`user` / `project` / `package` / `settings` / `cli`), path, and
 status:
 
@@ -40,7 +37,7 @@ status:
   failed resolution is reported as an `error` instead.
 - `error` — the file could not be read, with the reason.
 
-`--role <name>` gates the listing as the lane would for that role (the
+`--role <name>` gates the listing as a session would for that role (the
 document's `skills` allowlist plus the most-restrictive capability merge);
 a role that refuses to resolve fails the listing closed with its named
 reason. `--json` prints the rows as one stable array (sorted by name).
@@ -62,3 +59,8 @@ with the gate's reason. See [doctor and debug](doctor-and-debug.md).
 `kubic tui` prints a one-time boot notice when the loader skipped
 anything (`warning: skills: 2 skipped (1 error, 1 excluded) …`) instead
 of dropping the lines — the full reasons live in `kubic skills`.
+
+## See also
+
+- [Configuration](configuration.md#settings-skills): the `skills` key.
+- [`kubic run`](run.md): `--skill`, `--no-skills` and `--invoke-skill`.

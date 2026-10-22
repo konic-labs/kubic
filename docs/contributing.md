@@ -19,6 +19,23 @@ npm run build                # esbuild bundle -> gitignored dist/kubic.js
 Kubic runs on the Pi agent harness (`@earendil-works/*` **1.0.2**, exact
 pins), installed from npm like every other dependency.
 
+`npm run build` bundles Kubic's own code into one file, `dist/kubic.js`, with
+esbuild (`scripts/build.mjs`). Third-party packages stay external, so the
+bundle carries only Kubic's code, and a rebuild is byte-equivalent.
+`bin/kubic.js` is the committed executable over that output; `npm run kubic --
+<args>` and `node dist/kubic.js <args>` run the same binary.
+
+## Where things are
+
+| Path | What it is |
+| --- | --- |
+| [`bin/kubic.js`](../bin/kubic.js) | The committed `kubic` executable, a wrapper over the build output |
+| [`apps/kubic/`](../apps/kubic/) | The composition root: `src/main.ts` wires the host and the TUI, and `test/` holds the end-to-end tests |
+| [`packages/`](../packages/) | `core`, `exec`, `agent`, `host`, `trajectory`, `eval` and `tui`, each with a [package page](packages/README.md) |
+| [`scripts/`](../scripts/) | The build, the repository gates, kshot and the docs images, each with its own test |
+| [`test/`](../test/) | Fixtures every package's tests share: the fake terminal, temp directories and the hermetic environment |
+| [`docs/`](README.md) | These pages, and `docs/assets/` for their images |
+
 ## Before you push
 
 Three commands cover everything CI runs:
@@ -70,7 +87,7 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 | `faux-smoke.mjs` | Drives the built binary through a whole faux-provider run with a tool call. |
 | `release-stage.mjs` | Stages the npm package in `release/` (`npm run release:stage`): the bundle, a manifest generated from the root one, and a shrinkwrap resolved from the tested lockfile; then packs it and writes its CycloneDX SBOM beside the tarball. The root manifest stays private. |
 | `pack-install-contract.mjs` | Proves the packed release (`npm run release:contract`): its file list, a tarball install that runs, and a registry install that honours the shrinkwrap within the size budget. |
-| `dep-lint.mjs` | The import rules: package direction, no relative import across packages, test fixtures in tests only, `node:fs`/`node:child_process` only in `exec`, the two Pi boundary files, a host concern folder reached through its `index.ts`, and one argv parser. It reads `vi.mock` specifiers as imports too. dependency-cruiser, the standard tool, cannot parse TypeScript 7 sources. |
+| `dep-lint.mjs` | The import rules: package direction, no relative import across packages, test fixtures only in tests, `node:fs` and `node:child_process` only in `exec`, the two Pi boundary files, host folders through their `index.ts`, and one argv parser. `vi.mock` specifiers count as imports. |
 | `check-pinned-deps.mjs` | Every dependency in every manifest is one exact version, no manifest has `overrides` (npm ignores them when someone installs kubic), and every workspace dependency is declared by the root manifest with the same version. `.npmrc` sets `save-exact=true` for new installs; the check catches a hand edit. |
 | `check-docs-links.mjs` | Every relative link in `docs/` resolves, with no dependency to install. |
 | `gen-config-docs.mjs` | Generates the config key tables and `example.toml` from the config schema; `--check` fails when they are stale. |
@@ -79,6 +96,11 @@ The scripts under `scripts/` cover what those tools cannot, each with its own
 | `license.test.mjs` | MIT on every manifest, the NOTICE attributions, and a permissive license for every runtime dependency in the lockfile. |
 | `build-contract.test.mjs` | The packaging story: the ESM root manifest, the `kubic` bin wrapper loading `dist/kubic.js`, `dist/` ignored, the Node floor. |
 | `kshot/kshot.py` | Screenshots of the real TUI, driven by a scenario (`npm run kshot -- <scenario>`; see [Seeing the TUI](#seeing-the-tui)). Its tests are Python, and `kshot.test.mjs` runs them wherever `python3` is installed. |
+| `art/art.py` | Draws the README's brand art: the banner, the facts strip, the closing band and the feature icons (see [Docs images](#docs-images)). Its tests are Python too, run by `art.test.mjs`. |
+| `docs-images.mjs` | Regenerates every image under `docs/assets/` (`npm run docs:images`); its test checks that each image there has a generator. |
+
+dependency-cruiser, the standard tool for import rules, cannot parse TypeScript 7 sources,
+which is why `dep-lint.mjs` exists.
 
 ### Dead-code gate
 
@@ -158,7 +180,7 @@ are re-exported.
 Headless snapshots pin what a render function returns; kshot shows what a
 terminal shows. It runs the built `kubic tui` in a real pseudo-terminal
 inside a private tmux server, drives it from a scenario file, and writes
-each snapshot as a PNG, the plain text and the raw ANSI:
+each snapshot as a PNG, an SVG, the plain text and the ANSI:
 
 ```sh
 npm run kshot -- panels    # builds, then writes .kshot/panels/*.png
@@ -168,7 +190,11 @@ It needs tmux, and Python 3 with Pillow (`python3 -m pip install Pillow`);
 nothing else in the repo depends on them. The app runs on the faux provider
 with a fresh `HOME` and a minimal environment, so no key or setting of yours
 reaches it. A prompt of the form `faux:tool <name> <json arguments>` makes
-the faux model call that tool.
+the faux model call that tool. A scenario that needs a real-looking session
+names a scripted model instead (`model docs-tour.json`): an OpenAI-compatible
+endpoint on a loopback port that answers each request with the next reply of
+the script, text and tool calls, registered through a `models.json` in the
+scenario's `HOME`.
 
 A scenario has one step per line. The full list is at the top of
 `scripts/kshot/kshot.py`:
@@ -186,15 +212,44 @@ snap after-read
 ```
 
 `waitfor` waits for text on the screen, `idle` for the screen to hold still,
-and `key` takes tmux key names (`Enter`, `Escape`, `C-p`, `M-Down`). The
-scenarios in `scripts/kshot/scenarios/` cover the first screen, the palette,
-the panels and the confirm dialog, the approval card, the context gauge and
-the session tree.
+and `key` takes tmux key names (`Enter`, `Escape`, `C-p`, `M-Down`). `scrub`
+replaces text that changes on every run (a clock, a session id, a timing)
+before a snapshot is written, and `frame` adds the screen to a film that kshot
+writes as `film.svg`, which plays the frames on a loop. The scenarios in
+`scripts/kshot/scenarios/` cover the first screen, the palette, the panels
+and the confirm dialog, the approval card, the context gauge, the session
+tree, and the README's and the docs' images.
 A step that fails writes the screen at that moment as `error.png`.
 
 The PNG redraws the terminal's grid with a monospace font (JetBrains Mono,
 Menlo, DejaVu Sans Mono or Liberation Mono, or `--font FILE`): layout, glyphs
 and colours are exact, while font rendering can differ from your terminal's.
+The SVG keeps the text as text in the reader's own monospace font, with each
+run stretched to its cells so the columns stay in line.
+
+## Docs images
+
+Every image the README and `docs/` show lives in `docs/assets/`, and one
+command makes them all again:
+
+```sh
+npm run docs:images    # builds, runs the kshot scenarios, draws the brand art
+```
+
+- `docs/assets/tui/` holds the TUI's screens: snaps of the `docs-tour`
+  scenario, a session over a small project with a scripted model.
+- `docs/assets/readme/session.svg` is the README's film, from the
+  `readme-session` scenario.
+- The rest of `docs/assets/readme/` is the brand art from `scripts/art/art.py`:
+  Konic red on a black field (white under GitHub's light theme), the TUI's own
+  half-block wordmark and Konic's dither field. Its type is outlined from Inter
+  Tight and Space Mono, which the script fetches once from the Google Fonts
+  repository at pinned hashes; it needs fontTools
+  (`python3 -m pip install fonttools`).
+
+`PYTHON` names another interpreter, such as a virtualenv that has Pillow and
+fontTools. `scripts/docs-images.test.mjs` fails on an image that no generator
+makes.
 
 ## Code conventions
 
@@ -243,12 +298,52 @@ footer.
 A behaviour change ships its docs page in the same commit, and
 `npm run docs:check` must pass. Configuration keys are declared once, in
 `packages/host/src/config/schema.ts`: the parser's checks, the runtime's
-effect rows, `example.toml` and the key tables in
+effect rows, `example.toml` and the key sections in
 [configuration.md](cli/configuration.md) all derive from it. After changing a
-key, run `npm run docs:config` to regenerate the docs and the example. The area map lives on the
-[docs index](README.md). The docs style rules (present tense, behaviour rather
-than history, no tracker references) are in
-[CONTRIBUTING.md](../CONTRIBUTING.md#docs-style).
+key, run `npm run docs:config` to regenerate the docs and the example. The
+area map lives on the [docs index](README.md).
+
+## Docs style
+
+The docs are for the person using Kubic, so they say what Kubic does and how
+to use it, plainly.
+
+- **Voice.** Present tense and active voice, in short sentences. Describe the
+  behaviour as it is now: no history ("previously", "used to", "was
+  removed"), and no tracker references (issue numbers, design sections, epic
+  or wave names).
+- **One home per fact.** A guide shows how to do something; a reference lists
+  every option. Link to the other page rather than repeat it:
+  [the TUI](cli/tui.md) is the guide and [TUI keys](cli/tui-keys.md) the
+  reference.
+- **Every page** opens with its title and one `>` line that says what it
+  covers, uses `##` for sections and `###` within them, and ends with
+  `## See also` links.
+- **Terms.** *Agent* is what does the work; a *session* is the durable
+  conversation it works in; a *branch* is one line of a session (`/tree`); a
+  *fork* copies a session into a new one; the *journal* records every change,
+  and *undo* restores from it. *Approvals off* is the posture in which
+  challenged calls run without asking; write *full access* only when quoting
+  the CLI. *Lane* is an internal word: it belongs on the package and
+  architecture pages, not in the user docs.
+- **Keys** are written `Ctrl+O`, `Alt+M`, `Shift+Enter`, `Esc`, `Enter` and
+  `Tab`. Quote the TUI's own hint text as it appears (`^O review diff`).
+- **Commands.** Examples write `kubic`; the [docs index](README.md) says once
+  that a source checkout runs `bin/kubic.js`. Show output where it helps, and
+  label sample output as an example.
+- **Tables or sections.** A table suits short, parallel facts: a flag and one
+  line. When a cell needs more than a sentence or two, keep a one-line summary
+  in the table and give the detail a section of its own. `npm run docs:check`
+  fails on a cell over 300 characters, and on a row cut off from its table.
+- **No volatile numbers.** Timings, check counts and sizes change from run to
+  run: leave them out, or mark the output they appear in as an example.
+- **Screenshots** go where a screen says more than the text. The TUI's come
+  from kshot scenarios and the brand art from `scripts/art/art.py`, all
+  remade by `npm run docs:images` (see [docs images](#docs-images)). Every
+  image has alt text that says what it shows (`alt=""` for a decorative one),
+  stays under 300 KB, and is used by some page; `npm run docs:check` checks all
+  three.
+- **Honest limits.** Kubic has no isolation: never imply otherwise.
 
 ## CI
 

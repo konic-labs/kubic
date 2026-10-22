@@ -1,5 +1,7 @@
 # Threat model
 
+> What Kubic defends, against whom, and what it does not.
+
 What Kubic defends, against whom, with what — and what it does not. It builds
 on the [in-process runtime](in-process.md) (one process, the user's
 authority, no isolation by default) and the

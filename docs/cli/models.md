@@ -31,13 +31,23 @@ and a `warn:` line names it.
 
 | Flag | Meaning |
 | --- | --- |
-| (none) | Off a terminal: a `PROVIDER  MODEL  THINKING  IN $/1M  OUT $/1M` table (plain aligned columns), one row per model of every **usable** provider, then `info: <n> built-in providers not configured (set their env key): …` on stderr for the rest. On an interactive colour terminal: the catalogue view — a `MODEL  CONTEXT  THINKING  INPUT  IN $/1M  OUT $/1M  KEY` kit table grouped by provider, the default model marked `● <provider/id>  default` (the configured pin, else the model a run would pick), every provider with more than 8 models folded to its first 3 rows and a `<provider>/… N more  kubic models <provider>` line, one `○ N providers without a key  kubic models --all` line, the `keys: <provider> ← <source>` line, and `set a default: kubic setup`. With nothing usable, stdout stays empty and stderr says `info: no usable providers (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)`. Exits 0. |
+| (none) | List the models of every provider you can use (see [the listing](#the-listing)). |
 | `[provider]` | List one provider in full (no folding), configured or not; `--json` is scoped to it too. An unknown provider is a usage error: `error: unknown provider "<id>"; did you mean '<id>'?` when one is close, else `error: unknown provider "<id>" (known: …)`, on stderr, exit 2. |
 | `--all` | Include the providers without a configured key (their KEY cell reads `—`; off a terminal their rows join the plain table and the `not configured` note is dropped). |
-| `--json` | Every registered provider, usable or not, as one pretty-printed JSON document: `id`, `name`, `source` (`built-in`, `testing` or the `models.json` path), `usable`, `auth` (the auth source Pi reported, when configured) and `models` (`id`, `name`, `contextWindow`, `thinking`, `inputCost`, `outputCost`, `cacheReadCost`, `cacheWriteCost`, `input` modalities; `contextWindow` is followed by `contextWindowDefaulted: true` on a `models.json` model that declares no window). A model on the fallback window is marked `(default — set contextWindow)` in the interactive catalogue and flagged in `--json`; piped output has no window column and shows no marker. Exits 0. |
+| `--json` | Every registered provider, usable or not, as one JSON document (see [JSON output](#json-output)). |
 | `--resolve <provider/id>` | Print `selected <provider>/<id> (thinking: …)` for any registered model, built-in or custom, configured or not; a resolution failure prints `error: …` on stderr and exits 1. |
 
-**Default model.** `kubic run`/`kubic tui` with no `--model`, `[model]`,
+### The listing
+
+Off a terminal: a `PROVIDER  MODEL  THINKING  IN $/1M  OUT $/1M` table (plain aligned columns), one row per model of every **usable** provider, then `info: <n> built-in providers not configured (set their env key): …` on stderr for the rest. On an interactive colour terminal: the catalogue view — a `MODEL  CONTEXT  THINKING  INPUT  IN $/1M  OUT $/1M  KEY` kit table grouped by provider, the default model marked `● <provider/id>  default` (the configured pin, else the model a run would pick), every provider with more than 8 models folded to its first 3 rows and a `<provider>/… N more  kubic models <provider>` line, one `○ N providers without a key  kubic models --all` line, the `keys: <provider> ← <source>` line, and `set a default: kubic setup`. With nothing usable, stdout stays empty and stderr says `info: no usable providers (set a built-in provider's env key, e.g. ANTHROPIC_API_KEY, or add models.json)`. Exits 0.
+
+### JSON output
+
+Every registered provider, usable or not, as one pretty-printed JSON document: `id`, `name`, `source` (`built-in`, `testing` or the `models.json` path), `usable`, `auth` (the auth source Pi reported, when configured) and `models` (`id`, `name`, `contextWindow`, `thinking`, `inputCost`, `outputCost`, `cacheReadCost`, `cacheWriteCost`, `input` modalities; `contextWindow` is followed by `contextWindowDefaulted: true` on a `models.json` model that declares no window). A model on the fallback window is marked `(default — set contextWindow)` in the interactive catalogue and flagged in `--json`; piped output has no window column and shows no marker. Exits 0.
+
+### The default model
+
+`kubic run`/`kubic tui` with no `--model`, `[model]`,
 `KUBIC_MODEL` or role pin take the default model of the first usable
 provider. Providers are tried in this order: `models.json` customs, then
 built-ins whose auth is configured — `anthropic`, `openai`, `google` and
@@ -87,7 +97,7 @@ under a minute.
 A frozen enterprise `[model]` (`/etc/kubic/config.toml`) asks no model
 question: the step names the pinned model and nothing is written. With no
 provider key at all, setup names the variables to set (and `models.json`)
-and exits **6** without writing. A cancelled question (Ctrl-C / Esc) writes
+and exits **6** without writing. A cancelled question (Ctrl+C / Esc) writes
 nothing and exits **130**. Off a terminal (stdin or stdout not a TTY) setup
 refuses with `error: kubic setup is interactive: …` and the manual
 alternative (`[model]` in `~/.kubic/config.toml` or `KUBIC_MODEL`), exit
@@ -109,7 +119,13 @@ of Pi's built-in providers. Files, in load order:
 | Location | Trust |
 | --- | --- |
 | `~/.kubic/models/models.json` (global) | Always loaded — it is your own machine-local file, and the recommended place for provider config. |
-| `<projectRoot>/.kubic/models.json`, else `<projectRoot>/models.json` (project) | **Trust-gated** like the project `config.toml`: before it is trusted (`kubic trust`, the `kubic tui` prompt, or `KUBIC_TRUST_PROJECT=1`) it is never read, only named (`models.json ignored: <path> (project, untrusted — run 'kubic trust' or set KUBIC_TRUST_PROJECT=1 to load it)`), so a cloned repository cannot point a provider — and your key — at its own URL. |
+| `<projectRoot>/.kubic/models.json`, else `<projectRoot>/models.json` (project) | **Trust-gated** like the project `config.toml`: never read before the project is trusted. |
+
+An untrusted project file is never read, only named (`models.json ignored:
+<path> (project, untrusted — run 'kubic trust' or set KUBIC_TRUST_PROJECT=1
+to load it)`), so a cloned repository cannot point a provider, and your key,
+at its own URL. A project is trusted with `kubic trust`, the `kubic tui`
+prompt, or `KUBIC_TRUST_PROJECT=1` for one invocation.
 
 The **project root** is the nearest directory at or above the working
 directory that holds a `.git` entry (a repository or worktree top level) or
@@ -161,21 +177,41 @@ of entries with their own `id` is accepted as an alias):
 
 | Provider key | Meaning |
 | --- | --- |
-| `baseUrl` | `http(s)` endpoint (required). A plain `http:` URL to a host other than this machine (`localhost`, `127.0.0.0/8` and `::1` are exempt), on a provider with a key or a secret header, sends that key in clear text: the load receipt says so (`models.json: provider '<id>' sends its API key over plain http to <host>`) and `kubic doctor` warns (`models-transport:<id>`). |
+| `baseUrl` | The `http(s)` endpoint (required). See [plain http](#plain-http) for an `http:` URL. |
 | `api` | `openai-completions` or `openai-responses` (required). |
 | `apiKey` | A literal key (e.g. `not-needed` for a keyless local server), an allowlisted `$VAR` (same allowlist as `apiKeyEnv`), or a `!command` resolved per request. Escaped `\$` / `\!` stay literal. Not together with `apiKeyEnv`. |
 | `apiKeyEnv` | The env variable holding the key (allowlist above; default `KUBIC_API_KEY`). |
-| `name`, `headers` | Display name; per-request headers (non-empty strings). Literal values ride every request statically; `$VAR` (allowlisted) and `!command` values resolve per request through the key auth instead and never reach the wire verbatim. A gateway (LiteLLM, Portkey, Azure API Management) that routes or authorizes on a header of its own takes it here. |
-| `tls` | Mutual TLS for a gateway that demands a client certificate: `{"cert": "/etc/kubic/client.pem", "key": "/etc/kubic/client.key", "ca": "/etc/kubic/gateway-ca.pem"}` — absolute PEM paths; `ca` (optional) is trusted beside the default roots for this provider. The provider's requests present the certificate; a file that cannot be read refuses the models.json by name. See [Corporate networks](enterprise.md#corporate-networks). |
+| `name`, `headers` | A display name, and per-request headers (non-empty strings; see [headers](#headers)). |
+| `tls` | Mutual TLS for a gateway that demands a client certificate (see [mutual TLS](#mutual-tls)). |
 | `models` | Non-empty list of models (ids unique per provider). |
 
 | Model key | Meaning |
 | --- | --- |
 | `id`, `name`, `reasoning` | Model id (required), display name, reasoning support. |
-| `contextWindow`, `maxTokens` | Positive integers; `maxTokens` must be **less than** `contextWindow`, judged on the effective values (defaults `8192`/`2048`), so `contextWindow: 1024` alone is refused too. A `0` or fractional value is refused with the field named. **Set `contextWindow` for every model.** Compaction and the context gauge use the window: a model that omits it runs as an 8192-token model, so a 128k model compacts far too early. `kubic models` marks such a model `(default — set contextWindow)` and `kubic doctor` warns on it (`models-window:<provider>/<model>`). |
+| `contextWindow`, `maxTokens` | Positive integers, `maxTokens` less than `contextWindow`. **Set `contextWindow` for every model** (see [the context window](#the-context-window)). |
 | `cost` | `{input, output, cacheRead, cacheWrite}` in USD per 1M tokens; cache reads and writes are priced separately and reach `kubic models --json` as `cacheReadCost`/`cacheWriteCost`. The flat `inputCost`/`outputCost` keys still work — one place per field, never both. |
 | `input` | Input modalities: a non-empty list from `text`, `image` (default `["text"]`). |
-| `samplingParams`, `samplingParamsByThinkingLevel` | Extra request-body fields Pi assigns into the provider request verbatim (`temperature`, `top_p`, …). The by-level form is keyed by thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`); at request time the effective level's object is merged over `samplingParams`. An unknown level or a non-object body is refused with the field named. Supported for the OpenAI-compatible APIs this file declares (`openai-completions`, `openai-responses`). |
+| `samplingParams`, `samplingParamsByThinkingLevel` | Extra request-body fields sent as written, by thinking level if you like (see [sampling parameters](#sampling-parameters)). |
+
+### Plain http
+
+A plain `http:` URL to a host other than this machine (`localhost`, `127.0.0.0/8` and `::1` are exempt), on a provider with a key or a secret header, sends that key in clear text: the load receipt says so (`models.json: provider '<id>' sends its API key over plain http to <host>`) and `kubic doctor` warns (`models-transport:<id>`).
+
+### Headers
+
+Literal values ride every request statically; `$VAR` (allowlisted) and `!command` values resolve per request through the key auth instead and never reach the wire verbatim. A gateway (LiteLLM, Portkey, Azure API Management) that routes or authorizes on a header of its own takes it here.
+
+### Mutual TLS
+
+The `tls` object: `{"cert": "/etc/kubic/client.pem", "key": "/etc/kubic/client.key", "ca": "/etc/kubic/gateway-ca.pem"}` — absolute PEM paths; `ca` (optional) is trusted beside the default roots for this provider. The provider's requests present the certificate; a file that cannot be read refuses the models.json by name. See [Corporate networks](enterprise.md#corporate-networks).
+
+### The context window
+
+Positive integers; `maxTokens` must be **less than** `contextWindow`, judged on the effective values (defaults `8192`/`2048`), so `contextWindow: 1024` alone is refused too. A `0` or fractional value is refused with the field named. **Set `contextWindow` for every model.** Compaction and the context gauge use the window: a model that omits it runs as an 8192-token model, so a 128k model compacts far too early. `kubic models` marks such a model `(default — set contextWindow)` and `kubic doctor` warns on it (`models-window:<provider>/<model>`).
+
+### Sampling parameters
+
+Extra request-body fields Pi assigns into the provider request verbatim (`temperature`, `top_p`, …). The by-level form is keyed by thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`); at request time the effective level's object is merged over `samplingParams`. An unknown level or a non-object body is refused with the field named. Supported for the OpenAI-compatible APIs this file declares (`openai-completions`, `openai-responses`).
 
 ## Proxies
 
@@ -280,3 +316,8 @@ pass through Kubic: Pi hands the SDK the path, and the SDK reads the file.
 Anthropic counts as **configured** in `kubic models` and `kubic doctor` when
 the three required variables are present (the two ids are optional), while an
 API key or `ANTHROPIC_AUTH_TOKEN`, when set, wins as it does in Pi.
+
+## See also
+
+- [Configuration](configuration.md): `[model]`, `[providers]` and the layers.
+- [For teams](enterprise.md#keys-and-workload-identity): keys and workload identity.

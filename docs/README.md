@@ -1,82 +1,60 @@
 # Kubic documentation
 
-Every Kubic feature has one home here, separated by area so architecture
-rationale, package APIs and CLI behaviour never mix.
+> Start with the guide, then look things up in the reference.
 
-| Area | Directory | Belongs here | Does not belong here |
-| --- | --- | --- | --- |
-| Architecture | [architecture/](architecture/README.md) | Topology and why: the in-process runtime, the change journal, the approvals safety model, the package map | API signatures, CLI flags, config keys |
-| Packages | [packages/](packages/README.md) | One page per package: entry points, invariants, neighbours | Architecture rationale, CLI usage |
-| CLI & operations | [cli/](cli/README.md) | Commands, flags, exit codes, configuration, `doctor` diagnostics | Package internals |
-| Contributing | [contributing.md](contributing.md) | Workflow, Conventional Commits, the docs-update rule | Feature documentation |
+Examples write `kubic`. From a source checkout that is `bin/kubic.js`, or
+`kubic` after `npm link` (see [install](getting-started.md#install)).
 
-## Pages
+## Start here
 
-### Architecture
+- [Getting started](getting-started.md): install Kubic, connect a model, run a
+  first task, review and undo it, and come back to the session.
+- [The TUI](cli/tui.md): the screen, the panels and the slash commands.
 
-| Page | Covers |
-| --- | --- |
-| [overview.md](architecture/overview.md) | System overview and package map |
-| [in-process.md](architecture/in-process.md) | The in-process runtime: a single trust zone, no isolation |
-| [journal-and-safety.md](architecture/journal-and-safety.md) | The change journal and the approvals safety model |
-| [threat-model.md](architecture/threat-model.md) | What Kubic defends, against whom, and what is out of scope |
-
-### Packages
-
-| Package | Docs page |
-| --- | --- |
-| `packages/core` | [packages/core.md](packages/core.md) |
-| `packages/exec` | [packages/exec.md](packages/exec.md) |
-| `packages/agent` | [packages/agent.md](packages/agent.md) |
-| `packages/host` | [packages/host.md](packages/host.md) |
-| `packages/trajectory` | [packages/trajectory.md](packages/trajectory.md) |
-| `packages/eval` | [packages/eval.md](packages/eval.md) |
-| `packages/tui` | [packages/tui.md](packages/tui.md) |
-| `apps/kubic` (composition root) | [cli/commands.md](cli/commands.md) |
-
-### CLI & operations
+## Guides
 
 | Page | Covers |
 | --- | --- |
-| [commands.md](cli/commands.md) | The command index: global behaviour and where each command is documented |
-| [run.md](cli/run.md) | `kubic run`, `kubic attach`, `kubic resume` |
-| [tui.md](cli/tui.md) | `kubic tui`: the interactive surface |
-| [tui-keys.md](cli/tui-keys.md) | The TUI's screen layout, keys and keybindings file |
-| [approvals.md](cli/approvals.md) | The approval card and what each trigger detects |
-| [sessions.md](cli/sessions.md) | `kubic sessions`: listing, forking and pruning sessions |
-| [journal.md](cli/journal.md) | `kubic diff`, `undo`, `log`, `status`, `git`, `commit`, `journal prune` |
-| [models.md](cli/models.md) | `kubic models`, `kubic setup`, `models.json` and provider keys |
-| [analysis.md](cli/analysis.md) | `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy`, `audit` |
-| [exit-codes.md](cli/exit-codes.md) | The exit-code table |
-| [configuration.md](cli/configuration.md) | Config layers, keys and `kubic config` |
-| [enterprise.md](cli/enterprise.md) | The managed `[policy]` layer and its audit sinks |
-| [doctor-and-debug.md](cli/doctor-and-debug.md) | `kubic doctor` diagnostics and debugging |
-| [tools.md](cli/tools.md) | The tools the model calls |
-| [trust.md](cli/trust.md) | Project trust and `kubic trust` |
-| [skills.md](cli/skills.md) | `kubic skills`: which skills loaded and why any were left out |
-| [contributing.md](contributing.md) | Contributor workflow |
-| [contributing-cli.md](contributing-cli.md) | Building CLI commands: the commander registry, exit codes, `--json`, output helpers |
+| [Approvals](cli/approvals.md) | What asks before it runs, and the approval card |
+| [Reviewing and reverting changes](cli/journal.md) | `kubic diff`, `undo`, `log`, `status`, `git`, `commit` and `journal prune` |
+| [Sessions](cli/sessions.md) | Listing, resuming, forking and pruning sessions |
+| [Models and providers](cli/models.md) | `kubic models`, `setup` and `keys`, `models.json`, and where keys come from |
+| [Project trust](cli/trust.md) | When a project's own config applies, and `kubic trust` |
+| [Skills](cli/skills.md) | Which skills load, and why any were left out |
+| [For teams](cli/enterprise.md) | Managed policy, audit, spend caps, the bash sandbox and corporate networks |
+| [Analysis](cli/analysis.md) | `kubic cost`, `eval`, `benchmark`, `replay`, `export`, `policy` and `audit` |
+| [The GitHub Action](cli/github-action.md) | Running Kubic in a workflow |
 
-### Policies
+## Reference
 
 | Page | Covers |
 | --- | --- |
-| [support-policy.md](support-policy.md) | Supported versions and platforms, and security fixes |
-| [release-trust.md](release-trust.md) | Provenance, the SBOM, signed checksums and code scanning |
+| [Commands](cli/commands.md) | Every command by group, and the rules they share |
+| [`kubic run`](cli/run.md) | `kubic run`, `attach` and `resume` |
+| [TUI keys](cli/tui-keys.md) | Every key, and the keybindings file |
+| [Configuration](cli/configuration.md) | Config layers, every key, and `kubic config` |
+| [Tools](cli/tools.md) | The tools the model calls: arguments and results |
+| [Exit codes](cli/exit-codes.md) | What each exit code means |
+| [Doctor and debug](cli/doctor-and-debug.md) | `kubic doctor` and debugging a run |
 
-## Standards
+## Architecture
 
-1. **One page per area, one area per page.** Architecture pages explain
-   why; package pages specify APIs and contracts; CLI pages specify the
-   behaviour operators see. Cross-link instead of duplicating.
-2. **Docs change with the code.** A behaviour change ships its docs page
-   in the same commit. See [contributing.md](contributing.md).
-3. **No broken internal links.** `npm run docs:check` must pass: every
-   relative link resolves, and every anchor names a heading on its page.
-   External URLs are not fetched.
-4. **Honest limits, stated plainly.** Kubic has no isolation, and the
-   docs never imply otherwise.
+| Page | Covers |
+| --- | --- |
+| [Overview](architecture/overview.md) | The system and its package map |
+| [In-process runtime](architecture/in-process.md) | One trust zone, no isolation, and the controls instead |
+| [Journal and safety](architecture/journal-and-safety.md) | The change journal and the approval model |
+| [Threat model](architecture/threat-model.md) | What Kubic defends, against whom, and what is out of scope |
+| [Packages](packages/README.md) | One page per package: entry points, invariants and neighbours |
 
-Package-level contracts live with their code and are quoted, not copied,
-by the package pages: `packages/trajectory/CONTRACT.md` and
+## Contributing
+
+| Page | Covers |
+| --- | --- |
+| [Contributing](contributing.md) | Setup, the checks, tests, the docs images and the docs style |
+| [Building CLI commands](contributing-cli.md) | The command registry, exit codes, `--json` and output helpers |
+| [Support policy](support-policy.md) | Supported versions and platforms, and security fixes |
+| [Release trust](release-trust.md) | Provenance, the SBOM, signed checksums and code scanning |
+
+Package contracts live with their code: `packages/trajectory/CONTRACT.md` and
 `packages/eval/COMMUNITY.md`.

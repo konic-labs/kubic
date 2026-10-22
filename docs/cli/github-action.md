@@ -1,5 +1,7 @@
 # The GitHub Action
 
+> Run Kubic in a GitHub workflow and post its result on the pull request.
+
 The repository's `action.yml` runs Kubic in a workflow: it installs Kubic,
 runs `kubic run --json` on a pull request and posts the result as a comment.
 
@@ -65,3 +67,8 @@ step fails when `kubic run` does, with its exit code
 ([the exit codes](run.md)). Provider keys come from the job's secrets, or
 from OIDC with no stored key (see
 [Keys and workload identity](enterprise.md#keys-and-workload-identity)).
+
+## See also
+
+- [`kubic run`](run.md): the command the action runs.
+- [For teams](enterprise.md#headless-approvals): approvals in CI.

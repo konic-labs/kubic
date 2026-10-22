@@ -1,6 +1,6 @@
 // Generate the config docs from the config schema
-// (packages/host/src/config/schema.ts): the key table and the section list in
-// docs/cli/configuration.md, and the example config
+// (packages/host/src/config/schema.ts): the key reference and the section list
+// in docs/cli/configuration.md, and the example config
 // packages/host/src/config/example.toml.
 //
 // Usage: node scripts/gen-config-docs.mjs [--check]
@@ -15,15 +15,18 @@ const DOCS = 'docs/cli/configuration.md';
 const EXAMPLE = 'packages/host/src/config/example.toml';
 const SCHEMA = 'packages/host/src/config/schema.ts';
 
-// The docs' key table: one row per docs row of each section, in order.
-export function renderKeyTable(sections) {
-  const rows = sections.flatMap((section) =>
-    section.docs.map((row) => {
-      const label = row.label ?? row.keys.map((key) => `\`${key}\``).join(', ');
-      return `| ${label} | ${row.text} |`;
-    }),
-  );
-  return ['| Key | Effect |', '| --- | --- |', ...rows].join('\n');
+// The docs' key reference: one subsection per docs row of each section, in
+// order, headed by its keys (or its label).
+export function renderKeyReference(sections) {
+  return sections
+    .flatMap((section) =>
+      section.docs.map((row) => {
+        const label =
+          row.label ?? row.keys.map((key) => `\`${key}\``).join(', ');
+        return `### ${label}\n\n${row.text}`;
+      }),
+    )
+    .join('\n\n');
 }
 
 // The docs' section list: each section with its keys.
@@ -98,7 +101,7 @@ export function replaceBetween(text, name, body) {
 export function generate(read) {
   const sections = CONFIG_SECTIONS;
   const docs = replaceBetween(
-    replaceBetween(read(DOCS), 'config-keys', renderKeyTable(sections)),
+    replaceBetween(read(DOCS), 'config-keys', renderKeyReference(sections)),
     'config-sections',
     renderSectionList(sections),
   );

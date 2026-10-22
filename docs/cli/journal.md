@@ -1,49 +1,8 @@
 # Reviewing and reverting changes
 
-> `kubic diff`, `undo`, `log` and `status` over the change journal, `kubic git`
-> and `commit`, and `kubic journal prune`. Back to the
-> [command index](commands.md).
-
-## `kubic git`
-
-Thin over git ops. Outside a repo every subcommand exits 1 with
-`error: not a git repository — kubic diff/undo still work without git` on
-stderr — the journal path never needs git. Any other git failure is one
-`error: <reason>` line on stderr, exit 1.
-
-```
-kubic git status [--json]
-kubic git log [--max <n>] [--json]
-kubic git stage [--json] [--] <paths...>
-kubic git commit -m <message> [--json]
-```
-
-`kubic git --help` and `kubic git <subcommand> --help` print generated help
-(exit 0). A bare `kubic git` prints the same help and exits 1, as a bare
-`kubic` does. Usage errors exit **2** with one `error:` line on stderr: an
-unknown subcommand, an unknown option, a missing option
-value, `--max` that is not a positive integer, `stage` with no path,
-`commit` without `-m` or with an empty message.
-
-| Subcommand | Meaning |
-| --- | --- |
-| `status [--json]` | Branch (plus ahead/behind when non-zero), `staged:`/`modified:`/`untracked:` lines, a `conflicts:` line when merges are unresolved, or `clean`. On a detached HEAD the branch line reads `branch (detached HEAD)`. `--json` prints the status object: `branch` is `null` on a detached HEAD, `conflicts` lists the unresolved paths (never duplicated into `staged`/`modified`), and `renames` lists one `{path, oldPath, staged}` record per renamed or copied path that git detected (the new path also appears in `staged`/`modified`). |
-| `log [--max <n>] [--json]` | A `SHA DATE AUTHOR MESSAGE` table (short sha), or `no commits` — also on a fresh repo with no commits yet (exit 0). `--json` prints the entries array (`[]` when empty). |
-| `stage [--] <paths...>` | Stage paths, print `staged <p>` per path. `--json` prints `{staged: [paths]}`. Put `--` before a path that starts with `-`. |
-| `commit -m <message>` | Commit, print `committed <sha8> (<n> file(s))`. `--json` prints `{sha, files}` with each path verbatim (never C-quoted, even non-ASCII or newline names). `-m`/`--message` takes the next token verbatim, even one starting with `-` (`-m --amend` commits the message `--amend`). |
-
-On a colour terminal (TTY, no `NO_COLOR`, not `TERM=dumb`) the status
-labels are coloured and `log` is the kit table (muted header, faint rule); piped or under
-`--json` the output is plain text.
-
-## `kubic commit -m <message> [--json]`
-
-The alias for `kubic git commit`: same runner, same
-message rule (`-m`/`--message` takes the next token verbatim, even one
-starting with `-`; a message that really starts with `--` goes in the
-attached form `--message=--amend`), same output and same exit codes —
-`committed <sha8> (<n> file(s))` on stdout, `{sha, files}` under `--json`,
-exit 2 for a missing or empty message, exit 1 outside a git repository.
+> `kubic diff`, `undo`, `log` and `status` read and revert the change journal,
+> with or without git. `kubic git` and `kubic commit` cover git, and `kubic
+> journal prune` trims the journal.
 
 ## `kubic diff | undo | log | status`
 
@@ -118,7 +77,9 @@ path is touched. With no journal recorded, the `status` repo line resolves
 against the current directory. `--session` combined with a programmatically
 configured journal dir is refused (one store per invocation, exit 2).
 
-**Output channels.** The report — the diff, undo verdicts, the log table,
+### Output channels
+
+The report — the diff, undo verdicts, the log table,
 the status lines, or the one `--json` document — goes to stdout.
 Diagnostics (the fallback note, the empty-journal note, undo warnings as
 `warn: …`) go to stderr, so `kubic diff --json | jq` always sees pure
@@ -136,7 +97,9 @@ one, the `<path>` scope), a bad or conflicting `--session`. Every command
 answers `--help`/`-h` with generated help (exit 0); `diff --help` and
 `undo --help` include examples.
 
-**Read-time self-heal.** With `session.retentionDays` set in
+### Read-time self-heal
+
+With `session.retentionDays` set in
 config, `kubic log` drops entries older than that window from a **session**
 journal as it reads it — via `--session <id>` or the latest-session
 fallback — the same age bound `kubic sessions prune` applies to whole
@@ -154,12 +117,28 @@ kubic status [--session <id>] [--json]
 
 Options also take the `--flag=value` form (`--path=src/a.ts`).
 
-| Subcommand | Meaning |
+| Subcommand | What it does |
 | --- | --- |
-| `diff [path] [--path <p>] [--json] [--max-content-bytes <n>] [--session <id>]` | Rendered diff of journaled changes (`no changes` + exit 0 when empty). The `[path]` operand scopes exactly like `--path` (giving both with different values exits 2 naming the conflict; a second operand is refused the same way); `--stat` prints the per-file summary `path +added -removed tool[, turn N]` instead of hunks (counts from the same hunks, so they always agree; tool and turn render when the entry carries them — entries without them show the op, reconciliation finds `reconciled`); `--path` filters; `--json` prints `{session, root, changes}` — the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). `--json` wins over `--stat`: given both, the output is the JSON change array, not the summary. A `--path`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, is a usage error (exit 2). Read-only: `undo` keeps the single-store contract (undo across worktrees is out of scope). |
-| `undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]` | Restore journaled changes. `--json` prints one object `{session, root, dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible\|head-moved\|contested, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary; warnings (a removal whose content had no recoverable copy, a pre-undo file that is no longer lossless utf-8 text — recorded hash-only, so that undo cannot be redone — or a step whose inverse record would not fit the journal's byte bound — that step is skipped BEFORE the file is touched, so the undo never lands unrecorded) go to stderr as `warn: …`. A session whose lock is live refuses the whole invocation with one `error: session '<id>' is attached by pid <pid> — refusing to undo under a live run (pass --force to override)` line and exit 1: restoring under a live run races its writes, and `--force` is the documented override (the same knob the staleness refusal uses). `nothing to undo` exits 0. **Exit 1 when any step was skipped** (the partial outcome never reuses the usage code) — five skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find with no git pre-image (untracked, dirty at baseline, non-repo, binary or over-bound) or whose tool chain stored none, a write over a file above the 8 MiB pre-image bound (recorded hash-only), a delete-shaped undo whose file was absent pre-undo, or an inverse record over the journal's byte bound), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten), `head-moved (skipped): <p> — <reason>` (the entry predates a HEAD move the run observed — restoring would write pre-move content onto the moved HEAD; `--force` overrides per-invocation), `contested (skipped): <p> — <reason>` (a sweep find recorded while another session was live in the workspace — the change may be that session's work; `--force` overrides). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope. |
+| [`diff`](#diff) | Show the journaled changes as a diff. |
+| [`undo`](#undo) | Restore the journaled changes. |
+| [`log`](#log) | List the journal entries. |
+| [`status`](#status) | Count the entries, and show the repository. |
 
-**Undo staleness safety.** Before any restore, the file's
+### `diff`
+
+`diff [path] [--path <p>] [--json] [--max-content-bytes <n>] [--session <id>]`
+
+Rendered diff of journaled changes (`no changes` + exit 0 when empty). The `[path]` operand scopes exactly like `--path` (giving both with different values exits 2 naming the conflict; a second operand is refused the same way); `--stat` prints the per-file summary `path +added -removed tool[, turn N]` instead of hunks (counts from the same hunks, so they always agree; tool and turn render when the entry carries them — entries without them show the op, reconciliation finds `reconciled`); `--path` filters; `--json` prints `{session, root, changes}` — the change array with each side clipped at 64 KiB per change (`--max-content-bytes <n>` overrides the bound; `0` = unlimited). `--json` wins over `--stat`: given both, the output is the JSON change array, not the summary. A `--path`/`--session` without a value, or a `--max-content-bytes` that is missing or not a non-negative integer, is a usage error (exit 2). Read-only: `undo` keeps the single-store contract (undo across worktrees is out of scope).
+
+### `undo`
+
+`undo [--] [<path>] [--step] [--dry-run] [--force] [--json] [--session <id>]`
+
+Restore journaled changes. `--json` prints one object `{session, root, dryRun, restored: [paths], skipped: [{path, kind: stale\|already-undone\|non-reversible\|head-moved\|contested, reason}]}` (also when there is nothing to undo) with the same exit codes. Positional `<path>` limits scope; `--step` restores one step; `--dry-run` prints `would restore N step(s)…` and exits 0 without touching anything. Real runs print `restored <p>` per path plus a summary; warnings (a removal whose content had no recoverable copy, a pre-undo file that is no longer lossless utf-8 text — recorded hash-only, so that undo cannot be redone — or a step whose inverse record would not fit the journal's byte bound — that step is skipped BEFORE the file is touched, so the undo never lands unrecorded) go to stderr as `warn: …`. A session whose lock is live refuses the whole invocation with one `error: session '<id>' is attached by pid <pid> — refusing to undo under a live run (pass --force to override)` line and exit 1: restoring under a live run races its writes, and `--force` is the documented override (the same knob the staleness refusal uses). `nothing to undo` exits 0. **Exit 1 when any step was skipped** (the partial outcome never reuses the usage code) — five skip classes, each with its own line: `non-reversible (skipped): <p>` (no retrievable pre-image: an unattributed reconciliation find with no git pre-image (untracked, dirty at baseline, non-repo, binary or over-bound) or whose tool chain stored none, a write over a file above the 8 MiB pre-image bound (recorded hash-only), a delete-shaped undo whose file was absent pre-undo, or an inverse record over the journal's byte bound), `stale (skipped): <p> — <reason>` (the file changed after the entry was journaled — restoring would destroy unjournaled changes), `already undone (skipped): <p>` (a previous undo already unwound it — nothing is rewritten), `head-moved (skipped): <p> — <reason>` (the entry predates a HEAD move the run observed — restoring would write pre-move content onto the moved HEAD; `--force` overrides per-invocation), `contested (skipped): <p> — <reason>` (a sweep find recorded while another session was live in the workspace — the change may be that session's work; `--force` overrides). The summary is `undo: N restored, M non-reversible` when all skips are the non-reversible class, else `undo: N restored, M skipped (K stale, J already undone)` naming the counts present. The `--session` value selects the store, never the path scope.
+
+#### Undo staleness safety
+
+Before any restore, the file's
 current content is verified against the entry's recorded after-hash — undo
 must never overwrite a file whose state the journal does not account for.
 Verdicts are walk-aware: a whole-run undo judges each step against the state
@@ -188,7 +167,9 @@ the next `undo` re-checks by default). `--force` does not override
 non-reversible skips — no pre-image exists to write. Already-undone skips are
 informational: there is nothing to force.
 
-**The undo record and redo.** Every successful restore is
+#### The undo record and redo
+
+Every successful restore is
 itself journaled: the store appends the inverse entry for the step — the
 pre-undo content as `before`, the restored content as `after`, attributed
 `toolCall=none` and never marked `reconciled` (it is an
@@ -202,11 +183,23 @@ before-content, so `--step` on it reports it non-reversible instead — the
 undo of a delete cannot itself be undone. Plain `undo` (no `--step`) never
 targets `kubic-undo` records: it restores real agent work once and then
 reports `already undone` without appending, so repeating it never re-undoes
-the undo. `--dry-run` appends nothing; a skipped step appends nothing. |
-| `log [--json] [--session <id>]` | With `session.retentionDays` set and the session's lock live, the read-time self-heal is skipped with one `warn: journal retention skipped: session '<id>' is attached by pid <pid> — pruning under a live run can drop entries it just appended` line; the read itself is unchanged. A `TIME TOOL CALL OP PATH BYTES NOTE` table, one row per journal entry, oldest first — `NOTE` reads `reconciled` for an unattributed sweep find (`reconciled, contested by session <id>` for one recorded while another session was live in the workspace) (`journal is empty` + exit 0 when empty); `--json` prints `{session, root, entries}` with the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too). |
-| `status [--json] [--session <id>]` | `--json` prints the status object (`session`, `root`, `entries`, `reversible`, `nonReversible`, `unattributed`, `corrupt`, `corruptLines`, `unknownVersionLines`, `repo`); `unknownVersionLines` counts index lines a newer Kubic wrote in a format version this one cannot read — left out of `diff` and `undo`, kept in place, and named in the human output when there are any. Otherwise `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, then `corrupt: C` (content missing under a recorded hash) and `corrupt index lines: L` (index lines that do not parse and were dropped from the read — a torn tail from a crash or a full disk; the next append repairs it and the next retention rewrite drops it), plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown` with `, root <path>` when the root reads, `, ahead <n>, behind <m>` when an upstream exists, and `, conflicts: <p>, …` when merges are unresolved. Inside a linked worktree the branch is resolved through the `.git` `gitdir:` pointer (below); an unreadable pointer prints `branch (unknown)`. |
+the undo. `--dry-run` appends nothing; a skipped step appends nothing.
 
-**Display truthfulness.** Three display-level guarantees on the
+### `log`
+
+`log [--json] [--session <id>]`
+
+With `session.retentionDays` set and the session's lock live, the read-time self-heal is skipped with one `warn: journal retention skipped: session '<id>' is attached by pid <pid> — pruning under a live run can drop entries it just appended` line; the read itself is unchanged. A `TIME TOOL CALL OP PATH BYTES NOTE` table, one row per journal entry, oldest first — `NOTE` reads `reconciled` for an unattributed sweep find (`reconciled, contested by session <id>` for one recorded while another session was live in the workspace) (`journal is empty` + exit 0 when empty); `--json` prints `{session, root, entries}` with the raw entries array. The human output closes with the reconciliation line `unattributed: N of M entr(ies) reconciled at run end` (printed for an empty journal too).
+
+### `status`
+
+`status [--json] [--session <id>]`
+
+`--json` prints the status object (`session`, `root`, `entries`, `reversible`, `nonReversible`, `unattributed`, `corrupt`, `corruptLines`, `unknownVersionLines`, `repo`); `unknownVersionLines` counts index lines a newer Kubic wrote in a format version this one cannot read — left out of `diff` and `undo`, kept in place, and named in the human output when there are any. Otherwise `entries: N (reversible: R, non-reversible: M)`, then `unattributed: U of N (reconciled at run end)`, then `corrupt: C` (content missing under a recorded hash) and `corrupt index lines: L` (index lines that do not parse and were dropped from the read — a torn tail from a crash or a full disk; the next append repairs it and the next retention rewrite drops it), plus repo line: `repo: non-repo directory (journal works without git)` or `repo: branch <b>, dirty: yes|no|unknown` with `, root <path>` when the root reads, `, ahead <n>, behind <m>` when an upstream exists, and `, conflicts: <p>, …` when merges are unresolved. Inside a linked worktree the branch is resolved through the `.git` `gitdir:` pointer (below); an unreadable pointer prints `branch (unknown)`.
+
+### Display truthfulness
+
+Three display-level guarantees on the
 read side:
 
 - **Worktree branches resolve.** A linked worktree's `.git` is a pointer
@@ -233,7 +226,7 @@ read side:
 Interception alone has holes: a file moved by `bash`
 (`sed -i`, a formatter, `npm install` fallout, a build) never passes through
 Kubic's own `write`/`edit` operations, so nothing journals it. The run and TUI
-composition paths therefore capture a **baseline** when the lane boots and
+composition paths therefore capture a **baseline** when the session starts and
 **sweep** the workspace when it ends:
 
 - A path the walk could SEE but not READ is stored as the sentinel `unreadable`
@@ -245,7 +238,7 @@ composition paths therefore capture a **baseline** when the lane boots and
   recorded as deletes like any other disappearance.
 - **In `kubic tui` every prompt is a run**. The baseline
   is re-captured when each turn starts, a turn that used `bash` is swept when
-  it settles (so `Ctrl-O` / `Ctrl-R` and `kubic diff` from another terminal
+  it settles (so `Ctrl+O` / `Ctrl+R` and `kubic diff` from another terminal
   show the shell's change at once), and the baseline is re-captured again
   once no turn is running and before an idle quit. An edit you make in your
   own editor **between prompts** is therefore absorbed, never journaled as
@@ -256,7 +249,7 @@ composition paths therefore capture a **baseline** when the lane boots and
   quit-time sweep still catches a turn the quit interrupted and appends
   nothing for one that already settled.
 - The baseline is a metadata walk — sha256 per file, **no content copied** — of
-  the lane's workspace root, persisted as
+  the session's workspace root, persisted as
   `<sessions-root>/<id>/journal/baseline-<id>.json` beside that run's journal.
 - The sweep compares each path against its **expected state**: the last
   entry journaled for it during *this* run (the journal position is recorded
@@ -332,6 +325,54 @@ composition paths therefore capture a **baseline** when the lane boots and
 `kubic status` names it in the summary. `--json` keeps the raw entries (the
 `unattributed` flag is on each entry there).
 
+## `kubic git`
+
+Thin over git ops. Outside a repo every subcommand exits 1 with
+`error: not a git repository — kubic diff/undo still work without git` on
+stderr — the journal path never needs git. Any other git failure is one
+`error: <reason>` line on stderr, exit 1.
+
+```
+kubic git status [--json]
+kubic git log [--max <n>] [--json]
+kubic git stage [--json] [--] <paths...>
+kubic git commit -m <message> [--json]
+```
+
+`kubic git --help` and `kubic git <subcommand> --help` print generated help
+(exit 0). A bare `kubic git` prints the same help and exits 1, as a bare
+`kubic` does. Usage errors exit **2** with one `error:` line on stderr: an
+unknown subcommand, an unknown option, a missing option
+value, `--max` that is not a positive integer, `stage` with no path,
+`commit` without `-m` or with an empty message.
+
+| Subcommand | Meaning |
+| --- | --- |
+| `status [--json]` | The branch (with ahead and behind when non-zero), `staged:`, `modified:` and `untracked:` lines, a `conflicts:` line when merges are unresolved, or `clean`. |
+| `log [--max <n>] [--json]` | A `SHA DATE AUTHOR MESSAGE` table (short sha), or `no commits` — also on a fresh repo with no commits yet (exit 0). `--json` prints the entries array (`[]` when empty). |
+| `stage [--] <paths...>` | Stage paths, print `staged <p>` per path. `--json` prints `{staged: [paths]}`. Put `--` before a path that starts with `-`. |
+| `commit -m <message>` | Commit, print `committed <sha8> (<n> file(s))`. `--json` prints `{sha, files}` with each path verbatim (never C-quoted, even non-ASCII or newline names). `-m`/`--message` takes the next token verbatim, even one starting with `-` (`-m --amend` commits the message `--amend`). |
+
+On a detached HEAD the `status` branch line reads `branch (detached HEAD)`.
+`status --json` prints the status object: `branch` is `null` on a detached
+HEAD, `conflicts` lists the unresolved paths (never duplicated into `staged`
+or `modified`), and `renames` lists one `{path, oldPath, staged}` record per
+renamed or copied path git detected (the new path also appears in `staged`
+or `modified`).
+
+On a colour terminal (TTY, no `NO_COLOR`, not `TERM=dumb`) the status
+labels are coloured and `log` is the kit table (muted header, faint rule); piped or under
+`--json` the output is plain text.
+
+## `kubic commit -m <message> [--json]`
+
+The alias for `kubic git commit`: same runner, same
+message rule (`-m`/`--message` takes the next token verbatim, even one
+starting with `-`; a message that really starts with `--` goes in the
+attached form `--message=--amend`), same output and same exit codes —
+`committed <sha8> (<n> file(s))` on stdout, `{sha, files}` under `--json`,
+exit 2 for a missing or empty message, exit 1 outside a git repository.
+
 ## `kubic journal prune [--session <id>] [--keep-days <n>] [--yes] [--json]`
 
 Deletes journal entries older than the keep window from the journal `kubic
@@ -398,3 +439,8 @@ prune <time> <op> <path>`) and deletes nothing.
 kubic journal prune --keep-days 30
 kubic journal prune --session 3f2a --keep-days 30 --yes
 ```
+
+## See also
+
+- [The TUI](tui.md#panels): the diff and journal panels, and `/undo`.
+- [Journal and safety](../architecture/journal-and-safety.md): how the journal works.

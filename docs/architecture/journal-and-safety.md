@@ -1,5 +1,8 @@
 # Change journal and safety
 
+> How the change journal makes every edit reviewable and reversible, and how
+> approvals decide what runs.
+
 Kubic's safety model has two halves: a VCS-independent change journal
 that makes every edit reviewable and reversible, and an approvals
 model where the user — never the model — decides what dangerous
@@ -174,8 +177,8 @@ that decide them:
   root's `.kubic/`. A leading `~/`, `$HOME/` or `${HOME}/` is
   read as the home directory. No `autoApprove` entry answers it (naming it
   there is accepted but ignored: it takes the normal ask path and
-  `kubic doctor` warns by name), and neither does the
-  session's `--full-access` posture: on a TTY it
+  `kubic doctor` warns by name), and neither does a
+  session with approvals off: on a TTY it
   is a dialog, headless it is denied by name (exit 4). The path check is
   case-folded (`.KUBIC/Config.toml` is the config file on a case-insensitive
   disk).

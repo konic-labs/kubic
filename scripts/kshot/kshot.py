@@ -3,10 +3,11 @@
 
 The TUI runs in a real pseudo-terminal inside a private tmux server (tmux is
 the terminal emulator). A scenario types into it, and every `snap` step
-writes the screen three ways:
+writes the screen four ways:
 
   NAME.png   the screen drawn cell by cell: colours, bold, italic, underline,
              strikethrough, reverse video, dim text and the cursor
+  NAME.svg   the same screen as vector text, sharp at any size
   NAME.txt   the plain text of the screen
   NAME.ansi  the screen with its SGR colour sequences
 
@@ -21,6 +22,8 @@ $REPO expand to a fresh workspace, a fresh HOME and the Kubic checkout.
 
   size COLS ROWS      the terminal size, before start (default 120 40)
   env KEY=VALUE       a variable for the sh steps and the app (repeatable)
+  model FILE          answer the app with the scripted model in FILE (a
+                      path beside the scenario), before start: see model.py
   sh COMMAND          run a shell command in $WORK, e.g. to seed files
   start COMMAND       launch the app in $WORK
   type TEXT           type TEXT as it is (trailing spaces are dropped:
@@ -31,18 +34,26 @@ $REPO expand to a fresh workspace, a fresh HOME and the Kubic checkout.
   waitfor TEXT [MS]   wait until the screen shows TEXT; a trailing number is
                       the limit in milliseconds (default 8000)
   idle [MS]           wait until the screen holds still for MS (default 400)
-  snap NAME           write NAME.png, NAME.txt and NAME.ansi
+  scrub REGEX => TEXT in every later snap and frame, put TEXT where REGEX
+                      matches, padded or cut on the left to the same width:
+                      a clock, an id or a timing that changes every run
+  snap NAME           write NAME.png, NAME.svg, NAME.txt and NAME.ansi
+  frame MS            add the screen to the scenario's film, shown for MS
+                      milliseconds; a run with frames writes film.svg, which
+                      plays them on a loop
 
 Commands see only PATH, HOME=$KHOME, a UTF-8 locale, a truecolor
-xterm-256color terminal, KUBIC_PROVIDER=faux, KUBIC_TRUST_PROJECT=1 and the
-scenario's env steps: nothing else from the caller's environment, so no key
-or setting leaks in. When a step fails after start, the screen at that
-moment is written as error.png (with .txt and .ansi), and kshot exits 1.
+xterm-256color terminal, KUBIC_PROVIDER=faux (unless a model step names the
+model), KUBIC_TRUST_PROJECT=1 and the scenario's env steps: nothing else from
+the caller's environment, so no key or setting leaks in. When a step fails
+after start, the screen at that moment is written as error.png (with .svg,
+.txt and .ansi), and kshot exits 1.
 
 Needs tmux, and Pillow to draw the PNG (python3 -m pip install Pillow).
 """
 
 import argparse
+import json
 import os
 import re
 import shlex
@@ -52,6 +63,9 @@ import sys
 import tempfile
 import time
 import unicodedata
+
+import film
+import model
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 SCENARIOS = os.path.join(REPO, 'scripts', 'kshot', 'scenarios')
@@ -64,12 +78,16 @@ IDLE_MS = 400
 IDLE_LIMIT_S = 10
 POLL_S = 0.05
 
-STEPS = ('size', 'env', 'sh', 'start', 'type', 'key', 'wait', 'waitfor',
-         'idle', 'snap')
+STEPS = ('size', 'env', 'model', 'sh', 'start', 'type', 'key', 'wait',
+         'waitfor', 'idle', 'scrub', 'snap', 'frame')
 # The steps that act on the running app.
-APP_STEPS = ('type', 'key', 'waitfor', 'idle', 'snap')
-# The snapshot a failed step writes.
+APP_STEPS = ('type', 'key', 'waitfor', 'idle', 'snap', 'frame')
+# The steps that set up the app, so come before it starts.
+SETUP_STEPS = ('size', 'model')
+# The snapshot a failed step writes, and the film frames make.
 ERROR_SNAP = 'error'
+FILM = 'film'
+SCRUB_ARROW = ' => '
 
 FONT_SIZE = 15
 PAD = 12
@@ -135,11 +153,22 @@ def check_argument(verb, rest):
     elif verb == 'idle':
         if rest and not rest.isdigit():
             raise KshotError('idle takes milliseconds, or nothing')
+    elif verb == 'frame':
+        if not rest.isdigit() or int(rest) == 0:
+            raise KshotError('frame takes how long to show it, in milliseconds')
+    elif verb == 'scrub':
+        pattern, arrow, _ = rest.partition(SCRUB_ARROW)
+        if not arrow or not pattern:
+            raise KshotError(f'scrub takes REGEX{SCRUB_ARROW}TEXT')
+        try:
+            re.compile(pattern)
+        except re.error as error:
+            raise KshotError(f'scrub: {pattern!r} is not a regex ({error})') from None
     elif verb == 'snap':
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', rest):
             raise KshotError('snap takes a file name: letters, digits, . _ -')
-        if rest == ERROR_SNAP:
-            raise KshotError(f'the snap name {ERROR_SNAP!r} is kept for failures')
+        if rest in (ERROR_SNAP, FILM):
+            raise KshotError(f'the snap name {rest!r} is kept for kshot')
     elif not rest:
         raise KshotError(f'{verb} needs an argument')
 
@@ -148,11 +177,13 @@ def parse_scenario(text):
     """The steps of a scenario, as (line number, verb, argument).
 
     Every line is checked before anything runs: an unknown step, a bad
-    argument, a step that needs the app before `start`, a second `start` and
-    a `size` after it all fail with their line number.
+    argument, a step that needs the app before `start`, a second `start`, a
+    `size` or `model` after it and a second `model` all fail with their line
+    number.
     """
     steps = []
     started = False
+    modelled = False
     for number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith('#'):
@@ -167,11 +198,14 @@ def parse_scenario(text):
                 raise KshotError(f'{verb} needs the app: start it first')
             if verb == 'start' and started:
                 raise KshotError('the app is already started')
-            if verb == 'size' and started:
-                raise KshotError('size must come before start')
+            if verb in SETUP_STEPS and started:
+                raise KshotError(f'{verb} must come before start')
+            if verb == 'model' and modelled:
+                raise KshotError('the scenario already has a model')
         except KshotError as error:
             raise KshotError(f'line {number}: {error}') from None
         started = started or verb == 'start'
+        modelled = modelled or verb == 'model'
         steps.append((number, verb, rest))
     if not started:
         raise KshotError('the scenario never starts the app')
@@ -330,6 +364,67 @@ def parse_screen(ansi, cols, rows):
     while len(grid) < rows:
         grid.append([(' ', Style()) for _ in range(cols)])
     return grid
+
+
+def parse_scrub(rest):
+    """A scrub step's (compiled regex, replacement)."""
+    pattern, _, text = rest.partition(SCRUB_ARROW)
+    return re.compile(pattern), text
+
+
+def scrub_grid(grid, scrubs):
+    """Put each scrub's text where its regex matches a row, padded or cut on
+    the left to the matched width, so nothing else on the row moves and a
+    number keeps its unit (`12ms` in a three-cell match is `2ms`). The cells
+    keep their styles."""
+    for row in grid:
+        for pattern, text in scrubs:
+            line = ''.join('\0' if cell is None else cell[0] for cell in row)
+            for match in pattern.finditer(line):
+                width = match.end() - match.start()
+                fill = match.expand(text).rjust(width)[-width:] if width else ''
+                for offset, ch in enumerate(fill):
+                    cell = row[match.start() + offset]
+                    if cell is not None:
+                        row[match.start() + offset] = (ch, cell[1])
+    return grid
+
+
+def grid_text(grid):
+    """The plain text of a grid, one line per row, trailing spaces dropped."""
+    return '\n'.join(''.join(cell[0] for cell in row if cell is not None).rstrip()
+                     for row in grid) + '\n'
+
+
+def sgr(style):
+    """The SGR sequence that sets STYLE from a reset."""
+    codes = ['0']
+    for name, code in (('bold', '1'), ('dim', '2'), ('italic', '3'),
+                       ('underline', '4'), ('reverse', '7'), ('strike', '9')):
+        if getattr(style, name):
+            codes.append(code)
+    if style.fg is not None:
+        codes.append('38;2;%d;%d;%d' % style.fg)
+    if style.bg is not None:
+        codes.append('48;2;%d;%d;%d' % style.bg)
+    return f'\x1b[{";".join(codes)}m'
+
+
+def grid_ansi(grid):
+    """A grid written back as text with SGR sequences."""
+    lines = []
+    for row in grid:
+        out, last = [], None
+        for cell in row:
+            if cell is None:
+                continue
+            code = sgr(cell[1])
+            if code != last:
+                out.append(code)
+                last = code
+            out.append(cell[0])
+        lines.append(''.join(out) + '\x1b[0m')
+    return '\n'.join(lines) + '\n'
 
 
 # --- fonts and the PNG -----------------------------------------------------
@@ -525,17 +620,54 @@ class Tmux:
             self.started = False
 
 
-def snapshot(tmux, out_dir, name, cols, rows, fonts):
-    """Write NAME.ansi, NAME.txt and NAME.png; return the PNG's path."""
+def capture(tmux, cols, rows, scrubs):
+    """The screen as a grid, scrubbed."""
     ansi = tmux.screen(styled=True)
+    return scrub_grid(parse_screen(ansi.rstrip('\n'), cols, rows), scrubs)
+
+
+def snapshot(tmux, out_dir, name, cols, rows, fonts, scrubs=()):
+    """Write NAME.ansi, NAME.txt, NAME.png and NAME.svg; return the PNG's
+    path."""
+    grid = capture(tmux, cols, rows, scrubs)
     with open(os.path.join(out_dir, f'{name}.ansi'), 'w') as handle:
-        handle.write(ansi)
+        handle.write(grid_ansi(grid))
     with open(os.path.join(out_dir, f'{name}.txt'), 'w') as handle:
-        handle.write(tmux.screen())
+        handle.write(grid_text(grid))
+    with open(os.path.join(out_dir, f'{name}.svg'), 'w') as handle:
+        handle.write(film.film_svg([(grid, 0)], 'Kubic', f'The Kubic TUI: {name}.'))
     png = os.path.join(out_dir, f'{name}.png')
-    render_png(parse_screen(ansi.rstrip('\n'), cols, rows), tmux.cursor(),
-               png, fonts)
+    render_png(grid, tmux.cursor(), png, fonts)
     return png
+
+
+def write_film(out_dir, frames, scenario):
+    path = os.path.join(out_dir, f'{FILM}.svg')
+    with open(path, 'w') as handle:
+        handle.write(film.film_svg(frames, 'Kubic', f'A Kubic session in the TUI, '
+                                   f'recorded by kshot from {scenario}.'))
+    return path
+
+
+def serve_model(step_file, scenario, khome, env):
+    """Serve the script beside SCENARIO and point the app at it: a
+    models.json in HOME names it, and the faux provider is dropped."""
+    path = os.path.join(os.path.dirname(os.path.abspath(scenario)), step_file)
+    try:
+        with open(path) as handle:
+            script = model.load_script(handle.read())
+    except OSError as error:
+        raise KshotError(f'model: cannot read {step_file}: {error.strerror}') from None
+    except model.ScriptError as error:
+        raise KshotError(f'model: {step_file}: {error}') from None
+    served = model.ScriptedModel(script)
+    folder = os.path.join(khome, '.kubic', 'models')
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, 'models.json'), 'w') as handle:
+        json.dump({'providers': {script.get('provider', 'kshot'):
+                                 model.provider_entry(script, served.base_url)}}, handle, indent=2)
+    env.pop('KUBIC_PROVIDER', None)
+    return served
 
 
 def base_env(khome):
@@ -586,11 +718,15 @@ def run(scenario, out_dir, keep, font=None):
         stale = os.path.join(out_dir, f'{ERROR_SNAP}.{ext}')
         if os.path.exists(stale):
             os.remove(stale)
-    work = tempfile.mkdtemp(prefix='kshot-work-')
-    khome = tempfile.mkdtemp(prefix='kshot-home-')
+    # Real paths, so the app's `~` matches HOME where /tmp is a link.
+    work = os.path.realpath(tempfile.mkdtemp(prefix='kshot-work-'))
+    khome = os.path.realpath(tempfile.mkdtemp(prefix='kshot-home-'))
     places = {'WORK': work, 'KHOME': khome, 'REPO': REPO}
     cols, rows = DEFAULT_SIZE
     env = base_env(khome)
+    scrubs = []
+    frames = []
+    served = None
     try:
         for number, verb, raw in steps:
             rest = expand(raw, places)
@@ -600,6 +736,12 @@ def run(scenario, out_dir, keep, font=None):
                 elif verb == 'env':
                     key, _, value = rest.partition('=')
                     env[key] = value
+                elif verb == 'model':
+                    served = serve_model(rest, scenario, khome, env)
+                elif verb == 'scrub':
+                    scrubs.append(parse_scrub(raw))
+                elif verb == 'frame':
+                    frames.append((capture(tmux, cols, rows, scrubs), int(rest)))
                 elif verb == 'sh':
                     code = subprocess.run(rest, shell=True, cwd=work,
                                           env=env).returncode
@@ -621,17 +763,22 @@ def run(scenario, out_dir, keep, font=None):
                 elif verb == 'idle':
                     wait_for_idle(tmux, int(rest) if rest else IDLE_MS)
                 elif verb == 'snap':
-                    png = snapshot(tmux, out_dir, rest, cols, rows, fonts)
+                    png = snapshot(tmux, out_dir, rest, cols, rows, fonts, scrubs)
                     print(f'snap {rest}: {png}')
             except KshotError as error:
                 raise KshotError(f'line {number}: {error}') from None
+        if frames:
+            path = write_film(out_dir, frames, os.path.basename(scenario))
+            print(f'film of {len(frames)} frames: {path}')
     except KshotError:
         if tmux.started:
-            png = snapshot(tmux, out_dir, ERROR_SNAP, cols, rows, fonts)
+            png = snapshot(tmux, out_dir, ERROR_SNAP, cols, rows, fonts, scrubs)
             print(f'the screen at the failure: {png}', file=sys.stderr)
         raise
     finally:
         tmux.close()
+        if served is not None:
+            served.close()
         if keep:
             print(f'kept: WORK={work} KHOME={khome}')
         else:

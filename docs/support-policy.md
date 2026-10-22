@@ -1,5 +1,7 @@
 # Support policy
 
+> Which versions and platforms Kubic supports, and how fixes ship.
+
 ## Supported versions
 
 Kubic is pre-1.0: a minor release may change behaviour, and each change is

@@ -1,5 +1,8 @@
 # Building CLI commands
 
+> How to add or change a `kubic` command: the libraries, the command
+> registry, exit codes, `--json` and output.
+
 Kubic's command line is built on a small, pinned stack. Use it — never
 hand-roll argv parsing, colours, tables, or prompts.
 

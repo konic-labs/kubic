@@ -1,10 +1,9 @@
 # Tools the model calls
 
-> Source of truth: `OPERATION_PARAMETERS` in
-> `packages/agent/src/ops/registry.ts` (schemas) and each operation's
-> `validateArgs` (the authoritative check).
+> The tools the model calls: their arguments, what they return, and the
+> limits they keep.
 
-Every lane (`kubic run`, `kubic tui`) registers the same eighteen tools,
+Every session (`kubic run`, `kubic tui`) registers the same eighteen tools,
 narrowed only by permission classes and `--role`. Kubic has no
 isolation: these tools act on the real workspace.
 
@@ -26,7 +25,7 @@ isolation: these tools act on the real workspace.
   range that does not start with `-`, a path that stays in the workspace).
 - **Units:** `bash.timeout` is in **seconds**; `read.offset` is **1-indexed**.
 - **The file tools write only inside the workspace.** A `write` or `edit`
-  path outside it is refused by name before any ask, full access included
+  path outside it is refused by name before any ask, with approvals off too
   (`not approved: refused: write cannot change <path>: it is outside the
   workspace …`), and nothing is written or journaled. A change outside the
   workspace goes through `bash`, which asks for `outside-write`.
@@ -38,19 +37,31 @@ isolation: these tools act on the real workspace.
 | `find` | `root?`, `nameContains?`, `type?` (`"file"` \| `"dir"`), `maxResults?` (default 100) | Recursive; see [Search walk](#search-walk-find-and-grep). |
 | `grep` | `pattern` (JavaScript regex), `root?`, `include?`, `maxMatches?` (default 100) | `include` is a path **substring**, not a glob; same [walk](#search-walk-find-and-grep) as `find`; matching lines are clipped at 500 chars and files that are binary or over 8 MiB are skipped and counted (see [Grep bounds](#grep-bounds)). |
 | `write` | `path`, `content` | Whole-file, atomic (tmp + rename); a symlinked `path` is written through to its target, so the link survives (see [Symlinked writes](#symlinked-writes)); an existing file above 8 MiB is journaled hash-only, so `undo` reports that step non-reversible. |
-| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | `oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped; every line the edit does not touch keeps its own line ending, and the file keeps its BOM (see [Line endings and BOM](#line-endings-and-bom)). |
-| `bash` | `command`, `timeout?` (seconds, > 0) | bash, else sh, on Linux and macOS; on Windows a POSIX bash — Git Bash, else WSL, or the bash `KUBIC_BASH` names — because the approval detectors read POSIX shell only, and the tool refuses to run without one; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits). |
+| `edit` | `path`, `oldText`, `newText`, `expectCount?` (default 1) | Replaces `oldText` exactly; see [`edit`](#edit-matching). |
+| `bash` | `command`, `timeout?` (seconds, > 0) | A POSIX bash on every platform; see [`bash`](#bash-shells-and-output). |
 | `git_status` | — | Branch (or detached HEAD), ahead/behind, staged/unstaged/untracked/conflicts, renames, the repo root, and one record per submodule. |
-| `git_diff` | `staged?`, `range?`, `path?` | Diff keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink); a clipped diff also carries a capped `--stat` summary (at most 40 lines, summary kept) saying what was cut. |
-| `git_log` | `max?` (default 20, cap 100), `path?` | Raw log is clipped to the last 64 KiB / 2000 lines before parsing (`truncated`, spilled in full when the lane provides a sink); a clipped log also carries a capped `--stat` summary. |
-| `git_show` | `ref` | Patch keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the lane provides a sink); a clipped patch also carries a capped `--stat` summary. |
+| `git_diff` | `staged?`, `range?`, `path?` | Diff keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the session provides a sink); a clipped diff also carries a capped `--stat` summary (at most 40 lines, summary kept) saying what was cut. |
+| `git_log` | `max?` (default 20, cap 100), `path?` | Raw log is clipped to the last 64 KiB / 2000 lines before parsing (`truncated`, spilled in full when the session provides a sink); a clipped log also carries a capped `--stat` summary. |
+| `git_show` | `ref` | Patch keeps the last 64 KiB / 2000 lines (`truncated`, spilled in full when the session provides a sink); a clipped patch also carries a capped `--stat` summary. |
 | `git_stage` | `paths` (non-empty array) | Explicit paths only, never `-A`. |
 | `git_commit` | `message`, `amend?` | Killed after 120 s (a hanging hook fails the call instead of hanging it); an abort mid-flight kills the child and fails the call. With `amend: true` it rewrites the last commit and raises `destructive-shell`, as `git commit --amend` does in bash. |
 | `git_branch` | `create?` | Omit to list; no checkout. |
 | `git_checkpoint` | `message` | `git stash create`; the tree is untouched. |
-| `git_merge` | `branch` | Local refs only, never fetches; a conflict returns `{merged: false, conflicts}` and leaves the merge state for the resolver. No remote mutation — `git_push` stays approval-gated through bash. Raises no capability: it changes files in the workspace, which the journal records and `kubic undo` restores, and rewrites no history, like `git merge` in bash. |
+| `git_merge` | `branch` | Local refs only; see [`git_merge`](#git_merge-conflicts). |
 | `git_conflict_status` | — | Lists paths with unresolved merge conflicts. |
 | `git_worktree_list` | — | Attached worktrees as `{path, head, branch, bare, detached}` rows. |
+
+### `edit` matching
+
+`oldText` must occur exactly `expectCount` times, else `no_match` / `ambiguous_match`; over 8 MiB is refused; writes through a symlink like `write`; matching happens on LF-normalized text with the BOM stripped; every line the edit does not touch keeps its own line ending, and the file keeps its BOM (see [Line endings and BOM](#line-endings-and-bom)).
+
+### `bash` shells and output
+
+bash, else sh, on Linux and macOS; on Windows a POSIX bash — Git Bash, else WSL, or the bash `KUBIC_BASH` names — because the approval detectors read POSIX shell only, and the tool refuses to run without one; each stream keeps its last 64 KiB / 2000 lines, and a clipped stream is spilled in full to a session file whose path the header and `spillPath` name. Default timeout 120 s, at most 600 s; see [Bash limits](#bash-limits).
+
+### `git_merge` conflicts
+
+Local refs only, never fetches; a conflict returns `{merged: false, conflicts}` and leaves the merge state for the resolver. No remote mutation — `git_push` stays approval-gated through bash. Raises no capability: it changes files in the workspace, which the journal records and `kubic undo` restores, and rewrites no history, like `git merge` in bash.
 
 ## Result shapes
 
@@ -105,10 +116,10 @@ src/b.ts:3: // TODO remove
   `N binary file(s) skipped` / `N oversized file(s) skipped` when files were
   not searched at all (see [Grep bounds](#grep-bounds)).
 - Every other tool returns its structured result as JSON.
-- Every `git_*` call is abortable and time-bounded: an aborted lane kills
+- Every `git_*` call is abortable and time-bounded: an aborted turn kills
   the in-flight child and the call fails as `aborted`; a child (commit
   hooks included) that runs past 120 s is killed and the call fails as
-  `timed out`. The kill is also registered in the lane's kill registry
+  `timed out`. The kill is also registered in the session's kill registry
   for the call's operation id, and unregistered when the child settles.
 - A refused `git_commit` carries git's own reason: stderr when git wrote
   one, else stdout (an empty index prints `nothing to commit` on stdout).
@@ -255,8 +266,16 @@ restores the CRLF/BOM file exactly as it was.
   directory (outside it). The file holds the
   stream up to the seam's 10 MiB per-stream cap and is removed with the
   session (`kubic sessions prune`); it is created `0600`, because a command's
-  output can carry secrets. A run whose lane injected no sink (tests, a
+  output can carry secrets. A run that injected no sink (tests, a
   journal-free context) keeps the `[kubic: N leading chars dropped]` header
   with no path, and a spill that cannot be written does not fail the call —
   the header simply names no file. The result also carries
   `, output truncated`.
+
+## See also
+
+- [Approvals](approvals.md): which calls ask before they run.
+- [For teams](enterprise.md#mcp-servers): MCP servers' tools, offered beside these.
+
+The schemas are `OPERATION_PARAMETERS` in `packages/agent/src/ops/registry.ts`,
+and each operation's `validateArgs` is the authoritative check.

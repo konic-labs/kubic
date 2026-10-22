@@ -1,5 +1,8 @@
 # In-process runtime
 
+> Kubic runs one agent in your directory, in-process, with your authority:
+> what that means, and the controls it has instead of isolation.
+
 Kubic is one agent working
 directly in the user's directory. One Pi session plus one agent lane
 run in-process — harness, lane, and tools in a single process with

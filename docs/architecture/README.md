@@ -1,5 +1,7 @@
 # Architecture
 
+> Why Kubic is built the way it is.
+
 Topology and why. Each page explains the *why* of its area, with the
 implementation detail on the [package pages](../packages/README.md) and
 operator behaviour on the [CLI pages](../cli/README.md).

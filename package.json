@@ -59,7 +59,7 @@
     "docs:images": "node scripts/docs-images.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.15",
     "@types/node": "26.6.2",
     "@vitest/coverage-v8": "5.0.3",
     "esbuild": "0.28.2",

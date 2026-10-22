@@ -122,8 +122,8 @@ jobs:
           node-version: '22'
           package-manager-cache: false
           registry-url: https://registry.npmjs.org
-      # The npm release the first publish was made with: it handles npm's
-      # staged publishing for a token that bypasses 2FA.
+      # npm trusted publishing: this workflow's OIDC token is the credential
+      # (npm 11.5.1 or newer). No npm token exists.
       - run: npm install --global npm@11.6.2
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -140,8 +140,6 @@ jobs:
           node scripts/release-sign.mjs --key "$key"
           node scripts/release-sign.mjs --verify --pub docs/kubic-release.pub
       - run: npm publish "./release/kubic-$VERSION.tgz" --provenance --tag next --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: The registry serves the version with its shrinkwrap and provenance
         run: node scripts/release-check.mjs registry "$VERSION" next
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -180,6 +178,7 @@ jobs:
     environment: release
     permissions:
       contents: write # marks the GitHub Release as the latest
+      id-token: write # npm trusted publishing for the dist-tag change
     env:
       VERSION: ${{ inputs.promote }}
     steps:
@@ -190,11 +189,12 @@ jobs:
           node-version: '22'
           package-manager-cache: false
           registry-url: https://registry.npmjs.org
+      # npm authenticates a dist-tag change through trusted publishing from
+      # npm 12.2.0 on.
+      - run: npm install --global npm@12.2.0
       - name: The version is on next
         run: test "$(npm view kubic dist-tags.next)" = "$VERSION"
       - run: npm dist-tag add "kubic@$VERSION" latest
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: The registry serves it as latest
         run: |
           for _ in 1 2 3 4 5 6 7 8 9 10; do

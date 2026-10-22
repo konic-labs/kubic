@@ -1,9 +1,11 @@
 name: CI
 
+# A pull request runs CI once, as `pull_request`; a push runs it only on main.
+# A branch pushed without a pull request runs it by hand (workflow_dispatch).
 # Tags are left to the release workflow, which calls this one.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -11,10 +13,10 @@ on:
 permissions:
   contents: read
 
-# One live run per ref. A newer push supersedes the older run, and a PR branch
-# (which fires both `push` and `pull_request`) keeps a single run. main is
-# keyed by commit, so every merged commit is verified in full and never
-# cancelled. A release's call is keyed apart from the push run of its commit.
+# One live run per ref: a newer push to a pull request supersedes the older
+# run. main is keyed by commit, so every merged commit is verified in full and
+# never cancelled. A release's call is keyed apart from the push run of its
+# commit.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name == 'main' && format('main-{0}', github.sha) || format('ci-{0}', github.head_ref || github.ref_name) }}
   cancel-in-progress: true

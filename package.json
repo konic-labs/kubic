@@ -60,7 +60,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "@types/node": "26.6.2",
+    "@types/node": "26.6.5",
     "@vitest/coverage-v8": "5.0.3",
     "esbuild": "0.28.2",
     "knip": "6.38.0",

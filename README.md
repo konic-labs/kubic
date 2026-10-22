@@ -73,6 +73,7 @@ opens the TUI without a key, on a built-in model that echoes your prompts.
 | [Getting started](docs/getting-started.md) | [Commands](docs/cli/README.md) | [Architecture](docs/architecture/README.md) |
 | [The TUI](docs/cli/tui.md) | [Configuration](docs/cli/configuration.md) | [Threat model](docs/architecture/threat-model.md) |
 | [For teams](docs/cli/enterprise.md) | [TUI keys](docs/cli/tui-keys.md) | [Contributing](CONTRIBUTING.md) |
+| [Support policy](docs/support-policy.md) | [Security policy](SECURITY.md) | [Code of conduct](CODE_OF_CONDUCT.md) |
 
 ## License
 

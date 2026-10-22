@@ -32,7 +32,8 @@ newest release; older releases are not patched.
 
 A security fix ships in a new release as soon as it is ready, with an
 advisory naming the affected versions and the fix. Report a vulnerability
-privately to the maintainers, never in a public issue.
+privately, as the [security policy](../SECURITY.md) describes, never in a
+public issue.
 
 ## What a release carries
 

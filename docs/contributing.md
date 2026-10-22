@@ -409,15 +409,16 @@ publishes from a laptop.
 4. The `publish` job runs in the `release` environment, which needs a
    maintainer's approval. It signs `SHA256SUMS` with the release key, verifies
    the signature against [`kubic-release.pub`](kubic-release.pub), and
-   publishes to the `next` dist-tag with the `NPM_TOKEN` secret and npm's
-   provenance attestation. It then fails unless the registry serves the
-   version with its shrinkwrap, its provenance attestation and the `next` tag.
+   publishes to the `next` dist-tag with npm's provenance attestation, through
+   npm trusted publishing: no npm token exists. It then fails unless the
+   registry serves the version with its shrinkwrap, its provenance
+   attestation and the `next` tag.
 5. A GitHub Release for the tag carries the tarball, the SBOM, `SHA256SUMS`
    and `SHA256SUMS.sig`, marked as a pre-release.
 6. Once the version on `next` has been checked, run the workflow by hand with
    `promote` set to the version. That job also needs the `release`
-   environment's approval; it moves the version to `latest` with the
-   `NPM_TOKEN` secret and marks the GitHub Release as the latest.
+   environment's approval; it moves the version to `latest`, again through
+   trusted publishing, and marks the GitHub Release as the latest.
 
 A manual run with no input is a dry run: it runs the same gates, stages,
 proves and audits the package, signs it with a throwaway key and runs
@@ -431,10 +432,10 @@ What the workflow needs:
 - **`RELEASE_SIGNING_KEY`**: the Ed25519 private key (PEM) whose public half
   is `docs/kubic-release.pub`. The key is written to a temporary file for one
   step and removed whatever the outcome.
-- **`NPM_TOKEN`**: a granular npm token with read and write access to the
-  `kubic` package only, set to bypass two-factor authentication (the account
-  requires 2FA for writes). The publish and promotion jobs use it. It
-  expires: create a new one before then, and revoke the old one.
+- **npm trusted publishing** for the `kubic` package (on npmjs.com, under the
+  package's settings): GitHub Actions, `konic-labs/kubic`, `release.yml`,
+  environment `release`, allowed to publish and to change dist-tags. A run
+  from any other repository, workflow or environment is refused.
 
 ### Supply chain
 

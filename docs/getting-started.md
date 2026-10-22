@@ -45,20 +45,14 @@ cd ~/code/your-project
 kubic
 ```
 
-<picture>
-  <source srcset="assets/tui/first-screen.svg" type="image/svg+xml">
-  <img src="assets/tui/first-screen.png" alt="The first screen: the Kubic wordmark, preflight checks for the provider, project, journal and isolation, and the keys to start.">
-</picture>
+![The first screen: the Kubic wordmark, preflight checks for the provider, project, journal and isolation, and the keys to start.](assets/tui/first-screen.svg)
 
 The first screen checks what a session needs: the model, the project, the
 journal, and the isolation you have. There is none: Kubic acts with your
 authority, which is why it asks before risky actions and journals every change.
 Describe a task in the editor and press `Enter`.
 
-<picture>
-  <source srcset="assets/tui/session.svg" type="image/svg+xml">
-  <img src="assets/tui/session.png" alt="A finished turn: the agent read src/slug.js, edited it and ran the test; the summary line shows the time, three tools, one file changed and the cost.">
-</picture>
+![A finished turn: the agent read src/slug.js, edited it and ran the test; the summary line shows the time, three tools, one file changed and the cost.](assets/tui/session.svg)
 
 Each tool call shows as a card: the file read, the diff of each edit, the
 command run and its exit status. The line under the turn sums it up: time,
@@ -69,10 +63,7 @@ tools, files changed and cost.
 `Ctrl+O` opens the diff panel on the last change, and `Ctrl+R` opens the
 journal: every change of the session, file by file.
 
-<picture>
-  <source srcset="assets/tui/diff-panel.svg" type="image/svg+xml">
-  <img src="assets/tui/diff-panel.png" alt="The diff panel over the turn: two lines added to src/slug.js.">
-</picture>
+![The diff panel over the turn: two lines added to src/slug.js.](assets/tui/diff-panel.svg)
 
 Type `/undo` to put back the files the last turn changed. The same record is
 there from a shell, with or without git:
@@ -91,10 +82,7 @@ not what a command changed elsewhere. See [journal commands](cli/journal.md).
 Before the agent runs something destructive, reaches the network, writes
 outside the workspace or touches credentials, Kubic stops and asks:
 
-<picture>
-  <source srcset="assets/tui/approval-card.svg" type="image/svg+xml">
-  <img src="assets/tui/approval-card.png" alt="The approval card for rm -rf dist: marked destructive, with the keys to allow once, allow for the session, deny, deny with a comment, edit the command or ask for an explanation.">
-</picture>
+![The approval card for rm -rf dist: marked destructive, with the keys to allow once, allow for the session, deny, deny with a comment, edit the command or ask for an explanation.](assets/tui/approval-card.svg)
 
 `a` allows it once, `Ctrl+S` allows it for the session, and `d` or `Esc`
 denies it. `?` asks the model to explain the call. See
@@ -109,10 +97,7 @@ In the TUI, `/tree` shows the session as a tree. Pick an earlier prompt, edit
 it and send it: the new branch sits beside the old one, and you can move
 between them.
 
-<picture>
-  <source srcset="assets/tui/session-tree.svg" type="image/svg+xml">
-  <img src="assets/tui/session-tree.png" alt="The session tree: the prompts, replies and tool calls of a session, the latest selected.">
-</picture>
+![The session tree: the prompts, replies and tool calls of a session, the latest selected.](assets/tui/session-tree.svg)
 
 ## Next
 

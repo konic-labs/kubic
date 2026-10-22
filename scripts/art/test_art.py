@@ -69,8 +69,25 @@ class DitherTest(unittest.TestCase):
         self.assertIn('.b0{animation-duration:', css)
         self.assertIn('.quiet{stroke:#fff;stroke-opacity:0.22}', css)
 
+    def test_a_colour_left_to_the_caller_gets_no_rule(self):
+        svg, css = art.dither((0, 0, 320, 160), 'right', 0.4, 0.12, 6.0,
+                              {'accent': ('#ff004d', 1), 'quiet': None})
+        self.assertIn('class="quiet', svg)
+        self.assertNotIn('.quiet{', css)
+
 
 class FileTest(unittest.TestCase):
+    def test_the_light_field_waits_for_a_light_system_theme(self):
+        dark, media, light = art.THEME_CSS.partition('@media (prefers-color-scheme:light){')
+        self.assertTrue(media)
+        self.assertIn('.bg{fill:#050505}', dark)
+        self.assertIn('.bg{fill:#ffffff}', light)
+        self.assertIn('.quiet{stroke:#050505;stroke-opacity:0.2}', light)
+
+    def test_the_mark_takes_a_colour_or_a_tone(self):
+        self.assertIn('fill="#ff004d"', art.draw_mark(0, 0, 16, fill='#ff004d'))
+        self.assertIn('class="muted"', art.draw_mark(0, 0, 16, tone='muted'))
+
     def test_every_icon_is_a_titled_twelve_pixel_grid(self):
         for name, (title, rows) in art.ICONS.items():
             with self.subTest(name=name):

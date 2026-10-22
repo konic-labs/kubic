@@ -1,11 +1,10 @@
 // Content checks for the docs, beside the link check: every table row
 // belongs to a table and no cell runs over 300 characters (GitHub renders a
 // long cell as a wall of text, and a row cut off from its table as raw
-// pipes); every image has alt text and a file behind it, and a local SVG is
-// shown only from a <picture>'s <source>, beside a PNG in its <img> (GitHub's
-// mobile apps show the <img> and no SVG); and every file in docs/assets is
-// used, within the size budget, and an SVG with nothing active or outside
-// inside it.
+// pipes); no page uses a <picture>, which GitHub's mobile apps leave out,
+// image and all; every image has alt text and a file behind it; and every
+// file in docs/assets is used, within the size budget, and an SVG with
+// nothing active or outside inside it.
 // Usage: node scripts/check-docs-content.mjs [--root <dir>]
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -73,9 +72,27 @@ export function tableProblems(markdown) {
   return problems;
 }
 
+// The lines of a page that open a <picture>, outside code blocks and spans.
+export function pictureProblems(markdown) {
+  const problems = [];
+  let fenced = false;
+  markdown.split('\n').forEach((line, i) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      return;
+    }
+    if (!fenced && /<picture\b/i.test(line.replace(/`[^`]*`/g, ''))) {
+      problems.push(
+        `line ${i + 1}: a <picture>, which GitHub's mobile apps leave out: show the image with <img> or Markdown`,
+      );
+    }
+  });
+  return problems;
+}
+
 // The images a page shows: Markdown images and HTML <img>/<source>, with
-// their targets, their kind and whether alt text is present (an empty alt is
-// a decorative image, which is fine; a missing one is not).
+// their targets and whether alt text is present (an empty alt is a
+// decorative image, which is fine; a missing one is not).
 export function pageImages(markdown) {
   const images = [];
   let fenced = false;
@@ -86,16 +103,14 @@ export function pageImages(markdown) {
     }
     if (fenced) continue;
     for (const m of line.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)) {
-      images.push({ src: m[2], alt: m[1].trim() !== '', kind: 'markdown' });
+      images.push({ src: m[2], alt: m[1].trim() !== '' });
     }
     for (const m of line.matchAll(/<img\b[^>]*>/g)) {
       const src = /\ssrc="([^"]+)"/.exec(m[0]);
-      if (src) {
-        images.push({ src: src[1], alt: /\salt="/.test(m[0]), kind: 'img' });
-      }
+      if (src) images.push({ src: src[1], alt: /\salt="/.test(m[0]) });
     }
     for (const m of line.matchAll(/<source\b[^>]*\ssrcset="([^"]+)"/g)) {
-      images.push({ src: m[1], alt: true, kind: 'source' });
+      images.push({ src: m[1], alt: true });
     }
   }
   return images;
@@ -138,17 +153,15 @@ export function checkDocsContent(root) {
   for (const file of readerFiles(root)) {
     const markdown = readFileSync(file, 'utf8');
     const name = relative(root, file);
-    for (const problem of tableProblems(markdown)) {
+    for (const problem of [
+      ...tableProblems(markdown),
+      ...pictureProblems(markdown),
+    ]) {
       problems.push(`${name}: ${problem}`);
     }
     for (const image of pageImages(markdown)) {
       if (!image.alt) problems.push(`${name}: ${image.src} has no alt text`);
       if (isExternal(image.src)) continue;
-      if (image.kind !== 'source' && /\.svg$/i.test(image.src.split('#')[0])) {
-        problems.push(
-          `${name}: ${image.src} is shown as an SVG, which GitHub's mobile apps do not draw: show a PNG in the <img> and the SVG in a <picture>'s <source>`,
-        );
-      }
       const target = resolve(dirname(file), image.src.split('#')[0]);
       used.add(target);
       try {

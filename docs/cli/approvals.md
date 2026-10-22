@@ -6,10 +6,7 @@
 
 ## The approval card
 
-<picture>
-  <source srcset="../assets/tui/approval-card.svg" type="image/svg+xml">
-  <img src="../assets/tui/approval-card.png" alt="The approval card for rm -rf dist: marked destructive, with the working directory and the keys to allow once, allow for the session, deny, deny with a comment, edit the command or ask for an explanation.">
-</picture>
+![The approval card for rm -rf dist: marked destructive, with the working directory and the keys to allow once, allow for the session, deny, deny with a comment, edit the command or ask for an explanation.](../assets/tui/approval-card.svg)
 
 A challenged call turns the editor into an **approval card** instead of being
 refused: an amber frame with the

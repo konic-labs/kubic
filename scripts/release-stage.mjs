@@ -106,11 +106,10 @@ export function repositoryUrl(repository) {
 
 // The README the package page shows. npm resolves a relative link against
 // the repository, which a reader may not be able to open, so every link is
-// made absolute: a <picture> becomes its <img>, whose PNG ships in the
-// package and loads from jsDelivr at this version; any other relative link
-// goes to the repository on GitHub; and the badge line, which shows the
-// state of main rather than of this release, is left out. Returns the README
-// and the images to ship.
+// made absolute: an image ships in the package and loads from jsDelivr at
+// this version, any other relative link goes to the repository on GitHub,
+// and the badge line, which shows the state of main rather than of this
+// release, is left out. Returns the README and the images to ship.
 export function npmReadme(markdown, manifest) {
   const repo = repositoryUrl(manifest.repository);
   const cdn = `https://cdn.jsdelivr.net/npm/${manifest.name}@${manifest.version}`;
@@ -123,11 +122,6 @@ export function npmReadme(markdown, manifest) {
   const link = (target) =>
     ABSOLUTE.test(target) ? target : `${repo}/blob/main/${target}`;
   const readme = markdown
-    .replace(/<picture>[\s\S]*?<\/picture>/g, (picture) => {
-      const img = /<img\b[^>]*>/.exec(picture);
-      if (img === null) throw new Error(`a <picture> without an <img>`);
-      return img[0];
-    })
     .replace(/^(?:\[!\[[^\]]*\]\([^)\s]+\)\]\([^)\s]+\) *)+\n/gm, '')
     .replace(
       /(<img\b[^>]*\ssrc=")([^"]+)"/g,

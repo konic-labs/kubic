@@ -409,9 +409,9 @@ publishes from a laptop.
 4. The `publish` job runs in the `release` environment, which needs a
    maintainer's approval. It signs `SHA256SUMS` with the release key, verifies
    the signature against [`kubic-release.pub`](kubic-release.pub), and
-   publishes to the `next` dist-tag with provenance (npm trusted publishing:
-   no token). It then fails unless the registry serves the version with its
-   shrinkwrap, its provenance attestation and the `next` tag.
+   publishes to the `next` dist-tag with the `NPM_TOKEN` secret and npm's
+   provenance attestation. It then fails unless the registry serves the
+   version with its shrinkwrap, its provenance attestation and the `next` tag.
 5. A GitHub Release for the tag carries the tarball, the SBOM, `SHA256SUMS`
    and `SHA256SUMS.sig`, marked as a pre-release.
 6. Once the version on `next` has been checked, run the workflow by hand with
@@ -431,11 +431,10 @@ What the workflow needs:
 - **`RELEASE_SIGNING_KEY`**: the Ed25519 private key (PEM) whose public half
   is `docs/kubic-release.pub`. The key is written to a temporary file for one
   step and removed whatever the outcome.
-- **`NPM_TOKEN`**: a granular npm token that can change the `kubic` package's
-  dist-tags, used only by the promotion job.
-- **Trusted publishing** set up for the `kubic` package on npmjs.com, naming
-  this repository and `release.yml`. npm gives provenance only from a public
-  repository.
+- **`NPM_TOKEN`**: a granular npm token with read and write access to the
+  `kubic` package only, set to bypass two-factor authentication (the account
+  requires 2FA for writes). The publish and promotion jobs use it. It
+  expires: create a new one before then, and revoke the old one.
 
 ### Supply chain
 

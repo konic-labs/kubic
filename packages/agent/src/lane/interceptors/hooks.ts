@@ -6,7 +6,11 @@ import { resolve } from 'node:path';
 import { scanSecrets } from '@kubic/core/secret-scan';
 import { readRootFor } from '@kubic/exec/read-roots';
 import { effectiveNetworkLevel } from '../../permissions.js';
-import type { HookRegistration, JsonValue } from '../../pi-boundary.js';
+import type {
+  HookRegistration,
+  JsonValue,
+  ToolExecutionResult,
+} from '../../pi-boundary.js';
 import { hook, ToolTask } from '../../pi-boundary.js';
 import { confineArgs } from './confine.js';
 import { defaultIsDestructive } from './detectors.js';
@@ -159,7 +163,7 @@ function toolOutputScanHook(
   notify: (toolName: string, found: number) => void,
 ): HookRegistration {
   return hook(ToolTask, {
-    afterTool: (call, result) => {
+    afterTool: (call, result): ToolExecutionResult | undefined => {
       if (result.output === undefined) return undefined;
       let found = 0;
       const output = result.output.map((part) => {
@@ -270,7 +274,7 @@ function approvalHook(
         return block(`not approved: ${verdict.reason}`);
       }),
     // An edited call's result opens with what actually ran.
-    afterTool: (call, result) => {
+    afterTool: (call, result): ToolExecutionResult | undefined => {
       const edit = editedCalls.get(call.id);
       if (edit === undefined) return undefined;
       editedCalls.delete(call.id);

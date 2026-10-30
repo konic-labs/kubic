@@ -60,6 +60,13 @@ export type {
 //     group's rows with it, the name above the summary)
 //   why Pi has no alternative: it is Pi's ranking; ranking the palette with
 //     a Kubic copy would order rows differently from Pi's own pickers
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-tui renderFakeCursor (the zero-width markers
+//     around the cell the editor draws as its cursor)
+//   used by: packages/tui/src/screen.ts (the document printed on quit drops
+//     the markers) and the headless tests that render through it
+//   why Pi has no alternative: the markers are Pi's own; its renderer
+//     resolves them, and reading them off Pi keeps the strip in step
 export {
   CURSOR_MARKER,
   Editor,
@@ -75,6 +82,7 @@ export {
   matchesKey,
   ProcessTerminal,
   parseKey,
+  renderFakeCursor,
   /** @internal */ resetCapabilitiesCache,
   ScrollView,
   /** @internal */ setCapabilities,

@@ -109,6 +109,7 @@ export function fakeTerminal(
     clearScreen: () => {},
     setTitle: () => {},
     setProgress: () => {},
+    setProgramStatus: () => {},
   };
   return terminal;
 }

@@ -14,10 +14,17 @@ import type {
   LaneSnapshot,
 } from '@kubic/core/presentation';
 import { describe, expect, it } from 'vitest';
+import { stripCursor } from './screen.js';
 import { createTuiApp } from './tui-app.js';
 
 const ESC = '\u001b';
 const BEL = '\u0007';
+
+// A headless frame, less the editor's own cursor markers: Pi's renderer
+// resolves them, and they are not lane content.
+function screenText(lines: readonly string[]): string {
+  return lines.map(stripCursor).join('\n');
+}
 
 function frameWith(text: string): string {
   const app = createTuiApp({
@@ -33,7 +40,7 @@ function frameWith(text: string): string {
       message: { role: 'assistant', content: [{ type: 'text', text }] },
     },
   ]);
-  return app.render(60).join('\n');
+  return screenText(app.render(60));
 }
 
 // The app renders replicated state, so a test builds the state a
@@ -87,7 +94,7 @@ describe('terminal control sequences from lane content', () => {
         },
       },
     ]);
-    const frame = app.render(60).join('\n');
+    const frame = screenText(app.render(60));
     expect(frame).not.toContain(`${ESC}[2J`);
   });
 
@@ -114,7 +121,7 @@ describe('terminal control sequences from lane content', () => {
         },
       },
     ]);
-    const frame = app.render(60).join('\n');
+    const frame = screenText(app.render(60));
     // The renderer's OWN SGR (glyph colours, resets) is not content: strip it
     // and assert what the operator reads.
     const plain = frame.replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '');
@@ -144,7 +151,7 @@ describe('terminal control sequences from lane content', () => {
         },
       },
     ]);
-    const frame = app.render(60).join('\n');
+    const frame = screenText(app.render(60));
     expect(frame).toContain('evil');
     expect(frame).not.toContain(`${ESC}[2J`);
   });
@@ -173,7 +180,7 @@ describe('terminal control sequences from lane content', () => {
     );
     // The tree row is opened on demand (Ctrl-T).
     app.handleInput('\x14');
-    const frame = app.render(100).join('\n');
+    const frame = screenText(app.render(100));
     expect(frame).toContain('ZZ');
     expect(frame).not.toContain(`${ESC}[2J`);
     expect(frame).not.toContain(`${ESC}[31m`);
@@ -195,7 +202,7 @@ describe('terminal control sequences from lane content', () => {
     app.setEditorFooter(
       `cancel failed: ${JSON.stringify({ message: `zap${ESC}[2J${BEL}` })}`,
     );
-    const frame = app.render(60).join('\n');
+    const frame = screenText(app.render(60));
     expect(frame).not.toContain(`${ESC}[2J`);
     expect(frame).not.toContain(BEL);
   });

@@ -78,7 +78,7 @@ vi.mock('./tools-adapter.js', async () => {
           description: `${name} (faux)`,
           parameters: Type.Object({}),
           execute: async () => ({
-            content: [{ type: 'text' as const, text: name }],
+            output: [{ type: 'text' as const, text: name }],
           }),
         }),
       ),

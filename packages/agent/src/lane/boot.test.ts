@@ -101,7 +101,7 @@ vi.mock('./tools-adapter.js', async () => {
           execute: async (args: { path?: string; content?: string }, api) => {
             if (name === 'read' && args.path !== undefined) {
               return {
-                content: [
+                output: [
                   {
                     type: 'text' as const,
                     text: ctx.env.fs.readFile(args.path),

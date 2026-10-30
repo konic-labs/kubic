@@ -468,7 +468,7 @@ describe('Kubic tools on the pi-durable harness', () => {
         if (signal === undefined) throw new Error('no abort signal');
         if (runs === 1) await aborted(signal);
         return {
-          content: [{ type: 'text' as const, text: `memo=${String(won)}` }],
+          output: [{ type: 'text' as const, text: `memo=${String(won)}` }],
         };
       },
     });

@@ -147,14 +147,15 @@ async function toolResultBody(conversation: Conversation): Promise<string> {
 }
 
 // The guard a headless run passes: a cancellable Context bound (chord's
-// Context is the structural { abortSignal, value, toString } interface, so a
-// test does not need the boundary to build one).
+// Context is the structural { abortSignal, value, telemetry, toString }
+// interface, so a test builds one by hand, with the background telemetry).
 function guard(): { context: Context; cancel: () => void } {
   const controller = new AbortController();
   return {
     context: {
       abortSignal: controller.signal,
       value: () => undefined,
+      telemetry: BACKGROUND_CONTEXT.telemetry,
       toString: () => '[test guard]',
     },
     cancel: () => controller.abort(new Error('turn budget exhausted')),

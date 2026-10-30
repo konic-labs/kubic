@@ -316,6 +316,7 @@ describe('toKubicLaneEvent', () => {
         { callId: 'c-2', name: 'echo', status: 'done', entry: 2 as EntryId },
         { callId: 'c-3', name: 'echo', status: 'done' },
       ],
+      nestedTools: [],
       compactions: [
         {
           taskId: 9 as SnapshotEvent['compactions'][number]['taskId'],
@@ -379,7 +380,7 @@ const echoTool = defineTool({
   parameters: Type.Object({ text: Type.String() }),
   replay: 'safe',
   async execute(args) {
-    return { content: [{ type: 'text', text: `echo: ${args.text}` }] };
+    return { output: [{ type: 'text', text: `echo: ${args.text}` }] };
   },
 });
 

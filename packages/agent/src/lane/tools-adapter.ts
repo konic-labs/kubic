@@ -380,7 +380,7 @@ export function kubicToolsToPiTools(
         const text = out.ok
           ? renderToolText(op.name, out.result)
           : `error ${out.error.code}: ${out.error.message}`;
-        return { content: [{ type: 'text', text }], details };
+        return { output: [{ type: 'text', text }], details };
       },
     }),
   );

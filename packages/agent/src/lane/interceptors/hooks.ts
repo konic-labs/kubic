@@ -133,7 +133,7 @@ function adminAfterHook(
 ): HookRegistration {
   return hook(ToolTask, {
     afterTool: async (call, result) => {
-      const output = (result.content ?? [])
+      const output = (result.output ?? [])
         .flatMap((part) => (part.type === 'text' ? [part.text] : []))
         .join('\n');
       try {
@@ -160,9 +160,9 @@ function toolOutputScanHook(
 ): HookRegistration {
   return hook(ToolTask, {
     afterTool: (call, result) => {
-      if (result.content === undefined) return undefined;
+      if (result.output === undefined) return undefined;
       let found = 0;
-      const content = result.content.map((part) => {
+      const output = result.output.map((part) => {
         if (part.type !== 'text') return part;
         const scanned = scanSecrets(part.text);
         found += scanned.found;
@@ -170,7 +170,7 @@ function toolOutputScanHook(
       });
       if (found === 0) return undefined;
       notify(call.name, found);
-      return { ...result, content };
+      return { ...result, output };
     },
   });
 }
@@ -274,15 +274,15 @@ function approvalHook(
       const edit = editedCalls.get(call.id);
       if (edit === undefined) return undefined;
       editedCalls.delete(call.id);
-      if (result.content === undefined) return undefined;
+      if (result.output === undefined) return undefined;
       return {
         ...result,
-        content: [
+        output: [
           {
             type: 'text',
             text: `[edited by the user — ran: ${redactSecrets(edit.to)} (proposed: ${redactSecrets(edit.from)})]\n`,
           },
-          ...result.content,
+          ...result.output,
         ],
       };
     },

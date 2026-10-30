@@ -106,6 +106,26 @@ describe('bridgeToPiFileSystem 1.0 surface', () => {
     if (truncated.ok) throw new Error('expected failure');
     expect(truncated.error.code).toBe('not_supported');
   });
+
+  it('refuses the binary and directory readers and watch by name', async () => {
+    const { fs } = setup({ 'a.txt': 'content' });
+    const results = [
+      await fs.openBinaryReader('a.txt', undefined, BACKGROUND_CONTEXT),
+      await fs.openDirReader('.', BACKGROUND_CONTEXT),
+      await fs.watch(
+        [{ path: 'a.txt', recursive: false }],
+        () => undefined,
+        BACKGROUND_CONTEXT,
+      ),
+    ];
+    for (const result of results) {
+      if (result.ok) throw new Error('expected failure');
+      expect(result.error.code).toBe('not_supported');
+      expect(result.error.message).toMatch(
+        /does not implement (openBinaryReader|openDirReader|watch)/,
+      );
+    }
+  });
 });
 
 describe('bridgeToPiFileSystem.openTextLineReader', () => {

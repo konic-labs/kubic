@@ -18,7 +18,7 @@ npm run build                # esbuild bundle -> gitignored dist/kubic.js
 npm link                     # optional: `kubic` on your PATH runs this build
 ```
 
-Kubic runs on the Pi agent harness (`@earendil-works/*` **1.0.2**, exact
+Kubic runs on the Pi agent harness (`@earendil-works/*` **1.4.0**, exact
 pins), installed from npm like every other dependency.
 
 `npm run build` bundles Kubic's own code into one file, `dist/kubic.js`, with

@@ -39,7 +39,7 @@ never imports `host`/`agent` implementation, the agent never imports
 `host`, and only the app root wires `host` and `tui` together.
 
 **Test contract.** There is no `VirtualTerminal` in the pinned Pi
-(`@earendil-works/pi-tui` 1.0.2 exports no such class) and Kubic
+(`@earendil-works/pi-tui` 1.4.0 exports no such class) and Kubic
 declares no terminal-emulator dependency. TUI tests render the pure view
 functions directly into headless snapshot strings — no TTY, no alt-screen —
 and each view module records that in its header.

@@ -86,9 +86,9 @@ function probeTools(world: World) {
   const record = (
     name: string,
     args: Record<string, unknown>,
-  ): { content: Array<{ type: 'text'; text: string }> } => {
+  ): { output: Array<{ type: 'text'; text: string }> } => {
     world.calls.push({ name, args });
-    return { content: [{ type: 'text', text: `${name} ran` }] };
+    return { output: [{ type: 'text', text: `${name} ran` }] };
   };
   return [
     defineTool({

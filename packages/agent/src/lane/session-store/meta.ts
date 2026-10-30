@@ -73,6 +73,8 @@ export const KubicSessionDoc = defineDoc<{
   version: 1,
   scope: 'session',
   initial: () => ({ id: '', cwd: '', createdAt: '' }),
+  // Store every change as a delta; no periodic base.
+  checkpointWhen: () => false,
 });
 
 // One listed session. `meta` is absent when nothing readable recorded it (a

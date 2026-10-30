@@ -1,0 +1,134 @@
+name: Pi canary
+
+# Dependabot proposes a Pi release once it is 7 days old. This workflow tries
+# the newest published Pi every day, so a release that breaks Kubic is known
+# the day it ships. In its own checkout it moves every Pi pin to that release,
+# installs without install scripts, and runs the gates, the suite, the build
+# and the binary contract. It commits nothing: Dependabot still proposes the
+# bump after the cooldown.
+#
+# A scheduled run stops early when the newest Pi is the pinned one. A manual
+# run tries the version it is given, or the newest. A pull request that
+# changes this file runs it too.
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Pi version to try (default: the newest on npm)'
+        required: false
+        default: ''
+  pull_request:
+    paths:
+      - .github/workflows/pi-canary.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The newest Pi's code runs here, with a read-only token and no secrets.
+  canary:
+    name: pi canary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - id: pick
+        name: Pick the Pi release
+        env:
+          REQUESTED: ${{ inputs.version }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          pinned=$(node -p "require('./package.json').dependencies['@earendil-works/pi-durable']")
+          version=${REQUESTED:-$(npm view @earendil-works/pi-durable version)}
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "not a Pi release version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = schedule ] && [ "$version" = "$pinned" ]; then
+            echo "Pi $version is the pinned release: nothing to try." >> "$GITHUB_STEP_SUMMARY"
+            echo "try=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Trying Pi $version (pinned: $pinned)." >> "$GITHUB_STEP_SUMMARY"
+            echo "try=true" >> "$GITHUB_OUTPUT"
+          fi
+      # Every @earendil-works/* dependency of every manifest moves together:
+      # Pi ships its packages as one release.
+      - if: steps.pick.outputs.try == 'true'
+        name: Move every Pi pin to the release
+        env:
+          VERSION: ${{ steps.pick.outputs.version }}
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const version = process.env.VERSION;
+            for (const file of process.argv.slice(1)) {
+              const manifest = JSON.parse(readFileSync(file, "utf8"));
+              for (const name of Object.keys(manifest.dependencies ?? {})) {
+                if (name.startsWith("@earendil-works/")) manifest.dependencies[name] = version;
+              }
+              writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+            }
+          ' package.json packages/*/package.json apps/*/package.json
+          npm install --ignore-scripts --no-audit --no-fund
+          npm ls @earendil-works/pi-durable
+      # The bash sandbox's tests run bubblewrap for real, as in CI.
+      - if: steps.pick.outputs.try == 'true'
+        name: Install bubblewrap
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends bubblewrap
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --die-with-parent --new-session --unshare-pid --ro-bind / / --dev /dev --proc /proc --unshare-net -- true
+      - if: steps.pick.outputs.try == 'true'
+        run: npm run check
+      - if: steps.pick.outputs.try == 'true'
+        run: npm test
+      - if: steps.pick.outputs.try == 'true'
+        run: npm run build
+      - if: steps.pick.outputs.try == 'true'
+        run: npm run test:binary
+
+  # A scheduled failure opens one issue per Pi version, or comments on it.
+  # This job runs no Pi code; it is the only one that may write issues.
+  report:
+    name: report
+    needs: canary
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.canary.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Pi $VERSION fails Kubic's checks"
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" \
+              --body "Still failing: $RUN_URL"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --label dependencies \
+              --title "$title" \
+              --body "The daily Pi canary moved every Pi pin to $VERSION and a check failed: $RUN_URL. Dependabot proposes this release once it is 7 days old; [Upgrading Pi]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/docs/contributing.md#upgrading-pi) lists what to check."
+          fi

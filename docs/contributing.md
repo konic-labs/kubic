@@ -377,6 +377,15 @@ request needs from this workflow, so a change to the matrix never renames a
 required check. CodeQL and dependency review also run on every pull request
 ([code scanning](release-trust.md#code-scanning)).
 
+The Pi canary (`.github/workflows/pi-canary.yml`) runs every day. In its own
+checkout it moves every Pi pin to the newest Pi on npm, installs without
+install scripts, and runs `npm run check`, the suite, the build and
+`npm run test:binary`; it stops early when the newest Pi is the pinned one.
+When a scheduled run fails, a separate job opens an issue for that Pi version,
+or comments on the open one. That job runs no Pi code; the one that does has a
+read-only token and no secrets. Run it by hand to try a given release:
+`gh workflow run pi-canary.yml -f version=<version>`.
+
 ### What protects `main`
 
 `main` changes only through a pull request. Nobody, an administrator
@@ -470,7 +479,8 @@ manifests. `npm run check:gates` holds them, and every copy in the lockfile, at
 the version the root pins `pi-durable` to, with one hoisted copy of each.
 Nothing else names the version, so a compatible release needs no other edit.
 
-A Pi release arrives as one grouped Dependabot pull request. Before it merges:
+A Pi release arrives as one grouped Dependabot pull request, a week after it
+ships; the [Pi canary](#ci) has tried it the day it shipped. Before it merges:
 
 1. Read the release notes. `pi-durable` and `chord` ship their `CHANGELOG.md`
    (in `node_modules/@earendil-works/`); for `pi-ai`, `pi-tui` and

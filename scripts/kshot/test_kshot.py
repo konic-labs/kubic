@@ -171,6 +171,25 @@ class ScreenTest(unittest.TestCase):
         kshot.scrub_grid(grid, [kshot.parse_scrub(r'\b\d+ms\b => 12ms')])
         self.assertEqual(kshot.grid_text(grid), 'read · 2ms\n')
 
+    def test_the_docs_scenarios_scrub_a_timing_whatever_its_width(self):
+        # A tool card ends with a right-aligned label (`✓ exit 0 · 105ms`): a
+        # wider timing moves the whole label left, so the docs scenarios scrub
+        # the gap before it too, and the docs images stay the same run to run.
+        for name in ('docs-tour', 'readme-session'):
+            with open(kshot.resolve_scenario(name), encoding='utf-8') as file:
+                scrubs = [kshot.parse_scrub(rest) for _, verb, rest
+                          in kshot.parse_scenario(file.read())
+                          if verb == 'scrub']
+            for label in ('✓ exit 0 · ', '+2 −0 · ', '6 lines · '):
+                texts = set()
+                for ms in ('7', '48', '105', '2345'):
+                    row = f'  ● bash  x.js{(label + ms + "ms").rjust(40)}'
+                    grid = kshot.parse_screen(row, 80, 1)
+                    kshot.scrub_grid(grid, scrubs)
+                    texts.add(kshot.grid_text(grid))
+                self.assertEqual(len(texts), 1, f'{name}: {sorted(texts)}')
+                self.assertTrue(texts.pop().endswith(f'{label}12ms\n'))
+
     def test_a_grid_written_back_as_ansi_reads_the_same(self):
         grid = kshot.parse_screen(
             '\x1b[1;38;2;255;0;77mKUBIC\x1b[0m a张b \x1b[7;48;5;196mx', 12, 2)

@@ -7,6 +7,9 @@ scrub \d\d:\d\d:\d\d => 09:41:07
 scrub \b\d\d:\d\d\b => 09:41
 scrub [0-9a-z]{4}…[0-9a-z]{4} => 0193…a7c2
 scrub turn \d+(\.\d+)?s => turn 4.6s
+# A tool card's timing ends a right-aligned label: scrub the gap before
+# the label too, so a wider timing does not move it.
+scrub [ ]{2,}(\S(?:\S| (?! ))*· )\d+ms\b => \g<1>12ms
 scrub \b\d+ms\b => 12ms
 scrub Working · \d+:\d\d => Working · 0:02
 scrub [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] => ⠏

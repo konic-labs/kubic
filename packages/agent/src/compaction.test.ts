@@ -25,6 +25,7 @@ import {
   CompactionEntry,
   createModels,
   createRegistry,
+  estimateContextTokens,
   fauxAssistantMessage,
   fauxProvider,
   Harness,
@@ -344,11 +345,13 @@ describe('automatic compaction (threshold crossing)', () => {
     expect(entries).toHaveLength(1);
     expect(entryReason(entries[0] ?? {})).toBe('threshold');
 
-    // The summary heads the kept entry: it is the first thing the model sees,
-    // and the summarizer read the old prefix, not the kept turn.
+    // The summary heads the kept entry: it is the first thing the model sees
+    // after the system baseline, and the summarizer read the old prefix, not
+    // the kept turn.
     const view = await result.root.context(BACKGROUND_CONTEXT);
     expect(CompactionEntry.is(view.head)).toBe(true);
-    expect(messageText(view.messages[0])).toContain(SUMMARY);
+    const history = view.messages.filter(({ role }) => role !== 'system');
+    expect(messageText(history[0])).toContain(SUMMARY);
     expect(promptText(result.requests.summary[0] ?? {})).toContain('u1 ');
     expect(promptText(result.requests.summary[0] ?? {})).not.toContain('u2 ');
   });
@@ -553,19 +556,18 @@ describe('measureContext (the context gauge reading)', () => {
 
     // A message committed after the response (a tool result, the next
     // prompt) is in no usage yet, so it is estimated.
+    const note = {
+      role: 'user' as const,
+      content: text('note', 400),
+      timestamp: Date.now(),
+    };
     const write = await result.root.submit(
-      {
-        type: 'write',
-        entry: {
-          kind: 'test.note',
-          model: [
-            { role: 'user', content: text('note', 400), timestamp: Date.now() },
-          ],
-        },
-      },
+      { type: 'write', entry: { kind: 'test.note', model: [note] } },
       BACKGROUND_CONTEXT,
     );
     await write.wait(BACKGROUND_CONTEXT);
-    expect(await measureContext(lane, BACKGROUND_CONTEXT)).toBe(answered + 400);
+    expect(await measureContext(lane, BACKGROUND_CONTEXT)).toBe(
+      answered + estimateContextTokens([note]).tokens,
+    );
   });
 });

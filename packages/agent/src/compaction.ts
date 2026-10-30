@@ -54,7 +54,7 @@ export const KEEP_RECENT_TOKENS = 20000;
 // The kept window takes at most this share of the room below the reserve
 // (window - reserve). The system prompt and the tool definitions sit in the
 // same transcript and count toward the threshold: on an 8k window they take
-// about 2.8k of the 6.1k blocking threshold, so a larger share would leave no
+// about 3.2k of the 6.1k blocking threshold, so a larger share would leave no
 // room for the next exchange after a compaction.
 /** @internal */
 export const MAX_KEEP_RECENT_FRACTION = 0.25;
@@ -65,7 +65,7 @@ export const MAX_KEEP_RECENT_FRACTION = 0.25;
  * selection needs that much history before it can cut. With a fixed 20000 kept
  * window, a window under about 23k overflows before it holds 20000 tokens of
  * history, so the overflow path never cuts there. The threshold path cuts only
- * from about 30k, since the threshold must leave 20000 tokens of history below
+ * from about 31k, since the threshold must leave 20000 tokens of history below
  * it beside the system entry. An unknown window keeps the configured figure,
  * as the reserve does.
  */
@@ -85,11 +85,11 @@ export function effectiveKeepRecentTokens(
 }
 
 // The system entry of Kubic's default boot, in pi-ai's estimate: the
-// prompt section plus the 18 default tool declarations (about 2800 tokens).
+// prompt section plus the 18 default tool declarations (about 3200 tokens).
 // The room estimate below and `kubic doctor` use it; a test pins it to the
 // real boot, so a prompt or tool-set change moves the figure with it.
 /** @internal */
-export const SYSTEM_ENTRY_ESTIMATE = 2822;
+export const SYSTEM_ENTRY_ESTIMATE = 3249;
 
 // A planning figure for one summary, in estimated tokens. Pi's own budget for a
 // summary is 0.8 of the reserve; a typical summary is far shorter.

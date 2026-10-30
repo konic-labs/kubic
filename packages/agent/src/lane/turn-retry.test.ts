@@ -54,16 +54,21 @@ function text(label: string, tokens: number): string {
   return `${label} ${'x'.repeat(Math.max(1, tokens * 4 - label.length - 1))}`;
 }
 
+/** pi-ai's estimator counts 3.5 characters per token. */
+const ESTIMATED_CHARS_PER_TOKEN = 3.5;
+
 /** Estimated tokens of a message's text blocks, counted as the estimator does. */
 function textTokens(message: { readonly content?: unknown }): number {
   const content = message.content;
-  if (typeof content === 'string') return Math.ceil(content.length / 4);
+  if (typeof content === 'string') {
+    return Math.ceil(content.length / ESTIMATED_CHARS_PER_TOKEN);
+  }
   if (!Array.isArray(content)) return 0;
   const chars = content.reduce((sum: number, part: unknown) => {
     const body = (part as { text?: unknown } | null)?.text;
     return sum + (typeof body === 'string' ? body.length : 0);
   }, 0);
-  return Math.ceil(chars / 4);
+  return Math.ceil(chars / ESTIMATED_CHARS_PER_TOKEN);
 }
 
 /** The verbatim history after the summary head: the kept window. */

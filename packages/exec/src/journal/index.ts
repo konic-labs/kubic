@@ -4,7 +4,7 @@
 // the changes no tool call made; restore.ts and undo.ts reverse them;
 // diff.ts and status.ts report them. README.md states the durability protocol.
 //
-// Exports tagged @internal are for the composition-root tests only.
+// Exports with an `internal` JSDoc tag are for the composition-root tests only.
 export { /** @internal */ captureBaseline } from './baseline.js';
 export type { FileChange } from './diff.js';
 export {

@@ -1,8 +1,8 @@
 // The approval system's public entry: installing the policy a lane runs
 // under, its posture, the stores and the full-access switches.
 //
-// Exports tagged @internal are not part of that API. They expose the
-// detectors and the decider service to the composition-root tests in
+// Exports with an `internal` JSDoc tag are not part of that API. They expose
+// the detectors and the decider service to the composition-root tests in
 // apps/kubic, which exercise them alongside the production wiring.
 export type { ApprovalBrokerTarget } from './broker.js';
 export { webhookApprovalBroker } from './broker.js';

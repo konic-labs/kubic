@@ -60,9 +60,9 @@ const HOME_CREDENTIAL = new RegExp(
   String.raw`(?:^|[\s"'=(])` +
     HOME_PREFIX +
     String.raw`\/` +
-    String.raw`(?:` +
+    '(?:' +
     HOME_CREDENTIAL_PATHS +
-    String.raw`)`,
+    ')',
   'i',
 );
 

@@ -219,7 +219,7 @@ function standDowns(): StandDowns {
     isApproved: (callId, args) => {
       // No hash for the common case: a call id with no entry is the fast path.
       const keys = callId === '' ? undefined : approvedCalls.get(callId);
-      return keys !== undefined && keys.has(canonicalArgsHash(args));
+      return keys?.has(canonicalArgsHash(args)) ?? false;
     },
     // Every entry of one call id. Deletion is by id, not by the args hash:
     // the confine guard rewrites `call.arguments`, so the arguments a later

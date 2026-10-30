@@ -137,6 +137,7 @@ describe('credential-access detector', () => {
     const ctx = triggerContext();
     for (const command of [
       'cat ~/.aws/credentials',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable the command spells out
       'cat ${HOME}/.netrc',
       'cat /Users/x/.netrc',
       'cp ~/.netrc .',

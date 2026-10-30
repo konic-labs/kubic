@@ -46,6 +46,7 @@ import {
   fauxProvider,
   MemoryStorage,
   SystemEntry,
+  type ToolExecutionApi,
   type ToolRegistration,
   ToolResultEntry,
 } from '../pi-boundary.js';
@@ -162,20 +163,23 @@ export async function invokeRegisteredTool(
   if (tool === undefined) {
     throw new Error(`no registered tool '${name}'`);
   }
-  const api = {
+  // Checked against Pi's own tool API, so a member Pi renames or drops is a
+  // type error here; the members a tool here never calls stay out.
+  const api: Partial<ToolExecutionApi> = {
     callId: options.callId ?? 'call-1',
-    taskId: 'task-1',
+    taskId: 1 as ToolExecutionApi['taskId'],
     conversationId: lane.lane.conversation.id,
     output: () => undefined,
     diagnostic: () => undefined,
     details: async () => undefined,
-    memo: async () => undefined,
-    commit: async () => undefined,
+    memo: (async () => undefined) as ToolExecutionApi['memo'],
+    commit: async <T>() => undefined as T,
     env: undefined,
+    now: () => Date.now(),
   };
   return tool.execute(
     args,
-    api as never,
+    api as ToolExecutionApi,
     options.context ?? BACKGROUND_CONTEXT,
   );
 }

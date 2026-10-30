@@ -28,6 +28,7 @@ import { WALK_MAX_DEPTH, WALK_MAX_ENTRIES } from '../ops/walk.js';
 import {
   BACKGROUND_CONTEXT,
   type ToolExecutionApi,
+  type ToolExecutionResult,
   type ToolRegistration,
 } from '../pi-boundary.js';
 import { OperationKillRegistry } from './abort.js';
@@ -199,6 +200,21 @@ function shellEnv(options: {
   });
   return { env, spawns };
 }
+
+// The seam builds its results where TypeScript checks them against Pi's own
+// result type, so a field Pi does not know is a type error. Every field of the
+// type is optional: a result built anywhere looser, with a renamed field, still
+// compiles and the model reads nothing.
+describe('the tool result type at the seam', () => {
+  it('rejects a field Pi does not know', () => {
+    const stale = (): ToolExecutionResult => ({
+      details: null,
+      // @ts-expect-error: the model reads `output`; `content` is no field.
+      content: [{ type: 'text', text: 'ran' }],
+    });
+    expect(stale().output).toBeUndefined();
+  });
+});
 
 describe('kubicToolsToPiTools', () => {
   const tools = kubicToolsToPiTools(toolContext());

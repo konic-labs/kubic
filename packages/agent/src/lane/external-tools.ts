@@ -5,7 +5,7 @@
 // gate decide them), and every call goes through the same interceptors:
 // the approval ask, the hooks, the secret scan.
 
-import type { ToolRegistration } from '../pi-boundary.js';
+import type { ToolExecutionResult, ToolRegistration } from '../pi-boundary.js';
 import { defineTool, Type } from '../pi-boundary.js';
 
 export interface ExternalTool {
@@ -28,25 +28,25 @@ const OUTPUT_LIMITS = {
 export function externalToolRegistrations(
   tools: readonly ExternalTool[],
 ): ToolRegistration[] {
-  return tools.map(
-    (tool) =>
-      defineTool({
-        name: tool.name,
-        description: tool.description,
-        parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
-        // A call to another process's tool is never replayed on recovery.
-        replay: 'unsafe',
-        outputLimits: OUTPUT_LIMITS,
-        execute: async (args, _api, callContext) => {
-          const result = await tool.call(
-            args as Record<string, unknown>,
-            callContext.abortSignal,
-          );
-          return {
-            output: [{ type: 'text', text: result.text }],
-            isError: result.isError,
-          };
-        },
-      }) as ToolRegistration,
+  return tools.map((tool) =>
+    defineTool({
+      name: tool.name,
+      description: tool.description,
+      parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
+      // A call to another process's tool is never replayed on recovery.
+      replay: 'unsafe',
+      outputLimits: OUTPUT_LIMITS,
+      execute: async (
+        args,
+        _api,
+        callContext,
+      ): Promise<ToolExecutionResult> => {
+        const result = await tool.call(args, callContext.abortSignal);
+        return {
+          output: [{ type: 'text', text: result.text }],
+          isError: result.isError,
+        };
+      },
+    }),
   );
 }

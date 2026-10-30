@@ -35,7 +35,53 @@ const ABSENT_FROM_LOCK = [
 // Transitive Pi deps the root pins directly: a direct exact dependency is the
 // pin that holds in an npm install (overrides do not).
 const ROOT_PINNED_PI_DEPS = ['@earendil-works/pi-telemetry'];
-const PI_VERSION = '1.4.0';
+
+// Pi ships its packages as one release, so every Pi package a manifest
+// declares and every copy the lockfile resolves sits at one exact version:
+// the one the root manifest pins pi-durable to. The version lives in the
+// manifests alone, so a Pi bump is a manifest and lockfile change, never an
+// edit here. Returns one line per mismatch, naming both versions.
+function piVersionMismatches({ root, agent, tui, lock }) {
+  const version = root.dependencies?.['@earendil-works/pi-durable'];
+  if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) {
+    return [
+      `package.json: @earendil-works/pi-durable is ${version ?? 'missing'}, not an exact version`,
+    ];
+  }
+  const found = [];
+  const check = (where, dep, actual) => {
+    if (actual !== version) {
+      found.push(
+        `${where}: ${dep} is ${actual ?? 'missing'}, the root pins Pi at ${version}`,
+      );
+    }
+  };
+  const rootPinned = [...PI_DEPS, ...ROOT_PINNED_PI_DEPS];
+  for (const dep of rootPinned) {
+    check('package.json', dep, root.dependencies?.[dep]);
+  }
+  for (const dep of PI_DEPS.filter((d) => !TUI_PI_DEPS.includes(d))) {
+    check('packages/agent/package.json', dep, agent.dependencies?.[dep]);
+  }
+  for (const dep of TUI_PI_DEPS) {
+    check('packages/tui/package.json', dep, tui.dependencies?.[dep]);
+  }
+  // npm may hoist or nest each copy, so every resolved copy counts.
+  const pkgs = Object.entries(lock?.packages ?? {});
+  for (const dep of rootPinned) {
+    const suffix = `node_modules/${dep}`;
+    const copies = pkgs.filter(
+      ([path]) => path === suffix || path.endsWith(`/${suffix}`),
+    );
+    if (copies.length === 0) check('package-lock.json', dep, undefined);
+    for (const [path, entry] of copies) check(path, dep, entry.version);
+  }
+  return found;
+}
+
+function readJson(...parts) {
+  return JSON.parse(readFileSync(join(ROOT, ...parts), 'utf8'));
+}
 
 // Every `export` statement in either Pi boundary file must be
 // preceded by the JUSTIFICATION block the file's own template requires.
@@ -79,51 +125,37 @@ function duplicatePiCopies(lock) {
 }
 
 describe('pi pinning + boundary', () => {
-  it('agent and tui pin their Pi deps exactly and declare no unused Pi package', () => {
-    const pkg = JSON.parse(
-      readFileSync(join(ROOT, 'packages', 'agent', 'package.json'), 'utf8'),
+  it('every Pi package and lockfile copy sits at the version the root pins', () => {
+    assert.deepEqual(
+      piVersionMismatches({
+        root: readJson('package.json'),
+        agent: readJson('packages', 'agent', 'package.json'),
+        tui: readJson('packages', 'tui', 'package.json'),
+        lock: readJson('package-lock.json'),
+      }),
+      [],
     );
-    for (const dep of PI_DEPS.filter((d) => !TUI_PI_DEPS.includes(d))) {
-      assert.equal(
-        pkg.dependencies?.[dep],
-        PI_VERSION,
-        `${dep} must be pinned to ${PI_VERSION}`,
-      );
-    }
+  });
+
+  it('agent declares no unused Pi package and the root no overrides', () => {
+    const agent = readJson('packages', 'agent', 'package.json');
     assert.equal(
-      pkg.dependencies?.['@earendil-works/pi-tui'],
+      agent.dependencies?.['@earendil-works/pi-tui'],
       undefined,
       'pi-tui must not be declared by the agent manifest',
     );
-    const tui = JSON.parse(
-      readFileSync(join(ROOT, 'packages', 'tui', 'package.json'), 'utf8'),
-    );
-    for (const dep of TUI_PI_DEPS) {
-      assert.equal(
-        tui.dependencies?.[dep],
-        PI_VERSION,
-        `${dep} must be pinned to ${PI_VERSION} in the tui manifest`,
-      );
-    }
     for (const dep of UNUSED_PI_DEPS) {
       assert.equal(
-        pkg.dependencies?.[dep],
+        agent.dependencies?.[dep],
         undefined,
         `${dep} must not be declared by the agent manifest`,
       );
     }
-  });
-
-  it('the root pins every Pi package an install of kubic needs', () => {
-    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-    for (const dep of [...PI_DEPS, ...ROOT_PINNED_PI_DEPS]) {
-      assert.equal(
-        pkg.dependencies?.[dep],
-        PI_VERSION,
-        `${dep} must be a root dependency pinned to ${PI_VERSION}`,
-      );
-    }
-    assert.equal(pkg.overrides, undefined, 'the root must have no overrides');
+    assert.equal(
+      readJson('package.json').overrides,
+      undefined,
+      'the root must have no overrides',
+    );
   });
 
   it('both Pi boundary files justify every export', () => {
@@ -226,27 +258,55 @@ describe('pi pinning + boundary', () => {
     assert.deepEqual(duplicatePiCopies({}), []);
   });
 
-  it('lockfile pins every copy of the Pi deps and holds no unused one', () => {
-    const lock = JSON.parse(
-      readFileSync(join(ROOT, 'package-lock.json'), 'utf8'),
-    );
-    const pkgs = lock.packages ?? {};
-    for (const dep of [...PI_DEPS, ...ROOT_PINNED_PI_DEPS]) {
-      // npm may hoist or nest each copy (pi-ai appears both under the agent
-      // and under pi-durable), so pin every resolved copy, not one path.
-      const suffix = `node_modules/${dep}`;
-      const copies = Object.entries(pkgs).filter(
-        ([path]) => path === suffix || path.endsWith(`/${suffix}`),
-      );
-      assert.ok(copies.length > 0, `lockfile must contain ${dep}`);
-      for (const [path, entry] of copies) {
-        assert.equal(
-          entry.version,
-          PI_VERSION,
-          `${path} must be pinned to ${PI_VERSION}`,
-        );
-      }
-    }
+  it('the version gate takes the version from the root and names a mismatch', () => {
+    const at = (version) => ({
+      root: {
+        dependencies: {
+          '@earendil-works/chord': version,
+          '@earendil-works/pi-ai': version,
+          '@earendil-works/pi-durable': version,
+          '@earendil-works/pi-telemetry': version,
+          '@earendil-works/pi-tui': version,
+        },
+      },
+      agent: {
+        dependencies: {
+          '@earendil-works/chord': version,
+          '@earendil-works/pi-ai': version,
+          '@earendil-works/pi-durable': version,
+        },
+      },
+      tui: { dependencies: { '@earendil-works/pi-tui': version } },
+      lock: {
+        packages: {
+          'node_modules/@earendil-works/chord': { version },
+          'node_modules/@earendil-works/pi-ai': { version },
+          'node_modules/@earendil-works/pi-durable': { version },
+          'node_modules/@earendil-works/pi-telemetry': { version },
+          'node_modules/@earendil-works/pi-tui': { version },
+        },
+      },
+    });
+    // Any one exact version passes, so a Pi bump needs no edit here.
+    assert.deepEqual(piVersionMismatches(at('9.9.9')), []);
+    const tuiBehind = at('9.9.9');
+    tuiBehind.tui.dependencies['@earendil-works/pi-tui'] = '9.9.8';
+    assert.deepEqual(piVersionMismatches(tuiBehind), [
+      'packages/tui/package.json: @earendil-works/pi-tui is 9.9.8, the root pins Pi at 9.9.9',
+    ]);
+    const lockMissing = at('9.9.9');
+    delete lockMissing.lock.packages['node_modules/@earendil-works/pi-ai'];
+    assert.deepEqual(piVersionMismatches(lockMissing), [
+      'package-lock.json: @earendil-works/pi-ai is missing, the root pins Pi at 9.9.9',
+    ]);
+    const range = at('^9.9.9');
+    assert.deepEqual(piVersionMismatches(range), [
+      'package.json: @earendil-works/pi-durable is ^9.9.9, not an exact version',
+    ]);
+  });
+
+  it('the lockfile holds no unused Pi package', () => {
+    const pkgs = readJson('package-lock.json').packages ?? {};
     for (const dep of ABSENT_FROM_LOCK) {
       const suffix = `/node_modules/${dep}`;
       const copies = Object.keys(pkgs).filter(

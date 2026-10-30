@@ -18,8 +18,9 @@ npm run build                # esbuild bundle -> gitignored dist/kubic.js
 npm link                     # optional: `kubic` on your PATH runs this build
 ```
 
-Kubic runs on the Pi agent harness (`@earendil-works/*` **1.4.0**, exact
-pins), installed from npm like every other dependency.
+Kubic runs on the Pi agent harness (`@earendil-works/*`, one exact release
+pinned in the root `package.json`), installed from npm like every other
+dependency. [Upgrading Pi](#upgrading-pi) covers a new Pi release.
 
 `npm run build` bundles Kubic's own code into one file, `dist/kubic.js`, with
 esbuild (`scripts/build.mjs`). Third-party packages stay external, so the
@@ -460,5 +461,36 @@ What the workflow needs:
   beside the tarball: a CycloneDX SBOM of the shipped production tree,
   resolved from the shrinkwrap without network access. Staging fails when the
   SBOM misses a package the shrinkwrap pins.
+
+## Upgrading Pi
+
+Kubic pins every `@earendil-works/*` package to one exact release: in the root
+`package.json` (what an install of Kubic resolves) and in the agent and tui
+manifests. `npm run check:gates` holds them, and every copy in the lockfile, at
+the version the root pins `pi-durable` to, with one hoisted copy of each.
+Nothing else names the version, so a compatible release needs no other edit.
+
+A Pi release arrives as one grouped Dependabot pull request. Before it merges:
+
+1. Read the release notes. `pi-durable` and `chord` ship their `CHANGELOG.md`
+   (in `node_modules/@earendil-works/`); for `pi-ai`, `pi-tui` and
+   `pi-telemetry` read `packages/<name>/CHANGELOG.md` in
+   [earendil-works/pi](https://github.com/earendil-works/pi). Their "Breaking
+   Changes" sections are the checklist.
+2. Search Kubic for every API a breaking change names. A renamed optional
+   field can still compile, so a clean type check is not enough.
+3. Run the gates in [Before you push](#before-you-push), the build with
+   `npm run test:binary`, and the release contract (`npm run release:stage &&
+   npm run release:contract`), whose install-size budget catches a heavier Pi.
+4. When `pi-tui` changed, check the TUI with kshot
+   ([Seeing the TUI](#seeing-the-tui)).
+5. When pi-ai's token estimate moves, the test that pins
+   `SYSTEM_ENTRY_ESTIMATE` (`packages/agent/src/compaction.ts`) to the default
+   boot fails: move it to the measured figure, and the room figures in the
+   configuration and doctor docs with it.
+
+Fixes go on the Dependabot branch as commits of their own. While Dependabot's
+commit is the only one, comment `@dependabot rebase` to bring the branch up to
+date with `main`; after that, merge `main` into it.
 
 Back to the [docs index](README.md).

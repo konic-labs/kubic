@@ -156,12 +156,15 @@ export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable types (Conversation, Submission,
 //     SettledSubmissionRecord, Extension, ToolRegistration,
-//     ToolExecutionApi, ToolHooks, HookRegistration, HarnessSettings,
-//     CompactionPolicy, AgentEvent, EntryRecord, Storage)
+//     ToolExecutionApi, ToolExecutionResult, ToolHooks, HookRegistration,
+//     HarnessSettings, CompactionPolicy, AgentEvent, EntryRecord, Storage)
 //   used by: the Kubic modules that name them in their own signatures —
 // lane/boot.ts Lane (Conversation, Extension, HarnessSettings),
 //     lane/tools-adapter.ts (ToolRegistration, ToolExecutionApi),
-//     lane/interceptors/ (ToolHooks, HookRegistration), lane/settle.ts
+//     lane/tools-adapter.ts, lane/external-tools.ts and
+//     lane/interceptors/hooks.ts (ToolExecutionResult: the results they build
+//     are checked against Pi's own type, so a renamed field fails the
+//     typecheck), lane/interceptors/ (ToolHooks, HookRegistration), lane/settle.ts
 //     (Submission, SettledSubmissionRecord), lane/events.ts (AgentEvent),
 // lane/session-store/ (Storage), lane/boot.ts compaction
 //     (CompactionPolicy), the session readers (EntryRecord)
@@ -194,6 +197,7 @@ export type {
   SubmissionId,
   TaskId,
   ToolExecutionApi,
+  ToolExecutionResult,
   ToolRegistration,
   UsageState,
 } from '@earendil-works/pi-durable';

@@ -61,6 +61,7 @@ import {
   defineTool,
   type JsonValue,
   type ToolExecutionApi,
+  type ToolExecutionResult,
   type ToolRegistration,
 } from '../pi-boundary.js';
 import type { SpillSink } from '../spill.js';
@@ -342,7 +343,13 @@ export function kubicToolsToPiTools(
       constrainedSampling: { type: 'json_schema', strict: 'prefer' },
       replay: op.replay === 'never' ? 'unsafe' : 'safe',
       outputLimits: op.name === 'bash' ? BASH_OUTPUT_LIMITS : OUTPUT_BACKSTOP,
-      execute: async (args, api, callContext) => {
+      // Annotated with Pi's result type, so a field Pi does not know fails
+      // the typecheck instead of reaching the model as an empty result.
+      execute: async (
+        args,
+        api,
+        callContext,
+      ): Promise<ToolExecutionResult<KubicToolDetails>> => {
         const inv = toInvocation(api, callContext);
         const opContext: OpContext = {
           env: context.env,

@@ -666,12 +666,12 @@ room below that reserve, so a small-window model compacts only near its limit.
 (`autoCompact`, `reserveTokens`, `keepRecentTokens`), and `kubic config` and
 `kubic doctor` print the reserve in effect after the clamp.
 
-The system prompt and the default tool set take about 2800 tokens of every
+The system prompt and the default tool set take about 3200 tokens of every
 request, so the room a compaction leaves is smaller than the window suggests.
-As estimates (the threshold, minus those 2800 tokens and the kept window, with
-a summary of 700 to 1400 tokens): about 360 to 1060 tokens on an 8192-token
-window, roughly one exchange, so agent work needs a larger window; about 5000
-on 16384; about 14300 on 32768; and about 91000 on 131072. `kubic doctor`
+As estimates (the threshold, minus those 3200 tokens and the kept window, with
+a summary of 700 to 1400 tokens): at most about 660 tokens on an 8192-token
+window, and none after a long summary, so agent work needs a larger window;
+about 4600 on 16384; about 13800 on 32768; and about 90000 on 131072. `kubic doctor`
 warns (`context-room`) when a model you can configure, one defined in
 `models.json` or your default model, keeps less than 4096 estimated tokens of
 room.

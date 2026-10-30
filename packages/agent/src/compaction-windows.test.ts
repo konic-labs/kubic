@@ -285,13 +285,13 @@ describe('reserve clamp (a reserve never eats more than a quarter of the window)
 
 describe('roomAfterCompaction (the room a compaction leaves)', () => {
   it('estimates the room with the default reserve, kept window and system entry', () => {
-    expect(SYSTEM_ENTRY_ESTIMATE).toBe(2822);
-    // 8192 - 2048 reserve - 2822 system entry - 1536 kept - 800 summary.
-    expect(roomAfterCompaction(8192)).toBe(986);
-    // 12288 - 3072 reserve - 2822 system entry - 2304 kept - 800 summary.
-    expect(roomAfterCompaction(12288)).toBe(3290);
-    // 16384 - 4096 reserve - 2822 system entry - 3072 kept - 800 summary.
-    expect(roomAfterCompaction(16384)).toBe(5594);
+    expect(SYSTEM_ENTRY_ESTIMATE).toBe(3249);
+    // 8192 - 2048 reserve - 3249 system entry - 1536 kept - 800 summary.
+    expect(roomAfterCompaction(8192)).toBe(559);
+    // 12288 - 3072 reserve - 3249 system entry - 2304 kept - 800 summary.
+    expect(roomAfterCompaction(12288)).toBe(2863);
+    // 16384 - 4096 reserve - 3249 system entry - 3072 kept - 800 summary.
+    expect(roomAfterCompaction(16384)).toBe(5167);
   });
 
   it('uses the configured reserve and kept window', () => {

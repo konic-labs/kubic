@@ -100,7 +100,7 @@ async function bootHarness(options: {
           parameters: Type.Object({ command: Type.String() }),
           execute: async (args) => {
             world.calls.push(args);
-            return { content: [{ type: 'text', text: 'ran' }] };
+            return { output: [{ type: 'text', text: 'ran' }] };
           },
         }),
       ],

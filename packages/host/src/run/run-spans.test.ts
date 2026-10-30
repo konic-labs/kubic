@@ -203,7 +203,7 @@ describe('runSpanHooks', () => {
             description: 'returns after doing nothing',
             parameters: Type.Object({ value: Type.String() }),
             execute: async () => ({
-              content: [{ type: 'text', text: 'probed' }],
+              output: [{ type: 'text', text: 'probed' }],
             }),
           }),
         ],

@@ -43,7 +43,7 @@ export function externalToolRegistrations(
             callContext.abortSignal,
           );
           return {
-            content: [{ type: 'text', text: result.text }],
+            output: [{ type: 'text', text: result.text }],
             isError: result.isError,
           };
         },

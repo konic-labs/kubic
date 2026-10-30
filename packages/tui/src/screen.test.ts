@@ -4,7 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { buildLayoutRoot } from './layout.js';
 import { bootScreen } from './screen.js';
-import { CURSOR_MARKER, Text, visibleWidth } from './tui-boundary.js';
+import {
+  CURSOR_MARKER,
+  renderFakeCursor,
+  Text,
+  visibleWidth,
+} from './tui-boundary.js';
 
 describe('screen lifecycle', () => {
   it('boots the layout root and stops with restore', () => {
@@ -129,15 +134,17 @@ describe('screen lifecycle', () => {
     ).toContain('the last answer');
   });
 
-  // The document printed on quit is the layout's own
-  // render, which still carries the focused editor's hardware-cursor marker
-  // and the inverse-video cell that stands in for the cursor. Pi's stop path
-  // strips the marker before it prints; this path prints on the caller's
-  // channel, so it must strip both — the marker is an APC sequence a plain
-  // terminal (or a log) would show as garbage.
+  // The document printed on quit is the layout's own render, which still
+  // carries the focused editor's hardware-cursor marker and the fake cursor:
+  // the cell under the cursor between two zero-width APC markers, which Pi's
+  // renderer turns into inverse video. Pi's stop path strips the hardware
+  // marker before it prints; this path prints on the caller's channel, so it
+  // must strip every marker — each is an APC sequence a plain terminal (or a
+  // log) would show as garbage.
   describe('the final document carries no cursor artifacts', () => {
     const REVERSE = '\x1b[7m';
     const RESET = '\x1b[0m';
+    const APC = '\x1b_';
 
     function printedFor(editorLine: string): string[] {
       const terminal = fakeTerminal(100);
@@ -154,45 +161,42 @@ describe('screen lifecycle', () => {
       return printed;
     }
 
-    it('strips the cursor marker and the fake cursor cell after it', () => {
+    it('strips the cursor marker and the fake cursor after it', () => {
       const printed = printedFor(
-        `> hi${CURSOR_MARKER}${REVERSE} ${RESET}`,
+        `> hi${CURSOR_MARKER}${renderFakeCursor(' ')}`,
       ).join('\n');
-      expect(printed).not.toContain(CURSOR_MARKER);
-      expect(printed).not.toContain(REVERSE);
+      expect(printed).not.toContain(APC);
       expect(printed).toContain('> hi ');
     });
 
     it('keeps the character the fake cursor sat on', () => {
-      const printed = printedFor(`ab${CURSOR_MARKER}${REVERSE}c${RESET}d`).join(
-        '\n',
-      );
-      expect(printed).not.toContain(CURSOR_MARKER);
-      expect(printed).not.toContain(REVERSE);
+      const printed = printedFor(
+        `ab${CURSOR_MARKER}${renderFakeCursor('c')}d`,
+      ).join('\n');
+      expect(printed).not.toContain(APC);
       expect(printed).toContain('abcd');
     });
 
     it('keeps a wide character and a combining sequence whole', () => {
       const printed = printedFor(
-        `x${CURSOR_MARKER}${REVERSE}日${RESET} y${CURSOR_MARKER}${REVERSE}e\u0301${RESET}`,
+        `x${CURSOR_MARKER}${renderFakeCursor('日')} y${CURSOR_MARKER}${renderFakeCursor('e\u0301')}`,
       ).join('\n');
       expect(printed).toContain('x日 ye\u0301');
-      expect(printed).not.toContain(REVERSE);
+      expect(printed).not.toContain(APC);
+    });
+
+    it('strips a fake cursor that follows no hardware-cursor marker', () => {
+      const printed = printedFor(`ab${renderFakeCursor('c')}d`).join('\n');
+      expect(printed).not.toContain(APC);
+      expect(printed).toContain('abcd');
     });
 
     it('leaves inverse-video text that is not the cursor untouched', () => {
       const printed = printedFor(
-        `${REVERSE}selected${RESET} and ${CURSOR_MARKER}${REVERSE} ${RESET}`,
+        `${REVERSE}selected${RESET} and ${CURSOR_MARKER}${renderFakeCursor(' ')}`,
       ).join('\n');
       expect(printed).toContain(`${REVERSE}selected${RESET}`);
-      expect(printed).not.toContain(CURSOR_MARKER);
-    });
-
-    it('only the cell right after the marker is the cursor', () => {
-      const printed = printedFor(
-        `${CURSOR_MARKER}ab ${REVERSE}selected${RESET}`,
-      ).join('\n');
-      expect(printed).toContain(`ab ${REVERSE}selected${RESET}`);
+      expect(printed).not.toContain(APC);
     });
 
     it('a line without a cursor is printed as rendered', () => {

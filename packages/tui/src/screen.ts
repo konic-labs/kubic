@@ -4,25 +4,32 @@
 // through the caller's printer (stdout in prod, capture in tests).
 
 import type { Terminal, VStack } from './tui-boundary.js';
-import { CURSOR_MARKER, TuiAltScreen } from './tui-boundary.js';
+import {
+  CURSOR_MARKER,
+  renderFakeCursor,
+  TuiAltScreen,
+} from './tui-boundary.js';
 
-// The inverse-video cell the editor draws for its cursor: it directly follows
-// the hardware-cursor marker and wraps the one grapheme the cursor sits on (a
-// space at the end of the draft).
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching the SGR escapes is the point
-const FAKE_CURSOR_CELL = /^\x1b\[7m([^\x1b]*)\x1b\[0m/;
+// The fake cursor: the cell the editor draws as its cursor (the grapheme the
+// cursor sits on, or a space at the end of the draft) between two zero-width
+// APC markers, which Pi's renderer turns into inverse video. The markers are
+// read off Pi's own renderFakeCursor.
+const CELL = '\u0000';
+const [FAKE_CURSOR_START = '', FAKE_CURSOR_END = ''] =
+  renderFakeCursor(CELL).split(CELL);
 
 // The final document is the layout's own render, so it still carries the
-// focused editor's cursor: CURSOR_MARKER (an APC sequence a plain terminal or
-// log shows as garbage) and the fake cursor cell. Pi's own stop path strips
-// the marker before it prints; this path prints on the caller's channel, so it
-// strips the marker AND the cell — keeping the grapheme underneath. Inverse
-// text that does not follow a marker is content and stays.
-function stripCursor(line: string): string {
-  const [head = '', ...tails] = line.split(CURSOR_MARKER);
-  return (
-    head + tails.map((tail) => tail.replace(FAKE_CURSOR_CELL, '$1')).join('')
-  );
+// focused editor's cursor: CURSOR_MARKER and the fake cursor's markers, APC
+// sequences a plain terminal or log shows as garbage. Pi's own stop path
+// strips the hardware marker before it prints; this path prints on the
+// caller's channel, so it strips every marker — keeping the grapheme
+// underneath. Inverse text in a line is content and stays.
+/** @internal */
+export function stripCursor(line: string): string {
+  return line
+    .replaceAll(CURSOR_MARKER, '')
+    .replaceAll(FAKE_CURSOR_START, '')
+    .replaceAll(FAKE_CURSOR_END, '');
 }
 
 // The live alt-screen with a filter over the base frame, run

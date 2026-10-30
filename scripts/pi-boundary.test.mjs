@@ -32,11 +32,10 @@ const ABSENT_FROM_LOCK = [
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-protocol',
 ];
-// Transitive Pi deps the root pins directly: pi-ai@1.0.2 declares
-// pi-telemetry with a caret, and a direct exact dependency is the pin that
-// holds in an npm install (overrides do not).
+// Transitive Pi deps the root pins directly: a direct exact dependency is the
+// pin that holds in an npm install (overrides do not).
 const ROOT_PINNED_PI_DEPS = ['@earendil-works/pi-telemetry'];
-const PI_VERSION = '1.0.2';
+const PI_VERSION = '1.4.0';
 
 // Every `export` statement in either Pi boundary file must be
 // preceded by the JUSTIFICATION block the file's own template requires.

@@ -418,18 +418,18 @@ describe('runDoctorCommand', () => {
     });
 
     it('treats the 4096 floor as a boundary: 4095 tokens of room warns, 4096 does not', async () => {
-      // A window of 13718 leaves 4095 estimated tokens of room, and 13720 leaves
-      // 4096 (reserve 3429 / 3430, kept window 2572, system entry 2822, summary 800).
+      // A window of 14477 leaves 4095 estimated tokens of room, and 14478 leaves
+      // 4096 (reserve 3619, kept window 2714, system entry 3249, summary 800).
       const below = await roomReport({
         customModels: [
-          { provider: 'local', model: 'edge', contextWindow: 13718 },
+          { provider: 'local', model: 'edge', contextWindow: 14477 },
         ],
       });
       expect(below.room).toMatchObject({ status: 'warn' });
       expect(below.room?.detail).toContain('about 4095 tokens of room');
       const floor = await roomReport({
         customModels: [
-          { provider: 'local', model: 'edge', contextWindow: 13720 },
+          { provider: 'local', model: 'edge', contextWindow: 14478 },
         ],
       });
       expect(floor.room?.status).toBe('pass');

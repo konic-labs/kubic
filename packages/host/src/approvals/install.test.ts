@@ -115,8 +115,8 @@ describe('installed policy on a live lane', () => {
     // The allowlisted tool passes the same wrapper and really executes.
     const readResult = (await invokeRegisteredTool(lane, 'read', {
       path: 'notes.txt',
-    })) as { content: Array<{ text?: string }> };
-    expect(readResult.content[0]?.text).toContain('workspace notes');
+    })) as { output: Array<{ text?: string }> };
+    expect(readResult.output[0]?.text).toContain('workspace notes');
   });
 
   it('records the DENIED attempt in telemetry, proving telemetry wraps permission', async () => {

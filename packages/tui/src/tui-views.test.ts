@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest';
 import { fakeTerminal } from '../../../test/fake-terminal.js';
 import { panelBodyRows } from './app/panel.js';
 import { PANEL_MAX_ROWS } from './layout.js';
-import { bootScreen } from './screen.js';
+import { bootScreen, stripCursor } from './screen.js';
 import type { JournalChangeLike } from './tui-app.js';
 import { createTuiApp } from './tui-app.js';
 import { DiffPanel } from './view-panel.js';
@@ -477,7 +477,8 @@ describe('panel content is untrusted', () => {
       `tc${ESC}[31m`,
     );
     app.handleInput(OPEN_DIFF);
-    const frame = app.render(100).join('\n');
+    // Less the editor's own cursor markers, which Pi's renderer resolves.
+    const frame = app.render(100).map(stripCursor).join('\n');
     // The readable words survive; no control byte from journal content does.
     expect(frame).toContain('evil');
     expect(frame).toContain('name.ts');

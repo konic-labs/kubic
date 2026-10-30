@@ -48,6 +48,8 @@ const KubicLabelsDoc = defineDoc<{
   version: 1,
   scope: 'session',
   initial: () => ({ labels: {} }),
+  // Store every change as a delta; no periodic base.
+  checkpointWhen: () => false,
 });
 
 type BranchLane = {

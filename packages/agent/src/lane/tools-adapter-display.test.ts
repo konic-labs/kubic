@@ -126,7 +126,7 @@ async function run(
     api.api,
     BACKGROUND_CONTEXT,
   );
-  const first = result.content?.[0];
+  const first = result.output?.[0];
   return {
     text: first?.type === 'text' ? first.text : '',
     isError: result.isError,

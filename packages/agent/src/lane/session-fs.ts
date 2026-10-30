@@ -5,7 +5,8 @@
 // missing paths and maps other failures to FileError, per the contract.
 //
 // The 1.0 interface adds `id` (the file namespace), `truncateFile` (the JSONL
-// core's torn-line recovery) and `flushFile` (its fsync seam). The adapter
+// core's torn-line recovery) and `flushFile` (its fsync seam); the binary and
+// directory readers and `watch` are refused as not supported. The adapter
 // stays the only path between pi-durable's storage and the disk, so every
 // session byte crosses the exec seam — I/O confinement, the
 // secret-scrubbing bridge and the file modes all keep applying to
@@ -48,6 +49,25 @@ function toKind(info: {
   return info.isDirectory ? 'directory' : 'file';
 }
 
+function notSupported(path: string, method: string): FileError {
+  return new FileError(
+    'not_supported',
+    `the exec file bridge does not implement ${method}`,
+    path,
+  );
+}
+
+// The session store reads whole files and never watches, so the positional
+// and directory readers and watch refuse by name.
+const UNSUPPORTED: Pick<
+  FileSystem,
+  'openBinaryReader' | 'openDirReader' | 'watch'
+> = {
+  openBinaryReader: async (path) => err(notSupported(path, 'openBinaryReader')),
+  openDirReader: async (path) => err(notSupported(path, 'openDirReader')),
+  watch: async (targets) => err(notSupported(targets[0]?.path ?? '', 'watch')),
+};
+
 export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
   const attempt = async <T>(
     path: string,
@@ -62,13 +82,8 @@ export function bridgeToPiFileSystem(bridge: FileBridge): FileSystem {
   // The bridge is a local Node filesystem by construction (it is built on
   // node:fs), so it reports the one local namespace id pi-durable's own
   // NodeExecutionEnv reports: equal ids see the same files at the same paths.
-  const notSupported = (path: string, method: string): FileError =>
-    new FileError(
-      'not_supported',
-      `the exec file bridge does not implement ${method}`,
-      path,
-    );
   return {
+    ...UNSUPPORTED,
     id: 'node:local',
     cwd: bridge.cwd,
     absolutePath: async (path: string, _context: Context) =>

@@ -451,10 +451,12 @@ describe('git read/effect ops over real git', () => {
     const repo = scratchRepo();
     writeFileSync(join(repo.path, 'a.txt'), 'a\n');
     repo.git(['add', '--', 'a.txt']);
+    // The exit code is git's own and varies by version (1 on git 2.50, 128 on
+    // git 2.56).
     expect(
       await failure('git_checkpoint', { message: 'm' }, repo.path, 'cp-unborn'),
-    ).toBe(
-      'git_checkpoint failed (exit 1): You do not have the initial commit yet',
+    ).toMatch(
+      /^git_checkpoint failed \(exit (1|128)\): You do not have the initial commit yet$/,
     );
 
     repo.git(['commit', '-q', '-m', 'first']);

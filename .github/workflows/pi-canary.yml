@@ -53,7 +53,7 @@ jobs:
         run: |
           pinned=$(node -p "require('./package.json').dependencies['@earendil-works/pi-durable']")
           version=${REQUESTED:-$(npm view @earendil-works/pi-durable version)}
-          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "not a Pi release version: $version" >&2
             exit 1
           fi

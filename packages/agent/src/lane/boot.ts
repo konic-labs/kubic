@@ -388,6 +388,34 @@ function installKubicExtension(
   );
 }
 
+// The committed `model` of a conversation's `pi.agent` document, kept current
+// by a synchronous observer; `detach` ends it.
+async function observeAgentModel(
+  harness: Harness,
+  conversation: Conversation,
+  context: Context,
+): Promise<{ current(): AgentModelRef | undefined; detach(): void }> {
+  let model: AgentModelRef | undefined;
+  const observation = await harness.observeDoc(
+    AgentDoc,
+    conversation.id,
+    {
+      advance: (call) => {
+        if (call.kind === 'value') model = call.value.model;
+      },
+      end: () => {},
+    },
+    context,
+  );
+  model = observation?.value.model;
+  return {
+    current: () => model,
+    detach: () => observation?.detach(),
+  };
+}
+
+type AgentModelRef = { readonly provider: string; readonly modelId: string };
+
 export async function bootLane(options: LaneBootOptions): Promise<Lane> {
   const context = options.context ?? BACKGROUND_CONTEXT;
   const kills = new OperationKillRegistry();
@@ -411,22 +439,11 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
     options.models.getModels(provider).find((model) => model.id === modelId)
       ?.contextWindow;
   let laneRef: Lane | undefined;
-  // Minimal structural view of the attached `pi.agent` document state: its
-  // committed `model` and its dispose(), so this module needs no extra
-  // pi-boundary type for it.
-  let agentState:
-    | {
-        readonly value: {
-          readonly model?: {
-            readonly provider: string;
-            readonly modelId: string;
-          };
-        } | null;
-        dispose(): void;
-      }
-    | undefined;
+  // The live `pi.agent` model, observed once the conversation is open and
+  // detached by close().
+  let agentModel: (() => AgentModelRef | undefined) | undefined;
   const currentWindow = (): number | undefined => {
-    const live = agentState?.value?.model;
+    const live = agentModel?.();
     if (live !== undefined) {
       return windowOf(live.provider, live.modelId);
     }
@@ -485,7 +502,12 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
   // The live `pi.agent` document drives currentWindow: attached once here,
   // disposed by close(). `value` is the committed state, so a configure from
   // any caller (this module, the TUI, a headless switch) moves the reserve.
-  agentState = await harness.documentState(AgentDoc, conversation.id, context);
+  const agentObservation = await observeAgentModel(
+    harness,
+    conversation,
+    context,
+  );
+  agentModel = agentObservation.current;
   const storedAgent = await harness.snapshot(
     AgentDoc,
     conversation.id,
@@ -543,7 +565,7 @@ export async function bootLane(options: LaneBootOptions): Promise<Lane> {
     manualKeep,
     modelWindow: windowOf,
     close: async (closeContext) => {
-      agentState?.dispose();
+      agentObservation.detach();
       await harness.close(closeContext);
     },
     ...(options.taskId === undefined

@@ -21,9 +21,10 @@ import {
   fauxToolCall,
   Harness,
   MemoryStorage,
+  obj,
   openNodeJsonlStorage,
   type Storage,
-  Type,
+  str,
 } from '@kubic/agent/pi-boundary';
 import { describe, expect, it } from 'vitest';
 import { tempDir } from '../../../../test/temp-dir.js';
@@ -97,7 +98,7 @@ async function bootHarness(options: {
         defineTool({
           name: 'bash',
           description: 'run a shell command',
-          parameters: Type.Object({ command: Type.String() }),
+          parameters: obj({ command: str() }),
           execute: async (args) => {
             world.calls.push(args);
             return { output: [{ type: 'text', text: 'ran' }] };

@@ -66,7 +66,7 @@ vi.mock('../compaction.js', async (importOriginal) => {
 // journals under the harness's own call id) prove the boot threaded the
 // Kubic tool context through.
 vi.mock('./tools-adapter.js', async () => {
-  const { defineTool, Type } = await import('../pi-boundary.js');
+  const { defineTool, obj, opt, str } = await import('../pi-boundary.js');
   const { OPERATIONS } = await import('../ops/registry.js');
   return {
     kubicToolsToPiTools: (ctx: {
@@ -94,9 +94,9 @@ vi.mock('./tools-adapter.js', async () => {
         defineTool({
           name,
           description: `${name} (faux)`,
-          parameters: Type.Object({
-            path: Type.Optional(Type.String()),
-            content: Type.Optional(Type.String()),
+          parameters: obj({
+            path: opt(str()),
+            content: opt(str()),
           }),
           execute: async (args: { path?: string; content?: string }, api) => {
             if (name === 'read' && args.path !== undefined) {

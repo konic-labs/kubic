@@ -28,6 +28,7 @@
         "@earendil-works/chord",
         "@earendil-works/pi-ai",
         "@earendil-works/pi-durable",
+        "@earendil-works/pi-schema",
         "@earendil-works/pi-telemetry",
         "@earendil-works/pi-tui"
       ],

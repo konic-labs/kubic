@@ -123,7 +123,7 @@ describe('kubic run --session after a crash', () => {
     expect(notices).toEqual([
       expect.stringMatching(
         new RegExp(
-          `^pending work: pi\\.generation \\d+ \\(ready\\), submission ${submissionId} \\(placed\\) resumed after an interrupted run: done$`,
+          `^pending work: pi\\.generation \\d+ \\(pending\\), submission ${submissionId} \\(placed\\) resumed after an interrupted run: done$`,
         ),
       ),
     ]);

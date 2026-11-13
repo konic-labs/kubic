@@ -11,7 +11,18 @@
 // interrupted effect without re-entering execute, so the copy could never
 // be read and would cost a second durable write per effect.
 
-import { type TSchema, Type } from '../pi-boundary.js';
+import {
+  arr,
+  bool,
+  int,
+  num,
+  obj,
+  opt,
+  type Schema,
+  str,
+  union,
+  unsafe,
+} from '../pi-boundary.js';
 import type { BashResult } from './bash.js';
 import { bashOperation } from './bash.js';
 import type { EditResult } from './edit.js';
@@ -89,199 +100,134 @@ export type OperationName = keyof typeof OPERATIONS;
 // before a call runs. Kubic's validators stay authoritative (they also
 // check what a schema cannot, e.g. a compilable regex or a dash-free ref);
 // registry-schema.test.ts pins that the two accept the same keys. Every
-// object is closed (`additionalProperties: false`) — the validators reject
-// unknown keys too, so a guessed `file_path` fails fast with the real
-// argument names in view.
-const closed = { additionalProperties: false } as const;
-const nonEmpty = (description: string) =>
-  Type.String({ minLength: 1, description });
-const positiveInt = (description: string) =>
-  Type.Integer({ minimum: 1, description });
+// object is closed (`additionalProperties: false`, pi-schema's `obj`
+// default) — the validators reject unknown keys too, so a guessed
+// `file_path` fails fast with the real argument names in view.
+// A string literal keeps its `type` (pi-schema's `lit` writes only `const`):
+// some providers refuse a schema node without one.
+const literal = <V extends string>(value: V) =>
+  unsafe<V>({ type: 'string', const: value });
+const nonEmpty = (description: string) => str({ minLength: 1, description });
+const positiveInt = (description: string) => int({ minimum: 1, description });
 
-export const OPERATION_PARAMETERS: { readonly [N in OperationName]: TSchema } =
-  {
-    read: Type.Object(
-      {
-        path: nonEmpty('File path, relative to the workspace root.'),
-        offset: Type.Optional(
-          positiveInt('1-indexed line to start from (default 1).'),
-        ),
-        limit: Type.Optional(
-          positiveInt(
-            `Maximum lines to return (default and cap ${READ_MAX_LINES}).`,
-          ),
-        ),
-      },
-      closed,
+export const OPERATION_PARAMETERS: { readonly [N in OperationName]: Schema } = {
+  read: obj({
+    path: nonEmpty('File path, relative to the workspace root.'),
+    offset: opt(positiveInt('1-indexed line to start from (default 1).')),
+    limit: opt(
+      positiveInt(
+        `Maximum lines to return (default and cap ${READ_MAX_LINES}).`,
+      ),
     ),
-    ls: Type.Object(
-      {
-        path: Type.Optional(
-          nonEmpty(
-            'Directory to list, relative to the workspace (default ".").',
-          ),
-        ),
-      },
-      closed,
+  }),
+  ls: obj({
+    path: opt(
+      nonEmpty('Directory to list, relative to the workspace (default ".").'),
     ),
-    find: Type.Object(
-      {
-        root: Type.Optional(
-          nonEmpty('Directory to search from (default ".").'),
-        ),
-        nameContains: Type.Optional(
-          Type.String({
-            description: 'Only entries whose name contains this substring.',
-          }),
-        ),
-        type: Type.Optional(
-          Type.Union([Type.Literal('file'), Type.Literal('dir')], {
-            description: 'Only files ("file") or only directories ("dir").',
-          }),
-        ),
-        maxResults: Type.Optional(
-          positiveInt(
-            `Maximum entries to return (default ${FIND_DEFAULT_MAX}).`,
-          ),
-        ),
-      },
-      closed,
+  }),
+  find: obj({
+    root: opt(nonEmpty('Directory to search from (default ".").')),
+    nameContains: opt(
+      str({
+        description: 'Only entries whose name contains this substring.',
+      }),
     ),
-    grep: Type.Object(
-      {
-        pattern: nonEmpty(
-          'JavaScript regular expression, matched against each line.',
-        ),
-        root: Type.Optional(
-          nonEmpty('Directory to search from (default ".").'),
-        ),
-        include: Type.Optional(
-          Type.String({
-            description:
-              'Only files whose path contains this substring (not a glob), e.g. ".ts".',
-          }),
-        ),
-        maxMatches: Type.Optional(
-          positiveInt(`Maximum matching lines (default ${GREP_DEFAULT_MAX}).`),
-        ),
-      },
-      closed,
+    type: opt(
+      union([literal('file'), literal('dir')], {
+        description: 'Only files ("file") or only directories ("dir").',
+      }),
     ),
-    write: Type.Object(
-      {
-        path: nonEmpty('File path, relative to the workspace root.'),
-        content: Type.String({
-          description: 'The complete new file content (replaces the file).',
-        }),
-      },
-      closed,
+    maxResults: opt(
+      positiveInt(`Maximum entries to return (default ${FIND_DEFAULT_MAX}).`),
     ),
-    edit: Type.Object(
-      {
-        path: nonEmpty('File path, relative to the workspace root.'),
-        oldText: nonEmpty(
-          'Exact text to replace, byte for byte (whitespace included).',
-        ),
-        newText: Type.String({ description: 'Replacement text.' }),
-        expectCount: Type.Optional(
-          positiveInt(
-            'Exact number of occurrences oldText must have (default 1); any other count is refused and nothing changes.',
-          ),
-        ),
-      },
-      closed,
+  }),
+  grep: obj({
+    pattern: nonEmpty(
+      'JavaScript regular expression, matched against each line.',
     ),
-    bash: Type.Object(
-      {
-        command: nonEmpty('Shell command line, run in the workspace root.'),
-        timeout: Type.Optional(
-          Type.Number({
-            exclusiveMinimum: 0,
-            description: 'Timeout in SECONDS (not milliseconds).',
-          }),
-        ),
-      },
-      closed,
+    root: opt(nonEmpty('Directory to search from (default ".").')),
+    include: opt(
+      str({
+        description:
+          'Only files whose path contains this substring (not a glob), e.g. ".ts".',
+      }),
     ),
-    git_status: Type.Object({}, closed),
-    git_diff: Type.Object(
-      {
-        staged: Type.Optional(
-          Type.Boolean({ description: 'Diff the index (staged changes).' }),
-        ),
-        range: Type.Optional(
-          Type.String({
-            description:
-              'Revision or range, e.g. "HEAD~1..HEAD" (no leading dash).',
-          }),
-        ),
-        path: Type.Optional(
-          Type.String({ description: 'Limit the diff to this path.' }),
-        ),
-      },
-      closed,
+    maxMatches: opt(
+      positiveInt(`Maximum matching lines (default ${GREP_DEFAULT_MAX}).`),
     ),
-    git_log: Type.Object(
-      {
-        max: Type.Optional(
-          positiveInt('Commits to return (default 20, capped at 100).'),
-        ),
-        path: Type.Optional(
-          Type.String({ description: 'Only commits touching this path.' }),
-        ),
-      },
-      closed,
+  }),
+  write: obj({
+    path: nonEmpty('File path, relative to the workspace root.'),
+    content: str({
+      description: 'The complete new file content (replaces the file).',
+    }),
+  }),
+  edit: obj({
+    path: nonEmpty('File path, relative to the workspace root.'),
+    oldText: nonEmpty(
+      'Exact text to replace, byte for byte (whitespace included).',
     ),
-    git_show: Type.Object(
-      {
-        ref: nonEmpty('Commit or ref to show, e.g. "HEAD" (no leading dash).'),
-      },
-      closed,
+    newText: str({ description: 'Replacement text.' }),
+    expectCount: opt(
+      positiveInt(
+        'Exact number of occurrences oldText must have (default 1); any other count is refused and nothing changes.',
+      ),
     ),
-    git_stage: Type.Object(
-      {
-        paths: Type.Array(Type.String(), {
-          minItems: 1,
-          description: 'Explicit paths to stage (never "-A").',
-        }),
-      },
-      closed,
+  }),
+  bash: obj({
+    command: nonEmpty('Shell command line, run in the workspace root.'),
+    timeout: opt(
+      num({
+        exclusiveMinimum: 0,
+        description: 'Timeout in SECONDS (not milliseconds).',
+      }),
     ),
-    git_commit: Type.Object(
-      {
-        message: nonEmpty('Commit message.'),
-        amend: Type.Optional(
-          Type.Boolean({ description: 'Amend the previous commit.' }),
-        ),
-      },
-      closed,
+  }),
+  git_status: obj({}),
+  git_diff: obj({
+    staged: opt(bool({ description: 'Diff the index (staged changes).' })),
+    range: opt(
+      str({
+        description:
+          'Revision or range, e.g. "HEAD~1..HEAD" (no leading dash).',
+      }),
     ),
-    git_branch: Type.Object(
-      {
-        create: Type.Optional(
-          Type.String({
-            description:
-              'Name of a branch to create; omit to list branches (no checkout).',
-          }),
-        ),
-      },
-      closed,
+    path: opt(str({ description: 'Limit the diff to this path.' })),
+  }),
+  git_log: obj({
+    max: opt(positiveInt('Commits to return (default 20, capped at 100).')),
+    path: opt(str({ description: 'Only commits touching this path.' })),
+  }),
+  git_show: obj({
+    ref: nonEmpty('Commit or ref to show, e.g. "HEAD" (no leading dash).'),
+  }),
+  git_stage: obj({
+    paths: arr(str(), {
+      minItems: 1,
+      description: 'Explicit paths to stage (never "-A").',
+    }),
+  }),
+  git_commit: obj({
+    message: nonEmpty('Commit message.'),
+    amend: opt(bool({ description: 'Amend the previous commit.' })),
+  }),
+  git_branch: obj({
+    create: opt(
+      str({
+        description:
+          'Name of a branch to create; omit to list branches (no checkout).',
+      }),
     ),
-    git_checkpoint: Type.Object(
-      {
-        message: nonEmpty('Label for the restorable stash point.'),
-      },
-      closed,
-    ),
-    git_merge: Type.Object(
-      {
-        branch: nonEmpty('Local branch to merge into the current one.'),
-      },
-      closed,
-    ),
-    git_conflict_status: Type.Object({}, closed),
-    git_worktree_list: Type.Object({}, closed),
-  };
+  }),
+  git_checkpoint: obj({
+    message: nonEmpty('Label for the restorable stash point.'),
+  }),
+  git_merge: obj({
+    branch: nonEmpty('Local branch to merge into the current one.'),
+  }),
+  git_conflict_status: obj({}),
+  git_worktree_list: obj({}),
+};
 
 export interface OperationResults {
   read: ReadResult;

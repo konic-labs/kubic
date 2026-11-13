@@ -41,7 +41,7 @@ vi.mock('../compaction.js', async (importOriginal) => {
 });
 
 vi.mock('./tools-adapter.js', async () => {
-  const { defineTool, Type } = await import('../pi-boundary.js');
+  const { defineTool, obj } = await import('../pi-boundary.js');
   const { OPERATIONS } = await import('../ops/registry.js');
   return {
     kubicToolsToPiTools: () =>
@@ -49,7 +49,7 @@ vi.mock('./tools-adapter.js', async () => {
         defineTool({
           name,
           description: `${name} (faux)`,
-          parameters: Type.Object({}),
+          parameters: obj({}),
           execute: async () => ({
             output: [{ type: 'text' as const, text: name }],
           }),

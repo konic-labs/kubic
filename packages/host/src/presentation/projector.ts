@@ -3,7 +3,7 @@
 // of folding raw events ("The presentation does not fold raw events").
 //
 // Pure: no I/O, no authority, no harness access. The lane source is the
-// `subscribeLaneEvents` stream (itself pi-durable's `watchEvents`);
+// `subscribeLaneEvents` stream (itself pi-durable's conversation view);
 // approvals are narrow typed events the host feeds in (`applyApproval`).
 //
 // One session, one lane: the TUI renders exactly one lane, the session's own.

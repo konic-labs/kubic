@@ -52,7 +52,8 @@ describe('run envelope usage', () => {
     expect(result.terminus).toBe('completed');
     const envelope = buildRunEnvelope(result, 0);
     const [rows] = await loadSessionCostRows(root, result.sessionId);
-    expect(rows?.input).toBeGreaterThan(0);
+    // The faux provider books the prompt as a cache write.
+    expect((rows?.input ?? 0) + (rows?.cacheWrite ?? 0)).toBeGreaterThan(0);
     expect(envelope.usage).toMatchObject({
       ref: `usage:${result.sessionId}`,
       input: rows?.input,

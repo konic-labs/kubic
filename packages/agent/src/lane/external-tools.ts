@@ -6,7 +6,7 @@
 // the approval ask, the hooks, the secret scan.
 
 import type { ToolExecutionResult, ToolRegistration } from '../pi-boundary.js';
-import { defineTool, Type } from '../pi-boundary.js';
+import { defineTool, unsafe } from '../pi-boundary.js';
 
 export interface ExternalTool {
   readonly name: string;
@@ -32,7 +32,7 @@ export function externalToolRegistrations(
     defineTool({
       name: tool.name,
       description: tool.description,
-      parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
+      parameters: unsafe<Record<string, unknown>>(tool.inputSchema),
       // A call to another process's tool is never replayed on recovery.
       replay: 'unsafe',
       outputLimits: OUTPUT_LIMITS,

@@ -695,7 +695,9 @@ three points:
   `timeoutMs` is killed and refuses the call too, and so does one that
   cannot start: a before-tool hook fails closed.
 - `afterTool`: after each tool call, with its result. It observes: its exit
-  never changes what the model reads.
+  never changes what the model reads. It also sees the error result of a
+  call that never ran (a tool that does not exist, or arguments that do not
+  fit the tool), which no `beforeTool` hook saw.
 - `runEnd`: when a `kubic run` settles, with its status and final answer.
   In `kubic tui` each settled turn is a run end, with no answer.
 

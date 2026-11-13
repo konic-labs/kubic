@@ -25,15 +25,20 @@
 //     why Pi has no alternative: <one line — what breaks if we reimplement>
 
 // JUSTIFICATION:
-//   seam: @earendil-works/chord#Context, #JsonValue (types)
-// used by: packages/agent/src/lane/{boot,session-store,tools-adapter,
-//     pending,abort,events}.ts (Context) and lane/interceptors/ + tools
-//     (JsonValue for tool details, memos and hook state)
+//   seam: @earendil-works/chord/context#Context (type)
+//   used by: packages/agent/src/lane/{boot,session-store,tools-adapter,
+//     pending,abort,events}.ts
 //   why Pi has no alternative: chord's Context IS the cancellation/telemetry
-//     plumbing the 1.0 harness is threaded with, and JsonValue is the exact
-//     compiled JSON boundary the durable documents and tool details validate
-//     against (Kubic defines no parallel vocabularies).
-export type { Context, JsonValue } from '@earendil-works/chord';
+//     plumbing the harness is threaded with (Kubic defines no parallel
+//     vocabulary).
+export type { Context } from '@earendil-works/chord/context';
+// JUSTIFICATION:
+//   seam: @earendil-works/chord/json#JsonValue (type)
+//   used by: lane/interceptors/ and tools (JsonValue for tool details, memos
+//     and hook state)
+//   why Pi has no alternative: JsonValue is the exact compiled JSON boundary
+//     the durable documents and tool details validate against.
+export type { JsonValue } from '@earendil-works/chord/json';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/chord/context#BACKGROUND_CONTEXT
@@ -42,7 +47,7 @@ export type { Context, JsonValue } from '@earendil-works/chord';
 //     under packages/host/src/{sessions,journal,cost,doctor}/
 //   why Pi has no alternative: Pi 1.0 has no pi-agent-core re-export;
 //     chord owns Context, and every durable call (Harness.open, submit,
-//     wait, abort, watchEvents) takes one. BACKGROUND_CONTEXT is the
+//     wait, abort, watch) takes one. BACKGROUND_CONTEXT is the
 //     never-cancelling context; a Kubic copy would have to reimplement
 //     chord's cancellation plumbing and would not type against the harness.
 export { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -53,17 +58,36 @@ export { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 //     assembled catalogue resolves provider auth against)
 //   why Pi has no alternative: createModels reads auth through this context;
 //     a Kubic-shaped context would not type-check against Pi's resolver
-// TSchema: the type of the per-operation parameter schemas
-// in ops/registry.ts — the same typebox Pi's Tool.parameters requires.
 export type {
   ApiKeyAuth,
   AuthContext,
   Model,
   ModelThinkingLevel,
   MutableModels,
-  TSchema,
   Usage,
 } from '@earendil-works/pi-ai';
+
+// JUSTIFICATION:
+//   seam: @earendil-works/pi-schema builders (obj, str, int, num, bool, arr,
+//     opt, union, unsafe) and the Schema type
+//   used by: packages/agent/src/ops/registry.ts (the per-operation parameter
+//     schemas), lane/external-tools.ts (an MCP tool's own input schema) and
+//     faux-driven tests that define tools
+//   why Pi has no alternative: a ToolRegistration's parameters are JSON Schema
+//     checked by pi-schema; building them with Pi's own builders keeps exactly
+//     one schema implementation on the tool path and types each tool's args.
+export {
+  arr,
+  bool,
+  int,
+  num,
+  obj,
+  opt,
+  type Schema,
+  str,
+  union,
+  unsafe,
+} from '@earendil-works/pi-schema';
 
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai thinking support (supported levels + clamp)
@@ -72,16 +96,10 @@ export type {
 //     definitions; reimplementing the clamp would desync from models
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai model layer (createModels, faux provider,
-//     Model type, Type for tool schemas)
+//     Model type)
 //   used by: packages/agent/src/lane/* (model wiring) and faux-driven tests
 //   why Pi has no alternative: providers, auth, and models.json are Pi's
 //     model layer
-// JUSTIFICATION:
-//   seam: @earendil-works/pi-ai#Type (typebox re-export, v1.3.27)
-//   used by: packages/agent/src/lane/tools-adapter.ts (tool arg schemas)
-//   why Pi has no alternative: AgentTool.parameters requires a TSchema and
-//     Pi pins typebox 1.3.27 — importing Pi's re-export keeps exactly one
-//     schema implementation on the tool path instead of a second typebox copy
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-ai custom providers (createProvider +
 //     OpenAI-compatible stream factories for models.json endpoints)
@@ -112,7 +130,6 @@ export {
   fauxToolCall,
   getSupportedThinkingLevels,
   InMemoryCredentialStore,
-  Type,
   /** @internal */ validateToolArguments,
 } from '@earendil-works/pi-ai';
 
@@ -157,7 +174,7 @@ export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
 //   seam: @earendil-works/pi-durable types (Conversation, Submission,
 //     SettledSubmissionRecord, Extension, ToolRegistration,
 //     ToolExecutionApi, ToolExecutionResult, ToolHooks, HookRegistration,
-//     HarnessSettings, CompactionPolicy, AgentEvent, EntryRecord, Storage)
+//     HarnessSettings, CompactionPolicy, EntryRecord, Storage)
 //   used by: the Kubic modules that name them in their own signatures —
 // lane/boot.ts Lane (Conversation, Extension, HarnessSettings),
 //     lane/tools-adapter.ts (ToolRegistration, ToolExecutionApi),
@@ -165,33 +182,39 @@ export { uuidv7 } from '@earendil-works/pi-ai/utils/uuid';
 //     lane/interceptors/hooks.ts (ToolExecutionResult: the results they build
 //     are checked against Pi's own type, so a renamed field fails the
 //     typecheck), lane/interceptors/ (ToolHooks, HookRegistration), lane/settle.ts
-//     (Submission, SettledSubmissionRecord), lane/events.ts (AgentEvent),
+//     (Submission, SettledSubmissionRecord),
 // lane/session-store/ (Storage), lane/boot.ts compaction
 //     (CompactionPolicy), the session readers (EntryRecord)
 //   why Pi has no alternative: these are the shapes the durable harness
 //     passes across its API; Kubic aliases or structural copies would drift
 //     from upstream and fail to type-check at the calls they feed.
 // JUSTIFICATION:
-//   seam: @earendil-works/pi-durable#SnapshotEvent, #UsageState,
-//     #ConversationId, #SubmissionId, #TaskId, #EntryId, #JsonObject
+//   seam: @earendil-works/pi-durable#ConversationView, #LiveState,
+//     #ToolSlot, #CompactionStatus, #InboxState, #CommitPublication,
+//     #UsageState, #ConversationId, #SubmissionId, #TaskId, #EntryId,
+//     #JsonObject
 //   used by: packages/agent/src/lane/events.ts (the KubicLaneEvent union
-//     and the watchEvents snapshot mapping) and packages/agent/src/usage.ts
+//     and the conversation-view mapping) and packages/agent/src/usage.ts
 //     (per-response rows built from a committed assistant entry)
-//   why Pi has no alternative: these are the exact types of the events
-//     watchEvents delivers and of the ids Kubic keys its own lane events
-//     by; structural copies would drift from the committed stream
-//     and fail to type-check where Harness/watchEvents are called.
+//   why Pi has no alternative: these are the exact types of the view
+//     Conversation.watch() delivers, of the commits observeCommits() reports
+//     and of the ids Kubic keys its own lane events by; structural copies
+//     would drift from the committed state and fail to type-check where the
+//     watch is read.
 export type {
-  AgentEvent,
+  CommitPublication,
   CompactionPolicy,
+  CompactionStatus,
   Conversation,
   ConversationId,
+  ConversationView,
   EntryId,
   EntryRecord,
   HarnessSettings,
   HookRegistration,
+  InboxState,
   JsonObject,
-  SnapshotEvent,
+  LiveState,
   Storage,
   Submission,
   SubmissionId,
@@ -199,6 +222,7 @@ export type {
   ToolExecutionApi,
   ToolExecutionResult,
   ToolRegistration,
+  ToolSlot,
   UsageState,
 } from '@earendil-works/pi-durable';
 // JUSTIFICATION:
@@ -230,16 +254,18 @@ export type {
 //     positional pi.system entries; a Kubic event vocabulary would bypass
 //     durable recovery.
 // JUSTIFICATION:
-//   seam: @earendil-works/pi-durable#AgentDoc, #LiveDoc, #UsageDoc,
-//     #configure
+//   seam: @earendil-works/pi-durable#AgentDoc, #LiveDoc, #InboxDoc,
+//     #UsageDoc, #configure
 //   used by: packages/agent/src/lane/boot.ts (reconciles the stored model
 //     through the root conversation's pi.agent document),
-//     lane/events.ts (reads pi.live), the session readers (sum pi.usage),
+//     lane/events.ts (reads pi.live, pi.inbox and pi.usage from the
+//     conversation view), the session readers (sum pi.usage),
 //     and any creating commit that sets agent choices
 //     through configure(tx, …)
 //   why Pi has no alternative: these are the committed documents the
 //     harness itself writes and reads; Kubic's own doc kinds would not be
-//     observed by generation/compaction nor appear in viewState().
+//     observed by generation/compaction nor appear in the conversation
+//     view.
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable entry-kind tokens (#UserEntry,
 //     #AssistantEntry, #ToolResultEntry, #SystemEntry, #CompactionEntry)
@@ -251,16 +277,14 @@ export type {
 //     matching on Kubic string copies would silently drift from storage on
 //     an upstream kind rename.
 // JUSTIFICATION:
-//   seam: @earendil-works/pi-durable#watchEvents, #ConversationBusy,
-//     #MemoryStorage, #defineDoc
-//   used by: packages/agent/src/lane/events.ts (maps the committed event
-//     stream), packages/agent/src/lane/boot.ts (rejects a busy submit with
+//   seam: @earendil-works/pi-durable#ConversationBusy, #MemoryStorage,
+//     #defineDoc
+//   used by: packages/agent/src/lane/boot.ts (rejects a busy submit with
 //     ConversationBusy), packages/agent/src/lane/session-store/
 //     (defines the kubic.session document), and the Kubic test harness
 //     factory (swaps MemoryStorage for temp-dir JSONL)
-//   why Pi has no alternative: watchEvents is the harness's committed-state
-//     event stream (experimental upstream, isolated behind Kubic's events
-//     module), MemoryStorage is its in-memory backend, and defineDoc is the
+//   why Pi has no alternative: ConversationBusy is the harness's own busy
+//     refusal, MemoryStorage is its in-memory backend, and defineDoc is the
 //     only way to declare a document the harness will commit.
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable#createSession (the plain Session kernel
@@ -286,7 +310,8 @@ export {
   /** @internal */ GenerationTask,
   Harness,
   hook,
-  /** @internal */ LiveDoc,
+  InboxDoc,
+  LiveDoc,
   MemoryStorage,
   SystemEntry,
   section,
@@ -294,7 +319,6 @@ export {
   ToolTask,
   UsageDoc,
   UserEntry,
-  watchEvents,
 } from '@earendil-works/pi-durable';
 // JUSTIFICATION:
 //   seam: @earendil-works/pi-durable/env#FileSystem (with Result,

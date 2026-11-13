@@ -20,8 +20,8 @@ import {
   fauxProvider,
   fauxToolCall,
   Harness,
+  obj,
   openNodeJsonlStorage,
-  Type,
 } from '../pi-boundary.js';
 import { OperationKillRegistry } from './abort.js';
 import {
@@ -68,7 +68,7 @@ function blockingWork() {
   const tool = defineTool({
     name: 'work',
     description: 'block until the invocation is cancelled',
-    parameters: Type.Object({}),
+    parameters: obj({}),
     execute: async (_args, api, callCtx) => {
       state.runs += 1;
       api.output(`run ${state.runs}\n`);

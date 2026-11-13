@@ -111,7 +111,7 @@ describe('kubic tui prompt loop', () => {
     fake.feed('\x14');
     for (const ch of '/session') fake.feed(ch);
     fake.feed('\r');
-    await waitFor(() => /in [1-9]\d* out [1-9]\d*/.test(fake.writes.join('')));
+    await waitFor(() => /in \d+ out [1-9]\d*/.test(fake.writes.join('')));
     fake.feed('\x03');
     fake.feed('\x03');
     expect((await pending).exitCode).toBe(0);
@@ -126,8 +126,9 @@ describe('kubic tui prompt loop', () => {
     expect(doc).toMatch(/✓ bash echo hi \d+ms/);
     // The status bar carries a real usage row: setUsage has a production
     // caller too. The row values come from the lane's usage event, so a
-    // dropped `setUsage` call must also turn this red (verified).
-    expect(doc).toMatch(/in [1-9]\d* out [1-9]\d*/);
+    // dropped `setUsage` call must also turn this red (verified). The faux
+    // provider books the prompt as a cache write, so `in` may read 0.
+    expect(doc).toMatch(/in \d+ out [1-9]\d*/);
   });
 
   it('surfaces a refused abort as a footer, never an unhandled rejection', async () => {

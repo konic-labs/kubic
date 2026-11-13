@@ -10,6 +10,7 @@ Kubic's agent runtime is built on the Pi agent harness by Mario Zechner
 - `@earendil-works/chord`
 - `@earendil-works/pi-ai`
 - `@earendil-works/pi-durable`
+- `@earendil-works/pi-schema`
 - `@earendil-works/pi-telemetry`
 - `@earendil-works/pi-tui`
 

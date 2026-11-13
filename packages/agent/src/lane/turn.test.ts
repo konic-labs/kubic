@@ -12,6 +12,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
+  InboxDoc,
   MemoryStorage,
   withAbortSignal,
 } from '../pi-boundary.js';
@@ -232,10 +233,12 @@ describe('runTurn on pi-durable', () => {
     expect(
       queued.submissions.find((row) => String(row.id) === ids[0]),
     ).toMatchObject({ status: 'queued' });
-    const inbox = await lane.conversation.viewState(BACKGROUND_CONTEXT);
-    expect(JSON.stringify(inbox.value.docs['pi.inbox'])).toContain(
-      '"mode":"followUp"',
+    const inbox = await lane.harness.snapshot(
+      InboxDoc,
+      lane.conversation.id,
+      BACKGROUND_CONTEXT,
     );
+    expect(JSON.stringify(inbox)).toContain('"mode":"followUp"');
     // Nothing of the queued prompt is in the transcript yet.
     expect(userTexts(await transcript(lane))).toEqual(['first prompt']);
     release();
@@ -309,10 +312,12 @@ describe('runTurn on pi-durable', () => {
       onSubmitted: (id) => ids.push(id),
     });
     await vi.waitFor(() => expect(ids).toHaveLength(1));
-    const inbox = await lane.conversation.viewState(BACKGROUND_CONTEXT);
-    expect(JSON.stringify(inbox.value.docs['pi.inbox'])).toContain(
-      '"mode":"steer"',
+    const inbox = await lane.harness.snapshot(
+      InboxDoc,
+      lane.conversation.id,
+      BACKGROUND_CONTEXT,
     );
+    expect(JSON.stringify(inbox)).toContain('"mode":"steer"');
     releaseTool();
     await expect(first).resolves.toMatchObject({ kind: 'completed' });
     await expect(steered).resolves.toMatchObject({ kind: 'completed' });

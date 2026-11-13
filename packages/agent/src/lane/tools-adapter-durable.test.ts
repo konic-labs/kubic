@@ -29,10 +29,10 @@ import {
   fauxToolCall,
   Harness,
   LiveDoc,
+  obj,
   openNodeJsonlStorage,
   type ToolRegistration,
   ToolResultEntry,
-  Type,
 } from '../pi-boundary.js';
 import { OperationKillRegistry } from './abort.js';
 import { type KubicToolContext, kubicToolsToPiTools } from './tools-adapter.js';
@@ -458,7 +458,7 @@ describe('Kubic tools on the pi-durable harness', () => {
     const probe = defineTool({
       name: 'memo_probe',
       description: 'records a durable memo before it is interrupted',
-      parameters: Type.Object({}),
+      parameters: obj({}),
       replay: 'safe',
       execute: async (_args, api, callContext) => {
         runs += 1;

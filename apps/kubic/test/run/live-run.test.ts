@@ -189,7 +189,10 @@ describe('prod run path, durable retry', () => {
     expect(result.summary).toBe('recovered');
     expect(faux.state.callCount).toBe(2);
     // The failed attempt spent tokens: the run's usage counts both requests.
-    expect(result.usage?.input).toBeGreaterThan(0);
+    // (The faux provider books the prompt as a cache write.)
+    expect(
+      (result.usage?.input ?? 0) + (result.usage?.cacheWrite ?? 0),
+    ).toBeGreaterThan(0);
     const entries = await readTranscript(root, result.sessionId);
     const items = entriesToTranscript(entries);
     // Stands on the retry path too: the prompt appears exactly once.

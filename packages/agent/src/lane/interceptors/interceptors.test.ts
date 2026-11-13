@@ -18,9 +18,11 @@ import {
   hook,
   type JsonValue,
   MemoryStorage,
+  obj,
+  opt,
+  str,
   ToolResultEntry,
   ToolTask,
-  Type,
 } from '../../pi-boundary.js';
 import { policyInterceptorHooks } from './hooks.js';
 import { redactReason, redactSecrets } from './redact.js';
@@ -107,38 +109,38 @@ function probeTools(world: World) {
     defineTool({
       name: 'bash',
       description: 'run a shell command',
-      parameters: Type.Object({ command: Type.String() }),
+      parameters: obj({ command: str() }),
       execute: async (args) => record('bash', args),
     }),
     defineTool({
       name: 'read',
       description: 'read a file',
-      parameters: Type.Object({ path: Type.String() }),
+      parameters: obj({ path: str() }),
       execute: async (args) => record('read', args),
     }),
     defineTool({
       name: 'write',
       description: 'write a file',
-      parameters: Type.Object({
-        path: Type.String(),
-        content: Type.Optional(Type.String()),
+      parameters: obj({
+        path: str(),
+        content: opt(str()),
       }),
       execute: async (args) => record('write', args),
     }),
     defineTool({
       name: 'edit',
       description: 'edit a file',
-      parameters: Type.Object({
-        path: Type.String(),
-        oldText: Type.String(),
-        newText: Type.String(),
+      parameters: obj({
+        path: str(),
+        oldText: str(),
+        newText: str(),
       }),
       execute: async (args) => record('edit', args),
     }),
     defineTool({
       name: 'ls',
       description: 'list a directory',
-      parameters: Type.Object({ path: Type.Optional(Type.String()) }),
+      parameters: obj({ path: opt(str()) }),
       execute: async (args) => record('ls', args),
     }),
   ];

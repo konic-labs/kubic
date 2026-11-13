@@ -208,7 +208,10 @@ describe('kubic cost lock-free reads', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.session).toBe(session.id);
     expect(rows[0]?.model.startsWith('(')).toBe(false);
-    expect(rows[0]?.input).toBeGreaterThan(0);
+    // The faux provider books the prompt as a cache write.
+    expect((rows[0]?.input ?? 0) + (rows[0]?.cacheWrite ?? 0)).toBeGreaterThan(
+      0,
+    );
   });
 
   it('marks a session that goes live during the read (live)', async () => {
@@ -229,7 +232,7 @@ describe('kubic cost lock-free reads', () => {
       // The read rows stay; a zero marker row says they may be partial.
       const read = rows.find((row) => !row.model.startsWith('('));
       expect(read).toMatchObject({ session: session.id });
-      expect(read?.input).toBeGreaterThan(0);
+      expect((read?.input ?? 0) + (read?.cacheWrite ?? 0)).toBeGreaterThan(0);
       expect(rows.find((row) => row.model === '(live)')).toMatchObject({
         session: session.id,
         costUsd: 0,

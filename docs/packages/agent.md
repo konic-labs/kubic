@@ -18,7 +18,7 @@ accepts, returns and bounds is on the [tools page](../cli/tools.md).
 | `@kubic/agent/pi-boundary` | The only Pi seam: every `@earendil-works/*` symbol the package uses |
 | `@kubic/agent/lane/boot` | `bootLane`: the harness over a session, the tool registry and the extensions, installed `kubic.policy` → `kubic.spans` → `kubic` (install order is hook order) |
 | `@kubic/agent/lane/turn` | One turn, `conversation.submit()` → `submission.wait()`, with one compact-and-retry on context overflow |
-| `@kubic/agent/lane/events` | Lane events relayed from pi-durable's committed watch |
+| `@kubic/agent/lane/events` | Lane events derived from pi-durable's conversation view |
 | `@kubic/agent/lane/settle` | A settled submission mapped to Kubic's result errors and failure codes |
 | `@kubic/agent/lane/failures` | The failure taxonomy and the retry chooser |
 | `@kubic/agent/lane/pending` | Settling a turn a crashed process left open |
@@ -77,9 +77,10 @@ accepts, returns and bounds is on the [tools page](../cli/tools.md).
   (`lane/transcript.ts`). `readSessionEntries` reads a session without a
   harness, a model layer or a write.
 - **A lane event snapshot replaces; it never appends.** One
-  `subscribeLaneEvents` per conversation relays the committed watch; the
-  attach, late-join and overflow paths send a snapshot that replaces the
-  consumer's state.
+  `subscribeLaneEvents` per conversation watches the conversation view and
+  turns each change into lane events; the attach path, and a view window
+  that moved past entries the consumer never saw, send a snapshot that
+  replaces the consumer's state.
 - **Retries are bounded and mostly not Kubic's.** A transient model
   failure is retried by the harness's durable generation retry; the
   chooser adds a different tool or compact-then-retry, and abandons

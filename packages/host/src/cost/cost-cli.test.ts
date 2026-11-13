@@ -18,8 +18,8 @@ import {
   fauxToolCall,
   Harness,
   MemoryStorage,
+  obj,
   type Storage,
-  Type,
   UsageDoc,
 } from '@kubic/agent/pi-boundary';
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from '@kubic/core/cli/exit-codes';
@@ -521,7 +521,8 @@ describe('kubic cost durable usage', () => {
     );
     expect(totals).toEqual(summed);
     // The faux run really did spend tokens (not a vacuous match).
-    expect(totals.input).toBeGreaterThan(0);
+    // (The faux provider books the prompt as a cache write.)
+    expect(totals.input + totals.cacheWrite).toBeGreaterThan(0);
     expect(rows[0]?.key).toBe(MODEL_REF);
   });
 
@@ -531,7 +532,7 @@ describe('kubic cost durable usage', () => {
     const spend = defineTool({
       name: 'spend',
       description: 'reports its own usage',
-      parameters: Type.Object({}),
+      parameters: obj({}),
       execute: async () => ({
         content: [{ type: 'text', text: 'ok' }],
         usage: {
@@ -613,7 +614,10 @@ describe('kubic cost durable usage', () => {
       session: session.id,
       model: MODEL_REF,
     });
-    expect(rows[0]?.input).toBeGreaterThan(0);
+    // The faux provider books the prompt as a cache write.
+    expect((rows[0]?.input ?? 0) + (rows[0]?.cacheWrite ?? 0)).toBeGreaterThan(
+      0,
+    );
     expect(rows[0]?.costUsd).toBeGreaterThanOrEqual(0);
     expect(rows[0]?.cacheRead).toBeGreaterThanOrEqual(0);
   });
@@ -715,7 +719,10 @@ describe('kubic cost durable usage', () => {
     const measured = await readSessionRunUsage(root, session.id);
     expect(measured.model).toBe(MODEL_REF);
     expect(measured.usage.toolCalls).toBe(1);
-    expect(measured.usage.input).toBeGreaterThan(0);
+    // The faux provider books the prompt as a cache write.
+    expect(
+      measured.usage.input + (measured.usage.cacheWrite ?? 0),
+    ).toBeGreaterThan(0);
     expect(measured.usage.costUsd).toBeGreaterThanOrEqual(0);
   });
 

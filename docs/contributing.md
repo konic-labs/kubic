@@ -482,8 +482,8 @@ Nothing else names the version, so a compatible release needs no other edit.
 A Pi release arrives as one grouped Dependabot pull request, a week after it
 ships; the [Pi canary](#ci) has tried it the day it shipped. Before it merges:
 
-1. Read the release notes. `pi-durable` and `chord` ship their `CHANGELOG.md`
-   (in `node_modules/@earendil-works/`); for `pi-ai`, `pi-tui` and
+1. Read the release notes. `pi-durable`, `chord` and `pi-schema` ship their
+   `CHANGELOG.md` (in `node_modules/@earendil-works/`); for `pi-ai`, `pi-tui` and
    `pi-telemetry` read `packages/<name>/CHANGELOG.md` in
    [earendil-works/pi](https://github.com/earendil-works/pi). Their "Breaking
    Changes" sections are the checklist.

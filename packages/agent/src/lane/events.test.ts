@@ -1,12 +1,14 @@
-// The lane event consumer on pi-durable's committed watch. One subscription per
-// conversation; the sink sees Kubic's own vocabulary (run, tool, usage, fault,
-// retry, compaction, snapshot) and never another conversation's events.
+// The lane event consumer on pi-durable's conversation view. One subscription
+// per conversation; the sink sees Kubic's own vocabulary (run, tool, usage,
+// fault, retry, compaction, snapshot) and never another conversation's state.
 
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   BACKGROUND_CONTEXT,
+  type CommitPublication,
   type Conversation,
   type ConversationId,
+  type ConversationView,
   createModels,
   createRegistry,
   defineExtension,
@@ -18,18 +20,23 @@ import {
   fauxText,
   fauxToolCall,
   Harness,
+  type InboxState,
+  type LiveState,
   MemoryStorage,
-  type SnapshotEvent,
+  obj,
   type SubmissionId,
+  str,
   type TaskId,
-  Type,
   type Usage,
-  watchEvents,
+  type UsageState,
 } from '../pi-boundary.js';
 import {
+  faultsOf,
   type KubicLaneEvent,
+  laneEventsBetween,
+  snapshotOf,
   subscribeLaneEvents,
-  toKubicLaneEvent,
+  windowSkipped,
 } from './events.js';
 
 const CONVERSATION = 1 as ConversationId;
@@ -56,26 +63,27 @@ function entry(id: number, kind: string, message?: unknown): EntryRecord {
   };
 }
 
-function assistantEntry(
-  id: number,
-  over: { provider?: string; model?: string; usage?: Usage } = {},
-): EntryRecord {
-  return entry(id, 'pi.assistant', {
+function assistantMessage(content: unknown[], usage: Usage = FULL_USAGE) {
+  return {
     role: 'assistant',
-    content: [],
+    content,
     api: 'faux',
-    provider: over.provider ?? 'anthropic',
-    model: over.model ?? 'claude-sonnet-4-5',
-    usage: over.usage ?? FULL_USAGE,
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-5',
+    usage,
     stopReason: 'stop',
     timestamp: 0,
-  });
+  };
 }
 
-function toolResultEntry(id: number, isError = false): EntryRecord {
+function assistantEntry(id: number, content: unknown[] = []): EntryRecord {
+  return entry(id, 'pi.assistant', assistantMessage(content));
+}
+
+function toolResultEntry(id: number, callId = 'c-1', isError = false) {
   return entry(id, 'pi.tool-result', {
     role: 'toolResult',
-    toolCallId: 'c-1',
+    toolCallId: callId,
     toolName: 'echo',
     content: [{ type: 'text', text: 'echo: hi' }],
     isError,
@@ -83,255 +91,341 @@ function toolResultEntry(id: number, isError = false): EntryRecord {
   });
 }
 
-describe('toKubicLaneEvent', () => {
-  it('maps run start/end and tool start/end', () => {
-    expect(
-      toKubicLaneEvent({ type: 'run_start', inputs: [1 as SubmissionId] }),
-    ).toEqual({ type: 'run-start', inputs: [1] });
-    expect(
-      toKubicLaneEvent({ type: 'run_end', inputs: [1 as SubmissionId] }),
-    ).toEqual({ type: 'run-end', inputs: [1] });
-    expect(
-      toKubicLaneEvent({
-        type: 'tool_execution_start',
+function userEntry(id: number): EntryRecord {
+  return entry(id, 'pi.user', { role: 'user', content: 'hi', timestamp: 0 });
+}
+
+const RUN = {
+  taskId: 7 as TaskId,
+  inputs: [4 as SubmissionId],
+  turns: 0,
+};
+
+// A synthetic conversation view: its window of entries and the documents
+// the events read.
+function view(
+  entries: readonly EntryRecord[],
+  docs: { live?: LiveState; inbox?: InboxState; usage?: UsageState } = {},
+  before?: number,
+): ConversationView {
+  return {
+    conversation: {} as ConversationView['conversation'],
+    entries,
+    ...(before === undefined ? {} : { before: before as EntryId }),
+    docs: {
+      ...(docs.live === undefined ? {} : { 'pi.live': docs.live }),
+      ...(docs.inbox === undefined ? {} : { 'pi.inbox': docs.inbox }),
+      ...(docs.usage === undefined ? {} : { 'pi.usage': docs.usage }),
+    } as ConversationView['docs'],
+  };
+}
+
+function draft(text: string, thinking = ''): LiveState {
+  return {
+    run: RUN,
+    generation: {
+      attempt: 1,
+      message: assistantMessage([
+        ...(thinking === '' ? [] : [{ type: 'thinking', thinking }]),
+        { type: 'text', text },
+      ]) as unknown as NonNullable<LiveState['generation']>['message'],
+    },
+  };
+}
+
+describe('laneEventsBetween', () => {
+  it('maps run start and end from pi.live', () => {
+    const idle = view([]);
+    const running = view([], { live: { run: RUN } });
+    expect(laneEventsBetween(idle, running)).toEqual([
+      { type: 'run-start', inputs: [4] },
+    ]);
+    expect(laneEventsBetween(running, idle)).toEqual([
+      { type: 'run-end', inputs: [4] },
+    ]);
+    // A run that ends without an answer keeps its failure in pi.live; the
+    // run still ended.
+    const failed = view([], {
+      live: {
+        runFailure: {
+          taskId: RUN.taskId,
+          inputs: RUN.inputs,
+          reason: 'aborted',
+        },
+      },
+    });
+    expect(laneEventsBetween(running, failed)).toEqual([
+      { type: 'run-end', inputs: [4] },
+    ]);
+  });
+
+  it('starts a tool with the arguments its assistant entry gave the call', () => {
+    const call = assistantEntry(2, [
+      { type: 'toolCall', id: 'c-1', name: 'echo', arguments: { text: 'hi' } },
+    ]);
+    const pending = view([call], {
+      live: {
+        run: RUN,
+        tools: [{ callId: 'c-1', name: 'echo', status: 'pending' }],
+      },
+    });
+    const running = view([call], {
+      live: {
+        run: RUN,
+        tools: [{ callId: 'c-1', name: 'echo', status: 'running' }],
+      },
+    });
+    expect(laneEventsBetween(pending, running)).toEqual([
+      {
+        type: 'tool-start',
         toolCallId: 'c-1',
         toolName: 'echo',
         args: { text: 'hi' },
-      }),
-    ).toEqual({
-      type: 'tool-start',
-      toolCallId: 'c-1',
-      toolName: 'echo',
-      args: { text: 'hi' },
-    });
-
-    const result = toolResultEntry(2);
-    expect(
-      toKubicLaneEvent({
-        type: 'tool_execution_end',
-        toolCallId: 'c-1',
-        toolName: 'echo',
-        entry: result,
-      }),
-    ).toEqual({
-      type: 'tool-end',
-      toolCallId: 'c-1',
-      toolName: 'echo',
-      isError: false,
-      entry: result,
-    });
-    // No entry: the tool task faulted or was orphaned.
-    expect(
-      toKubicLaneEvent({
-        type: 'tool_execution_end',
-        toolCallId: 'c-1',
-        toolName: 'echo',
-      }),
-    ).toEqual({
-      type: 'tool-end',
-      toolCallId: 'c-1',
-      toolName: 'echo',
-      isError: true,
-    });
+      },
+    ]);
+    // Still running: no second start.
+    expect(laneEventsBetween(running, running)).toEqual([]);
   });
 
-  it('maps a streamed text delta into the live draft', () => {
-    expect(
-      toKubicLaneEvent({
-        type: 'message_update',
-        usage: { input: 1, output: 1 } as never,
-        changes: [{ type: 'text_delta', contentIndex: 0, delta: 'Hel' }],
-      }),
-    ).toEqual({ type: 'message-delta', text: 'Hel' });
-    // Several text deltas in one batch concatenate, in order.
-    expect(
-      toKubicLaneEvent({
-        type: 'message_update',
-        usage: { input: 1, output: 1 } as never,
-        changes: [
-          { type: 'text_delta', contentIndex: 0, delta: 'lo ' },
-          { type: 'thinking_delta', contentIndex: 1, delta: 'hmm' },
-          { type: 'text_delta', contentIndex: 0, delta: 'world' },
+  it('ends a tool directly before its result entry', () => {
+    const call = assistantEntry(2, [
+      { type: 'toolCall', id: 'c-1', name: 'echo', arguments: {} },
+    ]);
+    const result = toolResultEntry(3);
+    const running = view([call], {
+      live: {
+        run: RUN,
+        tools: [{ callId: 'c-1', name: 'echo', status: 'running' }],
+      },
+    });
+    const done = view([call, result], {
+      live: {
+        run: RUN,
+        tools: [
+          { callId: 'c-1', name: 'echo', status: 'done', entry: result.id },
         ],
-      }),
-    ).toEqual({ type: 'message-delta', text: 'lo world' });
-    // Nothing for the transcript: a thinking-only batch, or a whole-message
-    // replacement (the committed entry follows).
-    expect(
-      toKubicLaneEvent({
-        type: 'message_update',
-        usage: { input: 1, output: 1 } as never,
-        changes: [{ type: 'thinking_delta', contentIndex: 0, delta: 'hmm' }],
-      }),
-    ).toBeUndefined();
-    expect(
-      toKubicLaneEvent({
-        type: 'message_update',
-        usage: { input: 1, output: 1 } as never,
-        changes: [{ type: 'message', message: { role: 'assistant' } as never }],
-      }),
-    ).toBeUndefined();
-  });
-
-  it('maps a failed tool result to isError', () => {
-    const failed = toolResultEntry(2, true);
-    expect(
-      toKubicLaneEvent({
-        type: 'tool_execution_end',
+      },
+    });
+    expect(laneEventsBetween(running, done)).toEqual([
+      {
+        type: 'tool-end',
         toolCallId: 'c-1',
         toolName: 'echo',
+        isError: false,
+        entry: result,
+      },
+      { type: 'entry', entry: result },
+    ]);
+  });
+
+  it('marks a failed result, and a done slot without one, as errors', () => {
+    const failed = toolResultEntry(3, 'c-1', true);
+    const running = view([], {
+      live: {
+        run: RUN,
+        tools: [
+          { callId: 'c-1', name: 'echo', status: 'running' },
+          { callId: 'c-2', name: 'echo', status: 'running' },
+        ],
+      },
+    });
+    const done = view([failed], {
+      live: {
+        run: RUN,
+        tools: [
+          { callId: 'c-1', name: 'echo', status: 'done', entry: failed.id },
+          // Faulted or orphaned: done without a result entry.
+          { callId: 'c-2', name: 'echo', status: 'done' },
+        ],
+      },
+    });
+    expect(laneEventsBetween(running, done)).toEqual([
+      {
+        type: 'tool-end',
+        toolCallId: 'c-1',
+        toolName: 'echo',
+        isError: true,
         entry: failed,
-      }),
-    ).toMatchObject({ type: 'tool-end', isError: true });
+      },
+      { type: 'entry', entry: failed },
+      { type: 'tool-end', toolCallId: 'c-2', toolName: 'echo', isError: true },
+    ]);
+  });
+
+  it('ends an unfinished tool whose run ended, with the result it left', () => {
+    const result = toolResultEntry(3);
+    const running = view([], {
+      live: {
+        run: RUN,
+        tools: [{ callId: 'c-1', name: 'echo', status: 'running' }],
+      },
+    });
+    const ended = view([result]);
+    expect(laneEventsBetween(running, ended)).toEqual([
+      {
+        type: 'tool-end',
+        toolCallId: 'c-1',
+        toolName: 'echo',
+        isError: false,
+        entry: result,
+      },
+      { type: 'entry', entry: result },
+      { type: 'run-end', inputs: [4] },
+    ]);
+  });
+
+  it('streams the draft text as deltas, thinking left out', () => {
+    const none = view([], { live: { run: RUN } });
+    const hel = view([], { live: draft('Hel', 'pondering') });
+    const hello = view([], { live: draft('Hello', 'pondering more') });
+    expect(laneEventsBetween(none, hel)).toEqual([
+      { type: 'message-delta', text: 'Hel' },
+    ]);
+    expect(laneEventsBetween(hel, hello)).toEqual([
+      { type: 'message-delta', text: 'lo' },
+    ]);
+    // A thinking-only change carries no text.
+    expect(laneEventsBetween(hello, hello)).toEqual([]);
+  });
+
+  it('starts a new draft after the entry that ended the previous one', () => {
+    const answer = assistantEntry(5, [{ type: 'text', text: 'first' }]);
+    const first = view([], { live: draft('first') });
+    const second = view([answer], { live: draft('next') });
+    const events = laneEventsBetween(first, second);
+    expect(events.map((event) => event.type)).toEqual([
+      'usage',
+      'message-delta',
+    ]);
+    expect(events[1]).toEqual({ type: 'message-delta', text: 'next' });
   });
 
   it('maps an assistant entry to a usage row with its real provider/model', () => {
-    const committed = assistantEntry(7);
-    expect(toKubicLaneEvent({ type: 'message_end', entry: committed })).toEqual(
-      {
-        type: 'usage',
-        row: {
-          provider: 'anthropic',
-          model: 'claude-sonnet-4-5',
-          usage: FULL_USAGE,
-          entryId: '7',
-        },
-        entry: committed,
+    const answer = assistantEntry(2);
+    const [event] = laneEventsBetween(view([]), view([answer]));
+    expect(event).toMatchObject({
+      type: 'usage',
+      entry: answer,
+      row: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5',
+        usage: FULL_USAGE,
+        entryId: '2',
       },
-    );
+    });
   });
 
-  it('carries non-assistant message ends as committed entries', () => {
-    // A compaction summary and a reset handoff are user messages with no
-    // usage row; the transcript still needs the entry, so it rides its own
-    // event instead of being dropped.
-    const user = entry(8, 'pi.user', {
-      role: 'user',
-      content: 'hi',
-      timestamp: 0,
-    });
-    expect(toKubicLaneEvent({ type: 'message_end', entry: user })).toEqual({
-      type: 'entry',
-      entry: user,
-    });
-    const toolResult = toolResultEntry(9);
-    expect(
-      toKubicLaneEvent({ type: 'message_end', entry: toolResult }),
-    ).toEqual({ type: 'entry', entry: toolResult });
+  it('carries other committed messages as entries, and skips markers', () => {
+    const user = userEntry(2);
+    const marker = entry(3, 'pi.reset');
+    expect(laneEventsBetween(view([]), view([user, marker]))).toEqual([
+      { type: 'entry', entry: user },
+    ]);
+    // Only entries past the newest one already seen are new.
+    expect(laneEventsBetween(view([user]), view([user, marker]))).toEqual([]);
   });
 
-  it('maps retries, compactions and task failures', () => {
-    expect(
-      toKubicLaneEvent({
-        type: 'auto_retry_start',
-        attempt: 1,
-        at: 5,
-        errorMessage: 'server overloaded',
-      }),
-    ).toEqual({
-      type: 'retry',
-      phase: 'start',
-      attempt: 1,
-      error: 'server overloaded',
+  it('maps retries and compactions', () => {
+    const idle = view([], { live: { run: RUN } });
+    const retrying = view([], {
+      live: {
+        run: RUN,
+        generation: {
+          attempt: 2,
+          retry: { at: 10, error: 'server overloaded' },
+        },
+      },
     });
-    expect(toKubicLaneEvent({ type: 'auto_retry_end', attempt: 1 })).toEqual({
-      type: 'retry',
-      phase: 'end',
-      attempt: 1,
-    });
-    expect(
-      toKubicLaneEvent({
-        type: 'compaction_start',
-        taskId: 9 as TaskId,
-        reason: 'threshold',
-        blocking: true,
-      }),
-    ).toEqual({ type: 'compaction', phase: 'start', reason: 'threshold' });
-    expect(
-      toKubicLaneEvent({
-        type: 'compaction_end',
-        taskId: 9 as TaskId,
-        reason: 'threshold',
-      }),
-    ).toEqual({ type: 'compaction', phase: 'end', reason: 'threshold' });
-    expect(
-      toKubicLaneEvent({
-        type: 'task_failed',
-        taskId: 3 as TaskId,
-        kind: 'pi.generation',
-        message: 'boom',
-      }),
-    ).toEqual({ type: 'fault', code: 'pi.generation', message: 'boom' });
-  });
-
-  it('maps an inbox update to the queued items, ids as strings', () => {
-    expect(
-      toKubicLaneEvent({
-        type: 'inbox_update',
-        items: [
-          { id: 11 as SubmissionId, mode: 'followUp' },
-          { id: 12 as SubmissionId, mode: 'steer' },
+    expect(laneEventsBetween(idle, retrying)).toEqual([
+      { type: 'retry', phase: 'start', attempt: 2, error: 'server overloaded' },
+    ]);
+    expect(laneEventsBetween(retrying, idle)).toEqual([
+      { type: 'retry', phase: 'end', attempt: 2 },
+    ]);
+    const compacting = view([], {
+      live: {
+        run: RUN,
+        compactions: [
+          {
+            taskId: 9 as TaskId<never>,
+            trigger: 'threshold',
+            blocking: true,
+            attempt: 1,
+          },
         ],
-      }),
-    ).toEqual({
-      type: 'inbox',
-      items: [
-        { id: '11', mode: 'followUp' },
-        { id: '12', mode: 'steer' },
-      ],
-    });
-    // Placement and withdrawal emit the same event with the remaining items
-    // (here: none) — the list is a snapshot, so a renderer replaces its rows.
-    expect(toKubicLaneEvent({ type: 'inbox_update', items: [] })).toEqual({
-      type: 'inbox',
-      items: [],
-    });
-  });
-
-  it('ignores event kinds Kubic does not route', () => {
-    const ignored = [
-      { type: 'turn_start' },
-      { type: 'turn_end' },
-      { type: 'deferred_poll', pollAt: 1 },
-      { type: 'usage_changed', usage: { models: {}, tools: {} } },
-      { type: 'agent_changed', agent: {} },
-      {
-        type: 'message_start',
-        message: { role: 'user', content: '', timestamp: 0 },
       },
-    ] as const;
-    for (const event of ignored) {
-      expect(toKubicLaneEvent(event)).toBeUndefined();
-    }
+    });
+    expect(laneEventsBetween(idle, compacting)).toEqual([
+      { type: 'compaction', phase: 'start', reason: 'threshold' },
+    ]);
+    expect(laneEventsBetween(compacting, idle)).toEqual([
+      { type: 'compaction', phase: 'end', reason: 'threshold' },
+    ]);
   });
 
-  it('maps the snapshot (attach / late join / overflow) with replace semantics', () => {
-    const snapshot: SnapshotEvent = {
-      type: 'snapshot',
-      entries: [assistantEntry(1), toolResultEntry(2)],
-      run: { inputs: [4 as SubmissionId] },
-      generation: { attempt: 2, retry: { at: 10, error: 'server overloaded' } },
-      tools: [
-        { callId: 'c-1', name: 'echo', status: 'running' },
-        { callId: 'c-2', name: 'echo', status: 'done', entry: 2 as EntryId },
-        { callId: 'c-3', name: 'echo', status: 'done' },
-      ],
-      nestedTools: [],
-      compactions: [
-        {
-          taskId: 9 as SnapshotEvent['compactions'][number]['taskId'],
-          reason: 'threshold',
-          blocking: true,
-          attempt: 1,
-        },
-      ],
-      inbox: [],
-      agent: {},
-      usage: { models: { 'faux/faux-1': FULL_USAGE }, tools: {} },
+  it('maps an inbox change to the queued items, ids as strings', () => {
+    const queued = view([], {
+      inbox: {
+        items: [
+          { id: 3 as SubmissionId, mode: 'followUp', content: 'next' },
+          { id: 4 as SubmissionId, mode: 'write', entry: {} },
+        ],
+      },
+    });
+    expect(laneEventsBetween(view([]), queued)).toEqual([
+      {
+        type: 'inbox',
+        items: [
+          { id: '3', mode: 'followUp' },
+          { id: '4', mode: 'write' },
+        ],
+      },
+    ]);
+    // The same queue in a new view object is no change.
+    expect(laneEventsBetween(queued, { ...queued })).toEqual([]);
+    expect(laneEventsBetween(queued, view([]))).toEqual([
+      { type: 'inbox', items: [] },
+    ]);
+  });
+});
+
+describe('snapshotOf', () => {
+  it('maps the view with replace semantics', () => {
+    const answer = assistantEntry(1);
+    const result = toolResultEntry(2, 'c-2');
+    const usage: UsageState = {
+      models: { 'faux/faux-1': FULL_USAGE },
+      tools: {},
     };
-    expect(toKubicLaneEvent(snapshot)).toEqual({
+    const snapshot = snapshotOf(
+      view([answer, result], {
+        live: {
+          run: RUN,
+          generation: {
+            attempt: 2,
+            retry: { at: 10, error: 'server overloaded' },
+          },
+          tools: [
+            { callId: 'c-1', name: 'echo', status: 'running' },
+            { callId: 'c-2', name: 'echo', status: 'done', entry: result.id },
+            { callId: 'c-3', name: 'echo', status: 'done' },
+          ],
+          compactions: [
+            {
+              taskId: 9 as TaskId<never>,
+              trigger: 'threshold',
+              blocking: true,
+              attempt: 1,
+            },
+          ],
+        },
+        usage,
+      }),
+      [answer, result],
+    );
+    expect(snapshot).toEqual({
       type: 'snapshot',
-      entries: snapshot.entries,
+      entries: [answer, result],
       run: [4],
       tools: [
         {
@@ -345,7 +439,7 @@ describe('toKubicLaneEvent', () => {
           toolName: 'echo',
           status: 'done',
           isError: false,
-          entry: snapshot.entries[1],
+          entry: result,
         },
         // Done without a result entry: faulted or orphaned.
         { toolCallId: 'c-3', toolName: 'echo', status: 'done', isError: true },
@@ -354,8 +448,71 @@ describe('toKubicLaneEvent', () => {
       compactions: [
         { taskId: 9, reason: 'threshold', blocking: true, attempt: 1 },
       ],
-      usage: { models: { 'faux/faux-1': FULL_USAGE }, tools: {} },
+      usage,
     });
+  });
+
+  it('reads an idle, empty conversation as no run and zero usage', () => {
+    expect(snapshotOf(view([]), [])).toEqual({
+      type: 'snapshot',
+      entries: [],
+      tools: [],
+      compactions: [],
+      usage: { models: {}, tools: {} },
+    });
+  });
+});
+
+describe('windowSkipped', () => {
+  it('is true only when the window starts past the newest entry seen', () => {
+    const seen = view([userEntry(10)]);
+    expect(windowSkipped(seen, view([userEntry(10), userEntry(11)]))).toBe(
+      false,
+    );
+    expect(windowSkipped(seen, view([userEntry(60)], {}, 10))).toBe(false);
+    expect(windowSkipped(seen, view([userEntry(60)], {}, 59))).toBe(true);
+    // An empty first view has seen nothing to skip past.
+    expect(windowSkipped(view([]), view([userEntry(60)], {}, 59))).toBe(false);
+  });
+});
+
+describe('faultsOf', () => {
+  function taskChange(
+    conversationId: number,
+    kind: string,
+    outcome: unknown,
+  ): CommitPublication['changes'][number] {
+    return {
+      type: 'task',
+      value: {
+        id: 5,
+        kind,
+        conversationId,
+        state: { status: 'terminal', outcome },
+      },
+    } as unknown as CommitPublication['changes'][number];
+  }
+
+  it('reports this conversation’s faulted and orphaned tasks only', () => {
+    const publication = {
+      seq: 1,
+      changes: [
+        taskChange(1, 'pi.generation', {
+          status: 'faulted',
+          error: { message: 'boom' },
+        }),
+        taskChange(1, 'pi.tool', { status: 'orphaned', reason: 'lost' }),
+        taskChange(1, 'pi.tool', { status: 'completed', result: {} }),
+        taskChange(2, 'pi.tool', {
+          status: 'faulted',
+          error: { message: 'elsewhere' },
+        }),
+      ],
+    } as unknown as CommitPublication;
+    expect(faultsOf(publication, CONVERSATION)).toEqual([
+      { type: 'fault', code: 'pi.generation', message: 'boom' },
+      { type: 'fault', code: 'pi.tool', message: 'lost' },
+    ]);
   });
 });
 
@@ -377,7 +534,7 @@ afterEach(async () => {
 const echoTool = defineTool({
   name: 'echo',
   description: 'Echo the given text.',
-  parameters: Type.Object({ text: Type.String() }),
+  parameters: obj({ text: str() }),
   replay: 'safe',
   async execute(args) {
     return { output: [{ type: 'text', text: `echo: ${args.text}` }] };
@@ -427,7 +584,7 @@ async function runTurn(lane: TestLane, prompt: string): Promise<void> {
 const flush = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 0));
 
-describe('subscribeLaneEvents over watchEvents', () => {
+describe('subscribeLaneEvents over the conversation view', () => {
   it('streams a faux tool turn as run, tool, usage, run-end in order', async () => {
     const lane = await boot({
       responses: [
@@ -555,7 +712,7 @@ describe('subscribeLaneEvents over watchEvents', () => {
     }
     const usages = seen.filter((event) => event.type === 'usage');
     expect(usages.length).toBeGreaterThan(0);
-    const totals = { input: 0, output: 0, totalTokens: 0 };
+    const totals = { prompt: 0, output: 0, totalTokens: 0 };
     for (const event of usages) {
       if (event.type !== 'usage') continue;
       expect(event.row.provider).toBe('faux');
@@ -568,13 +725,17 @@ describe('subscribeLaneEvents over watchEvents', () => {
       }
       expect(event.row.usage).toEqual(message.usage);
       expect(event.row.entryId).toBe(String(event.entry.id));
-      totals.input += event.row.usage.input;
+      // The faux provider books the prompt as a cache write.
+      totals.prompt +=
+        event.row.usage.input +
+        event.row.usage.cacheRead +
+        event.row.usage.cacheWrite;
       totals.output += event.row.usage.output;
       totals.totalTokens += event.row.usage.totalTokens;
     }
     // Non-zero measured usage flowed end to end. No input+output
     // identity: the harness measures totalTokens on its own accounting.
-    expect(totals.input).toBeGreaterThan(0);
+    expect(totals.prompt).toBeGreaterThan(0);
     expect(totals.output).toBeGreaterThan(0);
     expect(totals.totalTokens).toBeGreaterThan(0);
   });
@@ -610,55 +771,46 @@ describe('subscribeLaneEvents over watchEvents', () => {
     expect(snapshot?.type === 'snapshot' ? snapshot.entries : []).toEqual([]);
   });
 
-  it('recovers a fallen-behind sink from the snapshot without duplicating cells', async () => {
+  it('folds a burst of commits into cells without duplicating any', async () => {
     const lane = await boot({
       responses: [
         fauxAssistantMessage(fauxToolCall('echo', { text: 'one' }), {
           stopReason: 'toolUse',
         }),
         fauxAssistantMessage(fauxText('first')),
-        fauxAssistantMessage(fauxToolCall('echo', { text: 'two' }), {
-          stopReason: 'toolUse',
-        }),
         fauxAssistantMessage(fauxText('second')),
       ],
     });
     await runTurn(lane, 'first');
-
-    // Attach without starting and commit more than the watch's 100-frame
-    // pending bound (pi-durable README "Watching a Conversation"): the
-    // overflow frame is one fresh snapshot.
-    const stream = await watchEvents(
+    const seen: KubicLaneEvent[] = [];
+    const stop = await subscribeLaneEvents(
       lane.harness,
       lane.conversation.id,
+      (event) => seen.push(event),
       BACKGROUND_CONTEXT,
     );
-    for (let i = 0; i < 105; i += 1) {
-      await lane.conversation.submit(
-        { type: 'write', entry: { kind: 'test.note', data: i } },
-        BACKGROUND_CONTEXT,
-      );
-    }
-    const seen: KubicLaneEvent[] = [];
-    stream.start(async (events) => {
-      for (const event of events) {
-        const mapped = toKubicLaneEvent(event);
-        if (mapped !== undefined) seen.push(mapped);
-      }
-    });
     try {
+      // More commits than the view's window holds, admitted together: the
+      // watch folds them, and a window that moved past unseen entries
+      // rebases on a fresh snapshot.
+      await Promise.all(
+        Array.from({ length: 120 }, (_, i) =>
+          lane.conversation.submit(
+            { type: 'write', entry: { kind: 'test.note', data: i } },
+            BACKGROUND_CONTEXT,
+          ),
+        ),
+      );
       await runTurn(lane, 'second');
       await flush();
     } finally {
-      await stream.stop();
+      await stop();
     }
 
     // Fold like the TUI feed does: a snapshot REPLACES the transcript
-    // cells, an entry-bearing event appends exactly that entry.
+    // cells, an entry-bearing event UPSERTS exactly that entry.
     const cells: number[] = [];
     const index = new Map<number, number>();
-    // The TUI feed UPSERTS by entry id (a re-delivered entry replaces its
-    // cell, it never appends a second one), so the fold here does the same.
     const push = (committed: EntryRecord): void => {
       const id = committed.id as number;
       const at = index.get(id);
@@ -669,22 +821,22 @@ describe('subscribeLaneEvents over watchEvents', () => {
         cells[at] = id;
       }
     };
-    let snapshotted = 0;
     for (const event of seen) {
       if (event.type === 'snapshot') {
         cells.length = 0;
         index.clear();
         for (const committed of event.entries) push(committed);
-        snapshotted = event.entries.length;
       } else if ('entry' in event && event.entry !== undefined) {
         push(event.entry);
       }
     }
     expect(seen[0]?.type).toBe('snapshot');
-    expect(snapshotted).toBeGreaterThan(0);
-    // The second turn appended its cells on top of the snapshot.
-    expect(cells.length).toBeGreaterThan(snapshotted);
-    // No cell appears twice.
+    // The second turn's answer is the last cell, and no cell appears twice.
+    const answers = seen.filter((event) => event.type === 'usage');
+    const last = answers.at(-1);
+    expect(last?.type === 'usage' ? (last.entry.id as number) : -1).toBe(
+      cells.at(-1),
+    );
     expect(cells.length).toBe(index.size);
   });
 });

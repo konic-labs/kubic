@@ -13,7 +13,8 @@ import {
   fauxToolCall,
   Harness,
   MemoryStorage,
-  Type,
+  obj,
+  str,
 } from '@kubic/agent/pi-boundary';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -201,7 +202,7 @@ describe('runSpanHooks', () => {
           defineTool({
             name: 'probe',
             description: 'returns after doing nothing',
-            parameters: Type.Object({ value: Type.String() }),
+            parameters: obj({ value: str() }),
             execute: async () => ({
               output: [{ type: 'text', text: 'probed' }],
             }),
@@ -270,7 +271,7 @@ describe('runSpanHooks', () => {
           defineTool({
             name: 'failing',
             description: 'fails on purpose',
-            parameters: Type.Object({}),
+            parameters: obj({}),
             execute: async () => ({
               content: [{ type: 'text', text: 'boom' }],
               isError: true,

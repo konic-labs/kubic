@@ -76,7 +76,7 @@
     "@earendil-works/pi-schema": "1.5.2",
     "@earendil-works/pi-telemetry": "1.5.2",
     "@earendil-works/pi-tui": "1.5.2",
-    "commander": "15.0.0",
+    "commander": "15.1.0",
     "consola": "3.4.2",
     "lowlight": "3.3.0"
   }
